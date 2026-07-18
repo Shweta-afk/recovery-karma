@@ -1,5 +1,7 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
+import { CallSessionProvider } from "@/lib/call-session";
+import { GlobalCallBar } from "@/components/global-call-bar";
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardLayout,
@@ -7,8 +9,11 @@ export const Route = createFileRoute("/dashboard")({
 
 function DashboardLayout() {
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <CallSessionProvider>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+      <GlobalCallBar />
+    </CallSessionProvider>
   );
 }

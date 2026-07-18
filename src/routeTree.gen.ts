@@ -14,12 +14,25 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ManagerIndexRouteImport } from './routes/manager.index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
+import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
+import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
+import { Route as ManagerChannelsRouteImport } from './routes/manager.channels'
+import { Route as ManagerAuditRouteImport } from './routes/manager.audit'
+import { Route as DashboardSettingsRouteImport } from './routes/dashboard.settings'
 import { Route as DashboardReportsRouteImport } from './routes/dashboard.reports'
 import { Route as DashboardPaymentsRouteImport } from './routes/dashboard.payments'
 import { Route as DashboardMessagesRouteImport } from './routes/dashboard.messages'
+import { Route as DashboardHistoryRouteImport } from './routes/dashboard.history'
 import { Route as DashboardDebtorsRouteImport } from './routes/dashboard.debtors'
+import { Route as DashboardCallQueueRouteImport } from './routes/dashboard.call-queue'
+import { Route as AdminUsersRouteImport } from './routes/admin.users'
+import { Route as AdminTeamsRouteImport } from './routes/admin.teams'
+import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
+import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
 
 const ManagerRoute = ManagerRouteImport.update({
@@ -47,6 +60,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ManagerIndexRoute = ManagerIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ManagerRoute,
+} as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -56,6 +74,36 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AdminRoute,
+} as any)
+const ManagerUploadRoute = ManagerUploadRouteImport.update({
+  id: '/upload',
+  path: '/upload',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerQueueRoute = ManagerQueueRouteImport.update({
+  id: '/queue',
+  path: '/queue',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerPortfolioRoute = ManagerPortfolioRouteImport.update({
+  id: '/portfolio',
+  path: '/portfolio',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerChannelsRoute = ManagerChannelsRouteImport.update({
+  id: '/channels',
+  path: '/channels',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerAuditRoute = ManagerAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardReportsRoute = DashboardReportsRouteImport.update({
   id: '/reports',
@@ -72,10 +120,40 @@ const DashboardMessagesRoute = DashboardMessagesRouteImport.update({
   path: '/messages',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardHistoryRoute = DashboardHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardDebtorsRoute = DashboardDebtorsRouteImport.update({
   id: '/debtors',
   path: '/debtors',
   getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardCallQueueRoute = DashboardCallQueueRouteImport.update({
+  id: '/call-queue',
+  path: '/call-queue',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const AdminUsersRoute = AdminUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminTeamsRoute = AdminTeamsRouteImport.update({
+  id: '/teams',
+  path: '/teams',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminSettingsRoute = AdminSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminReportsRoute = AdminReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AdminRoute,
 } as any)
 const AdminPortfolioRoute = AdminPortfolioRouteImport.update({
   id: '/portfolio',
@@ -88,26 +166,51 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteWithChildren
   '/dashboard': typeof DashboardRouteWithChildren
   '/login': typeof LoginRoute
-  '/manager': typeof ManagerRoute
+  '/manager': typeof ManagerRouteWithChildren
   '/admin/portfolio': typeof AdminPortfolioRoute
+  '/admin/reports': typeof AdminReportsRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/admin/teams': typeof AdminTeamsRoute
+  '/admin/users': typeof AdminUsersRoute
+  '/dashboard/call-queue': typeof DashboardCallQueueRoute
   '/dashboard/debtors': typeof DashboardDebtorsRoute
+  '/dashboard/history': typeof DashboardHistoryRoute
   '/dashboard/messages': typeof DashboardMessagesRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/reports': typeof DashboardReportsRoute
+  '/dashboard/settings': typeof DashboardSettingsRoute
+  '/manager/audit': typeof ManagerAuditRoute
+  '/manager/channels': typeof ManagerChannelsRoute
+  '/manager/portfolio': typeof ManagerPortfolioRoute
+  '/manager/queue': typeof ManagerQueueRoute
+  '/manager/upload': typeof ManagerUploadRoute
   '/admin/': typeof AdminIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
+  '/manager/': typeof ManagerIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/manager': typeof ManagerRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
+  '/admin/reports': typeof AdminReportsRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/admin/teams': typeof AdminTeamsRoute
+  '/admin/users': typeof AdminUsersRoute
+  '/dashboard/call-queue': typeof DashboardCallQueueRoute
   '/dashboard/debtors': typeof DashboardDebtorsRoute
+  '/dashboard/history': typeof DashboardHistoryRoute
   '/dashboard/messages': typeof DashboardMessagesRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/reports': typeof DashboardReportsRoute
+  '/dashboard/settings': typeof DashboardSettingsRoute
+  '/manager/audit': typeof ManagerAuditRoute
+  '/manager/channels': typeof ManagerChannelsRoute
+  '/manager/portfolio': typeof ManagerPortfolioRoute
+  '/manager/queue': typeof ManagerQueueRoute
+  '/manager/upload': typeof ManagerUploadRoute
   '/admin': typeof AdminIndexRoute
   '/dashboard': typeof DashboardIndexRoute
+  '/manager': typeof ManagerIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -115,14 +218,27 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteWithChildren
   '/dashboard': typeof DashboardRouteWithChildren
   '/login': typeof LoginRoute
-  '/manager': typeof ManagerRoute
+  '/manager': typeof ManagerRouteWithChildren
   '/admin/portfolio': typeof AdminPortfolioRoute
+  '/admin/reports': typeof AdminReportsRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/admin/teams': typeof AdminTeamsRoute
+  '/admin/users': typeof AdminUsersRoute
+  '/dashboard/call-queue': typeof DashboardCallQueueRoute
   '/dashboard/debtors': typeof DashboardDebtorsRoute
+  '/dashboard/history': typeof DashboardHistoryRoute
   '/dashboard/messages': typeof DashboardMessagesRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/reports': typeof DashboardReportsRoute
+  '/dashboard/settings': typeof DashboardSettingsRoute
+  '/manager/audit': typeof ManagerAuditRoute
+  '/manager/channels': typeof ManagerChannelsRoute
+  '/manager/portfolio': typeof ManagerPortfolioRoute
+  '/manager/queue': typeof ManagerQueueRoute
+  '/manager/upload': typeof ManagerUploadRoute
   '/admin/': typeof AdminIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
+  '/manager/': typeof ManagerIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -133,24 +249,49 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/admin/portfolio'
+    | '/admin/reports'
+    | '/admin/settings'
+    | '/admin/teams'
+    | '/admin/users'
+    | '/dashboard/call-queue'
     | '/dashboard/debtors'
+    | '/dashboard/history'
     | '/dashboard/messages'
     | '/dashboard/payments'
     | '/dashboard/reports'
+    | '/dashboard/settings'
+    | '/manager/audit'
+    | '/manager/channels'
+    | '/manager/portfolio'
+    | '/manager/queue'
+    | '/manager/upload'
     | '/admin/'
     | '/dashboard/'
+    | '/manager/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
-    | '/manager'
     | '/admin/portfolio'
+    | '/admin/reports'
+    | '/admin/settings'
+    | '/admin/teams'
+    | '/admin/users'
+    | '/dashboard/call-queue'
     | '/dashboard/debtors'
+    | '/dashboard/history'
     | '/dashboard/messages'
     | '/dashboard/payments'
     | '/dashboard/reports'
+    | '/dashboard/settings'
+    | '/manager/audit'
+    | '/manager/channels'
+    | '/manager/portfolio'
+    | '/manager/queue'
+    | '/manager/upload'
     | '/admin'
     | '/dashboard'
+    | '/manager'
   id:
     | '__root__'
     | '/'
@@ -159,12 +300,25 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/admin/portfolio'
+    | '/admin/reports'
+    | '/admin/settings'
+    | '/admin/teams'
+    | '/admin/users'
+    | '/dashboard/call-queue'
     | '/dashboard/debtors'
+    | '/dashboard/history'
     | '/dashboard/messages'
     | '/dashboard/payments'
     | '/dashboard/reports'
+    | '/dashboard/settings'
+    | '/manager/audit'
+    | '/manager/channels'
+    | '/manager/portfolio'
+    | '/manager/queue'
+    | '/manager/upload'
     | '/admin/'
     | '/dashboard/'
+    | '/manager/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -172,7 +326,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRouteWithChildren
   DashboardRoute: typeof DashboardRouteWithChildren
   LoginRoute: typeof LoginRoute
-  ManagerRoute: typeof ManagerRoute
+  ManagerRoute: typeof ManagerRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -212,6 +366,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/manager/': {
+      id: '/manager/'
+      path: '/'
+      fullPath: '/manager/'
+      preLoaderRoute: typeof ManagerIndexRouteImport
+      parentRoute: typeof ManagerRoute
+    }
     '/dashboard/': {
       id: '/dashboard/'
       path: '/'
@@ -225,6 +386,48 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
+    }
+    '/manager/upload': {
+      id: '/manager/upload'
+      path: '/upload'
+      fullPath: '/manager/upload'
+      preLoaderRoute: typeof ManagerUploadRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/queue': {
+      id: '/manager/queue'
+      path: '/queue'
+      fullPath: '/manager/queue'
+      preLoaderRoute: typeof ManagerQueueRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/portfolio': {
+      id: '/manager/portfolio'
+      path: '/portfolio'
+      fullPath: '/manager/portfolio'
+      preLoaderRoute: typeof ManagerPortfolioRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/channels': {
+      id: '/manager/channels'
+      path: '/channels'
+      fullPath: '/manager/channels'
+      preLoaderRoute: typeof ManagerChannelsRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/audit': {
+      id: '/manager/audit'
+      path: '/audit'
+      fullPath: '/manager/audit'
+      preLoaderRoute: typeof ManagerAuditRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/dashboard/settings': {
+      id: '/dashboard/settings'
+      path: '/settings'
+      fullPath: '/dashboard/settings'
+      preLoaderRoute: typeof DashboardSettingsRouteImport
+      parentRoute: typeof DashboardRoute
     }
     '/dashboard/reports': {
       id: '/dashboard/reports'
@@ -247,12 +450,54 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardMessagesRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/history': {
+      id: '/dashboard/history'
+      path: '/history'
+      fullPath: '/dashboard/history'
+      preLoaderRoute: typeof DashboardHistoryRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/debtors': {
       id: '/dashboard/debtors'
       path: '/debtors'
       fullPath: '/dashboard/debtors'
       preLoaderRoute: typeof DashboardDebtorsRouteImport
       parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/call-queue': {
+      id: '/dashboard/call-queue'
+      path: '/call-queue'
+      fullPath: '/dashboard/call-queue'
+      preLoaderRoute: typeof DashboardCallQueueRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/admin/users': {
+      id: '/admin/users'
+      path: '/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AdminUsersRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/teams': {
+      id: '/admin/teams'
+      path: '/teams'
+      fullPath: '/admin/teams'
+      preLoaderRoute: typeof AdminTeamsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/settings': {
+      id: '/admin/settings'
+      path: '/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/reports': {
+      id: '/admin/reports'
+      path: '/reports'
+      fullPath: '/admin/reports'
+      preLoaderRoute: typeof AdminReportsRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/admin/portfolio': {
       id: '/admin/portfolio'
@@ -266,29 +511,43 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteChildren {
   AdminPortfolioRoute: typeof AdminPortfolioRoute
+  AdminReportsRoute: typeof AdminReportsRoute
+  AdminSettingsRoute: typeof AdminSettingsRoute
+  AdminTeamsRoute: typeof AdminTeamsRoute
+  AdminUsersRoute: typeof AdminUsersRoute
   AdminIndexRoute: typeof AdminIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminPortfolioRoute: AdminPortfolioRoute,
+  AdminReportsRoute: AdminReportsRoute,
+  AdminSettingsRoute: AdminSettingsRoute,
+  AdminTeamsRoute: AdminTeamsRoute,
+  AdminUsersRoute: AdminUsersRoute,
   AdminIndexRoute: AdminIndexRoute,
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface DashboardRouteChildren {
+  DashboardCallQueueRoute: typeof DashboardCallQueueRoute
   DashboardDebtorsRoute: typeof DashboardDebtorsRoute
+  DashboardHistoryRoute: typeof DashboardHistoryRoute
   DashboardMessagesRoute: typeof DashboardMessagesRoute
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
   DashboardReportsRoute: typeof DashboardReportsRoute
+  DashboardSettingsRoute: typeof DashboardSettingsRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardCallQueueRoute: DashboardCallQueueRoute,
   DashboardDebtorsRoute: DashboardDebtorsRoute,
+  DashboardHistoryRoute: DashboardHistoryRoute,
   DashboardMessagesRoute: DashboardMessagesRoute,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
   DashboardReportsRoute: DashboardReportsRoute,
+  DashboardSettingsRoute: DashboardSettingsRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
 
@@ -296,12 +555,33 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
   DashboardRouteChildren,
 )
 
+interface ManagerRouteChildren {
+  ManagerAuditRoute: typeof ManagerAuditRoute
+  ManagerChannelsRoute: typeof ManagerChannelsRoute
+  ManagerPortfolioRoute: typeof ManagerPortfolioRoute
+  ManagerQueueRoute: typeof ManagerQueueRoute
+  ManagerUploadRoute: typeof ManagerUploadRoute
+  ManagerIndexRoute: typeof ManagerIndexRoute
+}
+
+const ManagerRouteChildren: ManagerRouteChildren = {
+  ManagerAuditRoute: ManagerAuditRoute,
+  ManagerChannelsRoute: ManagerChannelsRoute,
+  ManagerPortfolioRoute: ManagerPortfolioRoute,
+  ManagerQueueRoute: ManagerQueueRoute,
+  ManagerUploadRoute: ManagerUploadRoute,
+  ManagerIndexRoute: ManagerIndexRoute,
+}
+
+const ManagerRouteWithChildren =
+  ManagerRoute._addFileChildren(ManagerRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
   DashboardRoute: DashboardRouteWithChildren,
   LoginRoute: LoginRoute,
-  ManagerRoute: ManagerRoute,
+  ManagerRoute: ManagerRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

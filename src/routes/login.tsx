@@ -23,7 +23,7 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -36,7 +36,7 @@ function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const { error: loginError } = await login(email, password);
+    const { error: loginError, user: loggedInUser } = await login(email, password);
 
     if (loginError) {
       setError(loginError);
@@ -44,11 +44,13 @@ function LoginPage() {
       return;
     }
 
-    // login succeeded — fetch the role from the updated user state
-    // Navigate after a short tick so auth state settles
+    // Redirect based on role
     setTimeout(() => {
-      navigate({ to: "/dashboard" });
-    }, 100);
+      const role = loggedInUser?.role ?? user?.role;
+      if (role === "admin") navigate({ to: "/admin" });
+      else if (role === "manager") navigate({ to: "/manager" });
+      else navigate({ to: "/dashboard" });
+    }, 150);
   };
 
   return (

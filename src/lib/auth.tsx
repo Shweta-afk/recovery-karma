@@ -4,6 +4,8 @@ import { supabase } from "./supabase";
 export type Role = "agent" | "manager" | "admin";
 
 export interface AuthUser {
+  /** Supabase auth.users UUID — use this as the canonical agentId */
+  id: string;
   name: string;
   email: string;
   role: Role;
@@ -12,7 +14,7 @@ export interface AuthUser {
 interface AuthCtx {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<{ error: string | null }>;
+  login: (email: string, password: string) => Promise<{ error: string | null; user: AuthUser | null }>;
   logout: () => Promise<void>;
 }
 
@@ -30,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .single();
 
     if (error || !data) return null;
-    return { name: data.name, email: data.email, role: data.role as Role };
+    return { id: authUserId, name: data.name, email: data.email, role: data.role as Role };
   }
 
   useEffect(() => {
@@ -57,15 +59,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string): Promise<{ error: string | null }> => {
+  const login = async (email: string, password: string): Promise<{ error: string | null; user: AuthUser | null }> => {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setLoading(false);
-      return { error: error.message };
+      return { error: error.message, user: null };
     }
-    // onAuthStateChange will fire and set the user + setLoading(false)
-    return { error: null };
+    // Fetch profile immediately so caller gets the role for redirect
+    const profile = data.user ? await fetchAgentProfile(data.user.id) : null;
+    if (profile) setUser(profile);
+    setLoading(false);
+    return { error: null, user: profile };
   };
 
   const logout = async () => {

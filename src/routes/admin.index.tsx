@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Upload, ClipboardList, UserCog, Settings } from "lucide-react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Layers, Users, BarChart3, UserCog } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,13 +19,14 @@ export const Route = createFileRoute("/admin/")({
 });
 
 const tiles = [
-  { title: "Portfolio Upload", desc: "Import debtor portfolios from CSV or your LMS via API.", icon: Upload, action: "Upload portfolio" },
-  { title: "Case Assignment", desc: "Configure round-robin, skill or DPD-bucket allocation to agents.", icon: ClipboardList, action: "Configure rules" },
-  { title: "Agents", desc: "Add, remove and manage roles for agents and managers.", icon: UserCog, action: "Manage team" },
-  { title: "Settings", desc: "Branding, working hours, RBI compliance and integrations.", icon: Settings, action: "Open settings" },
-];
+  { title: "Users", desc: "Add, remove and manage roles for agents and managers.", icon: UserCog, action: "Manage users", url: "/admin/users" },
+  { title: "Teams", desc: "Create teams, assign a manager, and add agents.", icon: Users, action: "Manage teams", url: "/admin/teams" },
+  { title: "Portfolio Assignment", desc: "Assign uploaded portfolios to a manager and notify them.", icon: Layers, action: "Assign portfolios", url: "/admin/portfolio" },
+  { title: "Reports", desc: "Team performance, agent rankings and call outcomes across the org.", icon: BarChart3, action: "View reports", url: "/admin/reports" },
+] as const;
 
 function AdminPage() {
+  const navigate = useNavigate();
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -55,7 +56,9 @@ function AdminPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <Button variant="outline" size="sm">{t.action}</Button>
+              <Button variant="outline" size="sm" onClick={() => navigate({ to: t.url })}>
+                {t.action}
+              </Button>
             </CardContent>
           </Card>
         ))}
