@@ -79,6 +79,7 @@ import {
 import { cn } from "@/lib/utils";
 import { bucketOf, formatINR, type Debtor, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
 import { getPortfolios, getAgentDebtorIds, refreshPortfolios, DEFAULT_PORTFOLIO_SETTINGS, type CallMode } from "@/lib/portfolio-store";
+import { useDialerRun } from "@/lib/dialer/use-dialer-run";
 import {
   saveDisposition, getAgentDispositions, refreshDispositions,
   type DispositionRecord, type CallOutcome as StoredOutcome,
@@ -367,7 +368,8 @@ function CallQueuePage() {
   const primaryPortfolio = allQueue[0]?.portfolioId
     ? getPortfolios().find(p => p.id === allQueue[0].portfolioId)
     : undefined;
-  const portfolioMode: CallMode = primaryPortfolio?.settings.callMode ?? DEFAULT_PORTFOLIO_SETTINGS.callMode;
+  const dialerSettings = primaryPortfolio?.settings ?? DEFAULT_PORTFOLIO_SETTINGS;
+  const portfolioMode: CallMode = dialerSettings.callMode;
   const portfolioName = primaryPortfolio?.name ?? "No portfolio assigned";
 
   // Seed loggedOutcomes from persisted dispositions
@@ -384,7 +386,10 @@ function CallQueuePage() {
     return map;
   });
 
-  const [dialerRunning, setDialerRunning] = useState(false);
+  // Predictive dialer driven by the real engine + simulated provider (src/lib/dialer).
+  // Legs progress through the actual call state machine; mode: "server" later moves it
+  // server-side for true background dialing with no change here.
+  const dialer = useDialerRun();
   const [prodFilter, setProdFilter] = useState<ProdFilter>("all");
   const [manualDialPageOpen, setManualDialPageOpen] = useState(false);
   const [manualDialNumber, setManualDialNumber] = useState("");
@@ -392,7 +397,6 @@ function CallQueuePage() {
   const [manualDialSip, setManualDialSip] = useState("sip1");
   const [retainedOpen, setRetainedOpen] = useState(false);
   const [predictiveNotif, setPredictiveNotif] = useState<string | null>(null);
-  const [liveCalls, setLiveCalls] = useState<LiveCallEntry[]>([]);
   // A call the AI has connected and is handing to the agent WHILE they're already on another call
   const [incomingTransfer, setIncomingTransfer] = useState<{ debtor: QueueDebtor; from: string } | null>(null);
   const { filter: initialFilter } = Route.useSearch();
@@ -559,7 +563,6 @@ function CallQueuePage() {
       // Record outcome so queue row shows a confirmation badge
       const timeStr = `${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`;
       setLoggedOutcomes(prev => ({ ...prev, [debtor.id]: { outcome: disposition.outcome as CallOutcome, time: timeStr } }));
-      setLiveCalls(p => p.filter(c => c.loanId !== debtor.id));
     }
     setActiveCall(null);
   };
@@ -575,15 +578,6 @@ function CallQueuePage() {
       });
     });
   }, [agentId]);
-
-  // Auto-clear done / no_answer entries from the live panel after 4 seconds
-  useEffect(() => {
-    if (!liveCalls.length) return;
-    const timer = setTimeout(() => {
-      setLiveCalls(p => p.filter(c => c.status !== "done" && c.status !== "no_answer"));
-    }, 4000);
-    return () => clearTimeout(timer);
-  }, [liveCalls]);
 
   const filterCounts = useMemo(() => ({
     all:        allQueue.length,
@@ -722,7 +716,7 @@ function CallQueuePage() {
         </div>
 
         {/* ── Mode status bar ── */}
-        <DialerModeBar portfolioMode={portfolioMode} portfolioName={portfolioName} dialerRunning={dialerRunning} />
+        <DialerModeBar portfolioMode={portfolioMode} portfolioName={portfolioName} dialerRunning={dialer.running} />
       </div>
 
       {/* ── Predictive notification banner ── */}
@@ -871,33 +865,34 @@ function CallQueuePage() {
               )}
             </div>
 
-            {/* Predictive dialer */}
+            {/* Predictive dialer — real engine + simulated provider via useDialerRun */}
             <Button size="sm"
               onClick={() => {
-                const next = !dialerRunning;
-                setDialerRunning(next);
-                if (next) {
-                  // 4b — dial the currently filtered queue, not the whole book
-                  const target = filteredQueue.length ? filteredQueue : allQueue;
-                  const activeFilter = FILTERS.find(f => f.key === queueFilter);
-                  toast.success(`Predictive dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}`);
-                  setLiveCalls(buildSimulatedLiveCalls(target));
-                  setTimeout(() => setLiveCalls(prev => prev.map(c => c.id === "lc-0" ? { ...c, status: "connected", duration: "0:04" } : c)), 3000);
-                  // AI reaches a live debtor and hands over: auto-connect if the agent is free,
-                  // otherwise raise a Take / Forward notification.
-                  setTimeout(() => {
-                    const transferDebtor = target[Math.min(5, target.length - 1)];
-                    if (transferDebtor) handleAiTransfer(transferDebtor, "AI Bot");
-                  }, 6000);
-                } else {
-                  setLiveCalls([]);
+                if (dialer.running) {
+                  dialer.stop();
+                  return;
                 }
+                // 4b — dial the currently filtered queue, not the whole book
+                const target = filteredQueue.length ? filteredQueue : allQueue;
+                const activeFilter = FILTERS.find(f => f.key === queueFilter);
+                dialer.start({
+                  settings: dialerSettings,
+                  targets: target.map(d => ({ id: d.id, name: d.name, phone: d.phone, portfolioId: d.portfolioId, aiScore: d.aiScore })),
+                  agentsAvailable: Math.min(5, target.length),
+                });
+                toast.success(`Predictive dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}`);
+                // AI reaches a live debtor and hands over: auto-connect if the agent is free,
+                // otherwise raise a Take / Forward notification. (Kept as a demo flourish.)
+                setTimeout(() => {
+                  const transferDebtor = target[Math.min(5, target.length - 1)];
+                  if (transferDebtor) handleAiTransfer(transferDebtor, "AI Bot");
+                }, 6000);
               }}
-              className={cn("gap-1.5 text-sm", dialerRunning
+              className={cn("gap-1.5 text-sm", dialer.running
                 ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 : "bg-success text-success-foreground hover:bg-success/90"
               )}>
-              {dialerRunning ? <><Square className="h-3.5 w-3.5" />Stop Dialer</> : <><Zap className="h-3.5 w-3.5" />Predictive Dial</>}
+              {dialer.running ? <><Square className="h-3.5 w-3.5" />Stop Dialer</> : <><Zap className="h-3.5 w-3.5" />Predictive Dial</>}
             </Button>
           </div>
         </div>
@@ -974,7 +969,7 @@ function CallQueuePage() {
         {/* Currently ringing — sits directly above the queue */}
         <div className="mt-3 flex items-center gap-3 rounded-xl border border-blue-400/25 bg-blue-500/5 px-4 py-2.5">
           <span className="h-3 w-3 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
-          <span className="text-sm font-semibold text-blue-500">Currently Ringing: {dialerRunning ? "4" : "0"}</span>
+          <span className="text-sm font-semibold text-blue-500">Currently Ringing: {dialer.running ? dialer.legs.filter(c => c.status === "ringing").length : 0}</span>
           <span className="text-xs text-muted-foreground">outbound calls active right now</span>
           {prodFilter !== "all" && (
             <button type="button" onClick={() => setProdFilter("all")}
@@ -1260,19 +1255,17 @@ function CallQueuePage() {
         />
       )}
 
-      {/* ── Floating Live Calls Panel (bottom-right) ── */}
-      {dialerRunning && liveCalls.length > 0 && (
+      {/* ── Floating Live Calls Panel (bottom-right) — fed by engine legs ── */}
+      {dialer.running && dialer.legs.length > 0 && (
         <LiveCallsPanel
-          liveCalls={liveCalls}
-          onDismiss={() => setDialerRunning(false)}
+          liveCalls={dialer.legs}
+          onDismiss={() => dialer.stop()}
           onTake={(lc) => {
-            setLiveCalls(p => p.filter(c => c.id !== lc.id));
             const debtor = allQueue.find(d => d.id === lc.loanId) ?? allQueue[0];
             startCall(debtor);
           }}
           onTransfer={(lc) => {
             toast.success(`${lc.debtor} redirected to next available agent`);
-            setLiveCalls(p => p.filter(c => c.id !== lc.id));
           }}
         />
       )}
