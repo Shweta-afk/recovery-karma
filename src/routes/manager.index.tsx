@@ -4,7 +4,7 @@ import {
   Phone, Target, TrendingUp, TrendingDown, IndianRupee, PieChart as PieIcon,
   Users, Bell, Activity, CheckCircle2, Clock, XCircle,
   PhoneOff, CreditCard, MessageCircle, Zap, Send, FileDown,
-  LayoutDashboard, UserCog, FileBarChart2, HandCoins, Gauge,
+  LayoutDashboard, UserCog, FileBarChart2, HandCoins,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -30,6 +30,7 @@ import { getEscalations, refreshEscalations } from "@/lib/escalation-store";
 import { useStorageSync } from "@/lib/storage-sync";
 import { downloadCsv } from "@/lib/csv-export";
 import { rankColor } from "@/lib/rank-color";
+import { AgentDashboardContent } from "./dashboard.index";
 
 export const Route = createFileRoute("/manager/")({
   head: () => ({
@@ -219,12 +220,18 @@ function RecoveryTrendChart() {
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-        <XAxis dataKey="day" tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} tickFormatter={(v) => `D${v}`} interval={4} />
-        <YAxis tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} tickFormatter={(v) => `${v}%`} domain={[20, 50]} />
-        <Tooltip {...TOOLTIP} formatter={(v: number, name: string) => [`${v}%`, name === "thisMonth" ? "This Month" : "Last Month"]} labelFormatter={(d) => `Day ${d}`} />
-        <Legend formatter={(v) => v === "thisMonth" ? "This Month" : "Last Month"} wrapperStyle={{ fontSize: 11 }} />
-        <Area type="monotone" dataKey="lastMonth" stroke="oklch(0.40 0.02 258)" strokeWidth={1.5} strokeDasharray="4 3" fill="url(#lastMonthGrad)" dot={false} activeDot={{ r: 4 }} />
-        <Area type="monotone" dataKey="thisMonth" stroke="oklch(0.58 0.18 258)" strokeWidth={2} fill="url(#thisMonthGrad)" dot={false} activeDot={{ r: 5, strokeWidth: 0 }} />
+        <XAxis
+          dataKey="day" tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} tickFormatter={(v) => `${v}`} interval={4}
+          label={{ value: "Day of month", position: "insideBottom", offset: -2, fontSize: 10, fill: "var(--color-muted-foreground)" }}
+        />
+        <YAxis
+          tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} tickFormatter={(v) => `${v}%`} domain={[20, 50]}
+          label={{ value: "Recovery rate", angle: -90, position: "insideLeft", offset: 12, fontSize: 10, fill: "var(--color-muted-foreground)", style: { textAnchor: "middle" } }}
+        />
+        <Tooltip {...TOOLTIP} formatter={(v: number, name: string) => [`${v}%`, name === "thisMonth" ? "This month" : "Last month (same day)"]} labelFormatter={(d) => `Day ${d} of month`} />
+        <Legend formatter={(v) => v === "thisMonth" ? "This month" : "Last month (same days)"} wrapperStyle={{ fontSize: 11 }} />
+        <Area type="monotone" name="lastMonth" dataKey="lastMonth" stroke="oklch(0.55 0.03 258)" strokeWidth={1.5} strokeDasharray="5 3" fill="url(#lastMonthGrad)" dot={false} activeDot={{ r: 4 }} />
+        <Area type="monotone" name="thisMonth" dataKey="thisMonth" stroke="oklch(0.58 0.18 258)" strokeWidth={2.5} fill="url(#thisMonthGrad)" dot={false} activeDot={{ r: 5, strokeWidth: 0 }} />
       </AreaChart>
     </ResponsiveContainer>
   );
@@ -438,18 +445,18 @@ function AgentAvailabilityGrid({ agents }: { agents: AgentComputedStat[] }) {
 /* ─── Agent Live View tab ─────────────────────────────────────────────────── */
 
 function AgentDashboardView({ stat }: { stat: AgentComputedStat }) {
-  const cards = [
-    { label: "Calls Today",   value: stat.callsToday.toString(),        hint: "logged dispositions", icon: Phone },
-    { label: "PTPs Today",    value: stat.ptpCountToday.toString(),     hint: formatINR(stat.ptpAmountToday), icon: HandCoins },
-    { label: "Collected Today", value: formatINR(stat.paidToday),       hint: "paid today",          icon: IndianRupee },
-    { label: "Contact Rate",  value: `${stat.contactRate}%`,            hint: "all-time",            icon: Gauge },
-    { label: "Total Paid",    value: formatINR(stat.totalPaid),         hint: "all-time",            icon: TrendingUp },
-    { label: "Assigned",      value: stat.assignedCount.toString(),     hint: formatINR(stat.assignedPOS) + " POS", icon: Users },
-  ];
   return (
     <div className="space-y-4">
+      {/* Live figures the manager tracks per-agent, above the mirrored dashboard */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {cards.map((c, i) => (
+        {[
+          { label: "Calls Today",     value: stat.callsToday.toString(),    hint: "logged dispositions",               icon: Phone },
+          { label: "PTPs Today",      value: stat.ptpCountToday.toString(), hint: formatINR(stat.ptpAmountToday),      icon: HandCoins },
+          { label: "Collected Today", value: formatINR(stat.paidToday),     hint: "paid today",                        icon: IndianRupee },
+          { label: "Total Paid",      value: formatINR(stat.totalPaid),     hint: "all-time",                          icon: TrendingUp },
+          { label: "Contact Rate",    value: `${stat.contactRate}%`,        hint: "all-time",                          icon: Activity },
+          { label: "Assigned",        value: stat.assignedCount.toString(), hint: formatINR(stat.assignedPOS) + " POS", icon: Users },
+        ].map((c, i) => (
           <Card key={c.label} className="animate-in fade-in duration-300" style={{ animationDelay: `${i * 40}ms` }}>
             <CardContent className="p-3.5">
               <div className="flex items-center justify-between mb-1">
@@ -462,14 +469,19 @@ function AgentDashboardView({ stat }: { stat: AgentComputedStat }) {
           </Card>
         ))}
       </div>
+
       {stat.openEscalations > 0 && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-xs text-destructive">
-          {stat.openEscalations} open escalation{stat.openEscalations > 1 ? "s" : ""} from this agent — see Call Queue → My Queue.
+          {stat.openEscalations} open escalation{stat.openEscalations > 1 ? "s" : ""} from {stat.name} — see Call Queue → My Queue.
         </div>
       )}
-      <p className="text-xs text-muted-foreground">
-        Read-only view of {stat.name}'s live activity. Data updates automatically as they log calls (same-browser tabs only — see project notes on the localStorage architecture).
-      </p>
+
+      <div className="rounded-lg border border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+        Read-only mirror of {stat.name}'s agent dashboard — the same view they see. Quick-links are disabled here.
+      </div>
+
+      {/* Faithful mirror of the agent's own dashboard (interactive={false} = no navigation) */}
+      <AgentDashboardContent interactive={false} />
     </div>
   );
 }
@@ -731,13 +743,12 @@ function ManagerDashboardPage() {
             <Card className="lg:col-span-3">
               <CardHeader className="border-b border-border pb-3">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-primary" />
+                  <TrendingUp className="h-4 w-4 text-primary flex-shrink-0" />
                   Recovery Rate — This Month vs Last Month
-                  <span className="ml-auto flex items-center gap-3 text-[11px] font-normal">
-                    <span className="flex items-center gap-1.5"><span className="h-0.5 w-5 rounded bg-primary inline-block" />This Month</span>
-                    <span className="flex items-center gap-1.5"><span className="h-0.5 w-5 rounded bg-muted-foreground inline-block border-dashed border-t-2 border-muted-foreground" style={{ background: "none" }} />Last Month</span>
-                  </span>
                 </CardTitle>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Daily recovery rate through this month (solid), overlaid on the same days last month (dashed) for a like-for-like comparison.
+                </p>
               </CardHeader>
               <CardContent className="pt-4"><RecoveryTrendChart /></CardContent>
             </Card>

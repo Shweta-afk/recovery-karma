@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Phone, Users, ListChecks, ShieldAlert, Hash, PhoneOff, Loader2,
+  Phone, Users, ListChecks, ShieldAlert, Hash, PhoneOff, Loader2, Zap, Square,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -20,14 +20,14 @@ import { formatINR, bucketOf, BUCKET_META } from "@/lib/mock-debtors";
 import { useManagerTeamAgents, type AgentRef } from "@/lib/team-store";
 import {
   buildAssignedQueue, QUEUE_STATUS_META, OUTCOME_META, EMPTY_DISPOSITION,
-  ActiveCallPanel, ActiveCallModal,
-  type QueueDebtor, type ActiveCall, type DispositionForm,
+  ActiveCallPanel, ActiveCallModal, DialerModeBar, LiveCallsPanel, buildSimulatedLiveCalls,
+  type QueueDebtor, type ActiveCall, type DispositionForm, type LiveCallEntry,
 } from "@/routes/dashboard.call-queue";
 import {
   getOpenEscalations, resolveEscalation, refreshEscalations, type Escalation,
 } from "@/lib/escalation-store";
 import { saveDisposition, type DispositionRecord, type CallOutcome as StoredOutcome } from "@/lib/disposition-store";
-import { createAdHocDebtor } from "@/lib/portfolio-store";
+import { createAdHocDebtor, getPortfolios, DEFAULT_PORTFOLIO_SETTINGS, type CallMode } from "@/lib/portfolio-store";
 import { useStorageSync } from "@/lib/storage-sync";
 import { useAuth } from "@/lib/auth";
 
@@ -48,9 +48,16 @@ function AgentQueueView({ agentId, onCall, disabled }: {
   agentId: string; onCall: (debtor: QueueDebtor) => void; disabled: boolean;
 }) {
   const [queue, setQueue] = useState<QueueDebtor[]>(() => buildAssignedQueue(agentId));
+  // Simulated predictive dialer — mirrors the agent's own call-queue dialer, but here it
+  // reflects the *selected* agent's queue so the manager sees exactly what the agent's screen shows.
+  const [dialerRunning, setDialerRunning] = useState(false);
+  const [liveCalls, setLiveCalls] = useState<LiveCallEntry[]>([]);
   const reload = () => setQueue(buildAssignedQueue(agentId));
   useEffect(() => {
     reload();
+    // Switching to a different agent resets the simulated dialer for the new queue.
+    setDialerRunning(false);
+    setLiveCalls([]);
     window.addEventListener("assignments-updated", reload);
     window.addEventListener("portfolios-updated", reload);
     return () => {
@@ -65,8 +72,48 @@ function AgentQueueView({ agentId, onCall, disabled }: {
     return <p className="py-10 text-center text-sm text-muted-foreground">No accounts assigned to this agent yet.</p>;
   }
 
+  // Portfolio call mode is a property of the agent's primary (first) assigned portfolio,
+  // set by the manager at upload time — same derivation the agent's own queue uses.
+  const primaryPortfolio = queue[0]?.portfolioId
+    ? getPortfolios().find(p => p.id === queue[0].portfolioId)
+    : undefined;
+  const portfolioMode: CallMode = primaryPortfolio?.settings.callMode ?? DEFAULT_PORTFOLIO_SETTINGS.callMode;
+  const portfolioName = primaryPortfolio?.name ?? "No portfolio assigned";
+
+  const toggleDialer = () => {
+    const next = !dialerRunning;
+    setDialerRunning(next);
+    if (next) {
+      toast.success(`Predictive dialing this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}`);
+      setLiveCalls(buildSimulatedLiveCalls(queue));
+      // First ringing line connects a beat later, same cadence as the agent's dialer.
+      setTimeout(() => setLiveCalls(prev => prev.map(c => c.id === "lc-0" ? { ...c, status: "connected", duration: "0:04" } : c)), 3000);
+    } else {
+      setLiveCalls([]);
+    }
+  };
+
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
+    <div className="space-y-3">
+      {/* Mode status bar — identical to the agent's, driven by this agent's portfolio */}
+      <DialerModeBar portfolioMode={portfolioMode} portfolioName={portfolioName} dialerRunning={dialerRunning} />
+
+      {/* Predictive dialer toggle */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <p className="text-xs text-muted-foreground">
+          {dialerRunning
+            ? "Simulated dialer running — live lines mirror the agent's screen."
+            : "Start the predictive dialer to preview the agent's live call activity (simulated)."}
+        </p>
+        <Button size="sm" onClick={toggleDialer}
+          className={cn("gap-1.5 text-sm", dialerRunning
+            ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            : "bg-success text-success-foreground hover:bg-success/90")}>
+          {dialerRunning ? <><Square className="h-3.5 w-3.5" />Stop Dialer</> : <><Zap className="h-3.5 w-3.5" />Predictive Dial</>}
+        </Button>
+      </div>
+
+      <div className="rounded-lg border border-border overflow-hidden">
       <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
         <Table>
           <TableHeader className="sticky top-0 bg-card z-10">
@@ -112,6 +159,24 @@ function AgentQueueView({ agentId, onCall, disabled }: {
           </TableBody>
         </Table>
       </div>
+      </div>
+
+      {/* Floating live-calls panel — same component the agent sees during predictive dialing */}
+      {dialerRunning && liveCalls.length > 0 && (
+        <LiveCallsPanel
+          liveCalls={liveCalls}
+          onDismiss={() => { setDialerRunning(false); setLiveCalls([]); }}
+          onTake={(lc) => {
+            const d = queue.find(x => x.id === lc.loanId);
+            if (d && !disabled) onCall(d);
+            setLiveCalls(p => p.filter(c => c.id !== lc.id));
+          }}
+          onTransfer={(lc) => {
+            toast.success(`${lc.debtor} redirected to next available agent`);
+            setLiveCalls(p => p.filter(c => c.id !== lc.id));
+          }}
+        />
+      )}
     </div>
   );
 }

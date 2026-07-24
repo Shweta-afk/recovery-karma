@@ -301,10 +301,26 @@ export const QUEUE_STATUS_META: Record<QueueDebtor["queueStatus"], { label: stri
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 // Live calls floating panel mock data
-interface LiveCallEntry {
+export interface LiveCallEntry {
   id: string; agent: string; debtor: string; loanId: string;
   status: "ringing" | "connected" | "on_hold" | "no_answer" | "done"; duration: string; type: "agent" | "ai";
   incoming?: boolean; // true = another agent/AI is transferring this call to me
+}
+
+// Build the simulated set of concurrent calls shown when the predictive dialer starts.
+// Shared so the agent's queue and the manager's read-only mirror produce an identical spread.
+export function buildSimulatedLiveCalls(target: { name: string; id: string }[]): LiveCallEntry[] {
+  const agents = ["You", "AI Bot", "Ravi M.", "AI Bot", "Pooja S.", "AI Bot", "Arjun T.", "AI Bot", "Neha K.", "Ravi M."];
+  const types: LiveCallEntry["type"][] = ["agent", "ai", "agent", "ai", "agent", "ai", "agent", "ai", "agent", "agent"];
+  return target.slice(0, 10).map((d, i) => ({
+    id: `lc-${i}`,
+    agent: agents[i % agents.length],
+    debtor: d.name,
+    loanId: d.id,
+    status: (i < 3 ? "ringing" : i < 6 ? "connected" : i < 8 ? "on_hold" : "done") as LiveCallEntry["status"],
+    duration: i < 3 ? `0:0${i + 2}` : i < 6 ? `${i - 1}:${String(i * 13).padStart(2, "0")}` : "—",
+    type: types[i % types.length],
+  }));
 }
 
 // Agent availability — lives on the call queue since this is where the agent takes calls
@@ -706,55 +722,7 @@ function CallQueuePage() {
         </div>
 
         {/* ── Mode status bar ── */}
-        <div className="flex items-center gap-3 flex-wrap rounded-xl border border-border bg-card px-4 py-2.5">
-          {/* Portfolio mode — read-only, set by manager */}
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Portfolio Mode</span>
-            <div className={cn("flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold",
-              portfolioMode === "hybrid"     ? "border-violet-400/20 bg-violet-500/8 text-violet-500" :
-              portfolioMode === "ai_only"    ? "border-blue-400/20 bg-blue-500/8 text-blue-500" :
-              portfolioMode === "ivr_agent"  ? "border-amber-400/20 bg-amber-500/8 text-amber-600" :
-                                               "border-primary/20 bg-primary/8 text-primary")}>
-              {portfolioMode === "hybrid"    ? <><BotMessageSquare className="h-3 w-3" />Hybrid (AI + Agent)</> :
-               portfolioMode === "ai_only"   ? <><BotMessageSquare className="h-3 w-3" />AI Only</> :
-               portfolioMode === "ivr_agent" ? <><PhoneCall className="h-3 w-3" />IVR + Agent</> :
-                                                <><Phone className="h-3 w-3" />Agent Only</>}
-            </div>
-            <span className="text-[10px] text-muted-foreground">· {portfolioName}</span>
-            <span className="text-[10px] text-muted-foreground/50 italic">set by manager</span>
-          </div>
-
-          <div className="h-4 w-px bg-border" />
-
-          {/* Dialer status */}
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-            <span className={cn("h-2 w-2 rounded-full", dialerRunning ? "bg-success animate-pulse" : "bg-muted-foreground")} />
-            <span className={dialerRunning ? "text-success" : "text-muted-foreground"}>Predictive Dialer {dialerRunning ? "RUNNING" : "OFF"}</span>
-          </span>
-
-          {(portfolioMode === "hybrid" || portfolioMode === "ivr_agent") && dialerRunning && (
-            <>
-              <div className="h-4 w-px bg-border" />
-              {portfolioMode === "hybrid" && (
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full bg-violet-500 animate-pulse" />AI active
-                </span>
-              )}
-              {portfolioMode === "ivr_agent" && (
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />IVR active
-                </span>
-              )}
-              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />Agents active
-              </span>
-            </>
-          )}
-
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-[11px] text-muted-foreground">Today · 30 Jun 2026</span>
-          </div>
-        </div>
+        <DialerModeBar portfolioMode={portfolioMode} portfolioName={portfolioName} dialerRunning={dialerRunning} />
       </div>
 
       {/* ── Predictive notification banner ── */}
@@ -913,18 +881,7 @@ function CallQueuePage() {
                   const target = filteredQueue.length ? filteredQueue : allQueue;
                   const activeFilter = FILTERS.find(f => f.key === queueFilter);
                   toast.success(`Predictive dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}`);
-                  const agents = ["You", "AI Bot", "Ravi M.", "AI Bot", "Pooja S.", "AI Bot", "Arjun T.", "AI Bot", "Neha K.", "Ravi M."];
-                  const types: LiveCallEntry["type"][] = ["agent","ai","agent","ai","agent","ai","agent","ai","agent","agent"];
-                  const initial = target.slice(0, 10).map((d, i) => ({
-                    id: `lc-${i}`,
-                    agent: agents[i % agents.length],
-                    debtor: d.name,
-                    loanId: d.id,
-                    status: (i < 3 ? "ringing" : i < 6 ? "connected" : i < 8 ? "on_hold" : "done") as LiveCallEntry["status"],
-                    duration: i < 3 ? `0:0${i+2}` : i < 6 ? `${i-1}:${String(i*13).padStart(2,"0")}` : "—",
-                    type: types[i % types.length],
-                  }));
-                  setLiveCalls(initial);
+                  setLiveCalls(buildSimulatedLiveCalls(target));
                   setTimeout(() => setLiveCalls(prev => prev.map(c => c.id === "lc-0" ? { ...c, status: "connected", duration: "0:04" } : c)), 3000);
                   // AI reaches a live debtor and hands over: auto-connect if the agent is free,
                   // otherwise raise a Take / Forward notification.
@@ -3311,9 +3268,68 @@ function IncomingTransferNotification({
   );
 }
 
+// ─── Dialer mode status bar ─────────────────────────────────────────────────
+// Shared by the agent's own call queue and the manager's read-only Agent Live View
+// so both surfaces show an identical portfolio-mode + dialer-status strip.
+export function DialerModeBar({ portfolioMode, portfolioName, dialerRunning }: {
+  portfolioMode: CallMode; portfolioName: string; dialerRunning: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3 flex-wrap rounded-xl border border-border bg-card px-4 py-2.5">
+      {/* Portfolio mode — read-only, set by manager */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Portfolio Mode</span>
+        <div className={cn("flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold",
+          portfolioMode === "hybrid"     ? "border-violet-400/20 bg-violet-500/8 text-violet-500" :
+          portfolioMode === "ai_only"    ? "border-blue-400/20 bg-blue-500/8 text-blue-500" :
+          portfolioMode === "ivr_agent"  ? "border-amber-400/20 bg-amber-500/8 text-amber-600" :
+                                           "border-primary/20 bg-primary/8 text-primary")}>
+          {portfolioMode === "hybrid"    ? <><BotMessageSquare className="h-3 w-3" />Hybrid (AI + Agent)</> :
+           portfolioMode === "ai_only"   ? <><BotMessageSquare className="h-3 w-3" />AI Only</> :
+           portfolioMode === "ivr_agent" ? <><PhoneCall className="h-3 w-3" />IVR + Agent</> :
+                                            <><Phone className="h-3 w-3" />Agent Only</>}
+        </div>
+        <span className="text-[10px] text-muted-foreground">· {portfolioName}</span>
+        <span className="text-[10px] text-muted-foreground/50 italic">set by manager</span>
+      </div>
+
+      <div className="h-4 w-px bg-border" />
+
+      {/* Dialer status */}
+      <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+        <span className={cn("h-2 w-2 rounded-full", dialerRunning ? "bg-success animate-pulse" : "bg-muted-foreground")} />
+        <span className={dialerRunning ? "text-success" : "text-muted-foreground"}>Predictive Dialer {dialerRunning ? "RUNNING" : "OFF"}</span>
+      </span>
+
+      {(portfolioMode === "hybrid" || portfolioMode === "ivr_agent") && dialerRunning && (
+        <>
+          <div className="h-4 w-px bg-border" />
+          {portfolioMode === "hybrid" && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-violet-500 animate-pulse" />AI active
+            </span>
+          )}
+          {portfolioMode === "ivr_agent" && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />IVR active
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />Agents active
+          </span>
+        </>
+      )}
+
+      <div className="ml-auto flex items-center gap-2">
+        <span className="text-[11px] text-muted-foreground">Today · 30 Jun 2026</span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Live Calls Panel ─────────────────────────────────────────────────────────
 
-function LiveCallsPanel({
+export function LiveCallsPanel({
   liveCalls,
   onDismiss,
   onTake,

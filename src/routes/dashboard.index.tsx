@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import {
   PhoneCall,
   PhoneIncoming,
@@ -139,15 +139,37 @@ function fmtMins(mins: number) {
   return h === 0 ? `${m}m` : `${h}h ${m}m`;
 }
 
+// When false (e.g. the manager's read-only mirror of an agent's dashboard), the quick-link
+// cards render as plain divs so a click doesn't navigate the manager into the agent route tree.
+const InteractiveContext = createContext(true);
+
+function Nav({ to, search, className, style, children }: {
+  to: string; search?: Record<string, unknown>; className?: string;
+  style?: React.CSSProperties; children: React.ReactNode;
+}) {
+  const interactive = useContext(InteractiveContext);
+  if (interactive) return <Link to={to} search={search} className={className} style={style}>{children}</Link>;
+  return <div className={className} style={style}>{children}</div>;
+}
+
 // ─── Main component ────────────────────────────────────────────────────────────
 
+/** Route wrapper — the agent's own interactive dashboard. */
 function AgentDashboard() {
+  return <AgentDashboardContent />;
+}
+
+/** The dashboard body, reused read-only by the manager's Agent Live View.
+ * `interactive={false}` disables the quick-link navigation for the mirrored view. */
+export function AgentDashboardContent({ interactive = true }: { interactive?: boolean }) {
   const [period, setPeriod] = useState<Period>("today");
   const [customDate, setCustomDate] = useState("");
   const [intensitySlide, setIntensitySlide] = useState(0);
   const [retainedOpen, setRetainedOpen] = useState(false);
   const navigate = useNavigate();
-  const goToQueue = (filter: QueueFilter) => navigate({ to: "/dashboard/call-queue", search: { filter } });
+  const goToQueue = (filter: QueueFilter) => {
+    if (interactive) navigate({ to: "/dashboard/call-queue", search: { filter } });
+  };
 
   const kpi = period === "custom"
     ? KPI_BY_PERIOD.today  // use today's data as placeholder for custom date
@@ -158,6 +180,7 @@ function AgentDashboard() {
   const projectedRecovery = kpi.totalPTPAmount + kpi.todayPaidAmount;
 
   return (
+    <InteractiveContext.Provider value={interactive}>
     <div className="space-y-5">
 
       {/* ── Compact header row ── */}
@@ -210,7 +233,7 @@ function AgentDashboard() {
                 { label: "Run Rate",       value: formatINR(dailyRunRate),  sub: "pace × shift",  cls: "text-amber-500",   bar: null,               filter: "all" as const },
                 { label: "EOD Projection", value: formatINR(projection),    sub: "est. end of day", cls: projection >= target ? "text-success" : "text-destructive", bar: projection / target, filter: "ptp" as const },
               ].map(s => (
-                <Link key={s.label} to="/dashboard/call-queue" search={{ filter: s.filter }}
+                <Nav key={s.label} to="/dashboard/call-queue" search={{ filter: s.filter }}
                   className="rounded-lg border border-border bg-card px-3 py-2.5 transition-all hover:border-foreground/30 hover:shadow-sm focus:outline-none focus:ring-1 focus:ring-primary">
                   <div className={cn("text-base font-bold tabular-nums leading-tight", s.cls)}>{s.value}</div>
                   <div className="text-[11px] font-medium text-foreground mt-0.5">{s.label}</div>
@@ -220,7 +243,7 @@ function AgentDashboard() {
                       <div className={cn("h-full rounded-full", s.bar >= 1 ? "bg-success" : "bg-primary")} style={{ width: `${Math.min(s.bar * 100, 100)}%` }} />
                     </div>
                   )}
-                </Link>
+                </Nav>
               ))}
             </div>
           </div>
@@ -245,7 +268,7 @@ function AgentDashboard() {
               { label: "PTP Amount",   value: formatINR(kpi.totalPTPAmount), hint: "committed",   icon: IndianRupee,   highlight: false, filter: "ptp" as const },
               { label: "Collected",    value: formatINR(kpi.todayPaidAmount),hint: `${kpi.todayPaid} calls`, icon: CheckCircle2, highlight: true, filter: "paid" as const },
             ].map((c, i) => (
-              <Link key={c.label} to="/dashboard/call-queue" search={{ filter: c.filter }}
+              <Nav key={c.label} to="/dashboard/call-queue" search={{ filter: c.filter }}
                 className={cn("rounded-lg border p-2.5 animate-in fade-in duration-300 transition-all hover:shadow-sm focus:outline-none focus:ring-1 focus:ring-primary", c.highlight ? "border-success/30 bg-success/5 hover:border-success/50" : "border-border bg-muted/20 hover:border-foreground/30")}
                 style={{ animationDelay: `${i * 40}ms` }}>
                 <div className="flex items-center justify-between mb-1">
@@ -254,7 +277,7 @@ function AgentDashboard() {
                 </div>
                 <div className={cn("text-base font-bold tabular-nums", c.highlight ? "text-success" : "text-foreground")}>{c.value}</div>
                 <div className="text-[10px] text-muted-foreground">{c.hint}</div>
-              </Link>
+              </Nav>
             ))}
           </div>
 
@@ -272,9 +295,9 @@ function AgentDashboard() {
                 <span className="text-[10px] text-muted-foreground">{s.label}</span>
               </div>
             ))}
-            <Link to="/dashboard/call-queue" className="ml-auto text-[10px] text-primary hover:underline flex items-center gap-1">
+            <Nav to="/dashboard/call-queue" className="ml-auto text-[10px] text-primary hover:underline flex items-center gap-1">
               AI queue <ExternalLink className="h-3 w-3" />
-            </Link>
+            </Nav>
           </div>
         </div>
 
@@ -282,29 +305,29 @@ function AgentDashboard() {
         <div className="rounded-xl border border-border bg-card p-3 flex flex-col">
           <div className="flex items-center justify-between mb-2.5">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Queue</span>
-            <Link to="/dashboard/call-queue" className="text-[10px] text-primary hover:underline flex items-center gap-0.5">
+            <Nav to="/dashboard/call-queue" className="text-[10px] text-primary hover:underline flex items-center gap-0.5">
               Open <ExternalLink className="h-2.5 w-2.5" />
-            </Link>
+            </Nav>
           </div>
           <div className="flex-1 grid grid-cols-3 gap-2">
-            <Link to="/dashboard/call-queue" search={{ filter: "all" }}
+            <Nav to="/dashboard/call-queue" search={{ filter: "all" }}
               className="rounded-lg border border-border bg-muted/20 p-2.5 text-center flex flex-col justify-center transition-all hover:border-foreground/30 hover:shadow-sm focus:outline-none focus:ring-1 focus:ring-primary">
               <div className="text-base font-bold text-foreground tabular-nums leading-tight">{formatINR(PORTFOLIO_TOTAL_PRINCIPAL)}</div>
               <div className="text-[10px] font-medium text-foreground leading-tight mt-1">Total Principal</div>
               <div className="text-[9px] text-muted-foreground leading-tight">portfolio</div>
-            </Link>
-            <Link to="/dashboard/call-queue" search={{ filter: "ptp" }}
+            </Nav>
+            <Nav to="/dashboard/call-queue" search={{ filter: "ptp" }}
               className="rounded-lg border border-success/30 bg-success/5 p-2.5 text-center flex flex-col justify-center transition-all hover:border-success/50 hover:shadow-sm focus:outline-none focus:ring-1 focus:ring-primary">
               <div className="text-base font-bold text-success tabular-nums leading-tight">{formatINR(projectedRecovery)}</div>
               <div className="text-[10px] font-medium text-foreground leading-tight mt-1">Projected Recovery</div>
               <div className="text-[9px] text-muted-foreground leading-tight">PTP + collected</div>
-            </Link>
-            <Link to="/dashboard/call-queue" search={{ filter: "ptp" }}
+            </Nav>
+            <Nav to="/dashboard/call-queue" search={{ filter: "ptp" }}
               className="rounded-lg border border-blue-400/30 bg-blue-500/5 p-2.5 text-center flex flex-col justify-center transition-all hover:border-blue-400/50 hover:shadow-sm focus:outline-none focus:ring-1 focus:ring-primary">
               <div className="text-base font-bold text-blue-500 tabular-nums leading-tight">{formatINR(todayGeneration.ptpAmount ?? 0)}</div>
               <div className="text-[10px] font-medium text-foreground leading-tight mt-1">Today's Generation</div>
               <div className="text-[9px] text-muted-foreground leading-tight">{todayGeneration.count} PTPs today</div>
-            </Link>
+            </Nav>
           </div>
         </div>
       </div>
@@ -478,9 +501,9 @@ function AgentDashboard() {
                 className="inline-flex items-center gap-1 h-7 rounded-md border border-violet-400/30 bg-card px-2 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all">
                 <FileDown className="h-3.5 w-3.5" />Export
               </button>
-              <Link to="/dashboard/call-queue" className="inline-flex items-center gap-1 h-7 rounded-md border border-violet-400/30 bg-card px-2 text-xs text-violet-600 hover:text-violet-700 transition-all">
+              <Nav to="/dashboard/call-queue" className="inline-flex items-center gap-1 h-7 rounded-md border border-violet-400/30 bg-card px-2 text-xs text-violet-600 hover:text-violet-700 transition-all">
                 Queue <ExternalLink className="h-3 w-3" />
-              </Link>
+              </Nav>
             </div>
           </div>
 
@@ -570,7 +593,7 @@ function AgentDashboard() {
             const pct = Math.min(Math.round((item.actual / item.target) * 100), 100);
             const done = pct >= 100;
             return (
-              <Link key={item.key} to="/dashboard/call-queue" search={{ filter: item.filter }}
+              <Nav key={item.key} to="/dashboard/call-queue" search={{ filter: item.filter }}
                 className="animate-in fade-in duration-400 rounded-xl border border-border bg-card p-3 transition-all hover:border-foreground/30 hover:shadow-sm focus:outline-none focus:ring-1 focus:ring-primary"
                 style={{ animationDelay: `${i * 50}ms` }}>
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{item.label}</div>
@@ -582,13 +605,14 @@ function AgentDashboard() {
                 <div className={cn("text-[10px] mt-0.5", done ? "text-foreground font-medium" : "text-muted-foreground")}>
                   {done ? "✓ Done" : `${pct}%`}
                 </div>
-              </Link>
+              </Nav>
             );
           })}
         </div>
       </section>
 
     </div>
+    </InteractiveContext.Provider>
   );
 }
 
