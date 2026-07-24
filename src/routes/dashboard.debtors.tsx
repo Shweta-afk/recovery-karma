@@ -319,7 +319,7 @@ function DebtorsPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let list = allDebtors.filter((d) => {
+    const list = allDebtors.filter((d) => {
       if (bucket !== "all" && bucketOf(d.dpd) !== bucket) return false;
       if (portfolio !== "all" && d.portfolio !== portfolio) return false;
       if (q && !d.name.toLowerCase().includes(q) && !displayId(d).toLowerCase().includes(q))
