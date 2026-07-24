@@ -23,6 +23,9 @@ export interface StartCallRequest {
     bestContactTime?: "morning" | "afternoon" | "evening" | "any";
     /** True when the portfolio plays an IVR menu (ivr_agent / hybrid) — sim emits a keypress */
     ivr?: boolean;
+    /** Agent-initiated single dial: the sim always answers and never auto-hangs-up, so the
+     * agent controls when the call ends (via hangup). Real providers ignore this. */
+    manual?: boolean;
   };
 }
 

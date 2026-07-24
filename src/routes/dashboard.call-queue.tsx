@@ -86,6 +86,7 @@ import {
   type CallMode,
 } from "@/lib/portfolio-store";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
+import { useSingleCall } from "@/lib/dialer/use-single-call";
 import {
   saveDisposition,
   getAgentDispositions,
@@ -902,6 +903,9 @@ function CallQueuePage() {
   // Active call state — lives in CallSessionProvider (mounted above the dashboard's <Outlet/>)
   // so it survives navigating away from this page, letting the minimized call bar keep showing.
   const { activeCall, setActiveCall, disposition, setDisposition } = useCallSession();
+  // Single manual call driven by the sim provider + call-machine (ringing → connected via
+  // real events, no auto-hangup). Replaces the old blind setTimeout-to-connected.
+  const singleCall = useSingleCall(setActiveCall);
 
   // Keep a ref to the live active call so async dialer callbacks can read the latest value
   const activeCallRef = useRef<ActiveCall | null>(null);
@@ -910,6 +914,7 @@ function CallQueuePage() {
   }, [activeCall]);
 
   const startCall = (debtor: QueueDebtor, opts?: { instant?: boolean }) => {
+    singleCall.reset(); // clear any prior in-flight sim/timer
     setActiveCall({
       debtor,
       phase: opts?.instant ? "connected" : "ringing",
@@ -934,12 +939,12 @@ function CallQueuePage() {
       notes: "",
       followUpDate: "",
     });
-    // A transferred call is already live on the AI side — connect instantly; a fresh dial rings first
-    if (!opts?.instant)
-      setTimeout(() => setActiveCall((c) => (c ? { ...c, phase: "connected" } : null)), 3000);
+    // A transferred call is already live on the AI side — connect instantly; a fresh dial rings
+    // first, then connects when the (simulated) provider reports the debtor answered.
+    if (!opts?.instant) singleCall.dial(debtor);
   };
 
-  const endCall = () => setActiveCall((c) => (c ? { ...c, phase: "ended" } : null));
+  const endCall = () => singleCall.hangup();
 
   // AI has a live debtor to hand over. If the agent is free, connect them straight away.
   // If they're already on a connected call, surface a Take / Forward notification instead.
@@ -1073,6 +1078,7 @@ function CallQueuePage() {
         [debtor.id]: { outcome: disposition.outcome as CallOutcome, time: timeStr },
       }));
     }
+    singleCall.reset();
     setActiveCall(null);
   };
 

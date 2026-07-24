@@ -87,7 +87,8 @@ export function createSimProvider(opts?: { seed?: number }): SimProvider {
       const ringAt = now + RING_DELAY;
       schedule(ringAt, providerCallId, { type: "ring", providerCallId, at: ringAt });
 
-      const answered = rng() < answerProbability(req.hints);
+      // Agent-initiated manual dials always connect; predictive dials roll the dice.
+      const answered = req.hints?.manual ? true : rng() < answerProbability(req.hints);
       if (!answered) {
         const result: TerminalCallState = rng() < 0.25 ? "busy" : "no_answer";
         const endAt = ringAt + RING_TIMEOUT;
@@ -110,6 +111,9 @@ export function createSimProvider(opts?: { seed?: number }): SimProvider {
         const digit = rng() < 0.7 ? "1" : "9";
         schedule(dtmfAt, providerCallId, { type: "dtmf", providerCallId, at: dtmfAt, digit });
       }
+
+      // Manual dials stay connected until the agent hangs up — no auto-hangup/recording.
+      if (req.hints?.manual) return { providerCallId };
 
       const talkMs = MIN_TALK + Math.floor(rng() * (MAX_TALK - MIN_TALK));
       const endAt = answerAt + talkMs;

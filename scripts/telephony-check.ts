@@ -240,7 +240,27 @@ async function simE2E() {
   ok("stopped run not running", stopped.running === false);
 }
 
+// ── sim: manual single dial ────────────────────────────────────────────────────
+async function simManualCall() {
+  console.log("sim: manual single dial");
+  const sim = createSimProvider({ seed: 3 });
+  const types: TelephonyEvent["type"][] = [];
+  sim.subscribe?.((e: TelephonyEvent) => types.push(e.type));
+  // Low aiScore would usually mean no-answer, but manual must always connect.
+  await sim.startCall({
+    agentNumber: "agent-self",
+    debtorNumber: "+910000000000",
+    callLogId: "d0",
+    hints: { manual: true, aiScore: 1 },
+  });
+  sim.flushDue(Date.now() + 10_000_000);
+  ok("manual call rings", types.includes("ring"));
+  ok("manual call always answers", types.includes("answer"));
+  ok("manual call does not auto-hangup", !types.includes("hangup"));
+}
+
 await simE2E();
+await simManualCall();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
