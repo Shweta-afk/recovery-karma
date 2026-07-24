@@ -13,8 +13,20 @@ import type { ActiveCall, DispositionForm } from "@/routes/dashboard.call-queue"
 // Mirrors EMPTY_DISPOSITION in dashboard.call-queue.tsx — kept as a local literal (rather than
 // a value import from the route file) to avoid a runtime circular import.
 const EMPTY_DISPOSITION: DispositionForm = {
-  outcome: "", ptpAmount: "", ptpDate: "", callbackDate: "", callbackTime: "",
-  paidAmount: "", paidRef: "", disputeReason: "", settlementAmount: "", settlementDate: "", settlementWaiver: "", escalate: false, notes: "", followUpDate: "",
+  outcome: "",
+  ptpAmount: "",
+  ptpDate: "",
+  callbackDate: "",
+  callbackTime: "",
+  paidAmount: "",
+  paidRef: "",
+  disputeReason: "",
+  settlementAmount: "",
+  settlementDate: "",
+  settlementWaiver: "",
+  escalate: false,
+  notes: "",
+  followUpDate: "",
 };
 
 interface CallSessionCtx {
@@ -35,7 +47,7 @@ export function CallSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!activeCall || activeCall.phase !== "connected") return;
     const id = setInterval(() => {
-      setActiveCall(c => (c && c.phase === "connected" ? { ...c, elapsed: c.elapsed + 1 } : c));
+      setActiveCall((c) => (c && c.phase === "connected" ? { ...c, elapsed: c.elapsed + 1 } : c));
     }, 1000);
     return () => clearInterval(id);
   }, [activeCall?.phase]);

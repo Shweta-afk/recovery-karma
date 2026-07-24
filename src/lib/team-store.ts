@@ -8,7 +8,7 @@ import { useStorageSync } from "./storage-sync";
 // through every consumer. Refreshed on mount by useRoster()/useManagerTeamAgents(), and
 // after any agents-table mutation (invite/edit/delete — see admin.users.tsx).
 export interface AgentRef {
-  id: string;    // account email — matches the operational identity used everywhere else
+  id: string; // account email — matches the operational identity used everywhere else
   name: string;
   email: string;
   role: "agent" | "manager";
@@ -26,7 +26,7 @@ export function getRoster(): AgentRef[] {
 }
 
 export function getAgentById(id: string): AgentRef | undefined {
-  return getRoster().find(a => a.id === id);
+  return getRoster().find((a) => a.id === id);
 }
 
 export async function refreshRoster(): Promise<void> {
@@ -35,8 +35,11 @@ export async function refreshRoster(): Promise<void> {
     .select("email, name, role")
     .in("role", ["agent", "manager"]);
   if (error || !data) return;
-  const roster: AgentRef[] = data.map(a => ({
-    id: a.email, name: a.name, email: a.email, role: a.role as "agent" | "manager",
+  const roster: AgentRef[] = data.map((a) => ({
+    id: a.email,
+    name: a.name,
+    email: a.email,
+    role: a.role as "agent" | "manager",
   }));
   localStorage.setItem(ROSTER_KEY, JSON.stringify(roster));
   window.dispatchEvent(new CustomEvent("roster-updated"));
@@ -59,9 +62,9 @@ export function useRoster(): AgentRef[] {
 export interface Team {
   id: string;
   name: string;
-  managerId: string;   // manager's email — matches AgentRef.id
+  managerId: string; // manager's email — matches AgentRef.id
   managerName: string;
-  agentIds: string[];  // agent emails
+  agentIds: string[]; // agent emails
   createdAt: string;
 }
 
@@ -86,12 +89,12 @@ export async function refreshTeams(): Promise<void> {
   ]);
   if (!teamRows || !memberRows || !agentRows) return;
 
-  const byId = new Map(agentRows.map(a => [a.id, a]));
-  const teams: Team[] = teamRows.map(t => {
+  const byId = new Map(agentRows.map((a) => [a.id, a]));
+  const teams: Team[] = teamRows.map((t) => {
     const manager = byId.get(t.manager_id);
     const agentIds = memberRows
-      .filter(m => m.team_id === t.id)
-      .map(m => byId.get(m.agent_id)?.email)
+      .filter((m) => m.team_id === t.id)
+      .map((m) => byId.get(m.agent_id)?.email)
       .filter((e): e is string => !!e);
     return {
       id: t.id,
@@ -122,7 +125,7 @@ export function useTeams(): Team[] {
 
 export async function saveTeam(t: Team): Promise<void> {
   const { data: agentRows } = await supabase.from("agents").select("id, email");
-  const emailToId = new Map((agentRows ?? []).map(a => [a.email, a.id]));
+  const emailToId = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
   const managerAgentId = emailToId.get(t.managerId);
   if (!managerAgentId) throw new Error(`No agent account found for manager email ${t.managerId}`);
 
@@ -140,11 +143,11 @@ export async function saveTeam(t: Team): Promise<void> {
   const { error: clearErr } = await supabase.from("team_agents").delete().eq("team_id", t.id);
   if (clearErr) throw clearErr;
 
-  const memberIds = t.agentIds.map(email => emailToId.get(email)).filter((x): x is string => !!x);
+  const memberIds = t.agentIds.map((email) => emailToId.get(email)).filter((x): x is string => !!x);
   if (memberIds.length) {
     const { error: membersErr } = await supabase
       .from("team_agents")
-      .insert(memberIds.map(agentId => ({ team_id: t.id, agent_id: agentId })));
+      .insert(memberIds.map((agentId) => ({ team_id: t.id, agent_id: agentId })));
     if (membersErr) throw membersErr;
   }
 
@@ -158,11 +161,11 @@ export async function deleteTeam(id: string): Promise<void> {
 }
 
 export function getTeamByManager(managerId: string): Team | undefined {
-  return getTeams().find(t => t.managerId === managerId);
+  return getTeams().find((t) => t.managerId === managerId);
 }
 
 export function getTeamByAgent(agentId: string): Team | undefined {
-  return getTeams().find(t => t.agentIds.includes(agentId));
+  return getTeams().find((t) => t.agentIds.includes(agentId));
 }
 
 /** Agents belonging to this manager's own team — [] if they have no team yet, never "everyone". */

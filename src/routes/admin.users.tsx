@@ -1,9 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import {
-  UserPlus, Search, MoreHorizontal, ShieldCheck, Crown,
-  User, Loader2, AlertCircle, RefreshCw, Mail, Trash2,
-  ChevronDown, Check, X,
+  UserPlus,
+  Search,
+  MoreHorizontal,
+  ShieldCheck,
+  Crown,
+  User,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  Mail,
+  Trash2,
+  ChevronDown,
+  Check,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -12,10 +23,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
@@ -30,8 +49,8 @@ export const Route = createFileRoute("/admin/users")({
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface AgentRow {
-  id: string;                    // agents.id (PK)
-  auth_user_id: string | null;   // links to auth.users — null until an admin links a real login
+  id: string; // agents.id (PK)
+  auth_user_id: string | null; // links to auth.users — null until an admin links a real login
   name: string;
   email: string;
   role: Role;
@@ -39,18 +58,22 @@ interface AgentRow {
 }
 
 const ROLE_META: Record<Role, { label: string; icon: typeof User; cls: string }> = {
-  agent:   { label: "Agent",   icon: User,        cls: "bg-muted text-muted-foreground border-border" },
-  manager: { label: "Manager", icon: Crown,        cls: "bg-amber-500/10 text-amber-600 border-amber-400/20" },
-  admin:   { label: "Admin",   icon: ShieldCheck,  cls: "bg-primary/10 text-primary border-primary/20" },
+  agent: { label: "Agent", icon: User, cls: "bg-muted text-muted-foreground border-border" },
+  manager: {
+    label: "Manager",
+    icon: Crown,
+    cls: "bg-amber-500/10 text-amber-600 border-amber-400/20",
+  },
+  admin: { label: "Admin", icon: ShieldCheck, cls: "bg-primary/10 text-primary border-primary/20" },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 function AdminUsersPage() {
-  const [agents, setAgents]       = useState<AgentRow[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState<string | null>(null);
-  const [search, setSearch]       = useState("");
+  const [agents, setAgents] = useState<AgentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
   const [showInvite, setShowInvite] = useState(false);
   const [editAgent, setEditAgent] = useState<AgentRow | null>(null);
@@ -63,14 +86,20 @@ function AdminUsersPage() {
       .select("id, auth_user_id, name, email, role, created_at")
       .order("created_at", { ascending: false });
 
-    if (err) { setError(err.message); setLoading(false); return; }
+    if (err) {
+      setError(err.message);
+      setLoading(false);
+      return;
+    }
     setAgents((data as AgentRow[]) ?? []);
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
-  const filtered = agents.filter(a => {
+  const filtered = agents.filter((a) => {
     if (roleFilter !== "all" && a.role !== roleFilter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -79,7 +108,7 @@ function AdminUsersPage() {
     return true;
   });
 
-  const roleCount = (r: Role) => agents.filter(a => a.role === r).length;
+  const roleCount = (r: Role) => agents.filter((a) => a.role === r).length;
 
   const handleRoleChange = async (agent: AgentRow, newRole: Role) => {
     const { error: err } = await supabase
@@ -87,21 +116,24 @@ function AdminUsersPage() {
       .update({ role: newRole })
       .eq("id", agent.id);
 
-    if (err) { toast.error("Failed to update role: " + err.message); return; }
-    setAgents(prev => prev.map(a => a.id === agent.id ? { ...a, role: newRole } : a));
+    if (err) {
+      toast.error("Failed to update role: " + err.message);
+      return;
+    }
+    setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, role: newRole } : a)));
     toast.success(`${agent.name} is now ${newRole}`);
     refreshRoster();
   };
 
   const handleDelete = async (agent: AgentRow) => {
     if (!confirm(`Remove ${agent.name} from the system?`)) return;
-    const { error: err } = await supabase
-      .from("agents")
-      .delete()
-      .eq("id", agent.id);
+    const { error: err } = await supabase.from("agents").delete().eq("id", agent.id);
 
-    if (err) { toast.error("Failed to remove: " + err.message); return; }
-    setAgents(prev => prev.filter(a => a.id !== agent.id));
+    if (err) {
+      toast.error("Failed to remove: " + err.message);
+      return;
+    }
+    setAgents((prev) => prev.filter((a) => a.id !== agent.id));
     toast.success(`${agent.name} removed`);
     refreshRoster();
   };
@@ -117,24 +149,36 @@ function AdminUsersPage() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-1.5">
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />Refresh
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            Refresh
           </Button>
           <Button className="gap-1.5" onClick={() => setShowInvite(true)}>
-            <UserPlus className="h-4 w-4" />Invite User
+            <UserPlus className="h-4 w-4" />
+            Invite User
           </Button>
         </div>
       </div>
 
       {/* Role summary */}
       <div className="grid grid-cols-3 gap-4">
-        {(["agent", "manager", "admin"] as Role[]).map(r => {
+        {(["agent", "manager", "admin"] as Role[]).map((r) => {
           const meta = ROLE_META[r];
           return (
-            <Card key={r}
-              className={cn("cursor-pointer transition-all border-2", roleFilter === r ? "border-primary" : "border-transparent hover:border-border")}
-              onClick={() => setRoleFilter(prev => prev === r ? "all" : r)}>
+            <Card
+              key={r}
+              className={cn(
+                "cursor-pointer transition-all border-2",
+                roleFilter === r ? "border-primary" : "border-transparent hover:border-border",
+              )}
+              onClick={() => setRoleFilter((prev) => (prev === r ? "all" : r))}
+            >
               <CardContent className="flex items-center gap-3 pt-4 pb-4">
-                <div className={cn("flex h-8 w-8 items-center justify-center rounded-lg border", meta.cls)}>
+                <div
+                  className={cn(
+                    "flex h-8 w-8 items-center justify-center rounded-lg border",
+                    meta.cls,
+                  )}
+                >
                   <meta.icon className="h-4 w-4" />
                 </div>
                 <div>
@@ -151,14 +195,25 @@ function AdminUsersPage() {
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search name or email…" value={search} onChange={e => setSearch(e.target.value)} className="pl-8 h-9" />
+          <Input
+            placeholder="Search name or email…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-9"
+          />
         </div>
         {roleFilter !== "all" && (
-          <Badge variant="secondary" className="gap-1 cursor-pointer" onClick={() => setRoleFilter("all")}>
+          <Badge
+            variant="secondary"
+            className="gap-1 cursor-pointer"
+            onClick={() => setRoleFilter("all")}
+          >
             {roleFilter} <X className="h-3 w-3" />
           </Badge>
         )}
-        <span className="text-xs text-muted-foreground ml-auto">{filtered.length} user{filtered.length !== 1 ? "s" : ""}</span>
+        <span className="text-xs text-muted-foreground ml-auto">
+          {filtered.length} user{filtered.length !== 1 ? "s" : ""}
+        </span>
       </div>
 
       {/* Error */}
@@ -166,7 +221,9 @@ function AdminUsersPage() {
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 shrink-0" />
           <span>{error}</span>
-          <Button variant="ghost" size="sm" onClick={load} className="ml-auto h-6 text-xs">Retry</Button>
+          <Button variant="ghost" size="sm" onClick={load} className="ml-auto h-6 text-xs">
+            Retry
+          </Button>
         </div>
       )}
 
@@ -175,14 +232,17 @@ function AdminUsersPage() {
         <CardContent className="p-0">
           {loading ? (
             <div className="flex items-center justify-center py-16 gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />Loading users…
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading users…
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-16 text-center">
               <User className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
               <p className="text-sm font-medium text-foreground">No users found</p>
               <p className="text-xs text-muted-foreground mt-1">
-                {search || roleFilter !== "all" ? "Try adjusting your filters." : "Invite your first user to get started."}
+                {search || roleFilter !== "all"
+                  ? "Try adjusting your filters."
+                  : "Invite your first user to get started."}
               </p>
             </div>
           ) : (
@@ -190,14 +250,20 @@ function AdminUsersPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
-                    <th className="py-3 pl-4 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">User</th>
-                    <th className="py-3 px-3 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground w-32">Role</th>
-                    <th className="py-3 px-3 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground hidden sm:table-cell">Joined</th>
+                    <th className="py-3 pl-4 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      User
+                    </th>
+                    <th className="py-3 px-3 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground w-32">
+                      Role
+                    </th>
+                    <th className="py-3 px-3 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground hidden sm:table-cell">
+                      Joined
+                    </th>
                     <th className="py-3 pr-4 w-20" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filtered.map(agent => (
+                  {filtered.map((agent) => (
                     <UserRow
                       key={agent.id}
                       agent={agent}
@@ -224,7 +290,10 @@ function AdminUsersPage() {
 // ─── User row ─────────────────────────────────────────────────────────────────
 
 function UserRow({
-  agent, onRoleChange, onEdit, onDelete,
+  agent,
+  onRoleChange,
+  onEdit,
+  onDelete,
 }: {
   agent: AgentRow;
   onRoleChange: (a: AgentRow, r: Role) => void;
@@ -234,8 +303,17 @@ function UserRow({
   const [menuOpen, setMenuOpen] = useState(false);
   const [roleOpen, setRoleOpen] = useState(false);
   const meta = ROLE_META[agent.role];
-  const initials = agent.name.split(" ").map(n => n[0]).slice(0, 2).join("").toUpperCase();
-  const joined = new Date(agent.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  const initials = agent.name
+    .split(" ")
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  const joined = new Date(agent.created_at).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 
   return (
     <tr className="hover:bg-muted/20 transition-colors">
@@ -249,7 +327,10 @@ function UserRow({
             <div className="flex items-center gap-1.5">
               <span className="font-medium text-foreground truncate">{agent.name}</span>
               {!agent.auth_user_id && (
-                <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 border-amber-400/40 text-amber-600">
+                <Badge
+                  variant="outline"
+                  className="text-[9px] px-1.5 py-0 h-4 border-amber-400/40 text-amber-600"
+                >
                   Pending login
                 </Badge>
               )}
@@ -262,25 +343,35 @@ function UserRow({
       {/* Role selector */}
       <td className="py-3 px-3">
         <div className="relative">
-          <button type="button"
-            onClick={() => setRoleOpen(o => !o)}
+          <button
+            type="button"
+            onClick={() => setRoleOpen((o) => !o)}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all hover:opacity-80",
               meta.cls,
-            )}>
+            )}
+          >
             <meta.icon className="h-2.5 w-2.5" />
             {meta.label}
             <ChevronDown className="h-2.5 w-2.5 opacity-60" />
           </button>
           {roleOpen && (
             <div className="absolute left-0 top-full mt-1 z-50 w-36 rounded-md border border-border bg-card shadow-lg py-1">
-              {(["agent", "manager", "admin"] as Role[]).map(r => {
+              {(["agent", "manager", "admin"] as Role[]).map((r) => {
                 const rm = ROLE_META[r];
                 return (
-                  <button type="button" key={r}
-                    onClick={() => { onRoleChange(agent, r); setRoleOpen(false); }}
-                    className={cn("w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors",
-                      agent.role === r && "font-medium")}>
+                  <button
+                    type="button"
+                    key={r}
+                    onClick={() => {
+                      onRoleChange(agent, r);
+                      setRoleOpen(false);
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors",
+                      agent.role === r && "font-medium",
+                    )}
+                  >
                     <rm.icon className="h-3 w-3" />
                     <span>{rm.label}</span>
                     {agent.role === r && <Check className="h-3 w-3 ml-auto" />}
@@ -298,32 +389,49 @@ function UserRow({
       {/* Actions */}
       <td className="py-3 pr-4">
         <div className="relative flex justify-end">
-          <button type="button"
-            onClick={() => setMenuOpen(o => !o)}
-            className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+          >
             <MoreHorizontal className="h-4 w-4" />
           </button>
           {menuOpen && (
             <div className="absolute right-0 top-full mt-1 z-50 w-40 rounded-md border border-border bg-card shadow-lg py-1">
-              <button type="button"
-                onClick={() => { onEdit(); setMenuOpen(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
-                <User className="h-3.5 w-3.5" />Edit Details
+              <button
+                type="button"
+                onClick={() => {
+                  onEdit();
+                  setMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+              >
+                <User className="h-3.5 w-3.5" />
+                Edit Details
               </button>
-              <button type="button"
+              <button
+                type="button"
                 onClick={() => {
                   navigator.clipboard?.writeText(agent.email);
                   toast.success("Email copied");
                   setMenuOpen(false);
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
-                <Mail className="h-3.5 w-3.5" />Copy Email
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+              >
+                <Mail className="h-3.5 w-3.5" />
+                Copy Email
               </button>
               <div className="border-t border-border my-1" />
-              <button type="button"
-                onClick={() => { onDelete(agent); setMenuOpen(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-destructive hover:bg-destructive/5 transition-colors">
-                <Trash2 className="h-3.5 w-3.5" />Remove User
+              <button
+                type="button"
+                onClick={() => {
+                  onDelete(agent);
+                  setMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-destructive hover:bg-destructive/5 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Remove User
               </button>
             </div>
           )}
@@ -335,14 +443,25 @@ function UserRow({
 
 // ─── Invite dialog ─────────────────────────────────────────────────────────────
 
-function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: () => void; onInvited: () => void }) {
-  const [name, setName]         = useState("");
-  const [email, setEmail]       = useState("");
-  const [role, setRole]         = useState<Role>("agent");
-  const [saving, setSaving]     = useState(false);
+function InviteDialog({
+  open,
+  onClose,
+  onInvited,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onInvited: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<Role>("agent");
+  const [saving, setSaving] = useState(false);
 
   const handleInvite = async () => {
-    if (!name || !email) { toast.error("Fill all fields"); return; }
+    if (!name || !email) {
+      toast.error("Fill all fields");
+      return;
+    }
 
     setSaving(true);
 
@@ -350,7 +469,9 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
     // or dashboard), never from a browser client with the anon key — so this creates the
     // agent's profile row now (auth_user_id null) and lets an admin link the real login
     // afterwards via Edit Details, once it's created in Supabase Dashboard → Authentication.
-    const { data: { user: currentAuthUser } } = await supabase.auth.getUser();
+    const {
+      data: { user: currentAuthUser },
+    } = await supabase.auth.getUser();
     let clientId: string | null = null;
     if (currentAuthUser) {
       const { data: self } = await supabase
@@ -368,35 +489,64 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
       client_id: clientId,
       auth_user_id: null,
     });
-    if (agentErr) { toast.error(agentErr.message); setSaving(false); return; }
+    if (agentErr) {
+      toast.error(agentErr.message);
+      setSaving(false);
+      return;
+    }
     toast.success(`${name} added as ${role}`, {
-      description: "Create their login in Supabase Dashboard → Authentication → Users, then link it via Edit Details.",
+      description:
+        "Create their login in Supabase Dashboard → Authentication → Users, then link it via Edit Details.",
     });
     refreshRoster();
 
     setSaving(false);
-    setName(""); setEmail(""); setRole("agent");
+    setName("");
+    setEmail("");
+    setRole("agent");
     onInvited();
     onClose();
   };
 
   return (
-    <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
       <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>Invite New User</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Invite New User</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3 py-1">
           <div className="space-y-1.5">
-            <Label className="text-xs">Full Name <span className="text-destructive">*</span></Label>
-            <Input placeholder="Priya Singh" value={name} onChange={e => setName(e.target.value)} />
+            <Label className="text-xs">
+              Full Name <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              placeholder="Priya Singh"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Work Email <span className="text-destructive">*</span></Label>
-            <Input type="email" placeholder="priya@yourcompany.in" value={email} onChange={e => setEmail(e.target.value)} />
+            <Label className="text-xs">
+              Work Email <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              type="email"
+              placeholder="priya@yourcompany.in"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Role</Label>
-            <Select value={role} onValueChange={v => setRole(v as Role)}>
-              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+            <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+              <SelectTrigger className="h-9 text-sm">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="agent">Agent</SelectItem>
                 <SelectItem value="manager">Manager</SelectItem>
@@ -405,14 +555,25 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
             </Select>
           </div>
           <p className="text-[11px] text-muted-foreground pt-1">
-            This creates their profile. To let them sign in, create a matching login in
-            Supabase Dashboard → Authentication → Users, then paste its ID via Edit Details.
+            This creates their profile. To let them sign in, create a matching login in Supabase
+            Dashboard → Authentication → Users, then paste its ID via Edit Details.
           </p>
         </div>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={handleInvite} disabled={saving || !name || !email} className="gap-1.5">
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleInvite}
+            disabled={saving || !name || !email}
+            className="gap-1.5"
+          >
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <UserPlus className="h-3.5 w-3.5" />
+            )}
             Invite
           </Button>
         </DialogFooter>
@@ -425,9 +586,17 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function EditUserDialog({ agent, onClose, onSaved }: { agent: AgentRow; onClose: () => void; onSaved: () => void }) {
-  const [name, setName]   = useState(agent.name);
-  const [role, setRole]   = useState<Role>(agent.role);
+function EditUserDialog({
+  agent,
+  onClose,
+  onSaved,
+}: {
+  agent: AgentRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(agent.name);
+  const [role, setRole] = useState<Role>(agent.role);
   const [authUserId, setAuthUserId] = useState(agent.auth_user_id ?? "");
   const [saving, setSaving] = useState(false);
 
@@ -443,7 +612,11 @@ function EditUserDialog({ agent, onClose, onSaved }: { agent: AgentRow; onClose:
       .update({ name, role, auth_user_id: trimmed || null })
       .eq("id", agent.id);
 
-    if (error) { toast.error(error.message); setSaving(false); return; }
+    if (error) {
+      toast.error(error.message);
+      setSaving(false);
+      return;
+    }
     toast.success("User updated");
     refreshRoster();
     onSaved();
@@ -451,13 +624,20 @@ function EditUserDialog({ agent, onClose, onSaved }: { agent: AgentRow; onClose:
   };
 
   return (
-    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+    <Dialog
+      open
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
       <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>Edit User</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Edit User</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3 py-1">
           <div className="space-y-1.5">
             <Label className="text-xs">Full Name</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} />
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Email</Label>
@@ -465,8 +645,10 @@ function EditUserDialog({ agent, onClose, onSaved }: { agent: AgentRow; onClose:
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Role</Label>
-            <Select value={role} onValueChange={v => setRole(v as Role)}>
-              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+            <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+              <SelectTrigger className="h-9 text-sm">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="agent">Agent</SelectItem>
                 <SelectItem value="manager">Manager</SelectItem>
@@ -476,7 +658,12 @@ function EditUserDialog({ agent, onClose, onSaved }: { agent: AgentRow; onClose:
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Auth User ID</Label>
-            <Input placeholder="Paste UUID from Supabase Dashboard" value={authUserId} onChange={e => setAuthUserId(e.target.value)} className="font-mono text-xs" />
+            <Input
+              placeholder="Paste UUID from Supabase Dashboard"
+              value={authUserId}
+              onChange={(e) => setAuthUserId(e.target.value)}
+              className="font-mono text-xs"
+            />
             <p className="text-[11px] text-muted-foreground">
               Create the login in Supabase Dashboard → Authentication → Users, then paste its ID
               here to activate sign-in. Leave blank to keep this profile pending.
@@ -484,7 +671,9 @@ function EditUserDialog({ agent, onClose, onSaved }: { agent: AgentRow; onClose:
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
           <Button size="sm" onClick={handleSave} disabled={saving || !name}>
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
           </Button>

@@ -27,7 +27,8 @@ function liveStatus(state: CallState): LiveCallEntry["status"] {
 
 function fmtDuration(rec: CallRecord, now: number): string {
   let secs = rec.durationSeconds;
-  if (secs == null && rec.connectedAt) secs = Math.max(0, Math.round((now - rec.connectedAt) / 1000));
+  if (secs == null && rec.connectedAt)
+    secs = Math.max(0, Math.round((now - rec.connectedAt) / 1000));
   if (secs == null) return "—";
   const m = Math.floor(secs / 60);
   const s = secs % 60;

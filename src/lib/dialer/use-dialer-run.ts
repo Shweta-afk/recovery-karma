@@ -55,26 +55,29 @@ export function useDialerRun(): UseDialerRun {
     simRef.current = null;
   };
 
-  const placeCalls = useCallback(async (run: DialerRun, opened: CallRecord[]): Promise<DialerRun> => {
-    const sim = simRef.current;
-    if (!sim) return run;
-    let next = run;
-    for (const leg of opened) {
-      const t = targetsRef.current.find((x) => x.id === leg.debtorId);
-      const { providerCallId } = await sim.startCall({
-        agentNumber: "sim-agent",
-        debtorNumber: leg.phone,
-        callLogId: leg.id,
-        hints: {
-          aiScore: t?.aiScore,
-          bestContactTime: t?.bestContactTime,
-          ivr: run.settings.callMode === "ivr_agent" || run.settings.callMode === "hybrid",
-        },
-      });
-      next = engine.bindProviderCall(next, leg.id, providerCallId);
-    }
-    return next;
-  }, []);
+  const placeCalls = useCallback(
+    async (run: DialerRun, opened: CallRecord[]): Promise<DialerRun> => {
+      const sim = simRef.current;
+      if (!sim) return run;
+      let next = run;
+      for (const leg of opened) {
+        const t = targetsRef.current.find((x) => x.id === leg.debtorId);
+        const { providerCallId } = await sim.startCall({
+          agentNumber: "sim-agent",
+          debtorNumber: leg.phone,
+          callLogId: leg.id,
+          hints: {
+            aiScore: t?.aiScore,
+            bestContactTime: t?.bestContactTime,
+            ivr: run.settings.callMode === "ivr_agent" || run.settings.callMode === "hybrid",
+          },
+        });
+        next = engine.bindProviderCall(next, leg.id, providerCallId);
+      }
+      return next;
+    },
+    [],
+  );
 
   const start = useCallback(
     async ({ settings, targets, agentsAvailable = 3, mode = "local" }: StartArgs) => {
@@ -90,7 +93,9 @@ export function useDialerRun(): UseDialerRun {
         // Real-provider path — background dialing runs server-side. Dynamically imported so
         // vendor/server code never ships in the eager client bundle.
         const srv = await import("@/lib/telephony/server");
-        const started = await srv.startDialerRun({ data: { runId, settings, targets, agentsAvailable } });
+        const started = await srv.startDialerRun({
+          data: { runId, settings, targets, agentsAvailable },
+        });
         if (started) runRef.current = started;
         render();
         timerRef.current = setInterval(async () => {
@@ -110,7 +115,12 @@ export function useDialerRun(): UseDialerRun {
         }) ?? null;
 
       let run = engine.newDialerRun({ id: runId, settings });
-      const batch = engine.planDialBatch({ settings, queue: targets, agentsAvailable, inFlight: 0 });
+      const batch = engine.planDialBatch({
+        settings,
+        queue: targets,
+        agentsAvailable,
+        inFlight: 0,
+      });
       const opened = engine.openLegs(run, batch, { idPrefix: runId });
       run = await placeCalls(opened.run, opened.opened);
       runRef.current = run;

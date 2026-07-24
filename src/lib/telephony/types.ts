@@ -72,7 +72,13 @@ export type CallState =
   | "abandoned"
   | "canceled";
 
-export type TerminalCallState = "completed" | "no_answer" | "busy" | "failed" | "abandoned" | "canceled";
+export type TerminalCallState =
+  | "completed"
+  | "no_answer"
+  | "busy"
+  | "failed"
+  | "abandoned"
+  | "canceled";
 
 /** Who is on our side of the call once it connects. Drives mode routing in the engine. */
 export type CallParticipant = "agent" | "ai" | "ivr";
@@ -119,7 +125,13 @@ export type TelephonyEvent =
   | { type: "answer"; providerCallId: string; at: number }
   | { type: "dtmf"; providerCallId: string; at: number; digit: string }
   | { type: "recording"; providerCallId: string; at: number; recordingUrl: string }
-  | { type: "hangup"; providerCallId: string; at: number; result: TerminalCallState; durationSeconds: number }
+  | {
+      type: "hangup";
+      providerCallId: string;
+      at: number;
+      result: TerminalCallState;
+      durationSeconds: number;
+    }
   | { type: "sms_status"; providerMessageId: string; at: number; status: SmsStatus };
 
 export type TelephonyEventListener = (event: TelephonyEvent) => void;

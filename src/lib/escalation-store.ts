@@ -34,7 +34,7 @@ export interface Escalation {
   reason: string;
   priority: EscalationPriority;
   notes: string;
-  agentId: string;   // email
+  agentId: string; // email
   agentName: string;
   createdAt: string; // ISO
   resolved: boolean;
@@ -53,7 +53,7 @@ export function getEscalations(): Escalation[] {
 
 export function getOpenEscalations(): Escalation[] {
   return getEscalations()
-    .filter(e => !e.resolved)
+    .filter((e) => !e.resolved)
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
@@ -64,20 +64,24 @@ export async function refreshEscalations(): Promise<void> {
     { data: portfolioRows },
     { data: agentRows },
   ] = await Promise.all([
-    supabase.from("escalations")
+    supabase
+      .from("escalations")
       .select("id, debtor_id, reason, priority, notes, agent_id, resolved, created_at"),
-    supabase.from("debtors")
-      .select("id, name, phone_primary, phone_alternate, loan_amount, dpd, ai_score, ai_score_reason, last_contacted_at, portfolio_id"),
+    supabase
+      .from("debtors")
+      .select(
+        "id, name, phone_primary, phone_alternate, loan_amount, dpd, ai_score, ai_score_reason, last_contacted_at, portfolio_id",
+      ),
     supabase.from("portfolios").select("id, name"),
     supabase.from("agents").select("id, email, name"),
   ]);
   if (error || !rows || !debtorRows || !portfolioRows || !agentRows) return;
 
-  const debtorById = new Map(debtorRows.map(d => [d.id, d]));
-  const portfolioById = new Map(portfolioRows.map(p => [p.id, p]));
-  const agentById = new Map(agentRows.map(a => [a.id, a]));
+  const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
+  const portfolioById = new Map(portfolioRows.map((p) => [p.id, p]));
+  const agentById = new Map(agentRows.map((a) => [a.id, a]));
 
-  const escalations: Escalation[] = rows.map(e => {
+  const escalations: Escalation[] = rows.map((e) => {
     const debtor = debtorById.get(e.debtor_id);
     const portfolio = debtor?.portfolio_id ? portfolioById.get(debtor.portfolio_id) : undefined;
     const agent = agentById.get(e.agent_id);
@@ -112,9 +116,11 @@ export async function refreshEscalations(): Promise<void> {
   window.dispatchEvent(new CustomEvent("escalations-updated"));
 }
 
-export async function saveEscalation(e: Omit<Escalation, "id" | "createdAt" | "resolved">): Promise<void> {
+export async function saveEscalation(
+  e: Omit<Escalation, "id" | "createdAt" | "resolved">,
+): Promise<void> {
   const { data: agentRows } = await supabase.from("agents").select("id, email");
-  const idByEmail = new Map((agentRows ?? []).map(a => [a.email, a.id]));
+  const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
   const agentUuid = idByEmail.get(e.agentId);
   if (!agentUuid) throw new Error(`No agent account found for ${e.agentId}`);
 

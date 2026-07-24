@@ -30,7 +30,9 @@ export function getTelephonyProvider(): TelephonyProvider {
     (typeof process !== "undefined" ? process.env?.TELEPHONY_PROVIDER : undefined) ?? "sim";
   const factory = PROVIDERS[key];
   if (!factory) {
-    throw new Error(`Unknown TELEPHONY_PROVIDER "${key}" — expected one of: ${Object.keys(PROVIDERS).join(", ")}`);
+    throw new Error(
+      `Unknown TELEPHONY_PROVIDER "${key}" — expected one of: ${Object.keys(PROVIDERS).join(", ")}`,
+    );
   }
   return factory();
 }

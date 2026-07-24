@@ -10,7 +10,10 @@ import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import {
-  getAgentNotifications, markAllRead, refreshNotifications, type AppNotification,
+  getAgentNotifications,
+  markAllRead,
+  refreshNotifications,
+  type AppNotification,
 } from "@/lib/notification-store";
 import { useStorageSync } from "@/lib/storage-sync";
 
@@ -25,7 +28,9 @@ function timeAgo(iso: string): string {
 
 function NotificationBell({ agentId }: { agentId: string }) {
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => getAgentNotifications(agentId));
+  const [notifications, setNotifications] = useState<AppNotification[]>(() =>
+    getAgentNotifications(agentId),
+  );
 
   const reload = () => setNotifications(getAgentNotifications(agentId));
   useEffect(() => {
@@ -37,11 +42,17 @@ function NotificationBell({ agentId }: { agentId: string }) {
   }, [agentId]);
   useStorageSync(reload);
 
-  const unread = notifications.filter(n => !n.read).length;
+  const unread = notifications.filter((n) => !n.read).length;
 
   return (
     <div className="relative">
-      <Button variant="outline" size="sm" className="relative" onClick={() => setOpen(o => !o)} title="Notifications">
+      <Button
+        variant="outline"
+        size="sm"
+        className="relative"
+        onClick={() => setOpen((o) => !o)}
+        title="Notifications"
+      >
         <Bell className="h-4 w-4" />
         {unread > 0 && (
           <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
@@ -54,23 +65,36 @@ function NotificationBell({ agentId }: { agentId: string }) {
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-lg border border-border bg-card shadow-xl">
             <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Notifications</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Notifications
+              </span>
               {unread > 0 && (
-                <button type="button" onClick={() => { markAllRead(agentId).then(reload); }}
-                  className="text-[11px] text-primary hover:underline">
+                <button
+                  type="button"
+                  onClick={() => {
+                    markAllRead(agentId).then(reload);
+                  }}
+                  className="text-[11px] text-primary hover:underline"
+                >
                   Mark all read
                 </button>
               )}
             </div>
             <div className="max-h-80 overflow-y-auto divide-y divide-border">
               {notifications.length === 0 ? (
-                <p className="px-3 py-6 text-center text-xs text-muted-foreground">No notifications yet</p>
-              ) : notifications.map(n => (
-                <div key={n.id} className={cn("px-3 py-2.5", !n.read && "bg-primary/5")}>
-                  <p className="text-xs text-foreground leading-snug">{n.message}</p>
-                  <p className="text-[10px] text-muted-foreground mt-1">{n.fromName} · {timeAgo(n.createdAt)}</p>
-                </div>
-              ))}
+                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                  No notifications yet
+                </p>
+              ) : (
+                notifications.map((n) => (
+                  <div key={n.id} className={cn("px-3 py-2.5", !n.read && "bg-primary/5")}>
+                    <p className="text-xs text-foreground leading-snug">{n.message}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      {n.fromName} · {timeAgo(n.createdAt)}
+                    </p>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </>

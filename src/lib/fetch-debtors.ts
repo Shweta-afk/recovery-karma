@@ -1,24 +1,25 @@
-import { supabase } from './supabase';
-import type { Debtor } from './mock-debtors';
+import { supabase } from "./supabase";
+import type { Debtor } from "./mock-debtors";
 
 export async function fetchDebtorsByAgent(agentId: string): Promise<Debtor[]> {
   // Get agent's assigned portfolios
   const { data: portfolios, error: portfolioError } = await supabase
-    .from('agent_portfolios')
-    .select('portfolio_id')
-    .eq('agent_id', agentId);
+    .from("agent_portfolios")
+    .select("portfolio_id")
+    .eq("agent_id", agentId);
 
   if (portfolioError || !portfolios || portfolios.length === 0) {
-    console.warn('No portfolios assigned to agent:', agentId);
+    console.warn("No portfolios assigned to agent:", agentId);
     return [];
   }
 
-  const portfolioIds = portfolios.map(p => p.portfolio_id);
+  const portfolioIds = portfolios.map((p) => p.portfolio_id);
 
   // Fetch debtors from assigned portfolios
   const { data, error } = await supabase
-    .from('debtors')
-    .select(`
+    .from("debtors")
+    .select(
+      `
       id,
       name,
       phone_primary,
@@ -28,14 +29,15 @@ export async function fetchDebtorsByAgent(agentId: string): Promise<Debtor[]> {
       ai_score_reason,
       last_contacted_at,
       portfolios(name)
-    `)
-    .in('portfolio_id', portfolioIds)
-    .eq('status', 'active')
-    .order('ai_score', { ascending: false })
+    `,
+    )
+    .in("portfolio_id", portfolioIds)
+    .eq("status", "active")
+    .order("ai_score", { ascending: false })
     .limit(200);
 
   if (error) {
-    console.error('Error fetching debtors:', error);
+    console.error("Error fetching debtors:", error);
     return [];
   }
 
@@ -48,18 +50,21 @@ export async function fetchDebtorsByAgent(agentId: string): Promise<Debtor[]> {
     loanAmount: Number(row.loan_amount) || 0,
     dpd: row.dpd || 0,
     aiScore: row.ai_score || 0,
-    scoreReason: row.ai_score_reason || '',
-    lastContacted: row.last_contacted_at ? new Date(row.last_contacted_at).toISOString().split('T')[0] : null,
-    portfolio: row.portfolios?.name || 'Unknown Portfolio',
-    language: 'Hindi',
+    scoreReason: row.ai_score_reason || "",
+    lastContacted: row.last_contacted_at
+      ? new Date(row.last_contacted_at).toISOString().split("T")[0]
+      : null,
+    portfolio: row.portfolios?.name || "Unknown Portfolio",
+    language: "Hindi",
   })) as Debtor[];
 }
 
 export async function fetchDebtors(clientId?: string): Promise<Debtor[]> {
   // Fallback to fetching all active debtors (no agent filter)
   const { data, error } = await supabase
-    .from('debtors')
-    .select(`
+    .from("debtors")
+    .select(
+      `
       id,
       name,
       phone_primary,
@@ -69,13 +74,14 @@ export async function fetchDebtors(clientId?: string): Promise<Debtor[]> {
       ai_score_reason,
       last_contacted_at,
       portfolios(name)
-    `)
-    .eq('status', 'active')
-    .order('ai_score', { ascending: false })
+    `,
+    )
+    .eq("status", "active")
+    .order("ai_score", { ascending: false })
     .limit(100);
 
   if (error) {
-    console.error('Error fetching debtors from Supabase:', error);
+    console.error("Error fetching debtors from Supabase:", error);
     return [];
   }
 
@@ -88,18 +94,21 @@ export async function fetchDebtors(clientId?: string): Promise<Debtor[]> {
     loanAmount: Number(row.loan_amount) || 0,
     dpd: row.dpd || 0,
     aiScore: row.ai_score || 0,
-    scoreReason: row.ai_score_reason || '',
-    lastContacted: row.last_contacted_at ? new Date(row.last_contacted_at).toISOString().split('T')[0] : null,
-    portfolio: row.portfolios?.name || 'Unknown Portfolio',
-    language: 'Hindi',
+    scoreReason: row.ai_score_reason || "",
+    lastContacted: row.last_contacted_at
+      ? new Date(row.last_contacted_at).toISOString().split("T")[0]
+      : null,
+    portfolio: row.portfolios?.name || "Unknown Portfolio",
+    language: "Hindi",
   })) as Debtor[];
 }
 
 export async function fetchDebtorHistory(debtorId: string) {
   // Fetch call logs
   const { data: callLogs } = await supabase
-    .from('call_logs')
-    .select(`
+    .from("call_logs")
+    .select(
+      `
       id,
       created_at,
       call_type,
@@ -110,14 +119,16 @@ export async function fetchDebtorHistory(debtorId: string) {
       promise_amount,
       promise_date,
       agents(name)
-    `)
-    .eq('debtor_id', debtorId)
-    .order('created_at', { ascending: false });
+    `,
+    )
+    .eq("debtor_id", debtorId)
+    .order("created_at", { ascending: false });
 
   // Fetch messages
   const { data: messages } = await supabase
-    .from('messages')
-    .select(`
+    .from("messages")
+    .select(
+      `
       id,
       sent_at,
       channel,
@@ -126,14 +137,16 @@ export async function fetchDebtorHistory(debtorId: string) {
       status,
       template_name,
       agents(name)
-    `)
-    .eq('debtor_id', debtorId)
-    .order('sent_at', { ascending: false });
+    `,
+    )
+    .eq("debtor_id", debtorId)
+    .order("sent_at", { ascending: false });
 
   // Fetch payments
   const { data: payments } = await supabase
-    .from('payments')
-    .select(`
+    .from("payments")
+    .select(
+      `
       id,
       created_at,
       amount,
@@ -141,14 +154,16 @@ export async function fetchDebtorHistory(debtorId: string) {
       status,
       payment_type,
       received_at
-    `)
-    .eq('debtor_id', debtorId)
-    .order('created_at', { ascending: false });
+    `,
+    )
+    .eq("debtor_id", debtorId)
+    .order("created_at", { ascending: false });
 
   // Fetch disputes
   const { data: disputes } = await supabase
-    .from('disputes')
-    .select(`
+    .from("disputes")
+    .select(
+      `
       id,
       created_at,
       dispute_type,
@@ -156,9 +171,10 @@ export async function fetchDebtorHistory(debtorId: string) {
       agent_notes,
       status,
       agents(name)
-    `)
-    .eq('debtor_id', debtorId)
-    .order('created_at', { ascending: false });
+    `,
+    )
+    .eq("debtor_id", debtorId)
+    .order("created_at", { ascending: false });
 
   return {
     callLogs: callLogs || [],
@@ -170,13 +186,15 @@ export async function fetchDebtorHistory(debtorId: string) {
 
 export async function fetchDebtorDetails(debtorId: string) {
   const { data } = await supabase
-    .from('debtors')
-    .select(`
+    .from("debtors")
+    .select(
+      `
       *,
       portfolios(name, lender_name),
       agents(name, email)
-    `)
-    .eq('id', debtorId)
+    `,
+    )
+    .eq("id", debtorId)
     .single();
 
   return data;
@@ -185,19 +203,29 @@ export async function fetchDebtorDetails(debtorId: string) {
 export async function logCallOutcome(
   debtorId: string,
   agentId: string,
-  outcome: 'paid' | 'promised' | 'refused' | 'no_answer' | 'voicemail' | 'dispute' | 'callback' | 'wrong_number' | 'deceased' | 'escalated',
+  outcome:
+    | "paid"
+    | "promised"
+    | "refused"
+    | "no_answer"
+    | "voicemail"
+    | "dispute"
+    | "callback"
+    | "wrong_number"
+    | "deceased"
+    | "escalated",
   notes: string,
   promiseAmount?: number,
   promiseDate?: string,
-  durationSeconds?: number
+  durationSeconds?: number,
 ) {
   const { data, error } = await supabase
-    .from('call_logs')
+    .from("call_logs")
     .insert([
       {
         debtor_id: debtorId,
         agent_id: agentId,
-        call_type: 'human',
+        call_type: "human",
         outcome,
         raw_notes: notes,
         promise_amount: promiseAmount || null,
@@ -208,7 +236,7 @@ export async function logCallOutcome(
     .select();
 
   if (error) {
-    console.error('Error logging call:', error);
+    console.error("Error logging call:", error);
     return null;
   }
 

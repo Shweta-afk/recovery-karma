@@ -176,9 +176,9 @@ export function createSimProvider(opts?: { seed?: number }): SimProvider {
         duration?: number;
         recording_url?: string;
       };
-      const status = (["ringing", "connected", "no_answer", "failed", "completed"] as CallStatus[]).includes(
-        p.status as CallStatus,
-      )
+      const status = (
+        ["ringing", "connected", "no_answer", "failed", "completed"] as CallStatus[]
+      ).includes(p.status as CallStatus)
         ? (p.status as CallStatus)
         : "failed";
       return {

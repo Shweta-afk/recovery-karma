@@ -19,10 +19,34 @@ export const Route = createFileRoute("/admin/")({
 });
 
 const tiles = [
-  { title: "Users", desc: "Add, remove and manage roles for agents and managers.", icon: UserCog, action: "Manage users", url: "/admin/users" },
-  { title: "Teams", desc: "Create teams, assign a manager, and add agents.", icon: Users, action: "Manage teams", url: "/admin/teams" },
-  { title: "Portfolio Assignment", desc: "Assign uploaded portfolios to a manager and notify them.", icon: Layers, action: "Assign portfolios", url: "/admin/portfolio" },
-  { title: "Reports", desc: "Team performance, agent rankings and call outcomes across the org.", icon: BarChart3, action: "View reports", url: "/admin/reports" },
+  {
+    title: "Users",
+    desc: "Add, remove and manage roles for agents and managers.",
+    icon: UserCog,
+    action: "Manage users",
+    url: "/admin/users",
+  },
+  {
+    title: "Teams",
+    desc: "Create teams, assign a manager, and add agents.",
+    icon: Users,
+    action: "Manage teams",
+    url: "/admin/teams",
+  },
+  {
+    title: "Portfolio Assignment",
+    desc: "Assign uploaded portfolios to a manager and notify them.",
+    icon: Layers,
+    action: "Assign portfolios",
+    url: "/admin/portfolio",
+  },
+  {
+    title: "Reports",
+    desc: "Team performance, agent rankings and call outcomes across the org.",
+    icon: BarChart3,
+    action: "View reports",
+    url: "/admin/reports",
+  },
 ] as const;
 
 function AdminPage() {
@@ -67,7 +91,9 @@ function AdminPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base font-semibold">Recent activity</CardTitle>
-          <p className="text-sm text-muted-foreground">Admin actions will be logged here for audit.</p>
+          <p className="text-sm text-muted-foreground">
+            Admin actions will be logged here for audit.
+          </p>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border border-dashed border-border py-12 text-center text-sm text-muted-foreground">

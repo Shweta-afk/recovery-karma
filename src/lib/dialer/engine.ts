@@ -128,16 +128,25 @@ export function applyRechurn(input: RechurnInput): RechurnDecision {
   const now = input.now ?? new Date();
 
   if (!settings.autoRechurn) return { reschedule: false, reason: "auto-rechurn off" };
-  if (attempt >= settings.rechurnMaxCycles) return { reschedule: false, reason: "max cycles reached" };
+  if (attempt >= settings.rechurnMaxCycles)
+    return { reschedule: false, reason: "max cycles reached" };
 
   const eligible = voicemail
     ? settings.rechurnOnVoicemail
     : (terminalState === "no_answer" && settings.rechurnOnNoAnswer) ||
       (terminalState === "busy" && settings.rechurnOnBusy);
-  if (!eligible) return { reschedule: false, reason: `no rechurn rule for ${voicemail ? "voicemail" : terminalState}` };
+  if (!eligible)
+    return {
+      reschedule: false,
+      reason: `no rechurn rule for ${voicemail ? "voicemail" : terminalState}`,
+    };
 
   const nextAttemptAt = now.getTime() + settings.rechurnAfterDays * 24 * 60 * 60 * 1000;
-  return { reschedule: true, nextAttemptAt, reason: `rechurn after ${voicemail ? "voicemail" : terminalState}` };
+  return {
+    reschedule: true,
+    nextAttemptAt,
+    reason: `rechurn after ${voicemail ? "voicemail" : terminalState}`,
+  };
 }
 
 /** When to follow up on a promise-to-pay, from ptpFollowupHours. */
@@ -252,7 +261,8 @@ export function applyLegEvent(run: DialerRun, event: TelephonyEvent): DialerRun 
     if (event.type === "dtmf") {
       updated.dtmf = [...(updated.dtmf ?? []), event.digit];
       // IVR menu bridges to a human when the debtor presses the connect digit.
-      if (leg.participant === "ivr" && event.digit === IVR_CONNECT_DIGIT) updated.participant = "agent";
+      if (leg.participant === "ivr" && event.digit === IVR_CONNECT_DIGIT)
+        updated.participant = "agent";
     }
     if (event.type === "recording") updated.recordingUrl = event.recordingUrl;
     if (event.type === "hangup") {

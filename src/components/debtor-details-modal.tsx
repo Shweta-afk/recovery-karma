@@ -55,10 +55,7 @@ export function DebtorDetailsModal({
   useEffect(() => {
     if (debtor && open) {
       setLoading(true);
-      Promise.all([
-        fetchDebtorHistory(debtor.id),
-        fetchDebtorDetails(debtor.id),
-      ])
+      Promise.all([fetchDebtorHistory(debtor.id), fetchDebtorDetails(debtor.id)])
         .then(([hist, det]) => {
           setHistory(hist);
           setDetails(det);
@@ -78,7 +75,7 @@ export function DebtorDetailsModal({
         callOutcome as any,
         callNotes,
         callOutcome === "promised" ? Number(promiseAmount) : undefined,
-        callOutcome === "promised" ? promiseDate : undefined
+        callOutcome === "promised" ? promiseDate : undefined,
       );
 
       if (result) {
@@ -109,16 +106,12 @@ export function DebtorDetailsModal({
           <DialogHeader>
             <DialogTitle className="text-xl">
               {debtor.name}
-              <span className="ml-3 text-sm font-normal text-muted-foreground">
-                {debtor.id}
-              </span>
+              <span className="ml-3 text-sm font-normal text-muted-foreground">{debtor.id}</span>
             </DialogTitle>
           </DialogHeader>
 
           {loading ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Loading debtor history...
-            </div>
+            <div className="py-8 text-center text-muted-foreground">Loading debtor history...</div>
           ) : (
             <div className="space-y-6">
               {/* Summary */}
@@ -152,10 +145,7 @@ export function DebtorDetailsModal({
 
                 {/* Call History */}
                 <TabsContent value="calls" className="space-y-4">
-                  <Button
-                    onClick={() => setShowCallDialog(true)}
-                    className="w-full gap-2"
-                  >
+                  <Button onClick={() => setShowCallDialog(true)} className="w-full gap-2">
                     <Phone className="h-4 w-4" />
                     Log New Call
                   </Button>
@@ -171,9 +161,7 @@ export function DebtorDetailsModal({
                             <Badge variant="outline">{call.outcome}</Badge>
                           </div>
                           {call.raw_notes && (
-                            <p className="text-sm text-foreground/80 mb-2">
-                              {call.raw_notes}
-                            </p>
+                            <p className="text-sm text-foreground/80 mb-2">{call.raw_notes}</p>
                           )}
                           {call.promise_amount && (
                             <div className="text-xs text-muted-foreground">
@@ -249,11 +237,7 @@ export function DebtorDetailsModal({
                                 {formatINR(Number(payment.amount))}
                               </span>
                             </div>
-                            <Badge
-                              variant={
-                                payment.status === "completed" ? "default" : "outline"
-                              }
-                            >
+                            <Badge variant={payment.status === "completed" ? "default" : "outline"}>
                               {payment.status}
                             </Badge>
                           </div>
@@ -263,7 +247,7 @@ export function DebtorDetailsModal({
                             </div>
                             <div>
                               {new Date(
-                                payment.received_at || payment.created_at
+                                payment.received_at || payment.created_at,
                               ).toLocaleDateString()}
                             </div>
                           </div>
@@ -306,17 +290,13 @@ export function DebtorDetailsModal({
                           </div>
                           {dispute.debtor_reason && (
                             <div className="text-sm mb-2">
-                              <div className="text-xs text-muted-foreground">
-                                Debtor says:
-                              </div>
+                              <div className="text-xs text-muted-foreground">Debtor says:</div>
                               <p>{dispute.debtor_reason}</p>
                             </div>
                           )}
                           {dispute.agent_notes && (
                             <div className="text-sm">
-                              <div className="text-xs text-muted-foreground">
-                                Agent notes:
-                              </div>
+                              <div className="text-xs text-muted-foreground">Agent notes:</div>
                               <p>{dispute.agent_notes}</p>
                             </div>
                           )}
@@ -404,10 +384,7 @@ export function DebtorDetailsModal({
 
           <div className="flex gap-2 justify-end">
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleLogCall}
-              disabled={!callOutcome || logging}
-            >
+            <AlertDialogAction onClick={handleLogCall} disabled={!callOutcome || logging}>
               {logging ? "Saving..." : "Save Call"}
             </AlertDialogAction>
           </div>

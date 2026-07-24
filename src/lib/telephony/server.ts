@@ -57,7 +57,11 @@ async function dial(run: DialerRun, batch: DialTarget[], idPrefix: string): Prom
       agentNumber: "sim-agent",
       debtorNumber: leg.phone,
       callLogId: leg.id,
-      hints: { aiScore: t?.aiScore, bestContactTime: t?.bestContactTime, ivr: ivrHint(run.settings) },
+      hints: {
+        aiScore: t?.aiScore,
+        bestContactTime: t?.bestContactTime,
+        ivr: ivrHint(run.settings),
+      },
     });
     next = engine.bindProviderCall(next, leg.id, providerCallId);
   }
@@ -67,12 +71,14 @@ async function dial(run: DialerRun, batch: DialTarget[], idPrefix: string): Prom
 // ─── Dialer run lifecycle ────────────────────────────────────────────────────────
 
 export const startDialerRun = createServerFn({ method: "POST" })
-  .inputValidator((d: {
-    runId: string;
-    settings: PortfolioSettings;
-    targets: DialTarget[];
-    agentsAvailable: number;
-  }) => d)
+  .inputValidator(
+    (d: {
+      runId: string;
+      settings: PortfolioSettings;
+      targets: DialTarget[];
+      agentsAvailable: number;
+    }) => d,
+  )
   .handler(async ({ data }) => {
     ensureSubscribed();
     const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
@@ -130,13 +136,15 @@ export const stopDialerRun = createServerFn({ method: "POST" })
 // ─── Single-call + SMS wrappers ──────────────────────────────────────────────────
 
 export const startCall = createServerFn({ method: "POST" })
-  .inputValidator((d: {
-    callLogId: string;
-    agentNumber: string;
-    debtorNumber: string;
-    aiScore?: number;
-    ivr?: boolean;
-  }) => d)
+  .inputValidator(
+    (d: {
+      callLogId: string;
+      agentNumber: string;
+      debtorNumber: string;
+      aiScore?: number;
+      ivr?: boolean;
+    }) => d,
+  )
   .handler(async ({ data }) => {
     ensureSubscribed();
     const { providerCallId } = await getTelephonyProvider().startCall({
@@ -187,7 +195,12 @@ export const ingestProviderWebhook = createServerFn({ method: "POST" })
         type: "hangup",
         providerCallId: status.providerCallId,
         at,
-        result: status.status === "completed" ? "completed" : status.status === "failed" ? "failed" : "no_answer",
+        result:
+          status.status === "completed"
+            ? "completed"
+            : status.status === "failed"
+              ? "failed"
+              : "no_answer",
         durationSeconds: status.durationSeconds ?? 0,
       };
     }

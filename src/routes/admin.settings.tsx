@@ -34,7 +34,11 @@ function SectionCard({
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Icon className="h-4 w-4 text-primary" />
           {title}
-          {badge && <Badge variant="secondary" className="text-[10px] ml-1">{badge}</Badge>}
+          {badge && (
+            <Badge variant="secondary" className="text-[10px] ml-1">
+              {badge}
+            </Badge>
+          )}
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
       </CardHeader>
@@ -43,7 +47,15 @@ function SectionCard({
   );
 }
 
-function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function SettingRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="flex-1 min-w-0">
@@ -75,34 +87,74 @@ function AdminSettingsPage() {
           </p>
         </div>
         <Button onClick={handleSave} className="gap-1.5">
-          <Save className="h-4 w-4" />Save Settings
+          <Save className="h-4 w-4" />
+          Save Settings
         </Button>
       </div>
 
-      <SectionCard icon={Building2} title="Branding" description="Company details shown across the app and in debtor communications.">
+      <SectionCard
+        icon={Building2}
+        title="Branding"
+        description="Company details shown across the app and in debtor communications."
+      >
         <SettingRow label="Company name">
-          <Input value={cfg.companyName} onChange={(e) => set("companyName", e.target.value)} className="w-64 h-8 text-xs" />
+          <Input
+            value={cfg.companyName}
+            onChange={(e) => set("companyName", e.target.value)}
+            className="w-64 h-8 text-xs"
+          />
         </SettingRow>
         <SettingRow label="Support email">
-          <Input type="email" value={cfg.supportEmail} onChange={(e) => set("supportEmail", e.target.value)} className="w-64 h-8 text-xs" />
+          <Input
+            type="email"
+            value={cfg.supportEmail}
+            onChange={(e) => set("supportEmail", e.target.value)}
+            className="w-64 h-8 text-xs"
+          />
         </SettingRow>
         <SettingRow label="Support phone">
-          <Input value={cfg.supportPhone} onChange={(e) => set("supportPhone", e.target.value)} className="w-64 h-8 text-xs" />
+          <Input
+            value={cfg.supportPhone}
+            onChange={(e) => set("supportPhone", e.target.value)}
+            className="w-64 h-8 text-xs"
+          />
         </SettingRow>
       </SectionCard>
 
-      <SectionCard icon={Clock} title="Working Hours" description="Default calling window applied to new portfolios unless overridden per portfolio.">
+      <SectionCard
+        icon={Clock}
+        title="Working Hours"
+        description="Default calling window applied to new portfolios unless overridden per portfolio."
+      >
         <SettingRow label="Calling hours">
           <div className="flex items-center gap-2">
-            <Input type="time" value={cfg.callStartTime} onChange={(e) => set("callStartTime", e.target.value)} className="w-28 h-8 text-xs" />
+            <Input
+              type="time"
+              value={cfg.callStartTime}
+              onChange={(e) => set("callStartTime", e.target.value)}
+              className="w-28 h-8 text-xs"
+            />
             <span className="text-xs text-muted-foreground">to</span>
-            <Input type="time" value={cfg.callEndTime} onChange={(e) => set("callEndTime", e.target.value)} className="w-28 h-8 text-xs" />
+            <Input
+              type="time"
+              value={cfg.callEndTime}
+              onChange={(e) => set("callEndTime", e.target.value)}
+              className="w-28 h-8 text-xs"
+            />
           </div>
         </SettingRow>
       </SectionCard>
 
-      <SectionCard icon={Shield} title="Compliance" description="RBI/TRAI fair-practice guardrails enforced across every team." badge="TRAI / RBI">
-        <SettingRow label="Enforce DNC registry" hint="Accounts on the national Do-Not-Call list are automatically skipped org-wide.">
+      <SectionCard
+        icon={Shield}
+        title="Compliance"
+        description="RBI/TRAI fair-practice guardrails enforced across every team."
+        badge="TRAI / RBI"
+      >
+        <SettingRow
+          label="Enforce DNC registry"
+          hint="Accounts on the national Do-Not-Call list are automatically skipped org-wide."
+        >
           <Switch checked={cfg.enforceDnc} onCheckedChange={(v) => set("enforceDnc", v)} />
         </SettingRow>
         <SettingRow label="Enforce DND mobile numbers">
@@ -110,22 +162,32 @@ function AdminSettingsPage() {
         </SettingRow>
         <Separator />
         <SettingRow label="Max contacts per week per debtor">
-          <Input type="number" min={1} max={14} value={cfg.maxContactsPerWeek}
+          <Input
+            type="number"
+            min={1}
+            max={14}
+            value={cfg.maxContactsPerWeek}
             onChange={(e) => set("maxContactsPerWeek", +e.target.value)}
-            className="w-20 h-8 text-xs text-center" />
+            className="w-20 h-8 text-xs text-center"
+          />
         </SettingRow>
       </SectionCard>
 
-      <SectionCard icon={Plug} title="Integrations" description="LMS, telephony and payment gateway connections.">
+      <SectionCard
+        icon={Plug}
+        title="Integrations"
+        description="LMS, telephony and payment gateway connections."
+      >
         <div className="rounded-md border border-dashed border-border py-6 text-center text-sm text-muted-foreground">
-          Integrations are configured via environment credentials by your platform team.
-          Contact support to connect an LMS, telephony provider, or UPI gateway.
+          Integrations are configured via environment credentials by your platform team. Contact
+          support to connect an LMS, telephony provider, or UPI gateway.
         </div>
       </SectionCard>
 
       <div className="flex justify-end pb-6">
         <Button onClick={handleSave} className="gap-1.5">
-          <Save className="h-4 w-4" />Save All Settings
+          <Save className="h-4 w-4" />
+          Save All Settings
         </Button>
       </div>
     </div>

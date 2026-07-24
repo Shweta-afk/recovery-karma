@@ -28,7 +28,9 @@ const KEY = "recoveryai_org_settings";
 export function getOrgSettings(): OrgSettings {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...DEFAULT_ORG_SETTINGS, ...(JSON.parse(raw) as Partial<OrgSettings>) } : { ...DEFAULT_ORG_SETTINGS };
+    return raw
+      ? { ...DEFAULT_ORG_SETTINGS, ...(JSON.parse(raw) as Partial<OrgSettings>) }
+      : { ...DEFAULT_ORG_SETTINGS };
   } catch {
     return { ...DEFAULT_ORG_SETTINGS };
   }

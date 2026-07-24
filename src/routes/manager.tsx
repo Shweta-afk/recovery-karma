@@ -27,7 +27,8 @@ function ManagerLayout() {
           <span className="text-4xl">🔒</span>
           <h2 className="text-lg font-semibold text-foreground">Access Restricted</h2>
           <p className="text-sm text-muted-foreground max-w-xs">
-            This section is only available to managers and admins. Redirecting you to your dashboard…
+            This section is only available to managers and admins. Redirecting you to your
+            dashboard…
           </p>
         </div>
       </AppShell>

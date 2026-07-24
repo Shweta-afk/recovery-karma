@@ -11,9 +11,14 @@ export function parseCsvLine(line: string): string[] {
   let cur = "";
   let inQuotes = false;
   for (const ch of line) {
-    if (ch === '"') { inQuotes = !inQuotes; }
-    else if (ch === "," && !inQuotes) { fields.push(cur.trim()); cur = ""; }
-    else { cur += ch; }
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === "," && !inQuotes) {
+      fields.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
   }
   fields.push(cur.trim());
   return fields;

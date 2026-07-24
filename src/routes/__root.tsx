@@ -90,8 +90,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:title", content: "RecoveryAI · Collections Platform" },
       {
         property: "og:description",
-        content:
-          "Modern, compliant loan recovery operations for Indian financial services teams.",
+        content: "Modern, compliant loan recovery operations for Indian financial services teams.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },

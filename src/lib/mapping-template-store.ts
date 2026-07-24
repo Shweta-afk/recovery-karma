@@ -12,11 +12,11 @@ import { supabase, getMyAgentRow } from "./supabase";
 
 export interface MappingTemplate {
   id: string;
-  lender: string;                    // normalized lender key
-  lenderLabel: string;               // original display name
-  fingerprint: string;               // hash of the sorted normalized header set
-  mapping: Record<string, string>;   // canonical field key → source header
-  updatedAt: string;                 // ISO
+  lender: string; // normalized lender key
+  lenderLabel: string; // original display name
+  fingerprint: string; // hash of the sorted normalized header set
+  mapping: Record<string, string>; // canonical field key → source header
+  updatedAt: string; // ISO
   useCount: number;
 }
 
@@ -50,7 +50,7 @@ export async function refreshMappingTemplates(): Promise<void> {
     .select("id, lender, lender_label, fingerprint, mapping, use_count, updated_at");
   if (error || !data) return;
 
-  const templates: MappingTemplate[] = data.map(t => ({
+  const templates: MappingTemplate[] = data.map((t) => ({
     id: t.id,
     lender: t.lender,
     lenderLabel: t.lender_label ?? t.lender,
@@ -73,29 +73,36 @@ export function findTemplate(lender: string, headers: string[]): MappingTemplate
   const key = normLender(lender);
   if (!key) return null;
   const fp = headerFingerprint(headers);
-  const forLender = getTemplates().filter(t => t.lender === key);
+  const forLender = getTemplates().filter((t) => t.lender === key);
   if (!forLender.length) return null;
   return (
-    forLender.find(t => t.fingerprint === fp) ??
+    forLender.find((t) => t.fingerprint === fp) ??
     [...forLender].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0] ??
     null
   );
 }
 
 /** Create or update the template for this lender + layout. */
-export async function saveTemplate(lender: string, headers: string[], mapping: Record<string, string>): Promise<void> {
+export async function saveTemplate(
+  lender: string,
+  headers: string[],
+  mapping: Record<string, string>,
+): Promise<void> {
   const key = normLender(lender);
   if (!key) return;
   const fp = headerFingerprint(headers);
   const cleanMapping = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v));
-  const existing = getTemplates().find(t => t.lender === key && t.fingerprint === fp);
+  const existing = getTemplates().find((t) => t.lender === key && t.fingerprint === fp);
 
   if (existing) {
-    const { error } = await supabase.from("mapping_templates").update({
-      mapping: cleanMapping,
-      updated_at: new Date().toISOString(),
-      use_count: existing.useCount + 1,
-    }).eq("id", existing.id);
+    const { error } = await supabase
+      .from("mapping_templates")
+      .update({
+        mapping: cleanMapping,
+        updated_at: new Date().toISOString(),
+        use_count: existing.useCount + 1,
+      })
+      .eq("id", existing.id);
     if (error) throw error;
   } else {
     const me = await getMyAgentRow();
