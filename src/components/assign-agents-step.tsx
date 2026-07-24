@@ -89,7 +89,6 @@ export function AssignAgentsStep({ agents, rows, initialCounts, onAllocationChan
   // Reset any parsed CSV mapping when the underlying portfolio changes
   useEffect(() => {
     setCsvFileName(""); setCsvAllocation({}); setCsvUnmatchedLoanIds([]); setCsvUnmatchedAgentIds([]); setCsvError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
 
   // Push the concrete debtor-id allocation up to the parent whenever it changes

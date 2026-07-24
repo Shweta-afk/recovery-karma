@@ -308,22 +308,6 @@ export interface LiveCallEntry {
   incoming?: boolean; // true = another agent/AI is transferring this call to me
 }
 
-// Build the simulated set of concurrent calls shown when the predictive dialer starts.
-// Shared so the agent's queue and the manager's read-only mirror produce an identical spread.
-export function buildSimulatedLiveCalls(target: { name: string; id: string }[]): LiveCallEntry[] {
-  const agents = ["You", "AI Bot", "Ravi M.", "AI Bot", "Pooja S.", "AI Bot", "Arjun T.", "AI Bot", "Neha K.", "Ravi M."];
-  const types: LiveCallEntry["type"][] = ["agent", "ai", "agent", "ai", "agent", "ai", "agent", "ai", "agent", "agent"];
-  return target.slice(0, 10).map((d, i) => ({
-    id: `lc-${i}`,
-    agent: agents[i % agents.length],
-    debtor: d.name,
-    loanId: d.id,
-    status: (i < 3 ? "ringing" : i < 6 ? "connected" : i < 8 ? "on_hold" : "done") as LiveCallEntry["status"],
-    duration: i < 3 ? `0:0${i + 2}` : i < 6 ? `${i - 1}:${String(i * 13).padStart(2, "0")}` : "—",
-    type: types[i % types.length],
-  }));
-}
-
 // Agent availability — lives on the call queue since this is where the agent takes calls
 type AgentStatus = "available" | "break" | "lunch" | "training" | "offline";
 
@@ -1070,8 +1054,7 @@ function CallQueuePage() {
                   <TableRow>
                     {/* Debtor name — sortable A→Z */}
                     <TableHead>
-                      <QColHead label="Debtor" sortKey="name" activeSort={qSortKey} sortDir={qSortDir} onSort={toggleQSort}
-                        activeFilter={false} onFilterToggle={() => {}} />
+                      <QColHead label="Debtor" sortKey="name" activeSort={qSortKey} sortDir={qSortDir} onSort={toggleQSort} />
                     </TableHead>
                     <TableHead className="text-muted-foreground text-xs font-medium uppercase tracking-wider">Phone</TableHead>
 
@@ -1164,8 +1147,7 @@ function CallQueuePage() {
 
                     {/* Scheduled — sortable */}
                     <TableHead>
-                      <QColHead label="Scheduled" sortKey="scheduled" activeSort={qSortKey} sortDir={qSortDir} onSort={toggleQSort}
-                        activeFilter={false} onFilterToggle={() => {}} />
+                      <QColHead label="Scheduled" sortKey="scheduled" activeSort={qSortKey} sortDir={qSortDir} onSort={toggleQSort} />
                     </TableHead>
 
                     <TableHead className="text-muted-foreground text-xs font-medium uppercase tracking-wider min-w-[160px]">Reason</TableHead>
@@ -3162,8 +3144,9 @@ function QColHead({ label, sortKey, activeSort, sortDir, onSort, activeFilter, o
   activeSort: QueueSortKey | null;
   sortDir: "asc" | "desc";
   onSort: (k: QueueSortKey) => void;
-  activeFilter: boolean;
-  onFilterToggle: () => void;
+  // Omit both for columns that have no filter — the filter button is then hidden.
+  activeFilter?: boolean;
+  onFilterToggle?: () => void;
   children?: React.ReactNode;
 }) {
   const isActive = activeSort === sortKey;
@@ -3176,7 +3159,7 @@ function QColHead({ label, sortKey, activeSort, sortDir, onSort, activeFilter, o
         {label}
         <SortIcon className="h-3 w-3 flex-shrink-0" />
       </button>
-      {onFilterToggle !== (() => {}) && (
+      {onFilterToggle && (
         <button type="button" onClick={onFilterToggle}
           className={cn("ml-0.5 rounded p-0.5 transition-colors hover:bg-muted/60",
             activeFilter ? "text-primary" : "text-muted-foreground/50 hover:text-muted-foreground")}>
