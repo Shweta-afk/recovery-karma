@@ -20,9 +20,10 @@ import { formatINR, bucketOf, BUCKET_META } from "@/lib/mock-debtors";
 import { useManagerTeamAgents, type AgentRef } from "@/lib/team-store";
 import {
   buildAssignedQueue, QUEUE_STATUS_META, OUTCOME_META, EMPTY_DISPOSITION,
-  ActiveCallPanel, ActiveCallModal, DialerModeBar, LiveCallsPanel, buildSimulatedLiveCalls,
-  type QueueDebtor, type ActiveCall, type DispositionForm, type LiveCallEntry,
+  ActiveCallPanel, ActiveCallModal, DialerModeBar, LiveCallsPanel,
+  type QueueDebtor, type ActiveCall, type DispositionForm,
 } from "@/routes/dashboard.call-queue";
+import { useDialerRun } from "@/lib/dialer/use-dialer-run";
 import {
   getOpenEscalations, resolveEscalation, refreshEscalations, type Escalation,
 } from "@/lib/escalation-store";
@@ -48,16 +49,15 @@ function AgentQueueView({ agentId, onCall, disabled }: {
   agentId: string; onCall: (debtor: QueueDebtor) => void; disabled: boolean;
 }) {
   const [queue, setQueue] = useState<QueueDebtor[]>(() => buildAssignedQueue(agentId));
-  // Simulated predictive dialer — mirrors the agent's own call-queue dialer, but here it
-  // reflects the *selected* agent's queue so the manager sees exactly what the agent's screen shows.
-  const [dialerRunning, setDialerRunning] = useState(false);
-  const [liveCalls, setLiveCalls] = useState<LiveCallEntry[]>([]);
+  // Predictive dialer driven by the real engine + simulated provider (src/lib/dialer). Legs
+  // progress through the actual call state machine; swapping to server-side background
+  // dialing later is `mode: "server"` in the hook — no change here.
+  const dialer = useDialerRun();
   const reload = () => setQueue(buildAssignedQueue(agentId));
   useEffect(() => {
     reload();
-    // Switching to a different agent resets the simulated dialer for the new queue.
-    setDialerRunning(false);
-    setLiveCalls([]);
+    // Switching to a different agent resets the dialer for the new queue.
+    dialer.stop();
     window.addEventListener("assignments-updated", reload);
     window.addEventListener("portfolios-updated", reload);
     return () => {
@@ -72,44 +72,45 @@ function AgentQueueView({ agentId, onCall, disabled }: {
     return <p className="py-10 text-center text-sm text-muted-foreground">No accounts assigned to this agent yet.</p>;
   }
 
-  // Portfolio call mode is a property of the agent's primary (first) assigned portfolio,
-  // set by the manager at upload time — same derivation the agent's own queue uses.
+  // Portfolio settings (call mode + dialer config) come from the agent's primary (first)
+  // assigned portfolio — the same source that drives the agent's own queue.
   const primaryPortfolio = queue[0]?.portfolioId
     ? getPortfolios().find(p => p.id === queue[0].portfolioId)
     : undefined;
-  const portfolioMode: CallMode = primaryPortfolio?.settings.callMode ?? DEFAULT_PORTFOLIO_SETTINGS.callMode;
+  const settings = primaryPortfolio?.settings ?? DEFAULT_PORTFOLIO_SETTINGS;
+  const portfolioMode: CallMode = settings.callMode;
   const portfolioName = primaryPortfolio?.name ?? "No portfolio assigned";
 
   const toggleDialer = () => {
-    const next = !dialerRunning;
-    setDialerRunning(next);
-    if (next) {
-      toast.success(`Predictive dialing this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}`);
-      setLiveCalls(buildSimulatedLiveCalls(queue));
-      // First ringing line connects a beat later, same cadence as the agent's dialer.
-      setTimeout(() => setLiveCalls(prev => prev.map(c => c.id === "lc-0" ? { ...c, status: "connected", duration: "0:04" } : c)), 3000);
-    } else {
-      setLiveCalls([]);
+    if (dialer.running) {
+      dialer.stop();
+      return;
     }
+    dialer.start({
+      settings,
+      targets: queue.map(d => ({ id: d.id, name: d.name, phone: d.phone, portfolioId: d.portfolioId, aiScore: d.aiScore })),
+      agentsAvailable: Math.min(5, queue.length),
+    });
+    toast.success(`Predictive dialing this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}`);
   };
 
   return (
     <div className="space-y-3">
       {/* Mode status bar — identical to the agent's, driven by this agent's portfolio */}
-      <DialerModeBar portfolioMode={portfolioMode} portfolioName={portfolioName} dialerRunning={dialerRunning} />
+      <DialerModeBar portfolioMode={portfolioMode} portfolioName={portfolioName} dialerRunning={dialer.running} />
 
       {/* Predictive dialer toggle */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <p className="text-xs text-muted-foreground">
-          {dialerRunning
-            ? "Simulated dialer running — live lines mirror the agent's screen."
+          {dialer.running
+            ? "Dialer running — live lines progress through the real call state machine (simulated carrier)."
             : "Start the predictive dialer to preview the agent's live call activity (simulated)."}
         </p>
         <Button size="sm" onClick={toggleDialer}
-          className={cn("gap-1.5 text-sm", dialerRunning
+          className={cn("gap-1.5 text-sm", dialer.running
             ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
             : "bg-success text-success-foreground hover:bg-success/90")}>
-          {dialerRunning ? <><Square className="h-3.5 w-3.5" />Stop Dialer</> : <><Zap className="h-3.5 w-3.5" />Predictive Dial</>}
+          {dialer.running ? <><Square className="h-3.5 w-3.5" />Stop Dialer</> : <><Zap className="h-3.5 w-3.5" />Predictive Dial</>}
         </Button>
       </div>
 
@@ -161,20 +162,16 @@ function AgentQueueView({ agentId, onCall, disabled }: {
       </div>
       </div>
 
-      {/* Floating live-calls panel — same component the agent sees during predictive dialing */}
-      {dialerRunning && liveCalls.length > 0 && (
+      {/* Floating live-calls panel — same component the agent sees, now fed by engine legs */}
+      {dialer.running && dialer.legs.length > 0 && (
         <LiveCallsPanel
-          liveCalls={liveCalls}
-          onDismiss={() => { setDialerRunning(false); setLiveCalls([]); }}
+          liveCalls={dialer.legs}
+          onDismiss={() => dialer.stop()}
           onTake={(lc) => {
             const d = queue.find(x => x.id === lc.loanId);
             if (d && !disabled) onCall(d);
-            setLiveCalls(p => p.filter(c => c.id !== lc.id));
           }}
-          onTransfer={(lc) => {
-            toast.success(`${lc.debtor} redirected to next available agent`);
-            setLiveCalls(p => p.filter(c => c.id !== lc.id));
-          }}
+          onTransfer={(lc) => toast.success(`${lc.debtor} redirected to next available agent`)}
         />
       )}
     </div>

@@ -84,7 +84,7 @@ CREATE TABLE call_logs (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   debtor_id         UUID REFERENCES debtors(id),
   agent_id          UUID REFERENCES agents(id),
-  call_type         TEXT DEFAULT 'human' CHECK (call_type IN ('human','bot')),
+  call_type         TEXT DEFAULT 'human' CHECK (call_type IN ('human','bot','ai','ivr')),
   outcome           TEXT CHECK (outcome IN (
                       'paid','promised','refused','no_answer','voicemail',
                       'dispute','callback','wrong_number','deceased','escalated'
