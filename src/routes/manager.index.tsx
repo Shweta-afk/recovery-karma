@@ -902,7 +902,9 @@ function ReportsTab({ agents }: { agents: AgentComputedStat[] }) {
   const teamPOS = agents.reduce((s, a) => s + a.assignedPOS, 0);
   const teamCount = agents.reduce((s, a) => s + a.assignedCount, 0);
 
-  const monthlyTrend = useMemo(() => {
+  // month label + one paid-total column per agent name (dynamic keys)
+  type MonthlyTrendRow = { month: string; [agentName: string]: string | number };
+  const monthlyTrend = useMemo<MonthlyTrendRow[]>(() => {
     const roster = new Set(agents.map((a) => a.id));
     const paidDisps = getDispositions().filter(
       (d) => roster.has(d.agentId) && d.outcome === "paid",
@@ -952,10 +954,10 @@ function ReportsTab({ agents }: { agents: AgentComputedStat[] }) {
     downloadCsv(
       "monthly-trend.csv",
       ["Month", ...agentNames, "Team Total"],
-      monthlyTrend.map((row: any) => [
+      monthlyTrend.map((row) => [
         row.month,
         ...agentNames.map((n) => row[n] ?? 0),
-        agentNames.reduce((s, n) => s + (row[n] ?? 0), 0),
+        agentNames.reduce((s, n) => s + Number(row[n] ?? 0), 0),
       ]),
     );
   };

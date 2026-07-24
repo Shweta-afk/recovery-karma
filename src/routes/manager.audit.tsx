@@ -957,7 +957,7 @@ function CallAuditPage() {
           <Select
             value={filterSentiment}
             onValueChange={(v) => {
-              setFilterSentiment(v as any);
+              setFilterSentiment(v as Sentiment | "all");
               setActiveSummaryFilter(null);
             }}
           >
@@ -972,7 +972,10 @@ function CallAuditPage() {
               <SelectItem value="calm">Calm</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={filterCaller} onValueChange={(v) => setFilterCaller(v as any)}>
+          <Select
+            value={filterCaller}
+            onValueChange={(v) => setFilterCaller(v as CallerType | "all")}
+          >
             <SelectTrigger className="w-32 h-9 text-xs">
               <SelectValue placeholder="Caller" />
             </SelectTrigger>
@@ -982,7 +985,10 @@ function CallAuditPage() {
               <SelectItem value="ai">AI Bot only</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={filterFlagged} onValueChange={(v) => setFilterFlagged(v as any)}>
+          <Select
+            value={filterFlagged}
+            onValueChange={(v) => setFilterFlagged(v as "all" | "flagged")}
+          >
             <SelectTrigger className="w-32 h-9 text-xs">
               <SelectValue />
             </SelectTrigger>

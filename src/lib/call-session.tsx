@@ -50,6 +50,9 @@ export function CallSessionProvider({ children }: { children: ReactNode }) {
       setActiveCall((c) => (c && c.phase === "connected" ? { ...c, elapsed: c.elapsed + 1 } : c));
     }, 1000);
     return () => clearInterval(id);
+    // Intentionally keyed only on phase: the interval uses a functional update, so it never
+    // reads a stale activeCall. Depending on `activeCall` would tear down/recreate it every tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCall?.phase]);
 
   return (

@@ -267,7 +267,7 @@ function ChannelContributionPage() {
                   borderRadius: 6,
                   fontSize: 11,
                 }}
-                formatter={(v: number, _n, entry: any) => [
+                formatter={(v: number, _n, entry: { payload?: { real?: boolean } }) => [
                   v,
                   entry?.payload?.real ? "Volume (real)" : "Volume (illustrative)",
                 ]}

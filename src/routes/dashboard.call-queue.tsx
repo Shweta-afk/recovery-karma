@@ -784,6 +784,10 @@ const STATUS_META: Record<AgentStatus, { label: string; dot: string; txt: string
   offline: { label: "Offline", dot: "bg-muted-foreground", txt: "text-muted-foreground" },
 };
 
+// Module-scope so they're stable across renders (used in filteredQueue's useMemo deps).
+const PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = ["callback", "ptp"];
+const NON_PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = ["fresh", "no_answer", "escalated"];
+
 function CallQueuePage() {
   const { user } = useAuth();
   // Operational identity is the account email (matches the roster + assignments)
@@ -1101,11 +1105,8 @@ function CallQueuePage() {
       nc: 8,
       paid: 6,
     }),
-    [],
+    [allQueue],
   );
-
-  const PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = ["callback", "ptp"];
-  const NON_PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = ["fresh", "no_answer", "escalated"];
 
   const filteredQueue = useMemo(() => {
     let rows = allQueue;
@@ -1188,6 +1189,7 @@ function CallQueuePage() {
 
     return rows;
   }, [
+    allQueue,
     queueFilter,
     bucketFilter,
     queueSearch,
@@ -3052,7 +3054,7 @@ function ActiveCallContent({
               Dispute
             </span>
           )}
-          {(debtor as any).retained && (
+          {(debtor as QueueDebtor).retained && (
             <span className="rounded-full border border-violet-400/40 bg-violet-500/10 px-2.5 py-0.5 text-xs font-medium text-violet-500">
               ★ Retained
             </span>
@@ -5065,6 +5067,9 @@ function RecordingPlayer({
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
+    // Keyed on isPlaying only: `duration` is fixed per clip and `onToggle` is invoked once at
+    // completion via closure. Adding onToggle would restart playback on every parent re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying]);
 
   const elapsed = Math.round((progress / 100) * duration);

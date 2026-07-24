@@ -1,6 +1,89 @@
 import { supabase } from "./supabase";
 import type { Debtor } from "./mock-debtors";
 
+// The supabase client here is untyped (no generated Database type), so query rows come back
+// as `any`. These interfaces describe the exact columns each select requests, so callers get
+// real types instead of `any`. A Supabase to-one embed (e.g. `agents(name)`) is an object.
+
+export type CallLogOutcome =
+  | "paid"
+  | "promised"
+  | "refused"
+  | "no_answer"
+  | "voicemail"
+  | "dispute"
+  | "callback"
+  | "wrong_number"
+  | "deceased"
+  | "escalated";
+
+interface DebtorRow {
+  id: string;
+  name: string;
+  phone_primary: string;
+  loan_amount: number | string | null;
+  dpd: number | null;
+  ai_score: number | null;
+  ai_score_reason: string | null;
+  last_contacted_at: string | null;
+  portfolios: { name: string } | null;
+}
+
+export interface CallLogRow {
+  id: string;
+  created_at: string;
+  call_type: string;
+  outcome: CallLogOutcome | null;
+  duration_seconds: number | null;
+  raw_notes: string | null;
+  ai_notes: string | null;
+  promise_amount: number | null;
+  promise_date: string | null;
+  agents: { name: string } | null;
+}
+
+export interface MessageRow {
+  id: string;
+  sent_at: string;
+  channel: string;
+  direction: "outbound" | "inbound";
+  content: string;
+  status: string | null;
+  template_name: string | null;
+  agents: { name: string } | null;
+}
+
+export interface PaymentRow {
+  id: string;
+  created_at: string;
+  amount: number | string;
+  payment_method: string | null;
+  status: string;
+  payment_type: string;
+  received_at: string | null;
+}
+
+export interface DisputeRow {
+  id: string;
+  created_at: string;
+  dispute_type: string | null;
+  debtor_reason: string | null;
+  agent_notes: string | null;
+  status: string;
+  agents: { name: string } | null;
+}
+
+export interface DebtorHistory {
+  callLogs: CallLogRow[];
+  messages: MessageRow[];
+  payments: PaymentRow[];
+  disputes: DisputeRow[];
+}
+
+export interface DebtorDetails {
+  risk_flags: string[] | null;
+}
+
 export async function fetchDebtorsByAgent(agentId: string): Promise<Debtor[]> {
   // Get agent's assigned portfolios
   const { data: portfolios, error: portfolioError } = await supabase
@@ -43,7 +126,9 @@ export async function fetchDebtorsByAgent(agentId: string): Promise<Debtor[]> {
 
   if (!data) return [];
 
-  return data.map((row: any) => ({
+  // Supabase types a to-one embed as an array, but returns an object at runtime — assert the
+  // real shape through `unknown` (the columns are ours, from the select string above).
+  return (data as unknown as DebtorRow[]).map((row) => ({
     id: row.id,
     name: row.name,
     phone: row.phone_primary,
@@ -87,7 +172,9 @@ export async function fetchDebtors(clientId?: string): Promise<Debtor[]> {
 
   if (!data) return [];
 
-  return data.map((row: any) => ({
+  // Supabase types a to-one embed as an array, but returns an object at runtime — assert the
+  // real shape through `unknown` (the columns are ours, from the select string above).
+  return (data as unknown as DebtorRow[]).map((row) => ({
     id: row.id,
     name: row.name,
     phone: row.phone_primary,
@@ -103,7 +190,7 @@ export async function fetchDebtors(clientId?: string): Promise<Debtor[]> {
   })) as Debtor[];
 }
 
-export async function fetchDebtorHistory(debtorId: string) {
+export async function fetchDebtorHistory(debtorId: string): Promise<DebtorHistory> {
   // Fetch call logs
   const { data: callLogs } = await supabase
     .from("call_logs")
@@ -177,14 +264,14 @@ export async function fetchDebtorHistory(debtorId: string) {
     .order("created_at", { ascending: false });
 
   return {
-    callLogs: callLogs || [],
-    messages: messages || [],
-    payments: payments || [],
-    disputes: disputes || [],
+    callLogs: (callLogs as unknown as CallLogRow[] | null) ?? [],
+    messages: (messages as unknown as MessageRow[] | null) ?? [],
+    payments: (payments as PaymentRow[] | null) ?? [],
+    disputes: (disputes as unknown as DisputeRow[] | null) ?? [],
   };
 }
 
-export async function fetchDebtorDetails(debtorId: string) {
+export async function fetchDebtorDetails(debtorId: string): Promise<DebtorDetails | null> {
   const { data } = await supabase
     .from("debtors")
     .select(
@@ -197,23 +284,13 @@ export async function fetchDebtorDetails(debtorId: string) {
     .eq("id", debtorId)
     .single();
 
-  return data;
+  return (data as DebtorDetails | null) ?? null;
 }
 
 export async function logCallOutcome(
   debtorId: string,
   agentId: string,
-  outcome:
-    | "paid"
-    | "promised"
-    | "refused"
-    | "no_answer"
-    | "voicemail"
-    | "dispute"
-    | "callback"
-    | "wrong_number"
-    | "deceased"
-    | "escalated",
+  outcome: CallLogOutcome,
   notes: string,
   promiseAmount?: number,
   promiseDate?: string,
