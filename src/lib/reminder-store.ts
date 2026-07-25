@@ -7,15 +7,15 @@ export type ReminderKind = "ptp" | "callback";
 
 export interface Reminder {
   id: string;
-  agentId: string;   // email
+  agentId: string; // email
   debtorId: string;
   debtorName: string;
   phone: string;
   kind: ReminderKind;
   amount?: number;
-  dueDate: string;   // ISO date (yyyy-mm-dd)
-  dueTime?: string;  // HH:mm (callbacks)
-  message: string;   // agent-facing reminder text
+  dueDate: string; // ISO date (yyyy-mm-dd)
+  dueTime?: string; // HH:mm (callbacks)
+  message: string; // agent-facing reminder text
   createdAt: string; // ISO timestamp
   notified?: boolean;
 }
@@ -33,17 +33,20 @@ export function getReminders(): Reminder[] {
 
 export async function refreshReminders(): Promise<void> {
   const [{ data: rows, error }, { data: debtorRows }, { data: agentRows }] = await Promise.all([
-    supabase.from("reminders")
-      .select("id, agent_id, debtor_id, kind, amount, due_date, due_time, message, notified, created_at"),
+    supabase
+      .from("reminders")
+      .select(
+        "id, agent_id, debtor_id, kind, amount, due_date, due_time, message, notified, created_at",
+      ),
     supabase.from("debtors").select("id, name, phone_primary"),
     supabase.from("agents").select("id, email"),
   ]);
   if (error || !rows || !debtorRows || !agentRows) return;
 
-  const debtorById = new Map(debtorRows.map(d => [d.id, d]));
-  const emailById = new Map(agentRows.map(a => [a.id, a.email]));
+  const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
+  const emailById = new Map(agentRows.map((a) => [a.id, a.email]));
 
-  const reminders: Reminder[] = rows.map(r => {
+  const reminders: Reminder[] = rows.map((r) => {
     const debtor = debtorById.get(r.debtor_id);
     return {
       id: r.id,
@@ -67,7 +70,7 @@ export async function refreshReminders(): Promise<void> {
 
 export async function saveReminder(r: Reminder): Promise<void> {
   const { data: agentRows } = await supabase.from("agents").select("id, email");
-  const idByEmail = new Map((agentRows ?? []).map(a => [a.email, a.id]));
+  const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
   const agentUuid = idByEmail.get(r.agentId);
   if (!agentUuid) throw new Error(`No agent account found for ${r.agentId}`);
 
@@ -88,13 +91,13 @@ export async function saveReminder(r: Reminder): Promise<void> {
 }
 
 export function getAgentReminders(agentId: string): Reminder[] {
-  return getReminders().filter(r => r.agentId === agentId);
+  return getReminders().filter((r) => r.agentId === agentId);
 }
 
 /** Reminders for this agent that are due on/before `todayISO` and not yet shown. */
 export function getDueReminders(agentId: string, todayISO: string): Reminder[] {
   return getReminders().filter(
-    r => r.agentId === agentId && !r.notified && r.dueDate && r.dueDate <= todayISO,
+    (r) => r.agentId === agentId && !r.notified && r.dueDate && r.dueDate <= todayISO,
   );
 }
 

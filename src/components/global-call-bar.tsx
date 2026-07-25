@@ -8,7 +8,9 @@ import { useCallSession } from "@/lib/call-session";
 import { cn } from "@/lib/utils";
 
 function fmtElapsed(s: number) {
-  const m = Math.floor(s / 60).toString().padStart(2, "0");
+  const m = Math.floor(s / 60)
+    .toString()
+    .padStart(2, "0");
   const sec = (s % 60).toString().padStart(2, "0");
   return `${m}:${sec}`;
 }
@@ -18,23 +20,31 @@ export function GlobalCallBar() {
   const navigate = useNavigate();
 
   const [pos, setPos] = useState({ x: 24, y: 24 });
-  const dragRef = useRef<{ dragging: boolean; offX: number; offY: number }>({ dragging: false, offX: 0, offY: 0 });
+  const dragRef = useRef<{ dragging: boolean; offX: number; offY: number }>({
+    dragging: false,
+    offX: 0,
+    offY: 0,
+  });
   const barRef = useRef<HTMLDivElement>(null);
 
   if (!activeCall || activeCall.view !== "minimized") return null;
 
   const { debtor, phase, muted, elapsed } = activeCall;
-  const initials = debtor.name.split(" ").map(n => n[0]).slice(0, 2).join("");
+  const initials = debtor.name
+    .split(" ")
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("");
 
   const goToQueue = () => navigate({ to: "/dashboard/call-queue" });
 
   const expand = () => {
-    setActiveCall(c => (c ? { ...c, view: "panel" } : null));
+    setActiveCall((c) => (c ? { ...c, view: "panel" } : null));
     goToQueue();
   };
 
   const endCall = () => {
-    setActiveCall(c => (c ? { ...c, phase: "ended", view: "panel" } : null));
+    setActiveCall((c) => (c ? { ...c, phase: "ended", view: "panel" } : null));
     goToQueue();
   };
 
@@ -48,7 +58,8 @@ export function GlobalCallBar() {
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!dragRef.current.dragging || !barRef.current) return;
     const el = barRef.current;
-    const w = el.offsetWidth, h = el.offsetHeight;
+    const w = el.offsetWidth,
+      h = el.offsetHeight;
     const x = Math.max(0, Math.min(e.clientX - dragRef.current.offX, window.innerWidth - w));
     const y = Math.max(0, Math.min(e.clientY - dragRef.current.offY, window.innerHeight - h));
     setPos({ x, y });
@@ -75,22 +86,39 @@ export function GlobalCallBar() {
       </span>
 
       {phase !== "ringing" && (
-        <button type="button" onPointerDown={e => e.stopPropagation()}
-          onClick={() => setActiveCall(c => (c ? { ...c, muted: !c.muted } : null))}
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => setActiveCall((c) => (c ? { ...c, muted: !c.muted } : null))}
           title={muted ? "Unmute" : "Mute"}
-          className={cn("flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full transition-colors",
-            muted ? "bg-destructive text-destructive-foreground" : "bg-background/15 hover:bg-background/25")}>
+          className={cn(
+            "flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full transition-colors",
+            muted
+              ? "bg-destructive text-destructive-foreground"
+              : "bg-background/15 hover:bg-background/25",
+          )}
+        >
           {muted ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
         </button>
       )}
 
-      <button type="button" onPointerDown={e => e.stopPropagation()} onClick={expand} title="Expand"
-        className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-background/15 hover:bg-background/25 transition-colors">
+      <button
+        type="button"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={expand}
+        title="Expand"
+        className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-background/15 hover:bg-background/25 transition-colors"
+      >
         <Maximize2 className="h-3 w-3" />
       </button>
 
-      <button type="button" onPointerDown={e => e.stopPropagation()} onClick={endCall} title="End call"
-        className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors">
+      <button
+        type="button"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={endCall}
+        title="End call"
+        className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+      >
         <PhoneOff className="h-3 w-3" />
       </button>
     </div>

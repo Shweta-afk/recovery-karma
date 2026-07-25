@@ -11,13 +11,18 @@ export function rankColor(rank: number, total: number): { bg: string; fg: string
 
   // green (34,197,94) -> amber (245,158,11) -> red (239,68,68)
   const stops = [
-    { at: 0,   c: [34, 197, 94] },
+    { at: 0, c: [34, 197, 94] },
     { at: 0.5, c: [245, 158, 11] },
-    { at: 1,   c: [239, 68, 68] },
+    { at: 1, c: [239, 68, 68] },
   ];
-  let lo = stops[0], hi = stops[stops.length - 1];
+  let lo = stops[0],
+    hi = stops[stops.length - 1];
   for (let i = 0; i < stops.length - 1; i++) {
-    if (t >= stops[i].at && t <= stops[i + 1].at) { lo = stops[i]; hi = stops[i + 1]; break; }
+    if (t >= stops[i].at && t <= stops[i + 1].at) {
+      lo = stops[i];
+      hi = stops[i + 1];
+      break;
+    }
   }
   const span = hi.at - lo.at || 1;
   const localT = (t - lo.at) / span;

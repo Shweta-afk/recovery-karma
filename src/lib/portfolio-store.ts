@@ -12,14 +12,14 @@ const PRODUCT_LABEL_TO_ENUM: Record<string, string> = {
   "Two-Wheeler Auto": "vehicle_loan",
   "Home Loan": "home_loan",
   "Gold Loan": "gold_loan",
-  "Microfinance": "other",
+  Microfinance: "other",
 };
 const PRODUCT_ENUM_TO_LABEL: Record<string, string> = Object.fromEntries(
   Object.entries(PRODUCT_LABEL_TO_ENUM).map(([label, enumValue]) => [enumValue, label]),
 );
 
 export interface UploadedDebtor {
-  id: string;            // client-generated UUID — stable from the upload wizard through to debtors.id
+  id: string; // client-generated UUID — stable from the upload wizard through to debtors.id
   loanReference: string; // the CSV's own loan/account ID, for human display (debtors.loan_reference)
   name: string;
   phone: string;
@@ -97,19 +97,26 @@ export function getPortfolios(): UploadedPortfolio[] {
  * client is allowed to see (client-scoped via RLS) in one go — fine at today's scale, but
  * would need pagination/streaming if portfolios grow into the tens of thousands of rows. */
 export async function refreshPortfolios(): Promise<void> {
-  const [{ data: portfolioRows, error: pErr }, { data: debtorRows, error: dErr }, { data: agentRows }] =
-    await Promise.all([
-      supabase.from("portfolios")
-        .select("id, name, lender_name, product_type, uploaded_at, settings, team_id, manager_id"),
-      supabase.from("debtors")
-        .select("id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id"),
-      supabase.from("agents").select("id, email"),
-    ]);
+  const [
+    { data: portfolioRows, error: pErr },
+    { data: debtorRows, error: dErr },
+    { data: agentRows },
+  ] = await Promise.all([
+    supabase
+      .from("portfolios")
+      .select("id, name, lender_name, product_type, uploaded_at, settings, team_id, manager_id"),
+    supabase
+      .from("debtors")
+      .select(
+        "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id",
+      ),
+    supabase.from("agents").select("id, email"),
+  ]);
   if (pErr || dErr || !portfolioRows || !debtorRows || !agentRows) return;
 
-  const emailById = new Map(agentRows.map(a => [a.id, a.email]));
+  const emailById = new Map(agentRows.map((a) => [a.id, a.email]));
 
-  const portfolios: UploadedPortfolio[] = portfolioRows.map(p => ({
+  const portfolios: UploadedPortfolio[] = portfolioRows.map((p) => ({
     id: p.id,
     name: p.name,
     lender: p.lender_name ?? "",
@@ -118,18 +125,20 @@ export async function refreshPortfolios(): Promise<void> {
     managerId: p.manager_id ? emailById.get(p.manager_id) : undefined,
     teamId: p.team_id ?? undefined,
     settings: (p.settings as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
-    rows: debtorRows.filter(d => d.portfolio_id === p.id).map(d => ({
-      id: d.id,
-      loanReference: d.loan_reference ?? d.id,
-      name: d.name,
-      phone: d.phone_primary,
-      loanAmount: Number(d.loan_amount ?? 0),
-      dpd: d.dpd ?? 0,
-      bucket: dpd2bucket(d.dpd ?? 0),
-      email: d.email ?? "",
-      assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
-      extra: (d.extra as Record<string, string>) ?? {},
-    })),
+    rows: debtorRows
+      .filter((d) => d.portfolio_id === p.id)
+      .map((d) => ({
+        id: d.id,
+        loanReference: d.loan_reference ?? d.id,
+        name: d.name,
+        phone: d.phone_primary,
+        loanAmount: Number(d.loan_amount ?? 0),
+        dpd: d.dpd ?? 0,
+        bucket: dpd2bucket(d.dpd ?? 0),
+        email: d.email ?? "",
+        assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
+        extra: (d.extra as Record<string, string>) ?? {},
+      })),
   }));
 
   localStorage.setItem(KEY, JSON.stringify(portfolios));
@@ -145,7 +154,7 @@ export async function createPortfolio(
 ): Promise<void> {
   const me = await getMyAgentRow();
   const { data: agentRows } = await supabase.from("agents").select("id, email");
-  const idByEmail = new Map((agentRows ?? []).map(a => [a.email, a.id]));
+  const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
   const managerAgentId = p.managerId ? idByEmail.get(p.managerId) : undefined;
 
   const assignedIdFor = new Map<string, string>();
@@ -170,7 +179,7 @@ export async function createPortfolio(
   if (pErr) throw pErr;
 
   for (let i = 0; i < p.rows.length; i += CHUNK_SIZE) {
-    const chunk = p.rows.slice(i, i + CHUNK_SIZE).map(r => ({
+    const chunk = p.rows.slice(i, i + CHUNK_SIZE).map((r) => ({
       id: r.id,
       client_id: me?.client_id,
       portfolio_id: p.id,
@@ -199,7 +208,7 @@ export async function updatePortfolioMeta(
   const update: Record<string, unknown> = {};
   if (patch.managerId !== undefined) {
     const { data: agentRows } = await supabase.from("agents").select("id, email");
-    const idByEmail = new Map((agentRows ?? []).map(a => [a.email, a.id]));
+    const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
     update.manager_id = idByEmail.get(patch.managerId) ?? null;
   }
   if (patch.teamId !== undefined) update.team_id = patch.teamId || null;
@@ -243,9 +252,12 @@ export async function createAdHocDebtor(name: string, phone: string): Promise<st
  * agent's email to the debtor IDs they should own; any debtor not covered becomes unassigned.
  * Replaces the old assignment-store.ts — `debtors.assigned_agent_id` is now the single
  * source of truth for who owns a debtor, no separate ledger table. */
-export async function assignDebtors(portfolioId: string, allocation: Record<string, string[]>): Promise<void> {
+export async function assignDebtors(
+  portfolioId: string,
+  allocation: Record<string, string[]>,
+): Promise<void> {
   const { data: agentRows } = await supabase.from("agents").select("id, email");
-  const idByEmail = new Map((agentRows ?? []).map(a => [a.email, a.id]));
+  const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
 
   const { error: resetErr } = await supabase
     .from("debtors")
@@ -257,7 +269,10 @@ export async function assignDebtors(portfolioId: string, allocation: Record<stri
     if (!debtorIds.length) continue;
     const agentUuid = idByEmail.get(agentEmail);
     if (!agentUuid) continue;
-    const { error } = await supabase.from("debtors").update({ assigned_agent_id: agentUuid }).in("id", debtorIds);
+    const { error } = await supabase
+      .from("debtors")
+      .update({ assigned_agent_id: agentUuid })
+      .in("id", debtorIds);
     if (error) throw error;
   }
 
@@ -270,11 +285,17 @@ export async function assignDebtors(portfolioId: string, allocation: Record<stri
 export async function transferDebtor(debtorId: string, agentId: string | null): Promise<void> {
   let agentUuid: string | null = null;
   if (agentId) {
-    const { data: agentRows } = await supabase.from("agents").select("id, email").eq("email", agentId);
+    const { data: agentRows } = await supabase
+      .from("agents")
+      .select("id, email")
+      .eq("email", agentId);
     agentUuid = agentRows?.[0]?.id ?? null;
     if (!agentUuid) throw new Error(`Agent "${agentId}" not found`);
   }
-  const { error } = await supabase.from("debtors").update({ assigned_agent_id: agentUuid }).eq("id", debtorId);
+  const { error } = await supabase
+    .from("debtors")
+    .update({ assigned_agent_id: agentUuid })
+    .eq("id", debtorId);
   if (error) throw error;
   await refreshPortfolios();
 }
@@ -283,8 +304,8 @@ export async function transferDebtor(debtorId: string, agentId: string | null): 
  * directly from the cached portfolios/debtors, no separate assignment ledger to keep in sync. */
 export function getAgentDebtorIds(agentId: string): { portfolioId: string; debtorIds: string[] }[] {
   return getPortfolios()
-    .map(p => {
-      const debtorIds = p.rows.filter(r => r.assignedAgentId === agentId).map(r => r.id);
+    .map((p) => {
+      const debtorIds = p.rows.filter((r) => r.assignedAgentId === agentId).map((r) => r.id);
       return debtorIds.length ? { portfolioId: p.id, debtorIds } : null;
     })
     .filter((x): x is { portfolioId: string; debtorIds: string[] } => !!x);

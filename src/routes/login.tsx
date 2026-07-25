@@ -69,8 +69,8 @@ function LoginPage() {
             India's modern collections platform for NBFCs &amp; ARCs.
           </h1>
           <p className="max-w-md text-sm text-white/70">
-            Run compliant outbound calling, SMS &amp; UPI collection workflows from one
-            operator console. Built for RBI fair-practice guidelines.
+            Run compliant outbound calling, SMS &amp; UPI collection workflows from one operator
+            console. Built for RBI fair-practice guidelines.
           </p>
           <ul className="space-y-2 text-sm text-white/80">
             <li>• AI-assisted call queue prioritisation</li>
@@ -95,9 +95,7 @@ function LoginPage() {
           <Card className="border-border shadow-sm">
             <CardHeader className="space-y-1">
               <h2 className="text-xl font-semibold text-foreground">Sign in to your workspace</h2>
-              <p className="text-sm text-muted-foreground">
-                Enter your work email to continue.
-              </p>
+              <p className="text-sm text-muted-foreground">Enter your work email to continue.</p>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">

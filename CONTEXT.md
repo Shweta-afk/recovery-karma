@@ -6,11 +6,11 @@ RecoveryAI is a debt-collections platform for call-centre agents and managers. I
 
 ## User roles
 
-| Role    | Entry route        | What they do |
-|---------|--------------------|--------------|
-| Agent   | `/dashboard`       | Work the call queue, log outcomes, view debtor profiles, track their daily targets |
-| Manager | `/manager`         | Upload portfolios, assign accounts, audit calls, view team performance |
-| Admin   | `/admin`           | Platform-level settings, portfolio management |
+| Role    | Entry route  | What they do                                                                       |
+| ------- | ------------ | ---------------------------------------------------------------------------------- |
+| Agent   | `/dashboard` | Work the call queue, log outcomes, view debtor profiles, track their daily targets |
+| Manager | `/manager`   | Upload portfolios, assign accounts, audit calls, view team performance             |
+| Admin   | `/admin`     | Platform-level settings, portfolio management                                      |
 
 ## Tech stack
 
@@ -35,6 +35,7 @@ RecoveryAI is a debt-collections platform for call-centre agents and managers. I
 ## Colour system
 
 Semantic colours only — no raw hex. Opacity-modulated for muted professional tone:
+
 - **Success (green)**: confirmed, paid, PTP kept → `bg-success/8 text-success/70 border-success/15`
 - **Warning (amber)**: pending, callback → `bg-warning/8 text-warning-foreground/70 border-warning/15`
 - **Destructive (red)**: bounced, refused, high DPD → `bg-destructive/8 text-destructive/70 border-destructive/15`

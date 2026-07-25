@@ -13,10 +13,14 @@ function escapeCell(v: string | number): string {
 }
 
 export function toCsv(headers: string[], rows: (string | number)[][]): string {
-  return [headers, ...rows].map(r => r.map(escapeCell).join(",")).join("\n");
+  return [headers, ...rows].map((r) => r.map(escapeCell).join(",")).join("\n");
 }
 
-export function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]): void {
+export function downloadCsv(
+  filename: string,
+  headers: string[],
+  rows: (string | number)[][],
+): void {
   const csv = toCsv(headers, rows);
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);

@@ -11,7 +11,8 @@ import type {
   CallStatus,
 } from "./types";
 
-const API_KEY = process.env.KOOKOO_API_KEY;
+// Guarded so a stray client-side import of this module can't throw on a missing `process`.
+const API_KEY = typeof process !== "undefined" ? process.env?.KOOKOO_API_KEY : undefined;
 const BASE_URL = "https://in1-cpaas.ozonetel.com/api/v1";
 
 function requireApiKey() {
@@ -40,6 +41,14 @@ export const kookooProvider: TelephonyProvider = {
     //   custom_field: req.callLogId, status_callback: `${APP_URL}/api/telephony/webhook` }
     // and return the provider's call id from the response body.
     throw new Error("kookooProvider.startCall is not implemented yet — see TODO above");
+  },
+
+  async hangup(providerCallId: string): Promise<void> {
+    requireApiKey();
+    void providerCallId;
+    // TODO once KOOKOO_API_KEY exists: POST {BASE_URL}/calls/{providerCallId}/hangup
+    // (confirm the exact endpoint against Ozonetel's docs) to drop a live/ringing leg.
+    throw new Error("kookooProvider.hangup is not implemented yet — see TODO above");
   },
 
   async sendSms(req: SendSmsRequest): Promise<SendSmsResult> {

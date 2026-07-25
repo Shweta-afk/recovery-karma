@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Formatting is enforced on the code we actively format (src + scripts).
+      - name: Prettier (format check)
+        run: bun run format:check
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Telephony logic tests
+        run: bun run test:logic
+
+      # Note: `vite build` is intentionally omitted here — SSR prerender instantiates the
+      # Supabase client and would require VITE_SUPABASE_* secrets. Add it as a separate job
+      # with repo secrets if you want build coverage in CI.

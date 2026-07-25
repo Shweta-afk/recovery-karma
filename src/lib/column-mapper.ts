@@ -10,8 +10,8 @@
 export type MappingSource = "template" | "alias" | "fuzzy" | "value" | "none";
 
 export interface FieldSuggestion {
-  column: string;      // matched source header ("" when unmapped)
-  confidence: number;  // 0..1
+  column: string; // matched source header ("" when unmapped)
+  confidence: number; // 0..1
   source: MappingSource;
 }
 
@@ -19,7 +19,7 @@ export type MappingResult = Record<string, FieldSuggestion>;
 
 interface FieldSpec {
   key: string;
-  aliases: string[];               // known header spellings (normalized on compare)
+  aliases: string[]; // known header spellings (normalized on compare)
   /** value-content detector: fraction 0..1 of sampled values that look like this field */
   detect?: (values: string[]) => number;
 }
@@ -27,11 +27,16 @@ interface FieldSpec {
 // ─── Normalization + string similarity ────────────────────────────────────────
 
 export function normHeader(s: string): string {
-  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function levenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length;
+  const m = a.length,
+    n = b.length;
   if (!m) return n;
   if (!n) return m;
   const prev = new Array(n + 1);
@@ -41,11 +46,7 @@ function levenshtein(a: string, b: string): number {
     prev[0] = i;
     for (let j = 1; j <= n; j++) {
       const tmp = prev[j];
-      prev[j] = Math.min(
-        prev[j] + 1,
-        prev[j - 1] + 1,
-        diag + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
       diag = tmp;
     }
   }
@@ -60,7 +61,8 @@ function levRatio(a: string, b: string): number {
 
 function jaccard(a: string[], b: string[]): number {
   if (!a.length || !b.length) return 0;
-  const sa = new Set(a), sb = new Set(b);
+  const sa = new Set(a),
+    sb = new Set(b);
   let inter = 0;
   for (const t of sa) if (sb.has(t)) inter++;
   return inter / (sa.size + sb.size - inter);
@@ -71,7 +73,8 @@ function headerSim(colNorm: string, alias: string): number {
   if (colNorm === alias) return 1;
   const jac = jaccard(colNorm.split("_"), alias.split("_"));
   const lr = levRatio(colNorm, alias);
-  const contains = (colNorm.includes(alias) || alias.includes(colNorm)) && alias.length >= 3 ? 0.85 : 0;
+  const contains =
+    (colNorm.includes(alias) || alias.includes(colNorm)) && alias.length >= 3 ? 0.85 : 0;
   return Math.max(jac, lr, contains);
 }
 
@@ -90,22 +93,27 @@ const digitsOnly = (v: string) => v.replace(/\D/g, "");
 const toNumber = (v: string) => parseFloat(v.replace(/[,₹\s]/g, ""));
 const isNumeric = (v: string) => v !== "" && !isNaN(toNumber(v));
 
-const detectPhone = (values: string[]) => frac(values, v => {
-  const d = digitsOnly(v);
-  return d.length >= 10 && d.length <= 13 && /^[+\d][\d\s\-()]+$/.test(v);
-});
+const detectPhone = (values: string[]) =>
+  frac(values, (v) => {
+    const d = digitsOnly(v);
+    return d.length >= 10 && d.length <= 13 && /^[+\d][\d\s\-()]+$/.test(v);
+  });
 
-const detectEmail = (values: string[]) => frac(values, v => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v));
+const detectEmail = (values: string[]) => frac(values, (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v));
 
-const detectDate = (values: string[]) => frac(values, v =>
-  /^\d{4}-\d{1,2}-\d{1,2}/.test(v) || /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(v));
+const detectDate = (values: string[]) =>
+  frac(
+    values,
+    (v) => /^\d{4}-\d{1,2}-\d{1,2}/.test(v) || /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(v),
+  );
 
 // DPD: whole numbers in a plausible days-overdue range (small magnitude)
 const detectDpd = (values: string[]) => {
   const nums = nonEmpty(values).filter(isNumeric).map(toNumber);
   if (!nums.length) return 0;
   const numericFrac = nums.length / nonEmpty(values).length;
-  const inRange = nums.filter(n => Number.isInteger(n) && n >= 0 && n <= 2000).length / nums.length;
+  const inRange =
+    nums.filter((n) => Number.isInteger(n) && n >= 0 && n <= 2000).length / nums.length;
   const max = Math.max(...nums);
   const magnitudeOk = max <= 2000 ? 1 : 0.2;
   return numericFrac * inRange * magnitudeOk;
@@ -117,49 +125,163 @@ const detectAmount = (values: string[]) => {
   const nums = vals.filter(isNumeric).map(toNumber);
   if (!nums.length) return 0;
   const numericFrac = nums.length / vals.length;
-  const bigEnough = nums.filter(n => Math.abs(n) >= 500).length / nums.length;
+  const bigEnough = nums.filter((n) => Math.abs(n) >= 500).length / nums.length;
   const median = [...nums].sort((a, b) => a - b)[Math.floor(nums.length / 2)];
   const magnitude = median >= 1000 ? 1 : median >= 500 ? 0.6 : 0.25;
   return numericFrac * bigEnough * magnitude;
 };
 
 // Human name: mostly alphabetic + spaces, low digit content
-const detectName = (values: string[]) => frac(values, v =>
-  /^[a-zA-Z][a-zA-Z .'-]{2,}$/.test(v) && /\s/.test(v.trim() + " a"));
+const detectName = (values: string[]) =>
+  frac(values, (v) => /^[a-zA-Z][a-zA-Z .'-]{2,}$/.test(v) && /\s/.test(v.trim() + " a"));
 
 // Loan/account id: alphanumeric codes, frequently letter+digit or dashed
-const detectId = (values: string[]) => frac(values, v =>
-  /^[A-Za-z0-9][A-Za-z0-9\-_/]{2,}$/.test(v) && /\d/.test(v) && !isNumeric(v) || /^[A-Za-z]{1,4}[-_]?\d{3,}$/.test(v));
+const detectId = (values: string[]) =>
+  frac(
+    values,
+    (v) =>
+      (/^[A-Za-z0-9][A-Za-z0-9\-_/]{2,}$/.test(v) && /\d/.test(v) && !isNumeric(v)) ||
+      /^[A-Za-z]{1,4}[-_]?\d{3,}$/.test(v),
+  );
 
 // ─── Canonical field specs ────────────────────────────────────────────────────
 
 export const FIELD_SPECS: FieldSpec[] = [
-  { key: "loan_id",     aliases: ["loan_id","id","account_id","loanid","acc_id","accountid","account_no","loan_no","lan","agreement_no","case_id","ref_no"], detect: detectId },
-  { key: "name",        aliases: ["name","customer_name","borrower_name","debtor_name","full_name","client_name","cust_name","applicant_name","account_name"], detect: detectName },
-  { key: "phone",       aliases: ["phone","mobile","contact","phone_number","mobile_no","contact_no","cell","mob","primary_phone","contact_number","msisdn"], detect: detectPhone },
-  { key: "loan_amount", aliases: ["loan_amount","amount","outstanding","outstanding_amount","due_amount","balance","principal","pos","os_amount","total_due","current_balance","emi_outstanding"], detect: detectAmount },
-  { key: "dpd",         aliases: ["dpd","days_past_due","overdue_days","days_overdue","days_due","past_due","delinquency_days","bucket_days"], detect: detectDpd },
-  { key: "email",       aliases: ["email","email_id","email_address","mail","e_mail"], detect: detectEmail },
-  { key: "address",     aliases: ["address","addr","full_address","residential_address","mailing_address","permanent_address"] },
-  { key: "city",        aliases: ["city","town","district"] },
-  { key: "state",       aliases: ["state","province","region"] },
-  { key: "dob",         aliases: ["dob","date_of_birth","birth_date","birthdate"], detect: detectDate },
-  { key: "employer",    aliases: ["employer","company","employer_name","organization","company_name","workplace"] },
+  {
+    key: "loan_id",
+    aliases: [
+      "loan_id",
+      "id",
+      "account_id",
+      "loanid",
+      "acc_id",
+      "accountid",
+      "account_no",
+      "loan_no",
+      "lan",
+      "agreement_no",
+      "case_id",
+      "ref_no",
+    ],
+    detect: detectId,
+  },
+  {
+    key: "name",
+    aliases: [
+      "name",
+      "customer_name",
+      "borrower_name",
+      "debtor_name",
+      "full_name",
+      "client_name",
+      "cust_name",
+      "applicant_name",
+      "account_name",
+    ],
+    detect: detectName,
+  },
+  {
+    key: "phone",
+    aliases: [
+      "phone",
+      "mobile",
+      "contact",
+      "phone_number",
+      "mobile_no",
+      "contact_no",
+      "cell",
+      "mob",
+      "primary_phone",
+      "contact_number",
+      "msisdn",
+    ],
+    detect: detectPhone,
+  },
+  {
+    key: "loan_amount",
+    aliases: [
+      "loan_amount",
+      "amount",
+      "outstanding",
+      "outstanding_amount",
+      "due_amount",
+      "balance",
+      "principal",
+      "pos",
+      "os_amount",
+      "total_due",
+      "current_balance",
+      "emi_outstanding",
+    ],
+    detect: detectAmount,
+  },
+  {
+    key: "dpd",
+    aliases: [
+      "dpd",
+      "days_past_due",
+      "overdue_days",
+      "days_overdue",
+      "days_due",
+      "past_due",
+      "delinquency_days",
+      "bucket_days",
+    ],
+    detect: detectDpd,
+  },
+  {
+    key: "email",
+    aliases: ["email", "email_id", "email_address", "mail", "e_mail"],
+    detect: detectEmail,
+  },
+  {
+    key: "address",
+    aliases: [
+      "address",
+      "addr",
+      "full_address",
+      "residential_address",
+      "mailing_address",
+      "permanent_address",
+    ],
+  },
+  { key: "city", aliases: ["city", "town", "district"] },
+  { key: "state", aliases: ["state", "province", "region"] },
+  { key: "dob", aliases: ["dob", "date_of_birth", "birth_date", "birthdate"], detect: detectDate },
+  {
+    key: "employer",
+    aliases: ["employer", "company", "employer_name", "organization", "company_name", "workplace"],
+  },
   // income shares a value shape with loan_amount, so it maps by header only — a bare money
   // column should always fall to the required loan_amount field, not income.
-  { key: "income",      aliases: ["income","monthly_income","salary","monthly_salary","net_income","annual_income"] },
+  {
+    key: "income",
+    aliases: [
+      "income",
+      "monthly_income",
+      "salary",
+      "monthly_salary",
+      "net_income",
+      "annual_income",
+    ],
+  },
 ];
 
 // ─── Scoring + greedy assignment ──────────────────────────────────────────────
 
 const ASSIGN_THRESHOLD = 0.42;
 
-function scoreFieldColumn(spec: FieldSpec, colNorm: string, values: string[]): { score: number; source: MappingSource } {
-  const headerScore = Math.max(0, ...spec.aliases.map(a => headerSim(colNorm, a)));
+function scoreFieldColumn(
+  spec: FieldSpec,
+  colNorm: string,
+  values: string[],
+): { score: number; source: MappingSource } {
+  const headerScore = Math.max(0, ...spec.aliases.map((a) => headerSim(colNorm, a)));
   const valueScore = spec.detect ? spec.detect(values) : 0;
 
   // Strong header hit dominates; otherwise blend header + value evidence
-  if (headerScore >= 0.92) return { score: Math.min(1, headerScore + valueScore * 0.05), source: "alias" };
+  if (headerScore >= 0.92)
+    return { score: Math.min(1, headerScore + valueScore * 0.05), source: "alias" };
   const blended = Math.min(1, 0.7 * headerScore + 0.5 * valueScore);
   const source: MappingSource = headerScore >= valueScore ? "fuzzy" : "value";
   return { score: blended, source };
@@ -184,7 +306,9 @@ export function resolveMapping(
 
   // Per-column value samples (cap the work)
   const sampleCols: Record<string, string[]> = {};
-  headers.forEach((h, idx) => { sampleCols[h] = sampleRows.slice(0, 30).map(r => r[idx] ?? ""); });
+  headers.forEach((h, idx) => {
+    sampleCols[h] = sampleRows.slice(0, 30).map((r) => r[idx] ?? "");
+  });
 
   // 1) Apply saved template first — only for columns that still exist in this file
   if (template) {
@@ -212,10 +336,14 @@ export function resolveMapping(
   //    Ties break toward the earlier canonical field (e.g. loan_amount before income)
   //    so a required field wins a shared value detector over an optional one.
   const fieldRank = new Map(FIELD_SPECS.map((s, i) => [s.key, i]));
-  pairs.sort((a, b) => b.score - a.score || (fieldRank.get(a.field)! - fieldRank.get(b.field)!));
+  pairs.sort((a, b) => b.score - a.score || fieldRank.get(a.field)! - fieldRank.get(b.field)!);
   for (const p of pairs) {
     if (assignedFields.has(p.field) || usedCols.has(p.col)) continue;
-    result[p.field] = { column: p.col, confidence: Math.round(p.score * 100) / 100, source: p.source };
+    result[p.field] = {
+      column: p.col,
+      confidence: Math.round(p.score * 100) / 100,
+      source: p.source,
+    };
     assignedFields.add(p.field);
     usedCols.add(p.col);
   }
@@ -224,7 +352,10 @@ export function resolveMapping(
 }
 
 /** Convenience label for a confidence score. */
-export function confidenceLabel(s: FieldSuggestion): { label: string; tone: "template" | "high" | "medium" | "low" | "none" } {
+export function confidenceLabel(s: FieldSuggestion): {
+  label: string;
+  tone: "template" | "high" | "medium" | "low" | "none";
+} {
   if (!s.column) return { label: "unmapped", tone: "none" };
   if (s.source === "template") return { label: "saved", tone: "template" };
   if (s.confidence >= 0.85) return { label: "high", tone: "high" };

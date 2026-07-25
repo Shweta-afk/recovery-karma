@@ -14,7 +14,10 @@ export interface AuthUser {
 interface AuthCtx {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<{ error: string | null; user: AuthUser | null }>;
+  login: (
+    email: string,
+    password: string,
+  ) => Promise<{ error: string | null; user: AuthUser | null }>;
   logout: () => Promise<void>;
 }
 
@@ -46,7 +49,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     // Keep state in sync with Supabase auth events
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         const profile = await fetchAgentProfile(session.user.id);
         setUser(profile);
@@ -59,7 +64,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string): Promise<{ error: string | null; user: AuthUser | null }> => {
+  const login = async (
+    email: string,
+    password: string,
+  ): Promise<{ error: string | null; user: AuthUser | null }> => {
     setLoading(true);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {

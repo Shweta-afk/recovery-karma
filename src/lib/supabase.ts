@@ -9,7 +9,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
  * client-scoped table needs client_id to satisfy RLS, and agent_id/uploaded_by
  * style FKs need the agents.id UUID rather than the auth uid or email. */
 export async function getMyAgentRow(): Promise<{ id: string; client_id: string } | null> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return null;
   const { data, error } = await supabase
     .from("agents")
@@ -19,6 +21,9 @@ export async function getMyAgentRow(): Promise<{ id: string; client_id: string }
   // Surface lookup failures instead of silently returning null — callers that write to
   // client-scoped tables need client_id, and a swallowed error here previously showed up
   // downstream as a confusing generic RLS violation instead of this actionable message.
-  if (error) throw new Error(`Could not load your agent profile (${error.message}) — contact an admin to check your account is linked correctly`);
+  if (error)
+    throw new Error(
+      `Could not load your agent profile (${error.message}) — contact an admin to check your account is linked correctly`,
+    );
   return data ?? null;
 }

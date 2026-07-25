@@ -51,10 +51,10 @@ const managerItems = [
 ];
 
 const adminItems = [
-  { title: "Overview",     url: "/admin",           icon: LayoutDashboard },
-  { title: "Users",         url: "/admin/users",     icon: UserCog },
-  { title: "Teams",         url: "/admin/teams",     icon: Users },
-  { title: "Reports",       url: "/admin/reports",   icon: BarChart3 },
+  { title: "Overview", url: "/admin", icon: LayoutDashboard },
+  { title: "Users", url: "/admin/users", icon: UserCog },
+  { title: "Teams", url: "/admin/teams", icon: Users },
+  { title: "Reports", url: "/admin/reports", icon: BarChart3 },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];

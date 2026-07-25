@@ -90,8 +90,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:title", content: "RecoveryAI · Collections Platform" },
       {
         property: "og:description",
-        content:
-          "Modern, compliant loan recovery operations for Indian financial services teams.",
+        content: "Modern, compliant loan recovery operations for Indian financial services teams.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -114,7 +113,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    // The anti-FOUC script below sets the theme class on <html> before React hydrates,
+    // so the server markup intentionally differs from the client — suppress that warning.
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
         {/* Anti-FOUC: apply saved theme before first paint */}

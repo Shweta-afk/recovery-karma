@@ -11,6 +11,7 @@
 ## Architecture
 
 ### Tech Stack
+
 - **Frontend:** React 19 + TanStack Router + TanStack Query (react-query)
 - **Backend:** TanStack Start (uses nitro under the hood) + Node.js runtime
 - **Database:** Supabase Postgres (prod) + Row-Level Security
@@ -18,6 +19,7 @@
 - **APIs:** Anthropic (AI scoring), Interakt (WhatsApp), Razorpay (payments), ElevenLabs (voice bot)
 
 ### Build & Deploy
+
 - **Vite config:** Uses `@lovable.dev/vite-tanstack-config` with `nitro: { preset: "node" }` for Render
 - **Build output:** `dist/` (client) + `.output/server/` (nitro server)
 - **Start command:** `node .output/server/index.mjs`
@@ -46,6 +48,7 @@ clients ← clients table (company_name, plan: starter/growth/scale)
 ## Current State: What's Built & What's Mocked
 
 ### ✅ Complete (no changes needed)
+
 - **Schema + seed data** — 9 tables with 100+ debtors in Supabase
 - **Auth** — Login page + role-based access (agent/manager/admin)
 - **App shell** — Sidebar, routes, TanStack Router wired
@@ -59,6 +62,7 @@ clients ← clients table (company_name, plan: starter/growth/scale)
   - `login` — form with email/password
 
 ### 🟡 Partial (built but reads from mock)
+
 All pages read from `lib/mock-debtors.ts` instead of Supabase. **This is the main blocker.**
 
 ---
@@ -83,12 +87,14 @@ export function useDebtors(filters?: { portfolio_id?: string; status?: string })
     queryFn: async () => {
       let query = supabase
         .from("debtors")
-        .select(`
+        .select(
+          `
           id, name, phone_primary, phone_alternate, email,
           loan_amount, outstanding_balance, dpd, ai_score, ai_score_reason,
           status, last_contacted_at, portfolio_id,
           portfolios(name), agents(name)
-        `)
+        `,
+        )
         .limit(100);
 
       if (filters?.portfolio_id) query = query.eq("portfolio_id", filters.portfolio_id);
@@ -105,11 +111,7 @@ export function useDebtor(id: string) {
   return useQuery({
     queryKey: ["debtor", id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("debtors")
-        .select("*")
-        .eq("id", id)
-        .single();
+      const { data, error } = await supabase.from("debtors").select("*").eq("id", id).single();
       if (error) throw error;
       return data as Debtor;
     },
@@ -282,41 +284,40 @@ Server actions use TanStack Server Functions. Create actions in `src/` or coloca
 import { createServerFn } from "@tanstack/react-start";
 import { supabase } from "../supabase";
 
-export const logCallOutcome = createServerFn({ method: "POST" })(
-  async ({
-    debtorId,
-    agentId,
+export const logCallOutcome = createServerFn({ method: "POST" })(async ({
+  debtorId,
+  agentId,
+  outcome,
+  promiseAmount,
+  promiseDate,
+  durationSeconds,
+  notes,
+}: {
+  debtorId: string;
+  agentId: string;
+  outcome: "paid" | "promised" | "refused" | "no_answer" | "callback" | "escalated";
+  promiseAmount?: number;
+  promiseDate?: string;
+  durationSeconds?: number;
+  notes?: string;
+}) => {
+  const { data, error } = await supabase.from("call_logs").insert({
+    debtor_id: debtorId,
+    agent_id: agentId,
     outcome,
-    promiseAmount,
-    promiseDate,
-    durationSeconds,
-    notes,
-  }: {
-    debtorId: string;
-    agentId: string;
-    outcome: "paid" | "promised" | "refused" | "no_answer" | "callback" | "escalated";
-    promiseAmount?: number;
-    promiseDate?: string;
-    durationSeconds?: number;
-    notes?: string;
-  }) => {
-    const { data, error } = await supabase.from("call_logs").insert({
-      debtor_id: debtorId,
-      agent_id: agentId,
-      outcome,
-      promise_amount: promiseAmount,
-      promise_date: promiseDate,
-      duration_seconds: durationSeconds,
-      raw_notes: notes,
-    });
+    promise_amount: promiseAmount,
+    promise_date: promiseDate,
+    duration_seconds: durationSeconds,
+    raw_notes: notes,
+  });
 
-    if (error) throw error;
-    return data;
-  }
-);
+  if (error) throw error;
+  return data;
+});
 ```
 
 Call from component:
+
 ```typescript
 const [isPending, startTransition] = useTransition();
 
@@ -345,55 +346,53 @@ import { supabase } from "../supabase";
 const INTERAKT_API_KEY = process.env.INTERAKT_API_KEY;
 const INTERAKT_API_URL = "https://api.interakt.ai/v1/messages";
 
-export const sendWhatsApp = createServerFn({ method: "POST" })(
-  async ({
-    debtorId,
-    agentId,
-    phoneNumber,
-    message,
-    paymentLink,
-  }: {
-    debtorId: string;
-    agentId: string;
-    phoneNumber: string;
-    message: string;
-    paymentLink?: string;
-  }) => {
-    // 1. Send to Interakt API
-    const response = await fetch(INTERAKT_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${INTERAKT_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        phone: phoneNumber,
-        message: message + (paymentLink ? `\n\n${paymentLink}` : ""),
-        type: "template",
-      }),
-    });
+export const sendWhatsApp = createServerFn({ method: "POST" })(async ({
+  debtorId,
+  agentId,
+  phoneNumber,
+  message,
+  paymentLink,
+}: {
+  debtorId: string;
+  agentId: string;
+  phoneNumber: string;
+  message: string;
+  paymentLink?: string;
+}) => {
+  // 1. Send to Interakt API
+  const response = await fetch(INTERAKT_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${INTERAKT_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      phone: phoneNumber,
+      message: message + (paymentLink ? `\n\n${paymentLink}` : ""),
+      type: "template",
+    }),
+  });
 
-    if (!response.ok) {
-      throw new Error(`Interakt API error: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-
-    // 2. Log to messages table
-    const { data, error } = await supabase.from("messages").insert({
-      debtor_id: debtorId,
-      agent_id: agentId,
-      channel: "whatsapp",
-      direction: "outbound",
-      content: message,
-      status: "sent",
-      payment_link_url: paymentLink,
-    });
-
-    if (error) throw error;
-    return data;
+  if (!response.ok) {
+    throw new Error(`Interakt API error: ${response.statusText}`);
   }
-);
+
+  const result = await response.json();
+
+  // 2. Log to messages table
+  const { data, error } = await supabase.from("messages").insert({
+    debtor_id: debtorId,
+    agent_id: agentId,
+    channel: "whatsapp",
+    direction: "outbound",
+    content: message,
+    status: "sent",
+    payment_link_url: paymentLink,
+  });
+
+  if (error) throw error;
+  return data;
+});
 ```
 
 #### Step 2.3: Create Razorpay Payment Link
@@ -407,62 +406,60 @@ const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 const RAZORPAY_API_URL = "https://api.razorpay.com/v1/payment_links";
 
-export const createPaymentLink = createServerFn({ method: "POST" })(
-  async ({
-    debtorId,
-    agentId,
-    amount,
-    debtor,
-  }: {
-    debtorId: string;
-    agentId: string;
-    amount: number;
-    debtor: { name: string; phone_primary: string };
-  }) => {
-    // 1. Create link in Razorpay
-    const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
-    const response = await fetch(RAZORPAY_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        amount: amount * 100, // convert to paise
-        currency: "INR",
-        accept_partial: true,
-        customer_notify: 1,
-        notify: { sms: true, email: false },
-        reference_id: debtorId,
-        description: `Payment for ${debtor.name}`,
-        contact: debtor.phone_primary,
-      }),
-    });
+export const createPaymentLink = createServerFn({ method: "POST" })(async ({
+  debtorId,
+  agentId,
+  amount,
+  debtor,
+}: {
+  debtorId: string;
+  agentId: string;
+  amount: number;
+  debtor: { name: string; phone_primary: string };
+}) => {
+  // 1. Create link in Razorpay
+  const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+  const response = await fetch(RAZORPAY_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      amount: amount * 100, // convert to paise
+      currency: "INR",
+      accept_partial: true,
+      customer_notify: 1,
+      notify: { sms: true, email: false },
+      reference_id: debtorId,
+      description: `Payment for ${debtor.name}`,
+      contact: debtor.phone_primary,
+    }),
+  });
 
-    if (!response.ok) {
-      throw new Error(`Razorpay API error: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-
-    // 2. Record in payments table
-    const { data, error } = await supabase.from("payments").insert({
-      debtor_id: debtorId,
-      agent_id: agentId,
-      amount,
-      razorpay_link_id: result.id,
-      status: "pending",
-      payment_type: "full",
-    });
-
-    if (error) throw error;
-
-    return {
-      paymentLinkId: result.id,
-      paymentUrl: result.short_url,
-    };
+  if (!response.ok) {
+    throw new Error(`Razorpay API error: ${response.statusText}`);
   }
-);
+
+  const result = await response.json();
+
+  // 2. Record in payments table
+  const { data, error } = await supabase.from("payments").insert({
+    debtor_id: debtorId,
+    agent_id: agentId,
+    amount,
+    razorpay_link_id: result.id,
+    status: "pending",
+    payment_type: "full",
+  });
+
+  if (error) throw error;
+
+  return {
+    paymentLinkId: result.id,
+    paymentUrl: result.short_url,
+  };
+});
 ```
 
 ---
@@ -481,17 +478,16 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-export const scoreDebtor = createServerFn({ method: "POST" })(
-  async (debtor: {
-    id: string;
-    name: string;
-    dpd: number;
-    outstanding_balance: number;
-    loan_amount: number;
-    email?: string;
-    phone_primary: string;
-  }) => {
-    const prompt = `Score this debtor on a scale of 1-10 for likelihood to pay. Consider:
+export const scoreDebtor = createServerFn({ method: "POST" })(async (debtor: {
+  id: string;
+  name: string;
+  dpd: number;
+  outstanding_balance: number;
+  loan_amount: number;
+  email?: string;
+  phone_primary: string;
+}) => {
+  const prompt = `Score this debtor on a scale of 1-10 for likelihood to pay. Consider:
 - DPD (Days Past Due): ${debtor.dpd} days
 - Outstanding: ₹${debtor.outstanding_balance}
 - Loan amount: ₹${debtor.loan_amount}
@@ -499,30 +495,28 @@ export const scoreDebtor = createServerFn({ method: "POST" })(
 
 Return JSON: { "score": <1-10>, "reason": "<one-liner reason>" }`;
 
-    const message = await client.messages.create({
-      model: "claude-opus-4-8",
-      max_tokens: 200,
-      messages: [{ role: "user", content: prompt }],
-    });
+  const message = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 200,
+    messages: [{ role: "user", content: prompt }],
+  });
 
-    const text =
-      message.content[0].type === "text" ? message.content[0].text : "";
-    const parsed = JSON.parse(text);
+  const text = message.content[0].type === "text" ? message.content[0].text : "";
+  const parsed = JSON.parse(text);
 
-    // Update debtors table
-    const { error } = await supabase
-      .from("debtors")
-      .update({
-        ai_score: parsed.score,
-        ai_score_reason: parsed.reason,
-        score_updated_at: new Date().toISOString(),
-      })
-      .eq("id", debtor.id);
+  // Update debtors table
+  const { error } = await supabase
+    .from("debtors")
+    .update({
+      ai_score: parsed.score,
+      ai_score_reason: parsed.reason,
+      score_updated_at: new Date().toISOString(),
+    })
+    .eq("id", debtor.id);
 
-    if (error) throw error;
-    return parsed;
-  }
-);
+  if (error) throw error;
+  return parsed;
+});
 ```
 
 ---
@@ -530,20 +524,24 @@ Return JSON: { "score": <1-10>, "reason": "<one-liner reason>" }`;
 ## Development Workflow
 
 ### Local Setup
+
 ```bash
 cd ~/recovery-karma-main
 bun install
 bun run dev
 ```
+
 Opens http://localhost:5173 with hot reload.
 
 ### Testing Data Changes
+
 1. Make changes to `lib/queries.ts` or component
 2. HMR reloads automatically
 3. Open DevTools → Network tab to see Supabase API calls
 4. RLS errors appear in console if auth is wrong
 
 ### Supabase Console
+
 - **URL:** https://supabase.com/dashboard → select your project
 - **SQL Editor:** Run queries to verify seed data
 - **Auth Users:** See login credentials in Auth → Users
@@ -554,12 +552,14 @@ Opens http://localhost:5173 with hot reload.
 ## Deployment to Render
 
 ### Pre-deploy checklist
+
 1. ✅ render.yaml at root with `nitro: { preset: "node" }` in vite.config.ts
 2. ✅ package.json has `"start": "node .output/server/index.mjs"`
 3. ✅ .env.example has all env vars (VITE_SUPABASE_URL, ANTHROPIC_API_KEY, etc.)
 4. ✅ .gitignore ignores .env but not .env.example
 
 ### Steps
+
 1. `git push origin main`
 2. Go to https://dashboard.render.com
 3. New → Web Service → Select GitHub repo
@@ -572,24 +572,25 @@ Opens http://localhost:5173 with hot reload.
 
 ## Key Files to Know
 
-| File | Purpose |
-|------|---------|
-| `vite.config.ts` | Build config with nitro node preset |
-| `src/lib/supabase.ts` | Supabase client init |
-| `src/lib/queries.ts` | ← **CREATE THIS** — TanStack Query hooks |
-| `src/lib/server/*.ts` | ← **CREATE THESE** — Server actions for APIs |
-| `src/routes/dashboard/*.tsx` | Pages that need query wiring |
-| `src/routes/login.tsx` | Auth entry point |
-| `src/supabase/schema.sql` | DB schema (reference only) |
-| `src/supabase/seed.sql` | Seed data (ran once) |
-| `render.yaml` | Render deployment config |
-| `.env.example` | Template for env vars |
+| File                         | Purpose                                      |
+| ---------------------------- | -------------------------------------------- |
+| `vite.config.ts`             | Build config with nitro node preset          |
+| `src/lib/supabase.ts`        | Supabase client init                         |
+| `src/lib/queries.ts`         | ← **CREATE THIS** — TanStack Query hooks     |
+| `src/lib/server/*.ts`        | ← **CREATE THESE** — Server actions for APIs |
+| `src/routes/dashboard/*.tsx` | Pages that need query wiring                 |
+| `src/routes/login.tsx`       | Auth entry point                             |
+| `src/supabase/schema.sql`    | DB schema (reference only)                   |
+| `src/supabase/seed.sql`      | Seed data (ran once)                         |
+| `render.yaml`                | Render deployment config                     |
+| `.env.example`               | Template for env vars                        |
 
 ---
 
 ## Common Patterns
 
 ### Fetch + Display
+
 ```typescript
 const { data: items = [], isLoading, error } = useQuery(...);
 if (isLoading) return <Skeleton />;
@@ -598,6 +599,7 @@ return items.map((item) => <Item key={item.id} {...item} />);
 ```
 
 ### Call a Server Action
+
 ```typescript
 const [isPending, startTransition] = useTransition();
 startTransition(async () => {
@@ -607,6 +609,7 @@ startTransition(async () => {
 ```
 
 ### Refetch After Mutation
+
 ```typescript
 const queryClient = useQueryClient();
 await logCallOutcome({ ... });
@@ -632,7 +635,6 @@ queryClient.invalidateQueries({ queryKey: ["callLogs"] }); // auto-refetch
 ## Notes
 
 - **Supabase RLS:** All queries automatically filter by auth user's client_id via the `auth_client_id()` function in policies. No manual client filtering needed.
-- **VITE_* vars:** Baked into client bundle at build time. Must be set before `bun run build`.
+- **VITE\_\* vars:** Baked into client bundle at build time. Must be set before `bun run build`.
 - **TanStack Start:** Feels like Next.js but uses nitro. Server functions are always `/api/[path]`, no route configuration needed.
 - **Mock data:** Delete `lib/mock-debtors.ts` once all pages are wired (not yet).
-

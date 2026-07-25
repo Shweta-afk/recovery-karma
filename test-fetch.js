@@ -11,8 +11,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const { data, error } = await supabase
-  .from('debtors')
-  .select(`
+  .from("debtors")
+  .select(
+    `
     id,
     name,
     phone_primary,
@@ -22,14 +23,15 @@ const { data, error } = await supabase
     ai_score_reason,
     last_contacted_at,
     portfolios(name)
-  `)
-  .eq('status', 'active')
-  .order('ai_score', { ascending: false })
+  `,
+  )
+  .eq("status", "active")
+  .order("ai_score", { ascending: false })
   .limit(5);
 
 if (error) {
-  console.error('Error:', error);
+  console.error("Error:", error);
 } else {
-  console.log('Success! Fetched', data?.length || 0, 'debtors');
+  console.log("Success! Fetched", data?.length || 0, "debtors");
   console.log(JSON.stringify(data?.[0], null, 2));
 }

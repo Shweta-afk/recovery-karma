@@ -7,13 +7,13 @@ assigns to them, and any of it is visible from any browser/device once logged in
 
 ## The 5 accounts (default credentials — change later)
 
-| Role    | Name         | Email               | Password       |
-|---------|--------------|---------------------|----------------|
-| Admin   | Aditya Rao   | admin@axiotta.in    | Axiotta@2026   |
-| Manager | Sanjay Menon | manager@axiotta.in  | Axiotta@2026   |
-| Agent   | Priya Nair   | agent1@axiotta.in   | Axiotta@2026   |
-| Agent   | Ravi Kumar   | agent2@axiotta.in   | Axiotta@2026   |
-| Agent   | Neha Shah    | agent3@axiotta.in   | Axiotta@2026   |
+| Role    | Name         | Email              | Password     |
+| ------- | ------------ | ------------------ | ------------ |
+| Admin   | Aditya Rao   | admin@axiotta.in   | Axiotta@2026 |
+| Manager | Sanjay Menon | manager@axiotta.in | Axiotta@2026 |
+| Agent   | Priya Nair   | agent1@axiotta.in  | Axiotta@2026 |
+| Agent   | Ravi Kumar   | agent2@axiotta.in  | Axiotta@2026 |
+| Agent   | Neha Shah    | agent3@axiotta.in  | Axiotta@2026 |
 
 The agent emails are also the operational identity used to match uploaded/assigned data.
 The agent/manager roster and teams are both read live from Supabase (see `useRoster()` and
@@ -26,7 +26,7 @@ exists until one is created via Teams.
 2. **Realtime-sync migration** — run `migration_realtime_sync.sql` (adds `teams`,
    `team_agents`, `notifications`, `escalations`, `reminders`, `mapping_templates`, and
    extends `portfolios`/`debtors`/`call_logs` with the columns the app needs). Safe to re-run.
-3. **Create the 5 logins** — Authentication → Users → *Add user* (email + confirm) for each of
+3. **Create the 5 logins** — Authentication → Users → _Add user_ (email + confirm) for each of
    the 5 emails above, using password `Axiotta@2026`. Enable "Auto Confirm".
 4. **Copy each UUID** — click each new user, copy its **User UID**.
 5. **Seed the accounts** — open `seed.sql`, replace the five `<<<REPLACE_*_UUID>>>` placeholders

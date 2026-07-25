@@ -23,7 +23,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Phone, MessageCircle, IndianRupee, AlertTriangle } from "lucide-react";
-import { fetchDebtorHistory, fetchDebtorDetails, logCallOutcome } from "@/lib/fetch-debtors";
+import {
+  fetchDebtorHistory,
+  fetchDebtorDetails,
+  logCallOutcome,
+  type DebtorHistory,
+  type DebtorDetails,
+  type CallLogRow,
+  type MessageRow,
+  type PaymentRow,
+  type DisputeRow,
+  type CallLogOutcome,
+} from "@/lib/fetch-debtors";
 import { formatINR } from "@/lib/mock-debtors";
 import type { Debtor } from "@/lib/mock-debtors";
 
@@ -42,8 +53,8 @@ export function DebtorDetailsModal({
   onOpenChange,
   onCallLogged,
 }: DebtorDetailsModalProps) {
-  const [history, setHistory] = useState<any>(null);
-  const [details, setDetails] = useState<any>(null);
+  const [history, setHistory] = useState<DebtorHistory | null>(null);
+  const [details, setDetails] = useState<DebtorDetails | null>(null);
   const [loading, setLoading] = useState(false);
   const [showCallDialog, setShowCallDialog] = useState(false);
   const [callOutcome, setCallOutcome] = useState<string>("");
@@ -55,10 +66,7 @@ export function DebtorDetailsModal({
   useEffect(() => {
     if (debtor && open) {
       setLoading(true);
-      Promise.all([
-        fetchDebtorHistory(debtor.id),
-        fetchDebtorDetails(debtor.id),
-      ])
+      Promise.all([fetchDebtorHistory(debtor.id), fetchDebtorDetails(debtor.id)])
         .then(([hist, det]) => {
           setHistory(hist);
           setDetails(det);
@@ -75,10 +83,10 @@ export function DebtorDetailsModal({
       const result = await logCallOutcome(
         debtor.id,
         agentId,
-        callOutcome as any,
+        callOutcome as CallLogOutcome,
         callNotes,
         callOutcome === "promised" ? Number(promiseAmount) : undefined,
-        callOutcome === "promised" ? promiseDate : undefined
+        callOutcome === "promised" ? promiseDate : undefined,
       );
 
       if (result) {
@@ -109,16 +117,12 @@ export function DebtorDetailsModal({
           <DialogHeader>
             <DialogTitle className="text-xl">
               {debtor.name}
-              <span className="ml-3 text-sm font-normal text-muted-foreground">
-                {debtor.id}
-              </span>
+              <span className="ml-3 text-sm font-normal text-muted-foreground">{debtor.id}</span>
             </DialogTitle>
           </DialogHeader>
 
           {loading ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Loading debtor history...
-            </div>
+            <div className="py-8 text-center text-muted-foreground">Loading debtor history...</div>
           ) : (
             <div className="space-y-6">
               {/* Summary */}
@@ -152,17 +156,14 @@ export function DebtorDetailsModal({
 
                 {/* Call History */}
                 <TabsContent value="calls" className="space-y-4">
-                  <Button
-                    onClick={() => setShowCallDialog(true)}
-                    className="w-full gap-2"
-                  >
+                  <Button onClick={() => setShowCallDialog(true)} className="w-full gap-2">
                     <Phone className="h-4 w-4" />
                     Log New Call
                   </Button>
 
                   {history?.callLogs && history.callLogs.length > 0 ? (
                     <div className="space-y-3">
-                      {history.callLogs.map((call: any) => (
+                      {history.callLogs.map((call: CallLogRow) => (
                         <div key={call.id} className="border rounded-lg p-3">
                           <div className="flex justify-between items-start mb-2">
                             <div className="font-medium text-sm">
@@ -171,17 +172,15 @@ export function DebtorDetailsModal({
                             <Badge variant="outline">{call.outcome}</Badge>
                           </div>
                           {call.raw_notes && (
-                            <p className="text-sm text-foreground/80 mb-2">
-                              {call.raw_notes}
-                            </p>
+                            <p className="text-sm text-foreground/80 mb-2">{call.raw_notes}</p>
                           )}
-                          {call.promise_amount && (
+                          {call.promise_amount && call.promise_date && (
                             <div className="text-xs text-muted-foreground">
                               Promised {formatINR(call.promise_amount)} by{" "}
                               {new Date(call.promise_date).toLocaleDateString()}
                             </div>
                           )}
-                          {call.duration_seconds > 0 && (
+                          {call.duration_seconds != null && call.duration_seconds > 0 && (
                             <div className="text-xs text-muted-foreground">
                               Duration: {Math.floor(call.duration_seconds / 60)}m{" "}
                               {call.duration_seconds % 60}s
@@ -201,7 +200,7 @@ export function DebtorDetailsModal({
                 <TabsContent value="messages" className="space-y-4">
                   {history?.messages && history.messages.length > 0 ? (
                     <div className="space-y-3">
-                      {history.messages.map((msg: any) => (
+                      {history.messages.map((msg: MessageRow) => (
                         <div
                           key={msg.id}
                           className={`border rounded-lg p-3 ${
@@ -240,7 +239,7 @@ export function DebtorDetailsModal({
                 <TabsContent value="payments" className="space-y-4">
                   {history?.payments && history.payments.length > 0 ? (
                     <div className="space-y-3">
-                      {history.payments.map((payment: any) => (
+                      {history.payments.map((payment: PaymentRow) => (
                         <div key={payment.id} className="border rounded-lg p-3">
                           <div className="flex justify-between items-start mb-2">
                             <div className="flex items-center gap-2">
@@ -249,11 +248,7 @@ export function DebtorDetailsModal({
                                 {formatINR(Number(payment.amount))}
                               </span>
                             </div>
-                            <Badge
-                              variant={
-                                payment.status === "completed" ? "default" : "outline"
-                              }
-                            >
+                            <Badge variant={payment.status === "completed" ? "default" : "outline"}>
                               {payment.status}
                             </Badge>
                           </div>
@@ -263,7 +258,7 @@ export function DebtorDetailsModal({
                             </div>
                             <div>
                               {new Date(
-                                payment.received_at || payment.created_at
+                                payment.received_at || payment.created_at,
                               ).toLocaleDateString()}
                             </div>
                           </div>
@@ -295,7 +290,7 @@ export function DebtorDetailsModal({
 
                   {history?.disputes && history.disputes.length > 0 ? (
                     <div className="space-y-3">
-                      {history.disputes.map((dispute: any) => (
+                      {history.disputes.map((dispute: DisputeRow) => (
                         <div
                           key={dispute.id}
                           className="border border-red-200 rounded-lg p-3 bg-red-50"
@@ -306,17 +301,13 @@ export function DebtorDetailsModal({
                           </div>
                           {dispute.debtor_reason && (
                             <div className="text-sm mb-2">
-                              <div className="text-xs text-muted-foreground">
-                                Debtor says:
-                              </div>
+                              <div className="text-xs text-muted-foreground">Debtor says:</div>
                               <p>{dispute.debtor_reason}</p>
                             </div>
                           )}
                           {dispute.agent_notes && (
                             <div className="text-sm">
-                              <div className="text-xs text-muted-foreground">
-                                Agent notes:
-                              </div>
+                              <div className="text-xs text-muted-foreground">Agent notes:</div>
                               <p>{dispute.agent_notes}</p>
                             </div>
                           )}
@@ -404,10 +395,7 @@ export function DebtorDetailsModal({
 
           <div className="flex gap-2 justify-end">
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleLogCall}
-              disabled={!callOutcome || logging}
-            >
+            <AlertDialogAction onClick={handleLogCall} disabled={!callOutcome || logging}>
               {logging ? "Saving..." : "Save Call"}
             </AlertDialogAction>
           </div>
