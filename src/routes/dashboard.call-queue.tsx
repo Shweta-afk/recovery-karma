@@ -24,7 +24,7 @@ import {
   Filter,
   FileDown,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,7 +61,6 @@ import { useSingleCall } from "@/lib/dialer/use-single-call";
 import {
   QUEUE_FILTERS,
   OUTCOME_META,
-  AI_STATUS_META,
   QUEUE_STATUS_META,
   STATUS_META,
   PRODUCTIVE_STATUSES,
@@ -69,10 +68,7 @@ import {
   type QueueFilter,
   type ProdFilter,
   type QueueSortKey,
-  type SortKey,
-  type SortDir,
   type CallOutcome,
-  type ActiveTab,
   type ActiveCall,
   type DispositionForm,
   type QueueDebtor,
@@ -81,13 +77,7 @@ import {
 } from "@/lib/call-queue/types";
 // Re-export the shared types/consts so existing importers of this route file keep working.
 export * from "@/lib/call-queue/types";
-import {
-  exportCSV,
-  AI_QUEUE,
-  AI_STATS,
-  CALL_HISTORY,
-  type AIQueueFilter,
-} from "@/lib/call-queue/mock-data";
+import { exportCSV } from "@/lib/call-queue/mock-data";
 import {
   ActiveCallPanel,
   ActiveCallModal,
@@ -252,11 +242,7 @@ function CallQueuePage() {
   const [queueFilter, setQueueFilter] = useState<QueueFilter>(initialFilter ?? "all");
   const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<ActiveTab>("agent");
   const [queueSearch, setQueueSearch] = useState("");
-  const [historySearch, setHistorySearch] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("time");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   // Queue table column sort + filters
   const [qSortKey, setQSortKey] = useState<QueueSortKey | null>(null);
@@ -277,7 +263,6 @@ function CallQueuePage() {
     }
     setOpenColFilter(null);
   };
-  const [playingId, setPlayingId] = useState<string | null>(null);
 
   // Debtor profile sheet
   const [profileDebtor, setProfileDebtor] = useState<QueueDebtor | null>(null);
@@ -597,45 +582,6 @@ function CallQueuePage() {
     qSortKey,
     qSortDir,
   ]);
-
-  const filteredHistory = useMemo(() => {
-    const q = historySearch.trim().toLowerCase();
-    let rows = CALL_HISTORY;
-    if (q)
-      rows = rows.filter(
-        (c) =>
-          c.debtorName.toLowerCase().includes(q) ||
-          c.loanId.toLowerCase().includes(q) ||
-          c.outcome.includes(q),
-      );
-    return [...rows].sort((a, b) => {
-      let av: string | number = a.time,
-        bv: string | number = b.time;
-      if (sortKey === "debtorName") {
-        av = a.debtorName;
-        bv = b.debtorName;
-      }
-      if (sortKey === "duration") {
-        av = a.durationSecs;
-        bv = b.durationSecs;
-      }
-      if (sortKey === "outcome") {
-        av = a.outcome;
-        bv = b.outcome;
-      }
-      if (av < bv) return sortDir === "asc" ? -1 : 1;
-      if (av > bv) return sortDir === "asc" ? 1 : -1;
-      return 0;
-    });
-  }, [historySearch, sortKey, sortDir]);
-
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  };
 
   const FILTERS: { key: QueueFilter; label: string }[] = [
     { key: "all", label: "All" },
@@ -1617,326 +1563,6 @@ function CallQueuePage() {
   );
 }
 
-// ─── Agent Calls Panel ────────────────────────────────────────────────────────
-
-function AgentCallsPanel() {
-  const activeCalls = [
-    {
-      agent: "You",
-      debtor: "Karthik Nair",
-      loanId: "L-10122",
-      duration: "1m 42s",
-      status: "talking",
-    },
-    {
-      agent: "Ravi M.",
-      debtor: "Imran Sheikh",
-      loanId: "L-10478",
-      duration: "0m 28s",
-      status: "ringing",
-    },
-    {
-      agent: "Pooja S.",
-      debtor: "Sara Khan",
-      loanId: "L-10612",
-      duration: "3m 55s",
-      status: "talking",
-    },
-    { agent: "Deepak R.", debtor: "Nikita Rao", loanId: "L-10588", duration: "—", status: "break" },
-    {
-      agent: "Anita K.",
-      debtor: "Sandeep Yadav",
-      loanId: "L-10199",
-      duration: "2m 11s",
-      status: "talking",
-    },
-  ];
-  const statusMeta: Record<string, { label: string; dot: string; cls: string }> = {
-    talking: { label: "Talking", dot: "bg-success animate-pulse", cls: "text-success" },
-    ringing: { label: "Ringing", dot: "bg-blue-400 animate-pulse", cls: "text-blue-500" },
-    break: { label: "On Break", dot: "bg-orange-400", cls: "text-orange-500" },
-  };
-  return (
-    <Card>
-      <CardHeader className="pb-2 border-b border-border">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-semibold">Active Agent Sessions</CardTitle>
-          <span className="text-xs text-muted-foreground">3 talking · 1 ringing · 1 on break</span>
-        </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Agent</TableHead>
-              <TableHead>Debtor</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Duration</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {activeCalls.map((row) => {
-              const meta = statusMeta[row.status];
-              return (
-                <TableRow key={row.agent} className="hover:bg-primary/5">
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs font-bold">
-                        {row.agent[0]}
-                      </div>
-                      <span className="text-sm font-medium">{row.agent}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-sm font-medium">{row.debtor}</div>
-                    <div className="text-[11px] text-muted-foreground">{row.loanId}</div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1.5">
-                      <span className={cn("h-2 w-2 rounded-full", meta.dot)} />
-                      <span className={cn("text-xs font-semibold", meta.cls)}>{meta.label}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono text-sm tabular-nums">{row.duration}</TableCell>
-                  <TableCell className="text-right">
-                    <Button size="sm" variant="outline" className="h-6 px-2 text-xs">
-                      Monitor
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── AI Calls Panel ───────────────────────────────────────────────────────────
-
-const AI_FILTER_META: { key: AIQueueFilter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "in_call", label: "In Call" },
-  { key: "waiting", label: "Waiting" },
-  { key: "ptp", label: "PTP" },
-  { key: "paid", label: "Paid" },
-  { key: "no_answer", label: "No Answer" },
-  { key: "escalated", label: "Escalated" },
-  { key: "done", label: "Done" },
-];
-
-function AICallsPanel() {
-  const [aiFilter, setAiFilter] = useState<AIQueueFilter>("all");
-  const [aiSearch, setAiSearch] = useState("");
-
-  const aiFilterCounts = {
-    all: AI_QUEUE.length,
-    in_call: AI_QUEUE.filter((r) => r.queueFilter === "in_call").length,
-    waiting: AI_QUEUE.filter((r) => r.queueFilter === "waiting").length,
-    ptp: AI_QUEUE.filter((r) => r.queueFilter === "ptp").length,
-    paid: AI_QUEUE.filter((r) => r.queueFilter === "paid").length,
-    no_answer: AI_QUEUE.filter((r) => r.queueFilter === "no_answer").length,
-    escalated: AI_QUEUE.filter((r) => r.queueFilter === "escalated").length,
-    done: AI_QUEUE.filter((r) => r.status === "done").length,
-  };
-
-  const filtered = AI_QUEUE.filter((r) => {
-    const matchFilter =
-      aiFilter === "all" ||
-      r.queueFilter === aiFilter ||
-      (aiFilter === "done" && r.status === "done");
-    const q = aiSearch.trim().toLowerCase();
-    const matchSearch =
-      !q || r.debtorName.toLowerCase().includes(q) || r.loanId.toLowerCase().includes(q);
-    return matchFilter && matchSearch;
-  });
-
-  return (
-    <div className="space-y-4">
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[
-          { label: "Handled", value: AI_STATS.callsHandled },
-          { label: `PTPs · ${formatINR(AI_STATS.ptpAmount)}`, value: AI_STATS.ptpsCaptured },
-          { label: "Escalated", value: AI_STATS.escalated },
-          { label: "No Answer", value: AI_STATS.noAnswer },
-        ].map((s, i) => (
-          <Card
-            key={s.label}
-            className="animate-in fade-in duration-400"
-            style={{ animationDelay: `${i * 60}ms` }}
-          >
-            <CardContent className="p-4">
-              <div className="text-2xl font-bold text-foreground">{s.value}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">{s.label}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Filter pills + search */}
-      <div className="flex flex-wrap gap-2 items-center">
-        {AI_FILTER_META.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            onClick={() => setAiFilter(f.key)}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all duration-150",
-              aiFilter === f.key
-                ? "bg-foreground text-background border-foreground"
-                : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
-            )}
-          >
-            {f.label}
-            <span
-              className={cn(
-                "rounded-full px-1.5 py-0 text-[10px] font-bold",
-                aiFilter === f.key ? "bg-white/20" : "bg-muted text-muted-foreground",
-              )}
-            >
-              {aiFilterCounts[f.key]}
-            </span>
-          </button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
-          <div className="relative max-w-xs">
-            <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search debtor, loan…"
-              value={aiSearch}
-              onChange={(e) => setAiSearch(e.target.value)}
-              className="pl-7 h-7 text-xs"
-            />
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1 text-xs"
-            onClick={() =>
-              exportCSV(
-                "ai-queue.csv",
-                [
-                  "ID",
-                  "Debtor",
-                  "Loan ID",
-                  "Phone",
-                  "Status",
-                  "Duration",
-                  "Outcome",
-                  "Last Message",
-                ],
-                filtered.map((q) => [
-                  q.id,
-                  q.debtorName,
-                  q.loanId,
-                  q.phone,
-                  q.status,
-                  q.duration,
-                  q.outcome ?? "",
-                  q.lastMsg,
-                ]),
-              )
-            }
-          >
-            <FileDown className="h-3.5 w-3.5" />
-            Export
-          </Button>
-        </div>
-      </div>
-
-      {/* Queue table — scrollable within card */}
-      <Card>
-        <CardHeader className="pb-2 border-b border-border">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-semibold">AI Bot Queue · Live</CardTitle>
-            <div className="flex items-center gap-1.5 text-xs text-success">
-              <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
-              {AI_STATS.inCall} active
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-auto max-h-[400px]">
-            <Table>
-              <TableHeader className="sticky top-0 bg-card z-10">
-                <TableRow>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Debtor</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Outcome</TableHead>
-                  <TableHead className="min-w-[240px]">Bot Activity</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="text-center py-10 text-muted-foreground text-sm"
-                    >
-                      No AI calls match this filter.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filtered.map((row) => {
-                    const meta = AI_STATUS_META[row.status];
-                    return (
-                      <TableRow key={row.id} className="hover:bg-primary/5 align-top">
-                        <TableCell>
-                          <div className="flex items-center gap-1.5">
-                            <span className={cn("h-2 w-2 rounded-full", meta.dot)} />
-                            <span className={cn("text-xs font-semibold", meta.cls)}>
-                              {meta.label}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-medium text-sm">{row.debtorName}</div>
-                          <div className="text-[11px] text-muted-foreground">{row.loanId}</div>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {row.phone}
-                        </TableCell>
-                        <TableCell className="text-sm font-medium tabular-nums">
-                          {row.duration}
-                        </TableCell>
-                        <TableCell>
-                          {row.outcome ? (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                "text-xs",
-                                OUTCOME_META[row.outcome as CallOutcome]?.cls,
-                              )}
-                            >
-                              {OUTCOME_META[row.outcome as CallOutcome]?.label}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <p className="text-xs text-foreground/80 leading-relaxed">
-                            {row.lastMsg}
-                          </p>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
 // ─── Queue Row ────────────────────────────────────────────────────────────────
 
 function QueueRow({
@@ -2053,42 +1679,6 @@ function QueueRow({
         </div>
       </TableCell>
     </TableRow>
-  );
-}
-
-// ─── Language scripts ─────────────────────────────────────────────────────────
-
-function SortHead({
-  label,
-  k,
-  active,
-  dir,
-  toggle,
-  className,
-}: {
-  label: string;
-  k: SortKey;
-  active: SortKey;
-  dir: SortDir;
-  toggle: (k: SortKey) => void;
-  className?: string;
-}) {
-  const isActive = active === k;
-  const Icon = !isActive ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
-  return (
-    <TableHead className={className}>
-      <button
-        type="button"
-        onClick={() => toggle(k)}
-        className={cn(
-          "inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wider transition-colors hover:text-foreground",
-          isActive ? "text-foreground" : "text-muted-foreground",
-        )}
-      >
-        {label}
-        <Icon className="h-3.5 w-3.5" />
-      </button>
-    </TableHead>
   );
 }
 

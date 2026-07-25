@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import {
   Phone,
   PhoneCall,
@@ -12,8 +12,6 @@ import {
   PauseCircle,
   PhoneOff,
   UserRoundCog,
-  ChevronDown,
-  ChevronUp,
   CalendarClock,
   IndianRupee,
   AlertTriangle,
@@ -22,8 +20,6 @@ import {
   CheckCheck,
   FileText,
   Banknote,
-  PlayCircle,
-  StopCircle,
   ShieldAlert,
   Send,
   Flag,
@@ -74,83 +70,6 @@ import { toast } from "sonner";
 // disposition form, PTP tracker, debtor profile sheet, script/recording panels, and the
 // escalation modal. Prop-driven presentational components — the route wires them to state.
 
-const CALL_SCRIPTS: Record<
-  string,
-  { opener: string; ptp: string; refused: string; tips: string[] }
-> = {
-  Hindi: {
-    opener:
-      "Namaste [Name] ji, main [Bank] ki taraf se baat kar raha/rahi hoon. Aapka EMI ₹[amount] due hai.",
-    ptp: "Kya aap [date] tak payment kar sakte hain? Agar haan, toh main aapke liye note kar leta/leti hoon.",
-    refused:
-      "Main samajh sakta/sakti hoon. Kya aap mujhe bata sakte hain kya pareshani hai? Hum milke koi solution nikalte hain.",
-    tips: [
-      "Use 'aap' not 'tum' — formal register",
-      "Avoid calling after 7 PM",
-      "Mention bank name early — builds trust",
-    ],
-  },
-  Tamil: {
-    opener:
-      "Vanakkam [Name] avargale, naan [Bank] irundu pesugiren. Ungal EMI ₹[amount] due aagiradu.",
-    ptp: "[Date] ku payment pannalamaa? Naan ungalukkaaga note pannikiréen.",
-    refused: "Purinjukiren. Enna samsyam nu sollunga — naama serndu oru solution kaanom.",
-    tips: [
-      "Address as 'avargal' for respect",
-      "Morning calls preferred 9–11 AM",
-      "If no Tamil comfort, offer to switch to English",
-    ],
-  },
-  Telugu: {
-    opener:
-      "Namaskaram [Name] garu, nenu [Bank] nundi matladutunna. Meeru EMI ₹[amount] chellinchaali.",
-    ptp: "[Date] loga payment chestha ra? Nenu note chestukonaanu.",
-    refused: "Artham chesukuntunna. Samasyanu cheppandi — kalupu pettukoni solution chustaam.",
-    tips: [
-      "Use 'garu' suffix — mandatory for respect",
-      "Evening 5–7 PM is best window",
-      "Confirm language comfort before script",
-    ],
-  },
-  Gujarati: {
-    opener:
-      "Kem cho [Name] bhai/ben, hun [Bank] thi boli raha/rahi chhu. Tamaro EMI ₹[amount] due chhe.",
-    ptp: "[Date] sudhi payment karsha? Hu tamara maate note kari lidhu chhe.",
-    refused: "Samajhyu. Shun takleef chhe te kaho — aapde sathe milaine solution kadhiye.",
-    tips: [
-      "'Bhai' for male, 'Ben' for female",
-      "Business community — mention consequences briefly",
-      "Be concise — they value time",
-    ],
-  },
-  Marathi: {
-    opener: "Namaskar [Name] ji, mi [Bank] madhun bolat ahe. Tumcha EMI ₹[amount] due ahe.",
-    ptp: "[Date] paryant payment karal ka? Mi tumchyasathi note karto/karte.",
-    refused: "Samajato/samajate. Kaay problem ahe te sanga — aapan milun solution kadhuyat.",
-    tips: [
-      "Use 'ji' suffix throughout",
-      "Pune/Mumbai debtors prefer evenings",
-      "Reference lender name — Marathi trust formal institutions",
-    ],
-  },
-  English: {
-    opener:
-      "Good [morning/afternoon] [Name], I'm calling from [Bank] regarding your outstanding EMI of ₹[amount].",
-    ptp: "Would you be able to make the payment by [date]? I'll note that down for you.",
-    refused:
-      "I understand. Could you help me understand the situation? Let's work together to find a solution.",
-    tips: [
-      "Maintain professional tone throughout",
-      "Confirm preferred callback time if not available now",
-      "Summarise agreed action before ending call",
-    ],
-  },
-};
-
-function getScript(language: string) {
-  return CALL_SCRIPTS[language] ?? CALL_SCRIPTS["Hindi"];
-}
-
 // ─── Active Call Components ───────────────────────────────────────────────────
 
 function fmtElapsed(s: number) {
@@ -187,7 +106,6 @@ function ActiveCallContent({
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferTarget, setTransferTarget] = useState("");
   const [manualDialOpen, setManualDialOpen] = useState(false);
-  const [manualNumber, setManualNumber] = useState("");
   const [dialPadInput, setDialPadInput] = useState("");
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergedWith, setMergedWith] = useState<string | null>(null);
@@ -1982,13 +1900,6 @@ export function DebtorProfileSheet({
   onCall: (d: QueueDebtor) => void;
 }) {
   const extra = getDebtorExtra(debtor.id);
-  const b = bucketOf(debtor.dpd);
-  const dpdCls =
-    b === "X" || b === "1"
-      ? "bg-success/8 text-success/70 border-success/15"
-      : b === "2"
-        ? "bg-warning/8 text-warning-foreground/70 border-warning/15"
-        : "bg-destructive/8 text-destructive/70 border-destructive/15";
   const initials = debtor.name
     .split(" ")
     .map((n) => n[0])
@@ -2359,150 +2270,6 @@ export function DebtorProfileSheet({
           Settlement
         </Button>
       </div>
-    </div>
-  );
-}
-
-// ─── Script Panel ────────────────────────────────────────────────────────────
-
-function ScriptPanel({ debtor }: { debtor: QueueDebtor }) {
-  const [open, setOpen] = useState(true);
-  const [activeScript, setActiveScript] = useState<"opener" | "ptp" | "refused">("opener");
-  const script = getScript(debtor.language);
-  const ptpHint = debtor.ptpAmount ? `₹${debtor.ptpAmount.toLocaleString("en-IN")}` : "₹[amount]";
-  const filled = (s: string) =>
-    s
-      .replace("[Name]", debtor.name.split(" ")[0])
-      .replace("[amount]", debtor.loanAmount.toLocaleString("en-IN"))
-      .replace(/₹\[amount\]/g, ptpHint);
-
-  return (
-    <div className="rounded-lg border border-primary/30 bg-primary/5">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-primary"
-      >
-        <span className="flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-          Script · {debtor.language}
-        </span>
-        {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-      </button>
-
-      {open && (
-        <div className="px-3 pb-3 space-y-2">
-          {/* Script type tabs */}
-          <div className="flex gap-1">
-            {(["opener", "ptp", "refused"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setActiveScript(t)}
-                className={cn(
-                  "rounded px-2.5 py-1 text-[11px] font-semibold capitalize transition-all",
-                  activeScript === t
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted/50 text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {t === "opener" ? "Opening" : t === "ptp" ? "Get PTP" : "Handles Refusal"}
-              </button>
-            ))}
-          </div>
-
-          {/* Script text */}
-          <div className="rounded-md bg-card border border-border px-3 py-2 text-sm text-foreground leading-relaxed font-medium italic">
-            "{filled(script[activeScript])}"
-          </div>
-
-          {/* Tips */}
-          <div className="space-y-1">
-            {script.tips.map((tip, i) => (
-              <div key={i} className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
-                <span className="text-primary mt-0.5">›</span>
-                <span>{tip}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Recording Player ─────────────────────────────────────────────────────────
-
-function RecordingPlayer({
-  id,
-  duration,
-  isPlaying,
-  onToggle,
-}: {
-  id: string;
-  duration: number;
-  isPlaying: boolean;
-  onToggle: () => void;
-}) {
-  const [progress, setProgress] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (isPlaying) {
-      setProgress(0);
-      intervalRef.current = setInterval(() => {
-        setProgress((p) => {
-          if (p >= 100) {
-            clearInterval(intervalRef.current!);
-            onToggle();
-            return 0;
-          }
-          return p + 100 / duration;
-        });
-      }, 1000);
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      setProgress(0);
-    }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-    // Keyed on isPlaying only: `duration` is fixed per clip and `onToggle` is invoked once at
-    // completion via closure. Adding onToggle would restart playback on every parent re-render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying]);
-
-  const elapsed = Math.round((progress / 100) * duration);
-
-  return (
-    <div className="flex items-center gap-1.5 min-w-[120px]">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex-shrink-0 text-primary hover:text-primary/80 transition-colors"
-        title={isPlaying ? "Stop" : "Play recording"}
-      >
-        {isPlaying ? (
-          <StopCircle className="h-4 w-4 text-destructive" />
-        ) : (
-          <PlayCircle className="h-4 w-4" />
-        )}
-      </button>
-      {isPlaying ? (
-        <div className="flex-1 space-y-0.5">
-          <div className="h-1 rounded-full bg-muted overflow-hidden">
-            <div
-              className="h-full bg-primary transition-all duration-1000 rounded-full"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <div className="text-[10px] text-muted-foreground tabular-nums">
-            {fmtElapsed(elapsed)} / {fmtElapsed(duration)}
-          </div>
-        </div>
-      ) : (
-        <span className="text-[10px] text-muted-foreground">{fmtElapsed(duration)}</span>
-      )}
     </div>
   );
 }
