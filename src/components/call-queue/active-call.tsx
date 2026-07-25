@@ -1,20 +1,9 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Phone,
   PhoneCall,
-  PhoneIncoming,
-  PhoneMissed,
   MessageCircle,
-  SkipForward,
-  Search,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-  BotMessageSquare,
   HandCoins,
-  Play,
-  Square,
   Maximize2,
   Minimize2,
   Minus,
@@ -31,10 +20,7 @@ import {
   X,
   Clock,
   CheckCheck,
-  Check,
-  CreditCard,
   FileText,
-  TrendingDown,
   Banknote,
   PlayCircle,
   StopCircle,
@@ -47,25 +33,16 @@ import {
   PhoneForwarded,
   ArrowRightLeft,
   Hash,
-  Zap,
-  Bell,
-  Filter,
   FileDown,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -77,67 +54,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { bucketOf, formatINR, type Debtor, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
+import { bucketOf, formatINR, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
+
 import {
-  getPortfolios,
-  getAgentDebtorIds,
-  refreshPortfolios,
-  DEFAULT_PORTFOLIO_SETTINGS,
-  type CallMode,
-} from "@/lib/portfolio-store";
-import { useDialerRun } from "@/lib/dialer/use-dialer-run";
-import { useSingleCall } from "@/lib/dialer/use-single-call";
-import {
-  QUEUE_FILTERS,
-  EMPTY_DISPOSITION,
   OUTCOME_META,
-  AI_STATUS_META,
   QUEUE_STATUS_META,
-  STATUS_META,
-  PRODUCTIVE_STATUSES,
-  NON_PRODUCTIVE_STATUSES,
-  type QueueFilter,
-  type ProdFilter,
-  type QueueSortKey,
-  type SortKey,
-  type SortDir,
-  type SortKeyAny,
   type CallOutcome,
-  type ActiveTab,
-  type CallPhase,
-  type CallView,
-  type ActiveCall,
   type DispositionForm,
   type QueueDebtor,
-  type LiveCallEntry,
-  type AgentStatus,
   type CallControlProps,
 } from "@/lib/call-queue/types";
-import {
-  exportCSV,
-  AI_QUEUE,
-  AI_STATS,
-  CALL_HISTORY,
-  type AIQueueFilter,
-  type CallRecord,
-} from "@/lib/call-queue/mock-data";
-import {
-  saveDisposition,
-  getAgentDispositions,
-  refreshDispositions,
-  type DispositionRecord,
-  type CallOutcome as StoredOutcome,
-} from "@/lib/disposition-store";
-import {
-  saveReminder,
-  getDueReminders,
-  markReminderNotified,
-  refreshReminders,
-  type Reminder,
-} from "@/lib/reminder-store";
+import { exportCSV } from "@/lib/call-queue/mock-data";
+
 import { saveEscalation } from "@/lib/escalation-store";
-import { useAuth } from "@/lib/auth";
-import { useCallSession } from "@/lib/call-session";
+
 import { toast } from "sonner";
 
 // Active-call UI cluster extracted from dashboard.call-queue.tsx: the live-call panel/modal,

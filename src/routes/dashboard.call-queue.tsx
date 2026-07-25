@@ -3,8 +3,6 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Phone,
   PhoneCall,
-  PhoneIncoming,
-  PhoneMissed,
   MessageCircle,
   SkipForward,
   Search,
@@ -12,38 +10,12 @@ import {
   ArrowUp,
   ArrowDown,
   BotMessageSquare,
-  HandCoins,
-  Play,
   Square,
-  Maximize2,
-  Minimize2,
-  Minus,
-  MicOff,
-  Mic,
-  PauseCircle,
-  PhoneOff,
-  UserRoundCog,
   ChevronDown,
   ChevronUp,
-  CalendarClock,
-  IndianRupee,
-  AlertTriangle,
   X,
   Clock,
-  CheckCheck,
   Check,
-  CreditCard,
-  FileText,
-  TrendingDown,
-  Banknote,
-  PlayCircle,
-  StopCircle,
-  ShieldAlert,
-  Send,
-  Flag,
-  EarOff,
-  Ear,
-  GitMerge,
   PhoneForwarded,
   ArrowRightLeft,
   Hash,
@@ -56,7 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+
 import {
   Select,
   SelectContent,
@@ -64,10 +36,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+
 import {
   Table,
   TableBody,
@@ -77,7 +48,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { bucketOf, formatINR, type Debtor, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
+import { bucketOf, formatINR, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
 import {
   getPortfolios,
   getAgentDebtorIds,
@@ -89,7 +60,6 @@ import { useDialerRun } from "@/lib/dialer/use-dialer-run";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
 import {
   QUEUE_FILTERS,
-  EMPTY_DISPOSITION,
   OUTCOME_META,
   AI_STATUS_META,
   QUEUE_STATUS_META,
@@ -101,17 +71,13 @@ import {
   type QueueSortKey,
   type SortKey,
   type SortDir,
-  type SortKeyAny,
   type CallOutcome,
   type ActiveTab,
-  type CallPhase,
-  type CallView,
   type ActiveCall,
   type DispositionForm,
   type QueueDebtor,
   type LiveCallEntry,
   type AgentStatus,
-  type CallControlProps,
 } from "@/lib/call-queue/types";
 // Re-export the shared types/consts so existing importers of this route file keep working.
 export * from "@/lib/call-queue/types";
@@ -121,7 +87,6 @@ import {
   AI_STATS,
   CALL_HISTORY,
   type AIQueueFilter,
-  type CallRecord,
 } from "@/lib/call-queue/mock-data";
 import {
   ActiveCallPanel,
@@ -147,7 +112,7 @@ import {
   refreshReminders,
   type Reminder,
 } from "@/lib/reminder-store";
-import { saveEscalation } from "@/lib/escalation-store";
+
 import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { toast } from "sonner";
