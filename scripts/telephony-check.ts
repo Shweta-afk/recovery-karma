@@ -15,6 +15,7 @@ import * as engine from "@/lib/dialer/engine";
 import type { DialTarget } from "@/lib/dialer/engine";
 import { createSimProvider } from "@/lib/telephony/sim-provider";
 import type { CallRecord, TelephonyEvent } from "@/lib/telephony/types";
+import { legToCallLog, collectLoggableLegs } from "@/lib/dialer/leg-disposition";
 
 let passed = 0;
 let failed = 0;
@@ -183,7 +184,54 @@ ok(
   engine.applyRechurn({ settings: s(), terminalState: "busy", attempt: 1 }).reschedule === true,
 );
 
-// ── sim end-to-end ────────────────────────────────────────────────────────────
+// ── leg → call_log mapping (AI/IVR persistence) ────────────────────────────────
+console.log("leg-disposition: AI/IVR call logging");
+const leg = (o: Partial<CallRecord>): CallRecord => ({
+  id: "l",
+  debtorId: "d",
+  phone: "+910000000000",
+  direction: "outbound",
+  participant: "ai",
+  state: "completed",
+  attempt: 1,
+  queuedAt: 0,
+  ...o,
+});
+ok("agent leg not logged here", legToCallLog(leg({ participant: "agent" })) === null);
+ok("non-terminal not logged", legToCallLog(leg({ state: "connected" })) === null);
+ok("ai completed → call_type ai", legToCallLog(leg({ participant: "ai" }))?.callType === "ai");
+ok("ai completed → callback", legToCallLog(leg({ participant: "ai" }))?.outcome === "callback");
+ok(
+  "ai no_answer → no_answer",
+  legToCallLog(leg({ participant: "ai", state: "no_answer" }))?.outcome === "no_answer",
+);
+ok(
+  "ivr keypress 2 → promised",
+  legToCallLog(leg({ participant: "ivr", dtmf: ["2"] }))?.outcome === "promised",
+);
+ok(
+  "ivr keypress 3 → callback",
+  legToCallLog(leg({ participant: "ivr", dtmf: ["3"] }))?.outcome === "callback",
+);
+ok(
+  "ivr no keypress → no_answer",
+  legToCallLog(leg({ participant: "ivr", dtmf: [] }))?.outcome === "no_answer",
+);
+ok("failed not logged", legToCallLog(leg({ state: "failed" })) === null);
+{
+  const legs = [
+    leg({ id: "a", participant: "ai", state: "completed" }),
+    leg({ id: "b", participant: "agent", state: "completed" }),
+    leg({ id: "c", participant: "ivr", state: "no_answer" }),
+    leg({ id: "e", participant: "ai", state: "connected" }),
+  ];
+  ok(
+    "collect → 2 loggable (ai done + ivr no_answer)",
+    collectLoggableLegs(legs, new Set()).length === 2,
+  );
+  ok("collect skips already-logged", collectLoggableLegs(legs, new Set(["a"])).length === 1);
+}
+
 async function simE2E() {
   console.log("sim: end-to-end dialer run");
   const sim = createSimProvider({ seed: 7 });

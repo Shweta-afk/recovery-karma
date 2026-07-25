@@ -21,6 +21,7 @@ import { getTelephonyProvider } from "./index";
 import type { SimProvider } from "./sim-provider";
 import { isTerminal } from "./call-machine";
 import type { TelephonyEvent } from "./types";
+import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-disposition";
 
 // ─── In-memory run registry + event fan-out ─────────────────────────────────────
 
@@ -66,6 +67,31 @@ async function dial(run: DialerRun, batch: DialTarget[], idPrefix: string): Prom
     next = engine.bindProviderCall(next, leg.id, providerCallId);
   }
   return next;
+}
+
+// ─── AI/IVR leg persistence ──────────────────────────────────────────────────────
+// AI- and IVR-handled legs (no human agent) should be logged to call_logs — agent legs are
+// logged when the agent submits a disposition. Detection is wired below; the durable write is
+// a no-op stub for now: a background process has no user session for RLS, so a real write
+// needs a service-role Supabase client (Phase 2), and we must never write SIMULATED calls into
+// the audit trail. The intended row shape is disposition-store.saveCallLog.
+const loggedLegs = new Map<string, Set<string>>(); // runId → leg ids already handled
+
+async function persistLegLog(log: LegCallLog): Promise<void> {
+  // TODO(phase-2): insert via a service-role client — see disposition-store.saveCallLog.
+  void log;
+}
+
+async function persistLoggableLegs(run: DialerRun): Promise<void> {
+  let seen = loggedLegs.get(run.id);
+  if (!seen) {
+    seen = new Set();
+    loggedLegs.set(run.id, seen);
+  }
+  for (const { leg, log } of collectLoggableLegs(run.legs, seen)) {
+    seen.add(leg.id);
+    await persistLegLog(log);
+  }
 }
 
 // ─── Dialer run lifecycle ────────────────────────────────────────────────────────
@@ -115,6 +141,7 @@ export const tickDialerRun = createServerFn({ method: "POST" })
       if (batch.length) run = await dial(run, batch, data.runId);
     }
 
+    await persistLoggableLegs(run); // log any AI/IVR legs that just went terminal
     runs.set(run.id, run);
     return run;
   });
@@ -129,6 +156,8 @@ export const stopDialerRun = createServerFn({ method: "POST" })
       if (!isTerminal(leg.state) && leg.providerCallId) await prov.hangup(leg.providerCallId);
     }
     const stopped = engine.stopDialerRun(run);
+    await persistLoggableLegs(stopped);
+    loggedLegs.delete(data.runId);
     runs.set(stopped.id, stopped);
     return stopped;
   });
@@ -214,5 +243,6 @@ export const ingestProviderWebhook = createServerFn({ method: "POST" })
       };
       for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, rec));
     }
+    for (const run of runs.values()) await persistLoggableLegs(run);
     return { ok: true };
   });

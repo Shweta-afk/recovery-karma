@@ -1,4 +1,6 @@
 import { supabase } from "./supabase";
+// Type-only (erased) — the valid call_logs.outcome union, shared with fetch-debtors.
+import type { CallLogOutcome } from "./fetch-debtors";
 
 export type CallOutcome =
   | "paid"
@@ -140,6 +142,35 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     if (payErr) throw payErr;
   }
 
+  await refreshDispositions();
+}
+
+/** Insert a call outcome into call_logs directly (no disposition form). Used to auto-log
+ * dialer legs a human never dispositioned — AI and IVR calls. `agentEmail` is optional;
+ * AI/IVR legs persist with a null agent_id. */
+export async function saveCallLog(r: {
+  debtorId: string;
+  agentEmail?: string;
+  callType: "human" | "ai" | "ivr";
+  outcome: CallLogOutcome;
+  durationSeconds?: number;
+  notes?: string;
+}): Promise<void> {
+  let agentUuid: string | null = null;
+  if (r.agentEmail) {
+    const { data: agentRows } = await supabase.from("agents").select("id, email");
+    agentUuid = (agentRows ?? []).find((a) => a.email === r.agentEmail)?.id ?? null;
+  }
+  const { error } = await supabase.from("call_logs").insert({
+    id: crypto.randomUUID(),
+    debtor_id: r.debtorId,
+    agent_id: agentUuid,
+    call_type: r.callType,
+    outcome: r.outcome,
+    duration_seconds: r.durationSeconds ?? null,
+    raw_notes: r.notes ?? null,
+  });
+  if (error) throw error;
   await refreshDispositions();
 }
 
