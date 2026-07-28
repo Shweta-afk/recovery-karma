@@ -9,6 +9,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: Role;
+  agentPhone: string | null; // Tata SmartFlo phone/extension
 }
 
 interface AuthCtx {
@@ -30,12 +31,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function fetchAgentProfile(authUserId: string): Promise<AuthUser | null> {
     const { data, error } = await supabase
       .from("agents")
-      .select("name, email, role")
+      .select("name, email, role, agent_phone")
       .eq("auth_user_id", authUserId)
       .single();
 
     if (error || !data) return null;
-    return { id: authUserId, name: data.name, email: data.email, role: data.role as Role };
+    return {
+      id: authUserId,
+      name: data.name,
+      email: data.email,
+      role: data.role as Role,
+      agentPhone: data.agent_phone as string | null,
+    };
   }
 
   useEffect(() => {

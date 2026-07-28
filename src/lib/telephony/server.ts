@@ -20,8 +20,9 @@ import type { DialerRun, DialTarget } from "@/lib/dialer/engine";
 import { getTelephonyProvider } from "./index";
 import type { SimProvider } from "./sim-provider";
 import { isTerminal } from "./call-machine";
-import type { TelephonyEvent } from "./types";
+import type { TelephonyEvent, CallStatusEvent } from "./types";
 import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-disposition";
+import { startPollingJob } from "./polling";
 
 // ─── In-memory run registry + event fan-out ─────────────────────────────────────
 
@@ -35,6 +36,15 @@ function ensureSubscribed(): void {
   getTelephonyProvider().subscribe?.((event: TelephonyEvent) => {
     for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, event));
   });
+}
+
+// ─── Polling Job Initialization ───────────────────────────────────────────
+
+// Start the background polling job on module load.
+// Polling periodically fetches call records from Tata as a fallback if webhooks fail.
+// This runs server-side and is automatically started when this module is imported.
+if (typeof process !== "undefined") {
+  startPollingJob();
 }
 
 /** Release due simulated events (real providers push via ingestProviderWebhook instead). */
@@ -209,40 +219,46 @@ export const sendSms = createServerFn({ method: "POST" })
 // file convention) forwards the raw body here. Parsing + state transition + fan-out are
 // identical to the sim path, so nothing downstream changes when SIP is integrated.
 
+// Core logic: convert CallStatusEvent to TelephonyEvent and apply to all runs.
+// Used by both webhook handler and polling job.
+export async function ingestCallStatusEvent(status: CallStatusEvent): Promise<void> {
+  const at = Date.now();
+  let event: TelephonyEvent;
+  if (status.status === "ringing") {
+    event = { type: "ring", providerCallId: status.providerCallId, at };
+  } else if (status.status === "connected") {
+    event = { type: "answer", providerCallId: status.providerCallId, at };
+  } else {
+    event = {
+      type: "hangup",
+      providerCallId: status.providerCallId,
+      at,
+      result:
+        status.status === "completed"
+          ? "completed"
+          : status.status === "failed"
+            ? "failed"
+            : "no_answer",
+      durationSeconds: status.durationSeconds ?? 0,
+    };
+  }
+  for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, event));
+  if (status.recordingUrl) {
+    const rec: TelephonyEvent = {
+      type: "recording",
+      providerCallId: status.providerCallId,
+      at,
+      recordingUrl: status.recordingUrl,
+    };
+    for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, rec));
+  }
+  for (const run of runs.values()) await persistLoggableLegs(run);
+}
+
 export const ingestProviderWebhook = createServerFn({ method: "POST" })
   .inputValidator((payload: unknown) => payload)
   .handler(async ({ data }) => {
     const status = getTelephonyProvider().parseStatusWebhook(data);
-    const at = Date.now();
-    let event: TelephonyEvent;
-    if (status.status === "ringing") {
-      event = { type: "ring", providerCallId: status.providerCallId, at };
-    } else if (status.status === "connected") {
-      event = { type: "answer", providerCallId: status.providerCallId, at };
-    } else {
-      event = {
-        type: "hangup",
-        providerCallId: status.providerCallId,
-        at,
-        result:
-          status.status === "completed"
-            ? "completed"
-            : status.status === "failed"
-              ? "failed"
-              : "no_answer",
-        durationSeconds: status.durationSeconds ?? 0,
-      };
-    }
-    for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, event));
-    if (status.recordingUrl) {
-      const rec: TelephonyEvent = {
-        type: "recording",
-        providerCallId: status.providerCallId,
-        at,
-        recordingUrl: status.recordingUrl,
-      };
-      for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, rec));
-    }
-    for (const run of runs.values()) await persistLoggableLegs(run);
+    await ingestCallStatusEvent(status);
     return { ok: true };
   });

@@ -20,15 +20,17 @@ CREATE TABLE clients (
 
 -- agents
 CREATE TABLE agents (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  auth_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  client_id    UUID REFERENCES clients(id),
-  name         TEXT NOT NULL,
-  email        TEXT NOT NULL UNIQUE,
-  role         TEXT NOT NULL DEFAULT 'agent' CHECK (role IN ('agent', 'manager', 'admin')),
-  daily_target INTEGER DEFAULT 80,
-  is_active    BOOLEAN DEFAULT true,
-  created_at   TIMESTAMPTZ DEFAULT NOW()
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  auth_user_id         UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id            UUID REFERENCES clients(id),
+  name                 TEXT NOT NULL,
+  email                TEXT NOT NULL UNIQUE,
+  role                 TEXT NOT NULL DEFAULT 'agent' CHECK (role IN ('agent', 'manager', 'admin')),
+  daily_target         INTEGER DEFAULT 80,
+  is_active            BOOLEAN DEFAULT true,
+  agent_phone          TEXT,
+  provider_agent_id    TEXT,
+  created_at           TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- portfolios

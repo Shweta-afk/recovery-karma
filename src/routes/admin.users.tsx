@@ -54,6 +54,8 @@ interface AgentRow {
   name: string;
   email: string;
   role: Role;
+  agent_phone: string | null; // Tata SmartFlo phone/extension (e.g., 050XXXXXXX0)
+  provider_agent_id: string | null; // Tata's internal agent ID
   created_at: string;
 }
 
@@ -83,7 +85,7 @@ function AdminUsersPage() {
     setError(null);
     const { data, error: err } = await supabase
       .from("agents")
-      .select("id, auth_user_id, name, email, role, created_at")
+      .select("id, auth_user_id, name, email, role, agent_phone, provider_agent_id, created_at")
       .order("created_at", { ascending: false });
 
     if (err) {
@@ -598,6 +600,7 @@ function EditUserDialog({
   const [name, setName] = useState(agent.name);
   const [role, setRole] = useState<Role>(agent.role);
   const [authUserId, setAuthUserId] = useState(agent.auth_user_id ?? "");
+  const [agentPhone, setAgentPhone] = useState(agent.agent_phone ?? "");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -609,7 +612,12 @@ function EditUserDialog({
     setSaving(true);
     const { error } = await supabase
       .from("agents")
-      .update({ name, role, auth_user_id: trimmed || null })
+      .update({
+        name,
+        role,
+        auth_user_id: trimmed || null,
+        agent_phone: agentPhone.trim() || null,
+      })
       .eq("id", agent.id);
 
     if (error) {
@@ -667,6 +675,19 @@ function EditUserDialog({
             <p className="text-[11px] text-muted-foreground">
               Create the login in Supabase Dashboard → Authentication → Users, then paste its ID
               here to activate sign-in. Leave blank to keep this profile pending.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Agent Phone (Tata SmartFlo)</Label>
+            <Input
+              placeholder="e.g., 050XXXXXXX0"
+              value={agentPhone}
+              onChange={(e) => setAgentPhone(e.target.value)}
+              className="font-mono text-xs"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              The phone number or extension assigned to this agent in Tata SmartFlo for handling
+              calls.
             </p>
           </div>
         </div>

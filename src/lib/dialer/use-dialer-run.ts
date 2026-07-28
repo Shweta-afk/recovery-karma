@@ -1,11 +1,12 @@
-// Client hook that drives a dialer run for a live view. This pass runs in "local" mode:
-// the SAME pure engine + simulated provider execute in the browser, progressing legs
-// through the real call state machine — replacing the old ad-hoc setTimeout mock.
+// Client hook that drives a dialer run for a live view. Default "server" mode:
+// the dialer runs server-side through the real SIP provider (keys + always-on).
+// The client polls for updates, which get mapped through the call state machine.
 //
-// "server" mode is wired (via a dynamic import of the server functions) for when a real
-// SIP provider is integrated: the dialer must then run server-side (keys + always-on), and
-// switching is just passing mode: "server" — no other UI change. It is dynamically imported
-// so the server module (which reaches vendor code) never enters the eager client bundle.
+// "local" mode (for development/testing) runs the engine + simulated provider in the browser,
+// progressing legs through the real call state machine — replacing the old ad-hoc setTimeout mock.
+//
+// Server mode is wired via dynamic import of the server functions so the server module
+// (which reaches vendor code) never enters the eager client bundle.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PortfolioSettings } from "@/lib/portfolio-store";
 import * as engine from "@/lib/dialer/engine";
@@ -39,7 +40,7 @@ export function useDialerRun(): UseDialerRun {
   const simRef = useRef<SimProvider | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const modeRef = useRef<"local" | "server">("local");
+  const modeRef = useRef<"local" | "server">("server");
   const runIdRef = useRef<string>("");
   const targetsRef = useRef<DialTarget[]>([]);
   const agentsRef = useRef(1);
@@ -80,7 +81,7 @@ export function useDialerRun(): UseDialerRun {
   );
 
   const start = useCallback(
-    async ({ settings, targets, agentsAvailable = 3, mode = "local" }: StartArgs) => {
+    async ({ settings, targets, agentsAvailable = 3, mode = "server" }: StartArgs) => {
       clearTimer();
       teardownSim();
       const runId = `run-${Date.now()}`;

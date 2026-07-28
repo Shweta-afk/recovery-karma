@@ -1,7 +1,8 @@
 // Single entry point for telephony — call queue UI, server routes, and the dialer engine
 // should import from here, not from a specific vendor file, so switching providers later
-// (e.g. sim -> kookoo -> exotel) never touches feature code.
+// (e.g. sim -> tata -> plivo) never touches feature code.
 import type { TelephonyProvider } from "./types";
+import { tataProvider } from "./tata-provider";
 import { kookooProvider } from "./kookoo-provider";
 import { createSimProvider, type SimProvider } from "./sim-provider";
 
@@ -19,6 +20,7 @@ export function getSimProvider(): SimProvider {
 
 const PROVIDERS: Record<string, () => TelephonyProvider> = {
   sim: getSimProvider,
+  tata: () => tataProvider,
   kookoo: () => kookooProvider,
 };
 
