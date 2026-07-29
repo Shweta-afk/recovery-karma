@@ -2,15 +2,26 @@ import { createClient } from "@supabase/supabase-js";
 
 let supabaseInstance: ReturnType<typeof createClient> | null = null;
 
-function getConfig() {
-  // Try runtime env first (for server-side and production)
-  const supabaseUrl = typeof process !== "undefined" && process.env.SUPABASE_URL
-    ? process.env.SUPABASE_URL
-    : import.meta.env.VITE_SUPABASE_URL;
+export function getSupabaseConfig() {
+  // Server-side: read from process.env (Railway production)
+  if (typeof process !== "undefined" && process.env.SUPABASE_URL) {
+    return {
+      supabaseUrl: process.env.SUPABASE_URL,
+      supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+    };
+  }
 
-  const supabaseAnonKey = typeof process !== "undefined" && process.env.SUPABASE_ANON_KEY
-    ? process.env.SUPABASE_ANON_KEY
-    : import.meta.env.VITE_SUPABASE_ANON_KEY;
+  // Client-side or dev: use VITE_* vars (baked at build time)
+  return {
+    supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+    supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+  };
+}
+
+export function getSupabase() {
+  if (supabaseInstance) return supabaseInstance;
+
+  const { supabaseUrl, supabaseAnonKey } = getSupabaseConfig();
 
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error(
@@ -22,12 +33,6 @@ function getConfig() {
     );
   }
 
-  return { supabaseUrl, supabaseAnonKey };
-}
-
-export function getSupabase() {
-  if (supabaseInstance) return supabaseInstance;
-  const { supabaseUrl, supabaseAnonKey } = getConfig();
   supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
   return supabaseInstance;
 }
