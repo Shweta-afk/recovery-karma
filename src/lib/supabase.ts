@@ -2,20 +2,32 @@ import { createClient } from "@supabase/supabase-js";
 
 let supabaseInstance: ReturnType<typeof createClient> | null = null;
 
-export function getSupabase() {
-  if (supabaseInstance) return supabaseInstance;
+function getConfig() {
+  // Try runtime env first (for server-side and production)
+  const supabaseUrl = typeof process !== "undefined" && process.env.SUPABASE_URL
+    ? process.env.SUPABASE_URL
+    : import.meta.env.VITE_SUPABASE_URL;
 
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = typeof process !== "undefined" && process.env.SUPABASE_ANON_KEY
+    ? process.env.SUPABASE_ANON_KEY
+    : import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error(
-      `Missing Supabase config. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY env vars.\n` +
-      `VITE_SUPABASE_URL: ${supabaseUrl ? "✓" : "missing"}\n` +
-      `VITE_SUPABASE_ANON_KEY: ${supabaseAnonKey ? "✓" : "missing"}`,
+      `Missing Supabase config.\n` +
+      `Set SUPABASE_URL and SUPABASE_ANON_KEY env vars (production)\n` +
+      `or VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (development).\n` +
+      `SUPABASE_URL: ${supabaseUrl ? "✓" : "missing"}\n` +
+      `SUPABASE_ANON_KEY: ${supabaseAnonKey ? "✓" : "missing"}`,
     );
   }
 
+  return { supabaseUrl, supabaseAnonKey };
+}
+
+export function getSupabase() {
+  if (supabaseInstance) return supabaseInstance;
+  const { supabaseUrl, supabaseAnonKey } = getConfig();
   supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
   return supabaseInstance;
 }
