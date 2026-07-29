@@ -1,17 +1,30 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+let supabaseInstance: ReturnType<typeof createClient> | null = null;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    `Missing Supabase config. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY env vars.\n` +
-    `VITE_SUPABASE_URL: ${supabaseUrl ? "✓" : "missing"}\n` +
-    `VITE_SUPABASE_ANON_KEY: ${supabaseAnonKey ? "✓" : "missing"}`,
-  );
+export function getSupabase() {
+  if (supabaseInstance) return supabaseInstance;
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error(
+      `Missing Supabase config. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY env vars.\n` +
+      `VITE_SUPABASE_URL: ${supabaseUrl ? "✓" : "missing"}\n` +
+      `VITE_SUPABASE_ANON_KEY: ${supabaseAnonKey ? "✓" : "missing"}`,
+    );
+  }
+
+  supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
+  return supabaseInstance;
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = new Proxy(new Object(), {
+  get(_, prop) {
+    return (getSupabase() as any)[prop];
+  },
+}) as ReturnType<typeof createClient>;
 
 /** The logged-in user's own `agents` row (id + client_id) — every write to a
  * client-scoped table needs client_id to satisfy RLS, and agent_id/uploaded_by
