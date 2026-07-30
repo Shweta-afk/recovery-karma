@@ -2,6 +2,10 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import {
+  TELEPHONY_WEBHOOK_PATH,
+  handleTelephonyWebhook,
+} from "./lib/telephony/webhook-handler";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -40,6 +44,10 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      // Provider status callbacks are plain HTTP from outside the app, not app routes.
+      if (new URL(request.url).pathname === TELEPHONY_WEBHOOK_PATH) {
+        return await handleTelephonyWebhook(request);
+      }
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);

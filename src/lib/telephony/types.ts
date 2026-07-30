@@ -54,6 +54,10 @@ export type CallStatus = "ringing" | "connected" | "no_answer" | "failed" | "com
 
 export interface CallStatusEvent {
   providerCallId: string;
+  /** Echo of the id we sent when placing the call (our call_logs row id). Providers return
+   * their own call id, which may not equal the one handed back at dial time — this is the
+   * correlation key that always matches. */
+  customIdentifier?: string;
   status: CallStatus;
   /** Seconds, only present once the call has ended */
   durationSeconds?: number;

@@ -15,11 +15,34 @@ import { applyEvent, isTerminal } from "@/lib/telephony/call-machine";
 import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provider";
 import type { CallState, TelephonyEvent } from "@/lib/telephony/types";
 import { toCallPhase } from "./live-adapter";
-import { startCall as serverStartCall, hangupCall as serverHangupCall } from "@/lib/telephony/server";
+import {
+  startCall as serverStartCall,
+  hangupCall as serverHangupCall,
+  getCallStatus as serverGetCallStatus,
+} from "@/lib/telephony/server";
+import type { CallStatus } from "@/lib/telephony/types";
 // Type-only (erased) — avoids a runtime cycle with the route module that imports this hook.
 import type { ActiveCall, QueueDebtor } from "@/routes/dashboard.call-queue";
 
 const TICK_MS = 500;
+/** How often the browser asks the server what the provider last said about this call. */
+const STATUS_POLL_MS = 2000;
+
+/** The coarse provider status maps onto the call-machine's state vocabulary. */
+function callStateFor(status: CallStatus): CallState {
+  switch (status) {
+    case "ringing":
+      return "ringing";
+    case "connected":
+      return "connected";
+    case "no_answer":
+      return "no_answer";
+    case "completed":
+      return "completed";
+    default:
+      return "failed";
+  }
+}
 
 export interface DialOptions {
   /** Override the agent leg (the number Tata rings first). Defaults to the signed-in agent. */
@@ -98,9 +121,19 @@ export function useSingleCall(
               },
             });
             pidRef.current = result.providerCallId;
-            // Server-side provider will send webhook → ingestProviderWebhook → state updates
-            // Webhook events flow back via polling or direct event stream
-            // For now, UI shows ringing until webhook arrives
+            // The provider reports progress out-of-band (webhook, or the server's fallback
+            // poll of the call-records API). A single agent call belongs to no DialerRun, so
+            // nothing pushes those events at this component — poll the server for the latest
+            // status instead, matching on either id the provider might report back.
+            timerRef.current = setInterval(async () => {
+              const status = await serverGetCallStatus({
+                data: { keys: [result.providerCallId, debtor.id] },
+              });
+              if (!status) return;
+              const phase = toCallPhase(callStateFor(status.status));
+              setActiveCall((c) => (c ? { ...c, phase } : c));
+              if (status.status !== "ringing" && status.status !== "connected") reset();
+            }, STATUS_POLL_MS);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error("Failed to start call:", msg);
@@ -148,7 +181,7 @@ export function useSingleCall(
       // Server mode: call hangup via server function
       startTransition(async () => {
         try {
-          await serverHangupCall({ providerCallId: pidRef.current! });
+          await serverHangupCall({ data: { providerCallId: pidRef.current! } });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error("Failed to hangup call:", msg);

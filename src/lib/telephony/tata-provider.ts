@@ -163,50 +163,40 @@ export const tataProvider: TelephonyProvider = {
   },
 
   parseStatusWebhook(payload: unknown): CallStatusEvent {
-    // Tata webhook format (from https://docs.smartflo.tatatelebusiness.com):
-    //
-    // Answered:
-    // {
-    //   "$uuid": "call-id-from-tata",
-    //   "$call_status": "answered by customer",
-    //   "$duration": 120,
-    //   "$answer_agent_number": "050XXXXXXX0",
-    //   ...other fields...
-    // }
-    //
-    // Missed:
-    // {
-    //   "$uuid": "call-id-from-tata",
-    //   "$call_status": "missed",
-    //   "$duration": 30,
-    //   "$hangup_cause": "no-answer",
-    //   ...other fields...
-    // }
-
-    const p = payload as {
-      $uuid?: string;
-      $call_status?: string;
-      $duration?: number;
-      $recording_url?: string;
-      $hangup_cause?: string;
-      [key: string]: unknown;
+    // The dashboard's webhook body is a JSON template the user edits, e.g.
+    //   { "uuid": "$uuid", "call_status": "$call_status", "duration": "$duration", ... }
+    // The `$name` tokens are the VALUES Tata substitutes — the delivered keys are plain
+    // (`uuid`, `call_status`). Read those; accept `$`-prefixed keys too in case a template
+    // is written the other way round.
+    const p = payload as Record<string, unknown>;
+    const pick = <T>(...keys: string[]): T | undefined => {
+      for (const k of keys) {
+        const v = p[k] ?? p[`$${k}`];
+        // An unsubstituted template token ("$uuid") is not a real value.
+        if (v !== undefined && v !== null && v !== "" && v !== `$${k}`) return v as T;
+      }
+      return undefined;
     };
 
-    if (!p.$uuid) {
-      throw new Error("Invalid Tata webhook: missing $uuid");
+    // Correlation id. `custom_identifier` echoes back the callLogId we sent, which is the
+    // only id we can match without knowing whether Tata's uuid equals click_to_call's ref_id.
+    const customIdentifier = pick<string>("custom_identifier");
+    const providerCallId = pick<string>("uuid", "call_id", "ref_id");
+    if (!providerCallId && !customIdentifier) {
+      throw new Error("Invalid Tata webhook: no uuid/call_id/custom_identifier to correlate on");
     }
 
-    if (!p.$call_status) {
-      throw new Error("Invalid Tata webhook: missing $call_status");
-    }
+    const rawStatus = pick<string>("call_status");
+    if (!rawStatus) throw new Error("Invalid Tata webhook: missing call_status");
 
-    const status = (TATA_STATUS_MAP[p.$call_status] ?? "failed") as CallStatus;
+    const duration = pick<string | number>("duration", "billsec");
 
     return {
-      providerCallId: p.$uuid,
-      status,
-      durationSeconds: p.$duration,
-      recordingUrl: p.$recording_url, // May be undefined; recording is async in Tata
+      providerCallId: providerCallId ?? customIdentifier!,
+      customIdentifier,
+      status: TATA_STATUS_MAP[rawStatus.toLowerCase()] ?? ("failed" as CallStatus),
+      durationSeconds: duration === undefined ? undefined : Number(duration) || 0,
+      recordingUrl: pick<string>("recording_url"),
     };
   },
 };

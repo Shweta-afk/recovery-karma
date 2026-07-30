@@ -225,7 +225,33 @@ export const sendSms = createServerFn({ method: "POST" })
 
 // Core logic: convert CallStatusEvent to TelephonyEvent and apply to all runs.
 // Used by both webhook handler and polling job.
+// Latest status per call, keyed by BOTH the provider's call id and our own custom identifier
+// (they differ — Tata hands back a ref_id at dial time but reports a uuid on the webhook).
+// A single agent-initiated call has no DialerRun to live in, so this is how the browser
+// polling `getCallStatus` learns the call was answered or dropped.
+const latestStatus = new Map<string, CallStatusEvent>();
+const MAX_TRACKED_STATUSES = 1000;
+
+function rememberStatus(status: CallStatusEvent): void {
+  if (latestStatus.size > MAX_TRACKED_STATUSES) {
+    for (const k of Array.from(latestStatus.keys()).slice(0, 100)) latestStatus.delete(k);
+  }
+  latestStatus.set(status.providerCallId, status);
+  if (status.customIdentifier) latestStatus.set(status.customIdentifier, status);
+}
+
+export const getCallStatus = createServerFn({ method: "POST" })
+  .inputValidator((d: { keys: string[] }) => d)
+  .handler(async ({ data }) => {
+    for (const key of data.keys) {
+      const hit = latestStatus.get(key);
+      if (hit) return hit;
+    }
+    return null;
+  });
+
 export async function ingestCallStatusEvent(status: CallStatusEvent): Promise<void> {
+  rememberStatus(status);
   const at = Date.now();
   let event: TelephonyEvent;
   if (status.status === "ringing") {
