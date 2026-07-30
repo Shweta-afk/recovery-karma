@@ -184,10 +184,8 @@ export const startCall = createServerFn({ method: "POST" })
       ivr?: boolean;
     }) => d,
   )
-  .handler(async (input: any) => {
+  .handler(async ({ data }) => {
     ensureSubscribed();
-    // TanStack Start passes data in input.data
-    const data = input.data || input;
     console.log("[telephony:server] startCall:", {
       callLogId: data?.callLogId,
       agentNumber: data?.agentNumber,
