@@ -192,6 +192,7 @@ export const startCall = createServerFn({ method: "POST" })
     const { providerCallId } = await getTelephonyProvider().startCall({
       agentNumber: data.agentNumber,
       debtorNumber: data.debtorNumber,
+      callerId: data.callerId,
       callLogId: data.callLogId,
       hints: { aiScore: data.aiScore, ivr: data.ivr },
     });

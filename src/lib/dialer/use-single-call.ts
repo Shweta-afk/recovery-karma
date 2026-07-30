@@ -21,9 +21,16 @@ import type { ActiveCall, QueueDebtor } from "@/routes/dashboard.call-queue";
 
 const TICK_MS = 500;
 
+export interface DialOptions {
+  /** Override the agent leg (the number Tata rings first). Defaults to the signed-in agent. */
+  agentPhone?: string;
+  /** DID shown to the debtor as caller ID. Must be a DID on the Tata account. */
+  callerId?: string;
+}
+
 export interface UseSingleCall {
   /** Begin a fresh outbound dial: rings, then connects, driven by provider events. */
-  dial: (debtor: QueueDebtor, agentPhone?: string) => void;
+  dial: (debtor: QueueDebtor, opts?: DialOptions) => void;
   /** Agent ends the call → phase "ended" (also tells the provider to drop the leg). */
   hangup: () => void;
   /** Tear down any in-flight sim/timer without touching the ActiveCall UI state. */
@@ -60,10 +67,10 @@ export function useSingleCall(
   }, []);
 
   const dial = useCallback(
-    (debtor: QueueDebtor, overrideAgentPhone?: string) => {
+    (debtor: QueueDebtor, opts?: DialOptions) => {
       reset();
       // Use provided phone (manual dial) or fall back to auth context phone
-      const phoneToUse = overrideAgentPhone ?? agentPhone;
+      const phoneToUse = opts?.agentPhone ?? agentPhone;
 
       if (mode === "server") {
         // Server mode: call real provider via server function
@@ -86,6 +93,7 @@ export function useSingleCall(
                 callLogId: debtor.id,
                 agentNumber: phoneToUse,
                 debtorNumber: debtor.phone,
+                callerId: opts?.callerId,
                 aiScore: debtor.aiScore,
               },
             });

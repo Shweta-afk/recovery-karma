@@ -132,25 +132,8 @@ function convertTataRecordToEvent(record: unknown): CallStatusEvent | null {
 
 // ─── Main Polling Loop ─────────────────────────────────────────────────────
 
-// Track simulated test calls for auto-answer
-const testCallTimestamps = new Map<string, number>();
-
 async function pollOnce(): Promise<void> {
   try {
-    // Check for test mode calls to auto-answer after 3 seconds
-    const now = Date.now();
-    for (const [callId, timestamp] of testCallTimestamps.entries()) {
-      if (now - timestamp > 3000) {
-        console.log(`[polling] Test mode: auto-answering call ${callId}`);
-        await ingestCallStatusEvent({
-          providerCallId: callId,
-          status: "connected",
-          durationSeconds: 0,
-        });
-        testCallTimestamps.delete(callId);
-      }
-    }
-
     // Only run if we have a Tata token
     if (!TATA_ACCESS_TOKEN) {
       return;
@@ -260,11 +243,6 @@ export function stopPollingJob(): void {
   clearInterval(pollingTimer);
   pollingTimer = null;
   console.log("[polling] Background polling job stopped");
-}
-
-export function registerTestCall(callId: string): void {
-  testCallTimestamps.set(callId, Date.now());
-  console.log("[polling] Registered test call for auto-answer:", callId);
 }
 
 // ─── Cleanup ──────────────────────────────────────────────────────────────

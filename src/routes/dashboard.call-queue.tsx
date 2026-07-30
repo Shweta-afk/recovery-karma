@@ -127,6 +127,16 @@ export const Route = createFileRoute("/dashboard/call-queue")({
   component: CallQueuePage,
 });
 
+/** DIDs assigned to the Tata SmartFlo account, usable as outbound caller IDs. Tata rejects
+ * any caller_id that isn't one of these with a 422 ("DID Selected is either disabled…"). */
+const SMARTFLO_DIDS = [
+  "917965810560",
+  "917965810601",
+  "917965810606",
+  "917965810614",
+  "917965810618",
+] as const;
+
 // ─── Mock data ────────────────────────────────────────────────────────────────
 
 /** Build a queue from portfolios assigned to this agent; returns empty if none assigned */
@@ -230,7 +240,8 @@ function CallQueuePage() {
   const [manualDialPageOpen, setManualDialPageOpen] = useState(false);
   const [manualDialNumber, setManualDialNumber] = useState("");
   const [manualDialName, setManualDialName] = useState("");
-  const [manualDialSip, setManualDialSip] = useState("918169119135");
+  // Caller ID shown to the debtor — must be a DID on the Tata account, never a personal number.
+  const [manualDialCallerId, setManualDialCallerId] = useState<string>(SMARTFLO_DIDS[0]);
   const [retainedOpen, setRetainedOpen] = useState(false);
   const [predictiveNotif, setPredictiveNotif] = useState<string | null>(null);
   // A call the AI has connected and is handing to the agent WHILE they're already on another call
@@ -286,7 +297,10 @@ function CallQueuePage() {
     activeCallRef.current = activeCall;
   }, [activeCall]);
 
-  const startCall = (debtor: QueueDebtor, opts?: { instant?: boolean; agentPhone?: string }) => {
+  const startCall = (
+    debtor: QueueDebtor,
+    opts?: { instant?: boolean; agentPhone?: string; callerId?: string },
+  ) => {
     singleCall.reset(); // clear any prior in-flight sim/timer
     setActiveCall({
       debtor,
@@ -314,7 +328,8 @@ function CallQueuePage() {
     });
     // A transferred call is already live on the AI side — connect instantly; a fresh dial rings
     // first, then connects when the (simulated) provider reports the debtor answered.
-    if (!opts?.instant) singleCall.dial(debtor, opts?.agentPhone);
+    if (!opts?.instant)
+      singleCall.dial(debtor, { agentPhone: opts?.agentPhone, callerId: opts?.callerId });
   };
 
   const endCall = () => singleCall.hangup();
@@ -849,14 +864,18 @@ function CallQueuePage() {
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs text-muted-foreground">
-                      SmartFlo Number
+                      Caller ID (SmartFlo DID)
                     </label>
-                    <Select value={manualDialSip} onValueChange={setManualDialSip}>
+                    <Select value={manualDialCallerId} onValueChange={setManualDialCallerId}>
                       <SelectTrigger className="h-8 text-sm">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="918169119135">918169119135 (Your Phone)</SelectItem>
+                        {SMARTFLO_DIDS.map((did) => (
+                          <SelectItem key={did} value={did}>
+                            {did}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -879,9 +898,9 @@ function CallQueuePage() {
                         queueStatus: "fresh",
                         retained: false,
                       };
-                      // Start call with selected SmartFlo number
-                      startCall(manualDebtor, { agentPhone: manualDialSip });
-                      toast.success(`Calling ${name} via SmartFlo ${manualDialSip}…`);
+                      // Agent leg comes from the signed-in agent; the DID is only the caller ID.
+                      startCall(manualDebtor, { callerId: manualDialCallerId });
+                      toast.success(`Calling ${name} from ${manualDialCallerId}…`);
                       setManualDialPageOpen(false);
                       setManualDialNumber("");
                       setManualDialName("");

@@ -23,6 +23,12 @@ const TATA_BASE_URL =
     ? process.env?.TATA_BASE_URL ?? "https://api-smartflo.tatateleservices.com/v1"
     : "https://api-smartflo.tatateleservices.com/v1";
 
+/** Default caller ID (a DID assigned to the account). Tata rejects any caller_id that
+ * isn't one of your DIDs with "DID Selected is either disabled or Outbound calling is
+ * disabled" — so this must never be an agent's personal number. */
+const TATA_CALLER_ID =
+  typeof process !== "undefined" ? process.env?.TATA_CALLER_ID : undefined;
+
 function requireApiKey() {
   if (!TATA_ACCESS_TOKEN) {
     throw new Error(
@@ -61,40 +67,29 @@ export const tataProvider: TelephonyProvider = {
   async startCall(req: StartCallRequest): Promise<StartCallResult> {
     requireApiKey();
 
-    // TESTING MODE: Simulate debtor answering after 3 seconds
-    // In production, use real Tata click_to_call or dialer endpoint
-    const isTestMode = process.env.TATA_TEST_MODE === "true";
-
-    if (isTestMode) {
-      console.log("[tata-provider] TEST MODE: Simulating debtor call to", req.debtorNumber);
-      const callId = `sim-${Date.now()}`;
-
-      // Register with polling job for auto-answer simulation
-      const { registerTestCall } = await import("./polling");
-      registerTestCall(callId);
-
-      return {
-        providerCallId: callId,
-      };
-    }
-
-    // Use Click-to-Call: call agent's phone → when answered, bridge to debtor
-    // agent_number: the agent's actual phone (where to ring the agent)
-    // destination_number: the debtor's phone (to connect after agent answers)
+    // Click-to-Call rings the agent first, then bridges the debtor in on answer.
+    //   agent_number       — the Smartflo agent who receives the call
+    //   destination_number — the debtor we're collecting from
+    //   caller_id          — what the debtor sees. MUST be a DID on the account; passing an
+    //                        agent's personal number here is what returns the 422
+    //                        "DID Selected is either disabled or Outbound calling is disabled".
+    // Omitting caller_id makes Tata fall back to the account's pilot number.
+    const callerId = req.callerId ?? TATA_CALLER_ID;
     const url = `${TATA_BASE_URL}/click_to_call`;
-    const body = {
-      agent_number: req.agentNumber, // Agent's actual phone to call
-      destination_number: req.debtorNumber, // Debtor's phone to connect to
-      caller_id: req.agentNumber, // Show agent's number as caller ID
+    const body: Record<string, unknown> = {
+      agent_number: req.agentNumber,
+      destination_number: req.debtorNumber,
       custom_identifier: req.callLogId, // Our internal call ID
       async: 1, // Non-blocking
       call_timeout: 300, // 5 minutes
     };
+    if (callerId) body.caller_id = callerId;
 
     try {
       console.log("[tata-provider] Calling Click-to-Call endpoint");
-      console.log("[tata-provider] Calling agent at:", req.agentNumber);
+      console.log("[tata-provider] Ringing agent at:", req.agentNumber);
       console.log("[tata-provider] Will connect to debtor:", req.debtorNumber);
+      console.log("[tata-provider] caller_id (DID):", callerId ?? "(pilot number)");
 
       const response = await fetch(url, {
         method: "POST",

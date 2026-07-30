@@ -13,6 +13,9 @@ export interface StartCallRequest {
   agentNumber: string;
   /** Debtor's phone number to dial out to */
   debtorNumber: string;
+  /** Caller ID shown to the debtor. Must be a DID assigned to the account — a personal
+   * number here is rejected. Omit to fall back to the account's pilot number. */
+  callerId?: string;
   /** Our internal call_logs row id, so the webhook can report status against it */
   callLogId: string;
   /** Optional advisory metadata. Real providers ignore this; the simulated provider uses
