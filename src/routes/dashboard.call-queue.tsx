@@ -288,7 +288,7 @@ function CallQueuePage() {
     activeCallRef.current = activeCall;
   }, [activeCall]);
 
-  const startCall = (debtor: QueueDebtor, opts?: { instant?: boolean }) => {
+  const startCall = (debtor: QueueDebtor, opts?: { instant?: boolean; agentPhone?: string }) => {
     singleCall.reset(); // clear any prior in-flight sim/timer
     setActiveCall({
       debtor,
@@ -316,7 +316,7 @@ function CallQueuePage() {
     });
     // A transferred call is already live on the AI side — connect instantly; a fresh dial rings
     // first, then connects when the (simulated) provider reports the debtor answered.
-    if (!opts?.instant) singleCall.dial(debtor);
+    if (!opts?.instant) singleCall.dial(debtor, opts?.agentPhone);
   };
 
   const endCall = () => singleCall.hangup();
@@ -851,27 +851,18 @@ function CallQueuePage() {
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs text-muted-foreground">
-                      SIP Line{" "}
-                      <span className="text-muted-foreground/50">(future integration)</span>
+                      SmartFlo Number
                     </label>
                     <Select value={manualDialSip} onValueChange={setManualDialSip}>
                       <SelectTrigger className="h-8 text-sm">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="sip1">SIP-001 · Main Line (+91 22 4xxx xxxx)</SelectItem>
-                        <SelectItem value="sip2">
-                          SIP-002 · Backup Line (+91 22 4xxx xxxy)
-                        </SelectItem>
-                        <SelectItem value="sip3">
-                          SIP-003 · Regional North (+91 11 4xxx xxxx)
-                        </SelectItem>
-                        <SelectItem value="sip4">
-                          SIP-004 · Regional South (+91 44 4xxx xxxx)
-                        </SelectItem>
-                        <SelectItem value="sip5">
-                          SIP-005 · IVR Bridge (+91 80 4xxx xxxx)
-                        </SelectItem>
+                        <SelectItem value="91796581560">91796581560</SelectItem>
+                        <SelectItem value="91796581601">91796581601</SelectItem>
+                        <SelectItem value="91796581606">91796581606</SelectItem>
+                        <SelectItem value="91796581614">91796581614</SelectItem>
+                        <SelectItem value="91796581618">91796581618</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -880,7 +871,23 @@ function CallQueuePage() {
                     disabled={!manualDialNumber}
                     onClick={() => {
                       const name = manualDialName || manualDialNumber;
-                      toast.success(`Calling ${name} via ${manualDialSip.toUpperCase()}…`);
+                      // Create a temporary debtor object for manual dial
+                      const manualDebtor: QueueDebtor = {
+                        id: `manual-${Date.now()}`,
+                        name: name,
+                        phone: manualDialNumber,
+                        loanReference: "Manual Dial",
+                        loanAmount: 0,
+                        dpd: 0,
+                        aiScore: 0,
+                        status: "contacted",
+                        portfolio: "Manual",
+                        queueStatus: "fresh",
+                        retained: false,
+                      };
+                      // Start call with selected SmartFlo number
+                      startCall(manualDebtor, { agentPhone: manualDialSip });
+                      toast.success(`Calling ${name} via SmartFlo ${manualDialSip}…`);
                       setManualDialPageOpen(false);
                       setManualDialNumber("");
                       setManualDialName("");

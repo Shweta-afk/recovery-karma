@@ -23,7 +23,7 @@ const TICK_MS = 500;
 
 export interface UseSingleCall {
   /** Begin a fresh outbound dial: rings, then connects, driven by provider events. */
-  dial: (debtor: QueueDebtor) => void;
+  dial: (debtor: QueueDebtor, agentPhone?: string) => void;
   /** Agent ends the call → phase "ended" (also tells the provider to drop the leg). */
   hangup: () => void;
   /** Tear down any in-flight sim/timer without touching the ActiveCall UI state. */
@@ -60,8 +60,10 @@ export function useSingleCall(
   }, []);
 
   const dial = useCallback(
-    (debtor: QueueDebtor) => {
+    (debtor: QueueDebtor, overrideAgentPhone?: string) => {
       reset();
+      // Use provided phone (manual dial) or fall back to auth context phone
+      const phoneToUse = overrideAgentPhone ?? agentPhone;
 
       if (mode === "server") {
         // Server mode: call real provider via server function
@@ -81,7 +83,7 @@ export function useSingleCall(
           try {
             const result = await serverStartCall({
               callLogId: debtor.id,
-              agentNumber: agentPhone,
+              agentNumber: phoneToUse,
               debtorNumber: debtor.phone,
               aiScore: debtor.aiScore,
             });
@@ -112,7 +114,7 @@ export function useSingleCall(
           }) ?? null;
         sim
           .startCall({
-            agentNumber: agentPhone,
+            agentNumber: phoneToUse,
             debtorNumber: debtor.phone,
             callLogId: debtor.id,
             hints: { manual: true, aiScore: debtor.aiScore },
