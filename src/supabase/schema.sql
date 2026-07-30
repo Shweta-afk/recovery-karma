@@ -204,11 +204,18 @@ ALTER TABLE settlement_requests  ENABLE ROW LEVEL SECURITY;
 
 -- Helper: resolve the calling user's client_id once per statement
 -- (used inside USING expressions below)
+-- SECURITY DEFINER must pin search_path, else a caller able to create objects in an
+-- earlier schema on the path can shadow `agents` and control what this returns.
 CREATE OR REPLACE FUNCTION auth_client_id() RETURNS UUID
   LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = public, pg_temp
   AS $$
     SELECT client_id FROM agents WHERE auth_user_id = auth.uid() LIMIT 1
   $$;
+
+-- NOTE: the policies below are superseded by migrations/20260730_harden_rls.sql, which
+-- scopes them to the `authenticated` role, adds explicit WITH CHECK clauses, and revokes
+-- the anon role. Apply that migration after running this file.
 
 -- clients — agents can only read their own client row
 CREATE POLICY "clients_read_own"
