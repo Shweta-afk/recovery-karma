@@ -24,6 +24,9 @@ interface AuthCtx {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
+/** How long a cached agent profile stays trusted before it is re-fetched. */
+const PROFILE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,7 +37,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const cached = localStorage.getItem(cacheKey);
     if (cached) {
       try {
-        return JSON.parse(cached);
+        const { profile, at } = JSON.parse(cached) as { profile: AuthUser; at: number };
+        // Without this check the cache never expires, so an admin edit to the agent's row
+        // (e.g. their phone number) would never reach a browser that had logged in once.
+        if (profile && Date.now() - at < PROFILE_CACHE_TTL_MS) return profile;
       } catch {
         // Cache corrupted, fall through to fetch
       }
@@ -57,8 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       agentPhone: data.agent_phone as string | null,
     };
 
-    // Cache for 24 hours
-    localStorage.setItem(cacheKey, JSON.stringify(profile));
+    localStorage.setItem(cacheKey, JSON.stringify({ profile, at: Date.now() }));
     return profile;
   }
 
