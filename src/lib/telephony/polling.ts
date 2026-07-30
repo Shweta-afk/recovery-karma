@@ -86,6 +86,7 @@ function convertTataRecordToEvent(record: unknown): CallStatusEvent | null {
   const r = record as {
     call_id?: string;
     uuid?: string;
+    ref_id?: string;
     status?: string;
     call_status?: string;
     duration?: number;
@@ -95,8 +96,8 @@ function convertTataRecordToEvent(record: unknown): CallStatusEvent | null {
     [key: string]: unknown;
   };
 
-  // Tata uses either call_id or uuid
-  const callId = r.call_id ?? r.uuid;
+  // Tata uses call_id, uuid, or ref_id for the call identifier
+  const callId = r.call_id ?? r.uuid ?? r.ref_id;
   if (!callId) return null;
 
   // Status can be in different fields
@@ -146,12 +147,22 @@ async function pollOnce(): Promise<void> {
       return;
     }
 
+    if (records.length > 0) {
+      console.debug(
+        `[polling] Fetched ${records.length} records from Tata. First record:`,
+        JSON.stringify(records[0], null, 2),
+      );
+    }
+
     let processed = 0;
     let skipped = 0;
 
     for (const record of records) {
       const event = convertTataRecordToEvent(record);
-      if (!event) continue;
+      if (!event) {
+        console.debug(`[polling] Could not convert record to event:`, JSON.stringify(record, null, 2));
+        continue;
+      }
 
       // Skip if we've already processed this call
       if (processedCallIds.has(event.providerCallId)) {
