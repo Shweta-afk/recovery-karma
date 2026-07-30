@@ -87,7 +87,18 @@ export function useSingleCall(
               debtorNumber: debtor.phone,
               aiScore: debtor.aiScore,
             };
-            console.log("[use-single-call] Calling serverStartCall with:", payload);
+            console.log("[use-single-call] debtor object:", {
+              id: debtor.id,
+              phone: debtor.phone,
+              aiScore: debtor.aiScore,
+            });
+            console.log("[use-single-call] phoneToUse:", phoneToUse);
+            console.log("[use-single-call] payload before send:", {
+              callLogId: payload.callLogId,
+              agentNumber: payload.agentNumber,
+              debtorNumber: payload.debtorNumber,
+              aiScore: payload.aiScore,
+            });
             const result = await serverStartCall(payload);
             pidRef.current = result.providerCallId;
             // Server-side provider will send webhook → ingestProviderWebhook → state updates
