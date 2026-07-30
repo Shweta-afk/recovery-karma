@@ -175,21 +175,22 @@ export const stopDialerRun = createServerFn({ method: "POST" })
 // ─── Single-call + SMS wrappers ──────────────────────────────────────────────────
 
 export const startCall = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: {
-      callLogId: string;
-      agentNumber: string;
-      debtorNumber: string;
-      aiScore?: number;
-      ivr?: boolean;
-    }) => d,
-  )
-  .handler(async ({ data }) => {
+  .inputValidator((d: any) => {
+    console.log("[telephony:server] inputValidator received:", {
+      callLogId: d?.callLogId,
+      agentNumber: d?.agentNumber,
+      debtorNumber: d?.debtorNumber,
+    });
+    return d;
+  })
+  .handler(async ({ data }: any) => {
     ensureSubscribed();
-    console.log("[telephony:server] startCall:", {
+    console.log("[telephony:server] handler data:", {
       callLogId: data?.callLogId,
       agentNumber: data?.agentNumber,
       debtorNumber: data?.debtorNumber,
+      dataType: typeof data,
+      isNull: data === null,
     });
     if (!data?.agentNumber) {
       throw new Error(`Missing agentNumber: data=${JSON.stringify(data)}`);
