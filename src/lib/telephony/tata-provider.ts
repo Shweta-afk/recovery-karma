@@ -61,38 +61,36 @@ export const tataProvider: TelephonyProvider = {
   async startCall(req: StartCallRequest): Promise<StartCallResult> {
     requireApiKey();
 
-    // Use Dialer endpoint for direct outbound calls
-    // Dialer uses query parameter auth (different from click_to_call)
-    const urlObj = new URL(`${TATA_BASE_URL}/dialer`);
-    urlObj.searchParams.append("token", TATA_ACCESS_TOKEN!);
-    const url = urlObj.toString();
-
+    // Use Click-to-Call: call agent's phone → when answered, bridge to debtor
+    // agent_number: the agent's actual phone (where to ring the agent)
+    // destination_number: the debtor's phone (to connect after agent answers)
+    const url = `${TATA_BASE_URL}/click_to_call`;
     const body = {
-      cli: req.agentNumber, // SmartFlo DID shown to debtor as caller ID
-      destination: req.debtorNumber, // Debtor's phone number to call
-      custom_id: req.callLogId, // Our internal call ID for correlation
+      agent_number: req.agentNumber, // Agent's actual phone to call
+      destination_number: req.debtorNumber, // Debtor's phone to connect to
+      caller_id: req.agentNumber, // Show agent's number as caller ID
+      custom_identifier: req.callLogId, // Our internal call ID
+      async: 1, // Non-blocking
       call_timeout: 300, // 5 minutes
     };
 
     try {
-      console.log("[tata-provider] Calling Dialer endpoint:", url.split("?")[0] + "?token=***");
-      console.log("[tata-provider] Request body:", JSON.stringify(body));
+      console.log("[tata-provider] Calling Click-to-Call endpoint");
+      console.log("[tata-provider] Calling agent at:", req.agentNumber);
+      console.log("[tata-provider] Will connect to debtor:", req.debtorNumber);
 
       const response = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify(body),
       });
 
-      console.log("[tata-provider] Dialer response status:", response.status);
+      console.log("[tata-provider] Click-to-Call response status:", response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("[tata-provider] Dialer error response:", errorText);
-        throw new Error(`Tata Dialer failed: ${response.status} ${errorText}`);
+        console.error("[tata-provider] Click-to-Call error:", errorText);
+        throw new Error(`Tata Click-to-Call failed: ${response.status} ${errorText}`);
       }
 
       const data = (await response.json()) as {
