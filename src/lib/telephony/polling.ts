@@ -33,6 +33,15 @@ const TATA_BASE_URL =
 const TATA_ACCESS_TOKEN =
   typeof process !== "undefined" ? process.env?.TATA_ACCESS_TOKEN : undefined;
 
+/** Timezone the Tata account reports and filters in. */
+const TATA_TIMEZONE = "Asia/Kolkata";
+
+/** Format as "YYYY-MM-DD HH:mm:ss" in the account's timezone, which is what Tata expects. */
+function toTataStamp(d: Date): string {
+  // "sv-SE" renders as "YYYY-MM-DD HH:mm:ss", already the shape Tata wants.
+  return d.toLocaleString("sv-SE", { timeZone: TATA_TIMEZONE });
+}
+
 function getAuthHeaders(): Record<string, string> {
   return {
     Authorization: `Bearer ${TATA_ACCESS_TOKEN}`,
@@ -50,8 +59,11 @@ async function fetchTataCallRecords(minutesAgo: number): Promise<unknown> {
   const now = new Date();
   const from = new Date(now.getTime() - minutesAgo * 60 * 1000);
 
-  const fromStr = from.toISOString().slice(0, 19).replace("T", " "); // "2026-07-28 14:30:45"
-  const toStr = now.toISOString().slice(0, 19).replace("T", " "); // "2026-07-28 14:32:45"
+  // Tata's from_date/to_date are interpreted in the account's local time (IST), and its
+  // records come back stamped the same way. Sending UTC silently queries a window 5.5 hours
+  // in the past and always returns zero rows.
+  const fromStr = toTataStamp(from);
+  const toStr = toTataStamp(now);
 
   const url = `${TATA_BASE_URL}/call/records?from_date=${encodeURIComponent(fromStr)}&to_date=${encodeURIComponent(toStr)}`;
 
@@ -84,34 +96,30 @@ async function fetchTataCallRecords(minutesAgo: number): Promise<unknown> {
 
 function convertTataRecordToEvent(record: unknown): CallStatusEvent | null {
   const r = record as {
+    ref_id?: string;
     call_id?: string;
     uuid?: string;
-    ref_id?: string;
+    custom_identifier?: string;
     status?: string;
     call_status?: string;
-    duration?: number;
+    answered_seconds?: number;
     call_duration?: number;
+    duration?: number;
     recording_url?: string;
-    recording?: string;
     [key: string]: unknown;
   };
 
-  // Tata uses call_id, uuid, or ref_id for the call identifier
-  const callId = r.call_id ?? r.uuid ?? r.ref_id;
+  // ref_id FIRST: click_to_call hands back a ref_id at dial time and that is what we stored
+  // as providerCallId. A record's call_id/uuid are different values that would never match.
+  const callId = r.ref_id ?? r.call_id ?? r.uuid;
   if (!callId) return null;
 
-  // Status can be in different fields
   const status = r.status ?? r.call_status ?? "";
   if (!status) return null;
 
-  // Duration can be in different fields
-  const duration = r.duration ?? r.call_duration;
+  const duration = r.answered_seconds ?? r.call_duration ?? r.duration;
 
-  // Recording URL may be present
-  const recordingUrl = r.recording_url ?? r.recording;
-
-  // Map Tata status to our CallStatus
-  const statusMap: Record<string, string> = {
+  const statusMap: Record<string, CallStatusEvent["status"]> = {
     answered: "connected",
     "answered by customer": "connected",
     completed: "completed",
@@ -120,13 +128,12 @@ function convertTataRecordToEvent(record: unknown): CallStatusEvent | null {
     failed: "failed",
   };
 
-  const mappedStatus = statusMap[status] ?? "failed";
-
   return {
     providerCallId: String(callId),
-    status: mappedStatus as "connected" | "no_answer" | "completed" | "failed",
+    customIdentifier: r.custom_identifier,
+    status: statusMap[status.toLowerCase()] ?? "failed",
     durationSeconds: typeof duration === "number" ? duration : undefined,
-    recordingUrl: recordingUrl ? String(recordingUrl) : undefined,
+    recordingUrl: r.recording_url ? String(r.recording_url) : undefined,
   };
 }
 
