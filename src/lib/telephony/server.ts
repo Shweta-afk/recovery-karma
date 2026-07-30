@@ -184,8 +184,14 @@ export const startCall = createServerFn({ method: "POST" })
       ivr?: boolean;
     }) => d,
   )
-  .handler(async ({ data }) => {
+  .handler(async (input: any) => {
     ensureSubscribed();
+    // Handle both { data } and direct input structures
+    const data = input.data || input;
+    console.log("[telephony:server] startCall:", { data, input });
+    if (!data?.agentNumber) {
+      throw new Error(`Missing agentNumber in request: ${JSON.stringify({ data, input })}`);
+    }
     const { providerCallId } = await getTelephonyProvider().startCall({
       agentNumber: data.agentNumber,
       debtorNumber: data.debtorNumber,
