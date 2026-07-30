@@ -186,11 +186,15 @@ export const startCall = createServerFn({ method: "POST" })
   )
   .handler(async (input: any) => {
     ensureSubscribed();
-    // Handle both { data } and direct input structures
+    // TanStack Start passes data in input.data
     const data = input.data || input;
-    console.log("[telephony:server] startCall:", { data, input });
+    console.log("[telephony:server] startCall:", {
+      callLogId: data?.callLogId,
+      agentNumber: data?.agentNumber,
+      debtorNumber: data?.debtorNumber,
+    });
     if (!data?.agentNumber) {
-      throw new Error(`Missing agentNumber in request: ${JSON.stringify({ data, input })}`);
+      throw new Error(`Missing agentNumber: data=${JSON.stringify(data)}`);
     }
     const { providerCallId } = await getTelephonyProvider().startCall({
       agentNumber: data.agentNumber,
