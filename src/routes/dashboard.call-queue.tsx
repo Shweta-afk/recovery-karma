@@ -230,7 +230,7 @@ function CallQueuePage() {
   const [manualDialPageOpen, setManualDialPageOpen] = useState(false);
   const [manualDialNumber, setManualDialNumber] = useState("");
   const [manualDialName, setManualDialName] = useState("");
-  const [manualDialSip, setManualDialSip] = useState("917965810560");
+  const [manualDialSip, setManualDialSip] = useState("918169119135");
   const [retainedOpen, setRetainedOpen] = useState(false);
   const [predictiveNotif, setPredictiveNotif] = useState<string | null>(null);
   // A call the AI has connected and is handing to the agent WHILE they're already on another call
@@ -856,11 +856,7 @@ function CallQueuePage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="917965810560">917965810560</SelectItem>
-                        <SelectItem value="917965810601">917965810601</SelectItem>
-                        <SelectItem value="917965810606">917965810606</SelectItem>
-                        <SelectItem value="917965810614">917965810614</SelectItem>
-                        <SelectItem value="917965810618">917965810618</SelectItem>
+                        <SelectItem value="918169119135">918169119135 (Your Phone)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
