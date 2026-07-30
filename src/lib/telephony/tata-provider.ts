@@ -89,8 +89,10 @@ export const tataProvider: TelephonyProvider = {
         message?: string;
       };
 
-      if (!data.success || !data.call_id) {
-        throw new Error(`Tata returned success=false: ${data.message || "unknown error"}`);
+      // Tata sometimes returns success=false with "Originate successfully queued"
+      // Accept the call if we got a call_id, even if success flag is false
+      if (!data.call_id) {
+        throw new Error(`Tata returned no call_id: ${data.message || "unknown error"}`);
       }
 
       return {
