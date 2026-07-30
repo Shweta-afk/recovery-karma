@@ -29,6 +29,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   async function fetchAgentProfile(authUserId: string): Promise<AuthUser | null> {
+    // Check cache first (avoid redundant queries on auth state changes)
+    const cacheKey = `agent-profile-${authUserId}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {
+        // Cache corrupted, fall through to fetch
+      }
+    }
+
+    // Fetch from Supabase
     const { data, error } = await supabase
       .from("agents")
       .select("name, email, role, agent_phone")
@@ -36,13 +48,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .single();
 
     if (error || !data) return null;
-    return {
+
+    const profile: AuthUser = {
       id: authUserId,
       name: data.name,
       email: data.email,
       role: data.role as Role,
       agentPhone: data.agent_phone as string | null,
     };
+
+    // Cache for 24 hours
+    localStorage.setItem(cacheKey, JSON.stringify(profile));
+    return profile;
   }
 
   useEffect(() => {
