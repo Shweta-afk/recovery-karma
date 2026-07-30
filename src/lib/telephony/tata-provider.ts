@@ -61,6 +61,23 @@ export const tataProvider: TelephonyProvider = {
   async startCall(req: StartCallRequest): Promise<StartCallResult> {
     requireApiKey();
 
+    // TESTING MODE: Simulate debtor answering after 3 seconds
+    // In production, use real Tata click_to_call or dialer endpoint
+    const isTestMode = process.env.TATA_TEST_MODE === "true";
+
+    if (isTestMode) {
+      console.log("[tata-provider] TEST MODE: Simulating debtor call to", req.debtorNumber);
+      const callId = `sim-${Date.now()}`;
+
+      // Register with polling job for auto-answer simulation
+      const { registerTestCall } = await import("./polling");
+      registerTestCall(callId);
+
+      return {
+        providerCallId: callId,
+      };
+    }
+
     // Use Click-to-Call: call agent's phone → when answered, bridge to debtor
     // agent_number: the agent's actual phone (where to ring the agent)
     // destination_number: the debtor's phone (to connect after agent answers)
