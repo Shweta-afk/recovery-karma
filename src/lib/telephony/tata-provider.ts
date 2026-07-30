@@ -83,20 +83,19 @@ export const tataProvider: TelephonyProvider = {
         throw new Error(`Tata Click-to-Call failed: ${response.status} ${errorText}`);
       }
 
-      const data = (await response.json()) as Record<string, unknown>;
+      const data = (await response.json()) as {
+        success: boolean;
+        ref_id?: string;
+        message?: string;
+      };
 
-      console.log("[tata-provider] Click-to-Call response:", JSON.stringify(data, null, 2));
-
-      // Tata sometimes returns success=false with "Originate successfully queued"
-      // Try multiple possible field names for the call ID
-      const callId = data.call_id || data.callId || data.id || (data.data as any)?.call_id;
-
-      if (!callId) {
-        throw new Error(`Tata returned no call_id: ${data.message || JSON.stringify(data)}`);
+      // Tata returns ref_id as the call identifier
+      if (!data.ref_id) {
+        throw new Error(`Tata returned no ref_id: ${data.message || "unknown error"}`);
       }
 
       return {
-        providerCallId: String(callId),
+        providerCallId: data.ref_id,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
