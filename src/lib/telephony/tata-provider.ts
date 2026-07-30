@@ -74,18 +74,25 @@ export const tataProvider: TelephonyProvider = {
     };
 
     try {
+      console.log("[tata-provider] Calling Dialer endpoint:", url);
+      console.log("[tata-provider] Request body:", JSON.stringify(body));
+      console.log("[tata-provider] Token (first 20 chars):", TATA_ACCESS_TOKEN?.slice(0, 20));
+
       const response = await fetch(url, {
         method: "POST",
         headers: {
-          "X-API-Key": TATA_ACCESS_TOKEN!,
+          "Authorization": `Bearer ${TATA_ACCESS_TOKEN}`,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
         body: JSON.stringify(body),
       });
 
+      console.log("[tata-provider] Dialer response status:", response.status);
+
       if (!response.ok) {
         const errorText = await response.text();
+        console.error("[tata-provider] Dialer error response:", errorText);
         throw new Error(`Tata Dialer failed: ${response.status} ${errorText}`);
       }
 
