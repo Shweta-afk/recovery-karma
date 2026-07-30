@@ -61,13 +61,14 @@ export const tataProvider: TelephonyProvider = {
   async startCall(req: StartCallRequest): Promise<StartCallResult> {
     requireApiKey();
 
-    const url = `${TATA_BASE_URL}/click_to_call`;
+    // Use Dialer endpoint for direct outbound calls
+    // cli: caller line identification (the DID to show as caller ID)
+    // destination: the debtor's phone number to call
+    const url = `${TATA_BASE_URL}/dialer`;
     const body = {
-      agent_number: req.agentNumber,
-      destination_number: req.debtorNumber,
-      caller_id: req.agentNumber, // Use agent's number as caller ID
-      custom_identifier: req.callLogId, // Our internal call ID for correlation
-      async: 1, // Non-blocking — return immediately
+      cli: req.agentNumber, // SmartFlo DID shown to debtor as caller ID
+      destination: req.debtorNumber, // Debtor's phone number to call
+      custom_id: req.callLogId, // Our internal call ID for correlation
       call_timeout: 300, // 5 minutes
     };
 
@@ -80,22 +81,24 @@ export const tataProvider: TelephonyProvider = {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Tata Click-to-Call failed: ${response.status} ${errorText}`);
+        throw new Error(`Tata Dialer failed: ${response.status} ${errorText}`);
       }
 
       const data = (await response.json()) as {
         success: boolean;
         ref_id?: string;
+        call_id?: string;
         message?: string;
       };
 
-      // Tata returns ref_id as the call identifier
-      if (!data.ref_id) {
-        throw new Error(`Tata returned no ref_id: ${data.message || "unknown error"}`);
+      // Tata returns ref_id or call_id as the call identifier
+      const callId = data.ref_id || data.call_id;
+      if (!callId) {
+        throw new Error(`Tata returned no call ID: ${data.message || "unknown error"}`);
       }
 
       return {
-        providerCallId: data.ref_id,
+        providerCallId: callId,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
