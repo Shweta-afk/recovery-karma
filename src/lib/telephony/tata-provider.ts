@@ -81,7 +81,7 @@ export const tataProvider: TelephonyProvider = {
       const response = await fetch(url, {
         method: "POST",
         headers: {
-          "Authorization": `token=${TATA_ACCESS_TOKEN}`,
+          "Authorization": `TATA ${TATA_ACCESS_TOKEN}`,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
