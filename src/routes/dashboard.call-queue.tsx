@@ -226,11 +226,13 @@ function CallQueuePage() {
   // Legs progress through the actual call state machine; mode: "server" later moves it
   // server-side for true background dialing with no change here.
   const dialer = useDialerRun();
+  // Single-call mode: use "server" to place real calls through Tata SmartFlo (not simulator)
+  const singleCall = useSingleCall(setActiveCall, { mode: "server" });
   const [prodFilter, setProdFilter] = useState<ProdFilter>("all");
   const [manualDialPageOpen, setManualDialPageOpen] = useState(false);
   const [manualDialNumber, setManualDialNumber] = useState("");
   const [manualDialName, setManualDialName] = useState("");
-  const [manualDialSip, setManualDialSip] = useState("sip1");
+  const [manualDialSip, setManualDialSip] = useState("91796581560");
   const [retainedOpen, setRetainedOpen] = useState(false);
   const [predictiveNotif, setPredictiveNotif] = useState<string | null>(null);
   // A call the AI has connected and is handing to the agent WHILE they're already on another call
@@ -278,10 +280,6 @@ function CallQueuePage() {
   // Active call state — lives in CallSessionProvider (mounted above the dashboard's <Outlet/>)
   // so it survives navigating away from this page, letting the minimized call bar keep showing.
   const { activeCall, setActiveCall, disposition, setDisposition } = useCallSession();
-  // Single manual call driven by the sim provider + call-machine (ringing → connected via
-  // real events, no auto-hangup). Replaces the old blind setTimeout-to-connected.
-  const singleCall = useSingleCall(setActiveCall);
-
   // Keep a ref to the live active call so async dialer callbacks can read the latest value
   const activeCallRef = useRef<ActiveCall | null>(null);
   useEffect(() => {
