@@ -82,10 +82,12 @@ export function useSingleCall(
         startTransition(async () => {
           try {
             const result = await serverStartCall({
-              callLogId: debtor.id,
-              agentNumber: phoneToUse,
-              debtorNumber: debtor.phone,
-              aiScore: debtor.aiScore,
+              data: {
+                callLogId: debtor.id,
+                agentNumber: phoneToUse,
+                debtorNumber: debtor.phone,
+                aiScore: debtor.aiScore,
+              },
             });
             pidRef.current = result.providerCallId;
             // Server-side provider will send webhook → ingestProviderWebhook → state updates
