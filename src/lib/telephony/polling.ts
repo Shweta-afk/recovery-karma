@@ -236,8 +236,8 @@ export function stopPollingJob(): void {
 
 // ─── Cleanup ──────────────────────────────────────────────────────────────
 
-if (typeof process !== "undefined") {
-  // Stop polling on process exit
+if (typeof process !== "undefined" && typeof process.on === "function") {
+  // Stop polling on process exit (server-side only)
   process.on("exit", stopPollingJob);
 }
 
