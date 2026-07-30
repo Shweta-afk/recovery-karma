@@ -62,9 +62,10 @@ export const tataProvider: TelephonyProvider = {
     requireApiKey();
 
     // Use Dialer endpoint for direct outbound calls
-    // cli: caller line identification (the DID to show as caller ID)
-    // destination: the debtor's phone number to call
-    const url = `${TATA_BASE_URL}/dialer`;
+    // Dialer uses query parameter auth (different from click_to_call)
+    const urlObj = new URL(`${TATA_BASE_URL}/dialer`);
+    urlObj.searchParams.append("token", TATA_ACCESS_TOKEN!);
+    const url = urlObj.toString();
 
     const body = {
       cli: req.agentNumber, // SmartFlo DID shown to debtor as caller ID
@@ -74,14 +75,12 @@ export const tataProvider: TelephonyProvider = {
     };
 
     try {
-      console.log("[tata-provider] Calling Dialer endpoint:", url);
+      console.log("[tata-provider] Calling Dialer endpoint:", url.split("?")[0] + "?token=***");
       console.log("[tata-provider] Request body:", JSON.stringify(body));
-      console.log("[tata-provider] Token (first 20 chars):", TATA_ACCESS_TOKEN?.slice(0, 20));
 
       const response = await fetch(url, {
         method: "POST",
         headers: {
-          "Authorization": `TATA ${TATA_ACCESS_TOKEN}`,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
