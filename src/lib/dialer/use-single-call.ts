@@ -81,19 +81,12 @@ export function useSingleCall(
 
         startTransition(async () => {
           try {
-            const payload = {
+            const result = await serverStartCall({
               callLogId: debtor.id,
               agentNumber: phoneToUse,
               debtorNumber: debtor.phone,
               aiScore: debtor.aiScore,
-            };
-            console.log("[use-single-call] debtor.id:", debtor.id, "type:", typeof debtor.id);
-            console.log("[use-single-call] debtor.phone:", debtor.phone, "type:", typeof debtor.phone);
-            console.log("[use-single-call] phoneToUse:", phoneToUse, "type:", typeof phoneToUse);
-            console.log("[use-single-call] payload.callLogId:", payload.callLogId);
-            console.log("[use-single-call] payload.agentNumber:", payload.agentNumber);
-            console.log("[use-single-call] payload.debtorNumber:", payload.debtorNumber);
-            const result = await serverStartCall(payload);
+            });
             pidRef.current = result.providerCallId;
             // Server-side provider will send webhook → ingestProviderWebhook → state updates
             // Webhook events flow back via polling or direct event stream

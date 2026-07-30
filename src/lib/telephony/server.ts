@@ -183,17 +183,11 @@ export const startCall = createServerFn({ method: "POST" })
     });
     return d;
   })
-  .handler(async (input: any) => {
+  .handler(async ({ data }) => {
     ensureSubscribed();
-    console.log("[telephony:server] handler input keys:", Object.keys(input || {}));
-    console.log("[telephony:server] handler input:", input);
-
-    // Try different ways to access data
-    const data = input?.data || input;
-    console.log("[telephony:server] handler data:", data);
-
+    console.log("[telephony:server] startCall - agentNumber:", data?.agentNumber, "debtorNumber:", data?.debtorNumber);
     if (!data?.agentNumber) {
-      throw new Error(`Missing agentNumber: input=${JSON.stringify(input)}, data=${JSON.stringify(data)}`);
+      throw new Error(`Missing agentNumber in request`);
     }
     const { providerCallId } = await getTelephonyProvider().startCall({
       agentNumber: data.agentNumber,
