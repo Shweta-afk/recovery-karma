@@ -30,6 +30,8 @@ export interface DispositionRecord {
   paidRef?: string; // already folded into `notes` by the caller before saving — not read back
   loanAmount?: number;
   dpd?: number;
+  /** Provider-hosted recording of the call, when one is available. */
+  recordingUrl?: string;
   time: string; // ISO
 }
 
@@ -94,6 +96,7 @@ export async function refreshDispositions(): Promise<void> {
     promise_date: string | null;
     raw_notes: string | null;
     created_at: string;
+    recording_url: string | null;
     // Optional: present only once 20260731_call_logs_adhoc_contacts.sql has been applied.
     contact_name?: string | null;
     contact_phone?: string | null;
@@ -124,6 +127,7 @@ export async function refreshDispositions(): Promise<void> {
       paidAmount: l.outcome === "paid" ? amount : undefined,
       loanAmount: debtor ? Number(debtor.loan_amount ?? 0) : undefined,
       dpd: debtor?.dpd ?? undefined,
+      recordingUrl: l.recording_url ?? undefined,
       time: l.created_at,
     };
   });
@@ -160,6 +164,7 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     promise_amount: amount ?? null,
     promise_date: d.outcome === "promised" ? (d.ptpDate ?? null) : null,
     raw_notes: d.notes,
+    recording_url: d.recordingUrl ?? null,
   });
   if (error) throw error;
 

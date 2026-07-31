@@ -419,6 +419,10 @@ function CallQueuePage() {
         paidRef: disposition.paidRef || undefined,
         loanAmount: debtor.loanAmount,
         dpd: debtor.dpd,
+        // Present only if the provider published a recording before the agent dispositioned.
+        // Tata publishes these asynchronously, so this is often still empty here and the
+        // recording has to be backfilled from the CDR afterwards.
+        recordingUrl: activeCall?.recordingUrl,
         time: now.toISOString(),
       };
       saveDisposition(record).catch((e) =>

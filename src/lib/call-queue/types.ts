@@ -53,6 +53,12 @@ export interface ActiveCall {
   muted: boolean;
   held: boolean;
   elapsed: number; // seconds
+  /** Provider's id for this call leg, needed to correlate status and recordings. */
+  providerCallId?: string;
+  /** Set once the provider reports a recording for this call. Providers publish it
+   * asynchronously — often only at or after hangup — so it is frequently absent while
+   * the call is still live. */
+  recordingUrl?: string;
 }
 
 export interface DispositionForm {

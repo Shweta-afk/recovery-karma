@@ -98,16 +98,10 @@ export function useSingleCall(
       if (mode === "server") {
         // Server mode: call real provider via server function
         stateRef.current = "dialing";
-        setActiveCall((c) =>
-          c
-            ? { ...c, phase: "ringing" }
-            : {
-                id: debtor.id,
-                debtorName: debtor.name,
-                phase: "ringing",
-                durationSeconds: 0,
-              },
-        );
+        // The caller (startCall in the route) always seeds ActiveCall before dialling, so
+        // `c` is non-null here. The old fallback built a differently-shaped object that was
+        // not an ActiveCall at all — leave the state alone rather than corrupt it.
+        setActiveCall((c) => (c ? { ...c, phase: "ringing" } : c));
 
         startTransition(async () => {
           try {
@@ -131,15 +125,27 @@ export function useSingleCall(
               });
               if (!status) return;
               const phase = toCallPhase(callStateFor(status.status));
-              setActiveCall((c) => (c ? { ...c, phase } : c));
+              setActiveCall((c) =>
+                c
+                  ? {
+                      ...c,
+                      phase,
+                      providerCallId: result.providerCallId,
+                      // Keep any URL we already have: the provider publishes recordings
+                      // asynchronously, so a later poll can report none.
+                      recordingUrl: status.recordingUrl ?? c.recordingUrl,
+                    }
+                  : c,
+              );
               if (status.status !== "ringing" && status.status !== "connected") reset();
             }, STATUS_POLL_MS);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error("Failed to start call:", msg);
-            setActiveCall((c) =>
-              c ? { ...c, phase: "failed", errorMessage: msg } : c,
-            );
+            // "failed" is not a CallPhase ("ringing" | "connected" | "ended") and there is
+            // no errorMessage field, so the old shape left the panel stuck on a phase
+            // nothing renders. End the call — the error is surfaced by the caller's toast.
+            setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
             reset();
           }
         });
