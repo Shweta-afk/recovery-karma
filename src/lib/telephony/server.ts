@@ -57,26 +57,77 @@ function ivrHint(settings: PortfolioSettings): boolean {
   return settings.callMode === "ivr_agent" || settings.callMode === "hybrid";
 }
 
-/** Open the planned legs and place each call through the provider, binding provider ids. */
-async function dial(run: DialerRun, batch: DialTarget[], idPrefix: string): Promise<DialerRun> {
-  const prov = getTelephonyProvider();
-  const { run: withLegs, opened } = engine.openLegs(run, batch, { idPrefix });
-  let next = withLegs;
-  for (const leg of opened) {
-    const t = batch.find((x) => x.id === leg.debtorId);
-    const { providerCallId } = await prov.startCall({
-      agentNumber: "sim-agent",
-      debtorNumber: leg.phone,
-      callLogId: leg.id,
-      hints: {
-        aiScore: t?.aiScore,
-        bestContactTime: t?.bestContactTime,
-        ivr: ivrHint(run.settings),
-      },
-    });
-    next = engine.bindProviderCall(next, leg.id, providerCallId);
+/** Agent legs currently tied up by a run, so one agent is never dialed twice at once. */
+const busyAgents = new Map<string, string>(); // agentNumber → legId
+
+function releaseAgentsForTerminalLegs(run: DialerRun): void {
+  for (const leg of run.legs) {
+    if (!isTerminal(leg.state)) continue;
+    for (const [num, legId] of busyAgents) if (legId === leg.id) busyAgents.delete(num);
   }
-  return next;
+}
+
+/**
+ * Open the planned legs and place each call through the provider, binding provider ids.
+ *
+ * IMPORTANT — why this caps out at one call per free agent, even in "predictive" mode:
+ * click_to_call dials the AGENT first and bridges the debtor only once the agent answers,
+ * so every open line permanently consumes an agent. Real predictive dialing (overdialing
+ * 1.5-2x your agent count and connecting whoever picks up) requires dialing the debtor
+ * first, which this endpoint cannot do — it needs the provider's own campaign dialer.
+ * Opening more legs than we have free agents would just ring the same agent repeatedly,
+ * so we stop when the pool is exhausted and report it via `unassigned`.
+ */
+async function dial(
+  run: DialerRun,
+  batch: DialTarget[],
+  idPrefix: string,
+  agentNumbers: string[],
+  callerId?: string,
+): Promise<{ run: DialerRun; unassigned: number }> {
+  const prov = getTelephonyProvider();
+  releaseAgentsForTerminalLegs(run);
+
+  const free = agentNumbers.filter((n) => !busyAgents.has(n));
+  const assignable = batch.slice(0, free.length);
+  const unassigned = batch.length - assignable.length;
+
+  const { run: withLegs, opened } = engine.openLegs(run, assignable, { idPrefix });
+  let next = withLegs;
+
+  for (const [i, leg] of opened.entries()) {
+    const agentNumber = free[i];
+    const t = assignable.find((x) => x.id === leg.debtorId);
+    try {
+      const { providerCallId } = await prov.startCall({
+        agentNumber,
+        debtorNumber: leg.phone,
+        callerId,
+        callLogId: leg.id,
+        hints: {
+          aiScore: t?.aiScore,
+          bestContactTime: t?.bestContactTime,
+          ivr: ivrHint(run.settings),
+        },
+      });
+      busyAgents.set(agentNumber, leg.id);
+      next = engine.bindProviderCall(next, leg.id, providerCallId);
+    } catch (err) {
+      // One debtor's number being unreachable must not abort the whole batch.
+      console.error(
+        `[dialer] startCall failed for leg ${leg.id}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      next = engine.applyLegEvent(next, {
+        type: "hangup",
+        providerCallId: leg.id,
+        at: Date.now(),
+        result: "failed",
+        durationSeconds: 0,
+      });
+    }
+  }
+  return { run: next, unassigned };
 }
 
 // ─── AI/IVR leg persistence ──────────────────────────────────────────────────────
@@ -113,42 +164,66 @@ export const startDialerRun = createServerFn({ method: "POST" })
       settings: PortfolioSettings;
       targets: DialTarget[];
       agentsAvailable: number;
+      /** Phone numbers of the agents on shift. With click_to_call these are the legs the
+       * provider rings first, so the pool size is the real concurrency ceiling. */
+      agentNumbers?: string[];
+      /** DID shown to the debtor. Must be a caller ID assigned to the provider account. */
+      callerId?: string;
     }) => d,
   )
   .handler(async ({ data }) => {
     ensureSubscribed();
+    const agentNumbers = data.agentNumbers ?? [];
     const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
     const batch = engine.planDialBatch({
       settings: data.settings,
       queue: data.targets,
-      agentsAvailable: data.agentsAvailable,
+      agentsAvailable: Math.min(data.agentsAvailable, agentNumbers.length || data.agentsAvailable),
       inFlight: 0,
     });
-    const run = await dial(base, batch, data.runId);
+    const { run, unassigned } = await dial(base, batch, data.runId, agentNumbers, data.callerId);
+    if (unassigned > 0) {
+      console.warn(`[dialer] ${unassigned} target(s) not dialed — no free agent leg available`);
+    }
     runs.set(run.id, run);
     return run;
   });
 
 export const tickDialerRun = createServerFn({ method: "POST" })
-  .inputValidator((d: { runId: string; agentsAvailable: number; targets?: DialTarget[] }) => d)
+  .inputValidator(
+    (d: {
+      runId: string;
+      agentsAvailable: number;
+      targets?: DialTarget[];
+      agentNumbers?: string[];
+      callerId?: string;
+    }) => d,
+  )
   .handler(async ({ data }) => {
     ensureSubscribed();
     flushSim(); // advance the simulated carrier; subscription mutates runs in place
     let run = runs.get(data.runId);
     if (!run) return null;
 
-    // Continuous (predictive) dialing: top up capacity with debtors not yet dialed.
+    // Continuous dialing: top up capacity with debtors not yet dialed.
     if (run.running && data.targets?.length) {
+      const agentNumbers = data.agentNumbers ?? [];
       const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
       const dialed = new Set(run.legs.map((l) => l.debtorId));
       const remaining = data.targets.filter((t) => !dialed.has(t.id));
       const batch = engine.planDialBatch({
         settings: run.settings,
         queue: remaining,
-        agentsAvailable: data.agentsAvailable,
+        agentsAvailable: Math.min(
+          data.agentsAvailable,
+          agentNumbers.length || data.agentsAvailable,
+        ),
         inFlight,
       });
-      if (batch.length) run = await dial(run, batch, data.runId);
+      if (batch.length) {
+        const res = await dial(run, batch, data.runId, agentNumbers, data.callerId);
+        run = res.run;
+      }
     }
 
     await persistLoggableLegs(run); // log any AI/IVR legs that just went terminal

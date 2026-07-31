@@ -57,6 +57,7 @@ import {
   type CallMode,
 } from "@/lib/portfolio-store";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
+import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
 import {
   QUEUE_FILTERS,
@@ -919,7 +920,7 @@ function CallQueuePage() {
             {/* Predictive dialer — real engine + simulated provider via useDialerRun */}
             <Button
               size="sm"
-              onClick={() => {
+              onClick={async () => {
                 if (dialer.running) {
                   dialer.stop();
                   return;
@@ -927,6 +928,15 @@ function CallQueuePage() {
                 // 4b — dial the currently filtered queue, not the whole book
                 const target = filteredQueue.length ? filteredQueue : allQueue;
                 const activeFilter = FILTERS.find((f) => f.key === queueFilter);
+                // The agent pool is the concurrency ceiling: click-to-call rings an agent
+                // first, so a line cannot be opened without one free to take it.
+                const agentNumbers = await fetchDialerAgentNumbers();
+                if (!agentNumbers.length) {
+                  toast.error(
+                    "No agents with a phone number configured — set one in Admin → Users before dialing.",
+                  );
+                  return;
+                }
                 dialer.start({
                   settings: dialerSettings,
                   targets: target.map((d) => ({
@@ -936,10 +946,11 @@ function CallQueuePage() {
                     portfolioId: d.portfolioId,
                     aiScore: d.aiScore,
                   })),
-                  agentsAvailable: Math.min(5, target.length),
+                  agentNumbers,
+                  callerId: manualDialCallerId,
                 });
                 toast.success(
-                  `Predictive dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}`,
+                  `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
                 );
                 // AI reaches a live debtor and hands over: auto-connect if the agent is free,
                 // otherwise raise a Take / Forward notification. (Kept as a demo flourish.)

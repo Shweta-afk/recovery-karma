@@ -49,6 +49,7 @@ import {
   type DispositionForm,
 } from "@/routes/dashboard.call-queue";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
+import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import {
   getOpenEscalations,
   resolveEscalation,
@@ -130,9 +131,17 @@ function AgentQueueView({
   const portfolioMode: CallMode = settings.callMode;
   const portfolioName = primaryPortfolio?.name ?? "No portfolio assigned";
 
-  const toggleDialer = () => {
+  const toggleDialer = async () => {
     if (dialer.running) {
       dialer.stop();
+      return;
+    }
+    // One click-to-call leg per agent — the pool size is the concurrency ceiling.
+    const agentNumbers = await fetchDialerAgentNumbers();
+    if (!agentNumbers.length) {
+      toast.error(
+        "No agents with a phone number configured — set one in Admin → Users before dialing.",
+      );
       return;
     }
     dialer.start({
@@ -144,7 +153,7 @@ function AgentQueueView({
         portfolioId: d.portfolioId,
         aiScore: d.aiScore,
       })),
-      agentsAvailable: Math.min(5, queue.length),
+      agentNumbers,
     });
     toast.success(
       `Predictive dialing this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}`,

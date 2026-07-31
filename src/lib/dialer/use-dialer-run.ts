@@ -23,6 +23,12 @@ export interface StartArgs {
   targets: DialTarget[];
   /** Concurrent lines the run may open (team lines visible in the live view) */
   agentsAvailable?: number;
+  /** Phone numbers of the agents on shift. In server mode these are the legs the provider
+   * rings first, so the pool size is the real concurrency ceiling — see dial() in
+   * telephony/server.ts for why this cannot overdial. */
+  agentNumbers?: string[];
+  /** DID shown to the debtor; must be a caller ID assigned to the provider account. */
+  callerId?: string;
   mode?: "local" | "server";
 }
 
@@ -44,6 +50,8 @@ export function useDialerRun(): UseDialerRun {
   const runIdRef = useRef<string>("");
   const targetsRef = useRef<DialTarget[]>([]);
   const agentsRef = useRef(1);
+  const agentNumbersRef = useRef<string[]>([]);
+  const callerIdRef = useRef<string | undefined>(undefined);
 
   const render = useCallback(() => forceRender((n) => n + 1), []);
   const clearTimer = () => {
@@ -81,31 +89,45 @@ export function useDialerRun(): UseDialerRun {
   );
 
   const start = useCallback(
-    async ({ settings, targets, agentsAvailable = 3, mode = "server" }: StartArgs) => {
+    async ({
+      settings,
+      targets,
+      agentsAvailable,
+      agentNumbers = [],
+      callerId,
+      mode = "server",
+    }: StartArgs) => {
       clearTimer();
       teardownSim();
       const runId = `run-${Date.now()}`;
       runIdRef.current = runId;
       modeRef.current = mode;
       targetsRef.current = targets;
-      agentsRef.current = agentsAvailable;
+      // Default the line count to the agent pool: one click-to-call leg per agent.
+      const lines = agentsAvailable ?? (agentNumbers.length || 3);
+      agentsRef.current = lines;
+      agentNumbersRef.current = agentNumbers;
+      callerIdRef.current = callerId;
 
       if (mode === "server") {
         // Real-provider path — background dialing runs server-side. Dynamically imported so
         // vendor/server code never ships in the eager client bundle.
         const srv = await import("@/lib/telephony/server");
         const started = await srv.startDialerRun({
-          data: { runId, settings, targets, agentsAvailable },
+          data: { runId, settings, targets, agentsAvailable: lines, agentNumbers, callerId },
         });
         if (started) runRef.current = started;
         render();
         timerRef.current = setInterval(async () => {
-          const ticked = await srv.tickDialerRun({ data: { runId, agentsAvailable, targets } });
+          const ticked = await srv.tickDialerRun({
+            data: { runId, agentsAvailable: lines, targets, agentNumbers, callerId },
+          });
           if (ticked) runRef.current = ticked;
           render();
         }, TICK_MS);
         return;
       }
+      const agentsAvailableLocal = lines;
 
       // Local mode: engine + simulated provider, in-browser.
       const sim = createSimProvider();
@@ -119,7 +141,7 @@ export function useDialerRun(): UseDialerRun {
       const batch = engine.planDialBatch({
         settings,
         queue: targets,
-        agentsAvailable,
+        agentsAvailable: agentsAvailableLocal,
         inFlight: 0,
       });
       const opened = engine.openLegs(run, batch, { idPrefix: runId });
