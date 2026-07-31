@@ -35,6 +35,13 @@ export interface DispositionRecord {
 
 const KEY = "recoveryai_dispositions_cache";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Distinguishes a real debtor/log id from Manual Dial's synthetic `manual-<timestamp>`. */
+function isUuid(v: string | undefined | null): boolean {
+  return typeof v === "string" && UUID_RE.test(v);
+}
+
 export function getDispositions(): DispositionRecord[] {
   try {
     const raw = localStorage.getItem(KEY);
@@ -59,7 +66,7 @@ export async function refreshDispositions(): Promise<void> {
     supabase
       .from("call_logs")
       .select(
-        "id, debtor_id, agent_id, outcome, promise_amount, promise_date, raw_notes, created_at",
+        "id, debtor_id, agent_id, outcome, promise_amount, promise_date, raw_notes, created_at, contact_name, contact_phone",
       )
       .order("created_at", { ascending: false }),
     supabase.from("debtors").select("id, name, phone_primary, portfolio_id, loan_amount, dpd"),
@@ -74,16 +81,34 @@ export async function refreshDispositions(): Promise<void> {
   const agentById = new Map(agentRows.map((a) => [a.id, a]));
   const teamByAgentId = new Map(teamAgentRows.map((ta) => [ta.agent_id, ta.team_id]));
 
-  const disps: DispositionRecord[] = logs.map((l) => {
+  // The generated Supabase types don't cover these columns, so the rows widen to `never`
+  // (as they already do throughout this file). Narrow to the shape we actually select.
+  type CallLogRow = {
+    id: string;
+    debtor_id: string | null;
+    agent_id: string;
+    outcome: string;
+    promise_amount: number | string | null;
+    promise_date: string | null;
+    raw_notes: string | null;
+    created_at: string;
+    contact_name: string | null;
+    contact_phone: string | null;
+  };
+
+  const disps: DispositionRecord[] = (logs as unknown as CallLogRow[]).map((l) => {
     const debtor = debtorById.get(l.debtor_id);
     const portfolio = debtor?.portfolio_id ? portfolioById.get(debtor.portfolio_id) : undefined;
     const agent = agentById.get(l.agent_id);
     const amount = l.promise_amount != null ? Number(l.promise_amount) : undefined;
     return {
       id: l.id,
-      debtorId: l.debtor_id,
-      debtorName: debtor?.name ?? "",
-      phone: debtor?.phone_primary ?? "",
+      // Empty for an ad-hoc Manual Dial call, which has no debtor row to point at.
+      debtorId: l.debtor_id ?? "",
+      // Manual Dial calls have no debtor row — fall back to the ad-hoc contact captured
+      // on the log itself, so they still show a name and number in history.
+      debtorName: debtor?.name ?? l.contact_name ?? "",
+      phone: debtor?.phone_primary ?? l.contact_phone ?? "",
       agentId: agent?.email ?? "",
       agentName: agent?.name ?? "",
       teamId: teamByAgentId.get(l.agent_id),
@@ -115,9 +140,17 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   const amount =
     d.outcome === "promised" ? d.ptpAmount : d.outcome === "paid" ? d.paidAmount : undefined;
 
+  // Manual Dial invents an id like `manual-1785496287078` for a number that has no debtor
+  // row. call_logs.debtor_id is a UUID FK, so passing that straight through was rejected
+  // with a 400 and the call vanished. Store such calls with a NULL debtor_id and keep the
+  // contact details on the log instead.
+  const isAdHoc = !isUuid(d.debtorId);
+
   const { error } = await supabase.from("call_logs").insert({
-    id: d.id,
-    debtor_id: d.debtorId,
+    id: isUuid(d.id) ? d.id : crypto.randomUUID(),
+    debtor_id: isAdHoc ? null : d.debtorId,
+    contact_name: isAdHoc ? (d.debtorName || null) : null,
+    contact_phone: isAdHoc ? (d.phone || null) : null,
     agent_id: agentUuid,
     call_type: "human",
     outcome: d.outcome,
@@ -129,7 +162,10 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
 
   // Financial audit trail — separate from the call log so payments reporting has its own
   // real table, matching the schema's original intent.
-  if (d.outcome === "paid" && d.paidAmount) {
+  // payments.debtor_id is also a UUID FK. A payment that cannot be attributed to a debtor
+  // has no place in the financial audit trail, so an ad-hoc call records the outcome on the
+  // call log only — the amount still reaches reporting via promise_amount.
+  if (d.outcome === "paid" && d.paidAmount && !isAdHoc) {
     const { error: payErr } = await supabase.from("payments").insert({
       debtor_id: d.debtorId,
       agent_id: agentUuid,
