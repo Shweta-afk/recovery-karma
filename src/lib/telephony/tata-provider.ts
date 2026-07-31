@@ -181,7 +181,11 @@ export const tataProvider: TelephonyProvider = {
     // Correlation id. `custom_identifier` echoes back the callLogId we sent, which is the
     // only id we can match without knowing whether Tata's uuid equals click_to_call's ref_id.
     const customIdentifier = pick<string>("custom_identifier");
-    const providerCallId = pick<string>("uuid", "call_id", "ref_id");
+    // ref_id FIRST: click_to_call returns a ref_id at dial time and that is what we stored as
+    // providerCallId. The webhook body carries uuid AND ref_id, and they are different values
+    // — reading uuid first correlates against an id we never recorded, silently dropping the
+    // event. Same ordering as convertTataRecordToEvent in polling.ts.
+    const providerCallId = pick<string>("ref_id", "uuid", "call_id");
     if (!providerCallId && !customIdentifier) {
       throw new Error("Invalid Tata webhook: no uuid/call_id/custom_identifier to correlate on");
     }
