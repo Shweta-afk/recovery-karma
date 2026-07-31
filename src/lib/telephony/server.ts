@@ -24,9 +24,35 @@ import type { TelephonyEvent, CallStatusEvent } from "./types";
 import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-disposition";
 import { startPollingJob } from "./polling";
 
-// ─── In-memory run registry + event fan-out ─────────────────────────────────────
+// ─── Process-wide state + event fan-out ─────────────────────────────────────────
+//
+// These maps are written by one entry point and read by another: the webhook handler
+// (mounted on the server fetch entry, reaching this module via `await import`) writes call
+// status, while the RPC server functions read it. A bundler can legitimately give those two
+// callers SEPARATE instances of this module, in which case the webhook fills one Map and
+// getCallStatus reads a different, empty one — the endpoint answers 200 and the UI still
+// never learns the call connected. Hanging the state off globalThis makes every instance
+// share it within the process.
+//
+// This is still per-process: it does not survive a restart and is not shared across
+// instances. Durable state needs the database (see persistLegLog).
+const g = globalThis as typeof globalThis & {
+  __recoveryaiTelephony?: {
+    runs: Map<string, DialerRun>;
+    busyAgents: Map<string, string>;
+    loggedLegs: Map<string, Set<string>>;
+    latestStatus: Map<string, CallStatusEvent>;
+  };
+};
 
-const runs = new Map<string, DialerRun>();
+g.__recoveryaiTelephony ??= {
+  runs: new Map(),
+  busyAgents: new Map(),
+  loggedLegs: new Map(),
+  latestStatus: new Map(),
+};
+
+const runs = g.__recoveryaiTelephony.runs;
 
 let subscribed = false;
 function ensureSubscribed(): void {
@@ -58,7 +84,7 @@ function ivrHint(settings: PortfolioSettings): boolean {
 }
 
 /** Agent legs currently tied up by a run, so one agent is never dialed twice at once. */
-const busyAgents = new Map<string, string>(); // agentNumber → legId
+const busyAgents = g.__recoveryaiTelephony.busyAgents; // agentNumber → legId
 
 function releaseAgentsForTerminalLegs(run: DialerRun): void {
   for (const leg of run.legs) {
@@ -136,7 +162,7 @@ async function dial(
 // a no-op stub for now: a background process has no user session for RLS, so a real write
 // needs a service-role Supabase client (Phase 2), and we must never write SIMULATED calls into
 // the audit trail. The intended row shape is disposition-store.saveCallLog.
-const loggedLegs = new Map<string, Set<string>>(); // runId → leg ids already handled
+const loggedLegs = g.__recoveryaiTelephony.loggedLegs; // runId → leg ids already handled
 
 async function persistLegLog(log: LegCallLog): Promise<void> {
   // TODO(phase-2): insert via a service-role client — see disposition-store.saveCallLog.
@@ -304,7 +330,7 @@ export const sendSms = createServerFn({ method: "POST" })
 // (they differ — Tata hands back a ref_id at dial time but reports a uuid on the webhook).
 // A single agent-initiated call has no DialerRun to live in, so this is how the browser
 // polling `getCallStatus` learns the call was answered or dropped.
-const latestStatus = new Map<string, CallStatusEvent>();
+const latestStatus = g.__recoveryaiTelephony.latestStatus;
 const MAX_TRACKED_STATUSES = 1000;
 
 function rememberStatus(status: CallStatusEvent): void {
@@ -320,8 +346,17 @@ export const getCallStatus = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     for (const key of data.keys) {
       const hit = latestStatus.get(key);
-      if (hit) return hit;
+      if (hit) {
+        console.log(`[telephony] getCallStatus hit ${key} -> ${hit.status}`);
+        return hit;
+      }
     }
+    // Logged so a "stuck on ringing" report can be told apart at a glance: an empty store
+    // means no webhook ever landed in THIS process, whereas a populated one means the keys
+    // simply don't match.
+    console.log(
+      `[telephony] getCallStatus miss for [${data.keys.join(", ")}] — store holds ${latestStatus.size} entr${latestStatus.size === 1 ? "y" : "ies"}: [${[...latestStatus.keys()].slice(0, 6).join(", ")}]`,
+    );
     return null;
   });
 
