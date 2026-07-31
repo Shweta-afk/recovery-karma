@@ -29,6 +29,11 @@ const TATA_BASE_URL =
 const TATA_CALLER_ID =
   typeof process !== "undefined" ? process.env?.TATA_CALLER_ID : undefined;
 
+/** How long the legs ring before Tata abandons the attempt. */
+const CALL_TIMEOUT_SECONDS = Number(
+  (typeof process !== "undefined" ? process.env?.TATA_CALL_TIMEOUT : undefined) ?? 45,
+);
+
 function requireApiKey() {
   if (!TATA_ACCESS_TOKEN) {
     throw new Error(
@@ -59,6 +64,50 @@ const TATA_STATUS_MAP: Record<string, CallStatus> = {
   failed: "failed",
 };
 
+/**
+ * Find the provider's own call id for an in-flight call we know only by ref_id.
+ *
+ * The exact field names on /live_calls are not documented and we have not yet observed a
+ * live payload, so this checks every plausible carrier of our ref_id and logs the raw entry
+ * the first time it runs — one real cancellation will confirm the shape.
+ */
+async function resolveLiveCallId(refId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${TATA_BASE_URL}/live_calls`, { headers: getAuthHeaders() });
+    if (!res.ok) {
+      console.warn(`[tata-provider] live_calls lookup failed: ${res.status}`);
+      return null;
+    }
+    const body = (await res.json()) as unknown;
+    const calls: Array<Record<string, unknown>> = Array.isArray(body)
+      ? (body as Array<Record<string, unknown>>)
+      : (((body as { results?: unknown[]; data?: unknown[] }).results ??
+          (body as { data?: unknown[] }).data ??
+          []) as Array<Record<string, unknown>>);
+
+    if (calls.length) {
+      console.log("[tata-provider] live_calls sample:", JSON.stringify(calls[0]));
+    }
+
+    const match = calls.find((c) =>
+      ["ref_id", "custom_identifier", "customIdentifier"].some((k) => c[k] === refId),
+    );
+    if (!match) return null;
+
+    for (const k of ["call_id", "uuid", "id"]) {
+      const v = match[k];
+      if (typeof v === "string" && v) return v;
+    }
+    return null;
+  } catch (err) {
+    console.warn(
+      "[tata-provider] live_calls lookup error:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
 // ─── Click-to-Call ────────────────────────────────────────────────────────
 
 export const tataProvider: TelephonyProvider = {
@@ -81,7 +130,10 @@ export const tataProvider: TelephonyProvider = {
       destination_number: req.debtorNumber,
       custom_identifier: req.callLogId, // Our internal call ID
       async: 1, // Non-blocking
-      call_timeout: 300, // 5 minutes
+      // Ring timeout, not call duration: how long the legs ring before the attempt is
+      // abandoned. 300s left a debtor's phone ringing for five minutes and kept the agent
+      // pinned to a dead line; collections practice is well under a minute.
+      call_timeout: CALL_TIMEOUT_SECONDS,
     };
     if (callerId) body.caller_id = callerId;
 
@@ -130,9 +182,21 @@ export const tataProvider: TelephonyProvider = {
   async hangup(providerCallId: string): Promise<void> {
     requireApiKey();
 
+    // `providerCallId` is the ref_id click_to_call handed back, but /call/hangup rejects it:
+    //   POST /call/hangup {call_id: "<ref_id>"} -> 422 {"message":"Invalid Call ID"}
+    // Tata wants its OWN call id, which only comes into existence once the call is live.
+    // Resolve it from /live_calls by matching on whichever field carries our ref_id.
+    const liveId = await resolveLiveCallId(providerCallId);
+    if (!liveId) {
+      console.warn(
+        `[tata-provider] hangup: no live call matching ref_id ${providerCallId} — it may have already ended`,
+      );
+      return;
+    }
+
     const url = `${TATA_BASE_URL}/call/hangup`;
     const body = {
-      call_id: providerCallId,
+      call_id: liveId,
     };
 
     try {
