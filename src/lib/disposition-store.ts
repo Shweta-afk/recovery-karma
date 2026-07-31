@@ -65,9 +65,11 @@ export async function refreshDispositions(): Promise<void> {
   ] = await Promise.all([
     supabase
       .from("call_logs")
-      .select(
-        "id, debtor_id, agent_id, outcome, promise_amount, promise_date, raw_notes, created_at, contact_name, contact_phone",
-      )
+      // `*` rather than an explicit column list: naming contact_name/contact_phone here
+      // makes the whole query 400 on any database where that migration has not been applied
+      // yet, which silently empties every history view. Selecting all columns keeps reads
+      // working across schema drift — the ad-hoc fields are simply absent until then.
+      .select("*")
       .order("created_at", { ascending: false }),
     supabase.from("debtors").select("id, name, phone_primary, portfolio_id, loan_amount, dpd"),
     supabase.from("portfolios").select("id, name"),
@@ -92,8 +94,9 @@ export async function refreshDispositions(): Promise<void> {
     promise_date: string | null;
     raw_notes: string | null;
     created_at: string;
-    contact_name: string | null;
-    contact_phone: string | null;
+    // Optional: present only once 20260731_call_logs_adhoc_contacts.sql has been applied.
+    contact_name?: string | null;
+    contact_phone?: string | null;
   };
 
   const disps: DispositionRecord[] = (logs as unknown as CallLogRow[]).map((l) => {
