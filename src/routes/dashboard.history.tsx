@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Phone,
   BotMessageSquare,
@@ -32,6 +32,11 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/mock-debtors";
+import {
+  getDispositions,
+  refreshDispositions,
+  type DispositionRecord,
+} from "@/lib/disposition-store";
 
 export const Route = createFileRoute("/dashboard/history")({
   head: () => ({
@@ -54,7 +59,7 @@ type Tone = "positive" | "neutral" | "negative";
 interface ActivityEvent {
   id: string;
   date: string; // "30 Jun 2026"
-  day: "today" | "yesterday";
+  day: DayBucket;
   time: string; // "09:02"
   debtorName: string;
   loanId: string;
@@ -66,6 +71,8 @@ interface ActivityEvent {
   tone: Tone;
   detail: string;
   amount?: number | null;
+  /** ISO timestamp, kept for sorting — `date`/`time` are display-only. */
+  rawTime: string;
 }
 
 const CHANNEL_META: Record<
@@ -115,442 +122,74 @@ const TONE_CLS: Record<Tone, string> = {
   negative: "bg-destructive/8 text-destructive/70 border-destructive/20",
 };
 
-// ─── Mock unified activity feed ───────────────────────────────────────────────
+// ─── Real activity feed ───────────────────────────────────────────────────────
+// Built from call_logs (via the disposition store) rather than a fixture. SMS/WhatsApp
+// rows will appear here once messaging is wired — the messages table is not read anywhere
+// yet, so those channels are legitimately empty rather than hidden.
 
-const ACTIVITY: ActivityEvent[] = [
-  // ── Today ──
-  {
-    id: "A-001",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "09:02",
-    debtorName: "Rahul Sharma",
-    loanId: "L-10042",
-    contact: "+91 98XXX XX789",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Ravi M.",
-    result: "PTP",
-    tone: "positive",
-    detail: "Will pay by EOD Friday via UPI",
-    amount: 8200,
-  },
-  {
-    id: "A-002",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "09:05",
-    debtorName: "Amit Verma",
-    loanId: "L-10211",
-    contact: "+91 99XXX XX104",
-    channel: "ivr",
-    direction: "outbound",
-    actor: "System",
-    result: "No input",
-    tone: "negative",
-    detail: "IVR reminder played — call disconnected before keypress",
-  },
-  {
-    id: "A-003",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "09:08",
-    debtorName: "Sunita Rao",
-    loanId: "L-10544",
-    contact: "+91 98XXX XX901",
-    channel: "sms",
-    direction: "outbound",
-    actor: "System",
-    result: "Delivered",
-    tone: "neutral",
-    detail: "Payment reminder SMS delivered to handset",
-  },
-  {
-    id: "A-004",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "09:12",
-    debtorName: "Priya Iyer",
-    loanId: "L-10018",
-    contact: "+91 90XXX XX221",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Neha K.",
-    result: "Paid",
-    tone: "positive",
-    detail: "Payment received ₹8,200 during call",
-    amount: 8200,
-  },
-  {
-    id: "A-005",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "09:20",
-    debtorName: "Firoz Khan",
-    loanId: "L-10388",
-    contact: "+91 91XXX XX220",
-    channel: "ivr",
-    direction: "outbound",
-    actor: "System",
-    result: "Keypress 1",
-    tone: "positive",
-    detail: "Debtor pressed 1 — PTP captured automatically via IVR",
-    amount: 12000,
-  },
-  {
-    id: "A-006",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "09:34",
-    debtorName: "Rakesh Tiwari",
-    loanId: "L-10712",
-    contact: "+91 90XXX XX311",
-    channel: "call_ai",
-    direction: "outbound",
-    actor: "AI Bot",
-    result: "Callback",
-    tone: "neutral",
-    detail: "Bot scheduled a callback for 4:30 PM",
-  },
-  {
-    id: "A-007",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "09:41",
-    debtorName: "Kavitha Menon",
-    loanId: "L-09744",
-    contact: "+91 98XXX XX903",
-    channel: "whatsapp",
-    direction: "outbound",
-    actor: "System",
-    result: "Seen",
-    tone: "neutral",
-    detail: "WhatsApp reminder seen — no reply yet",
-  },
-  {
-    id: "A-008",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "09:52",
-    debtorName: "Sneha Reddy",
-    loanId: "L-10087",
-    contact: "+91 97XXX XX556",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Ravi M.",
-    result: "Callback",
-    tone: "neutral",
-    detail: "Asked to call after 6 PM",
-  },
-  {
-    id: "A-009",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "10:03",
-    debtorName: "Kavitha Menon",
-    loanId: "L-09744",
-    contact: "+91 98XXX XX903",
-    channel: "whatsapp",
-    direction: "inbound",
-    actor: "Debtor",
-    result: "Replied",
-    tone: "positive",
-    detail: '"Will pay ₹5,000 tomorrow" — reply received',
-  },
-  {
-    id: "A-010",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "10:08",
-    debtorName: "Vikram Singh",
-    loanId: "L-10309",
-    contact: "+91 98XXX XX012",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Neha K.",
-    result: "Refused",
-    tone: "negative",
-    detail: "Says payment already made — needs verification",
-  },
-  {
-    id: "A-011",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "10:22",
-    debtorName: "Ananya Bose",
-    loanId: "L-10455",
-    contact: "+91 91XXX XX334",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Ravi M.",
-    result: "PTP",
-    tone: "positive",
-    detail: "Salary on 24th — will pay immediately",
-    amount: 15000,
-  },
-  {
-    id: "A-012",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "10:41",
-    debtorName: "Hemant Sharma",
-    loanId: "L-10290",
-    contact: "+91 99XXX XX174",
-    channel: "call_ai",
-    direction: "outbound",
-    actor: "AI Bot",
-    result: "No Answer",
-    tone: "negative",
-    detail: "Rang out — max retries scheduled",
-  },
-  {
-    id: "A-013",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "10:55",
-    debtorName: "Geetha Pillai",
-    loanId: "L-10457",
-    contact: "+91 98XXX XX602",
-    channel: "call_ai",
-    direction: "outbound",
-    actor: "AI Bot",
-    result: "Escalated",
-    tone: "neutral",
-    detail: "Debtor requested a human agent — escalated to queue",
-  },
-  {
-    id: "A-014",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "11:03",
-    debtorName: "Meera Joshi",
-    loanId: "L-10277",
-    contact: "+91 98XXX XX670",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Neha K.",
-    result: "Paid",
-    tone: "positive",
-    detail: "Full EMI settled — confirmed via bank transfer",
-    amount: 22000,
-  },
-  {
-    id: "A-015",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "11:14",
-    debtorName: "Divya Krishnan",
-    loanId: "L-10333",
-    contact: "+91 97XXX XX115",
-    channel: "sms",
-    direction: "outbound",
-    actor: "System",
-    result: "Failed",
-    tone: "negative",
-    detail: "SMS failed — number unreachable / DND",
-  },
-  {
-    id: "A-016",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "11:28",
-    debtorName: "Lalitha Devi",
-    loanId: "L-10631",
-    contact: "+91 97XXX XX540",
-    channel: "ivr",
-    direction: "outbound",
-    actor: "System",
-    result: "Hung up",
-    tone: "negative",
-    detail: "IVR answered then hung up before script finished",
-  },
-  {
-    id: "A-017",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "11:45",
-    debtorName: "Geeta Menon",
-    loanId: "L-10523",
-    contact: "+91 97XXX XX058",
-    channel: "call_ai",
-    direction: "outbound",
-    actor: "AI Bot",
-    result: "Refused",
-    tone: "negative",
-    detail: "Hostile response detected — escalated to senior agent",
-  },
-  {
-    id: "A-018",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "12:05",
-    debtorName: "Manish Gupta",
-    loanId: "L-10145",
-    contact: "+91 97XXX XX461",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Ravi M.",
-    result: "PTP",
-    tone: "positive",
-    detail: "Extension approved — new date set",
-    amount: 9500,
-  },
-  {
-    id: "A-019",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "12:30",
-    debtorName: "Rekha Patel",
-    loanId: "L-10350",
-    contact: "+91 91XXX XX804",
-    channel: "call_ai",
-    direction: "outbound",
-    actor: "AI Bot",
-    result: "Paid",
-    tone: "positive",
-    detail: "Debtor confirmed bank transfer during bot call",
-    amount: 6400,
-  },
-  {
-    id: "A-020",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "13:12",
-    debtorName: "Sara Khan",
-    loanId: "L-10612",
-    contact: "+91 90XXX XX174",
-    channel: "whatsapp",
-    direction: "outbound",
-    actor: "System",
-    result: "Delivered",
-    tone: "neutral",
-    detail: "Payment link sent on WhatsApp",
-  },
-  {
-    id: "A-021",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "14:03",
-    debtorName: "Arjun Kapoor",
-    loanId: "L-10068",
-    contact: "+91 91XXX XX833",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Neha K.",
-    result: "Paid",
-    tone: "positive",
-    detail: "Paid 2 EMIs together via NEFT",
-    amount: 31000,
-  },
-  {
-    id: "A-022",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "14:20",
-    debtorName: "Sara Khan",
-    loanId: "L-10612",
-    contact: "+91 90XXX XX174",
-    channel: "whatsapp",
-    direction: "inbound",
-    actor: "Debtor",
-    result: "Replied",
-    tone: "positive",
-    detail: '"Paid via the link, sharing screenshot"',
-  },
-  {
-    id: "A-023",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "15:02",
-    debtorName: "Imran Sheikh",
-    loanId: "L-10478",
-    contact: "+91 91XXX XX642",
-    channel: "call_agent",
-    direction: "outbound",
-    actor: "Ravi M.",
-    result: "PTP",
-    tone: "positive",
-    detail: "Reliable track record — PTP confirmed",
-    amount: 11000,
-  },
-  {
-    id: "A-024",
-    date: "30 Jun 2026",
-    day: "today",
-    time: "15:40",
-    debtorName: "Pooja Bhatt",
-    loanId: "L-10421",
-    contact: "+91 98XXX XX209",
-    channel: "sms",
-    direction: "inbound",
-    actor: "Debtor",
-    result: "Replied",
-    tone: "positive",
-    detail: 'Replied "PAID" — auto-flagged for verification',
-  },
-  // ── Yesterday ──
-  {
-    id: "A-025",
-    date: "29 Jun 2026",
-    day: "yesterday",
-    time: "16:10",
-    debtorName: "Mohan Lal",
-    loanId: "L-10711",
-    contact: "+91 97XXX XX133",
-    channel: "ivr",
-    direction: "outbound",
-    actor: "System",
-    result: "Keypress 2",
-    tone: "neutral",
-    detail: "Pressed 2 — requested callback via IVR",
-  },
-  {
-    id: "A-026",
-    date: "29 Jun 2026",
-    day: "yesterday",
-    time: "16:35",
-    debtorName: "Tarun Desai",
-    loanId: "L-10366",
-    contact: "+91 99XXX XX590",
-    channel: "sms",
-    direction: "outbound",
-    actor: "System",
-    result: "Delivered",
-    tone: "neutral",
-    detail: "Legal-notice pre-intimation SMS delivered",
-  },
-  {
-    id: "A-027",
-    date: "29 Jun 2026",
-    day: "yesterday",
-    time: "17:02",
-    debtorName: "Deepak Rawat",
-    loanId: "L-09655",
-    contact: "+91 91XXX XX771",
-    channel: "call_agent",
-    direction: "inbound",
-    actor: "Deepak Rawat",
-    result: "Callback",
-    tone: "neutral",
-    detail: "Debtor called back — dispute discussion, escalated",
-  },
-  {
-    id: "A-028",
-    date: "29 Jun 2026",
-    day: "yesterday",
-    time: "17:44",
-    debtorName: "Bhavna Shah",
-    loanId: "L-09512",
-    contact: "+91 99XXX XX308",
-    channel: "whatsapp",
-    direction: "inbound",
-    actor: "Debtor",
-    result: "Replied",
-    tone: "positive",
-    detail: "Shared payment screenshot on WhatsApp",
-    amount: 9000,
-  },
-];
+export type DayBucket = "today" | "yesterday" | "older";
+
+function dayBucket(d: Date, now: Date): DayBucket {
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOf(now) - startOf(d)) / 86_400_000);
+  return days <= 0 ? "today" : days === 1 ? "yesterday" : "older";
+}
+
+/** Outcome -> the colour-coded tone the table already renders. */
+const OUTCOME_TONE: Record<string, Tone> = {
+  paid: "positive",
+  promised: "positive",
+  settlement: "positive",
+  callback: "neutral",
+  no_answer: "neutral",
+  voicemail: "neutral",
+  refused: "negative",
+  dispute: "negative",
+};
+
+const OUTCOME_LABEL: Record<string, string> = {
+  paid: "Paid",
+  promised: "PTP",
+  refused: "Refused",
+  no_answer: "No Answer",
+  voicemail: "Voicemail",
+  dispute: "Dispute",
+  callback: "Callback",
+  settlement: "Settlement",
+};
+
+function channelFor(callType: DispositionRecord["callType"]): Channel {
+  if (callType === "ai" || callType === "bot") return "call_ai";
+  if (callType === "ivr") return "ivr";
+  return "call_agent";
+}
+
+export function toActivityEvents(disps: DispositionRecord[], now = new Date()): ActivityEvent[] {
+  return disps
+    .map((d): ActivityEvent => {
+      const at = new Date(d.time);
+      const amount = d.paidAmount ?? d.ptpAmount ?? null;
+      return {
+        id: d.id,
+        date: at.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+        day: dayBucket(at, now),
+        time: at.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }),
+        debtorName: d.debtorName || d.phone || "Unknown",
+        // call_logs has no loan reference; the portfolio is the closest grouping we hold.
+        loanId: d.portfolioName ?? "",
+        contact: d.phone,
+        channel: channelFor(d.callType),
+        direction: "outbound",
+        actor: d.agentName || d.agentId || "System",
+        result: OUTCOME_LABEL[d.outcome] ?? d.outcome,
+        tone: OUTCOME_TONE[d.outcome] ?? "neutral",
+        detail: d.notes,
+        amount,
+        rawTime: d.time,
+      };
+    })
+    .sort((a, b) => +new Date(b.rawTime) - +new Date(a.rawTime));
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -559,23 +198,36 @@ const CHANNEL_ORDER: Channel[] = ["call_agent", "call_ai", "ivr", "sms", "whatsa
 function ActivityHistoryPage() {
   const [channel, setChannel] = useState<Channel | "all">("all");
   const [result, setResult] = useState<string>("all");
-  const [day, setDay] = useState<"all" | "today" | "yesterday">("all");
+  const [day, setDay] = useState<"all" | DayBucket>("all");
   const [search, setSearch] = useState("");
 
-  const channelCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: ACTIVITY.length };
-    for (const c of CHANNEL_ORDER) counts[c] = ACTIVITY.filter((e) => e.channel === c).length;
-    return counts;
+  // Render the cached dispositions immediately, then refresh from call_logs. The store
+  // broadcasts `dispositions-updated` after each write, so a call dispositioned elsewhere
+  // in the app shows up here without a reload.
+  const [disps, setDisps] = useState<DispositionRecord[]>(() => getDispositions());
+  useEffect(() => {
+    const load = () => setDisps(getDispositions());
+    window.addEventListener("dispositions-updated", load);
+    refreshDispositions().finally(load);
+    return () => window.removeEventListener("dispositions-updated", load);
   }, []);
 
+  const events = useMemo(() => toActivityEvents(disps), [disps]);
+
+  const channelCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: events.length };
+    for (const c of CHANNEL_ORDER) counts[c] = events.filter((e) => e.channel === c).length;
+    return counts;
+  }, [events]);
+
   const resultOptions = useMemo(
-    () => Array.from(new Set(ACTIVITY.map((e) => e.result))).sort(),
-    [],
+    () => Array.from(new Set(events.map((e) => e.result))).sort(),
+    [events],
   );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return ACTIVITY.filter((e) => {
+    return events.filter((e) => {
       if (channel !== "all" && e.channel !== channel) return false;
       if (result !== "all" && e.result !== result) return false;
       if (day !== "all" && e.day !== day) return false;
@@ -592,7 +244,7 @@ function ActivityHistoryPage() {
         return false;
       return true;
     });
-  }, [channel, result, day, search]);
+  }, [events, channel, result, day, search]);
 
   const resetFilters = () => {
     setChannel("all");
@@ -734,6 +386,8 @@ function ActivityHistoryPage() {
                 <SelectItem value="all">All dates</SelectItem>
                 <SelectItem value="today">Today</SelectItem>
                 <SelectItem value="yesterday">Yesterday</SelectItem>
+                {/* Real data goes back further than the two days the fixture covered. */}
+                <SelectItem value="older">Older</SelectItem>
               </SelectContent>
             </Select>
             {(channel !== "all" || result !== "all" || day !== "all" || search) && (
@@ -747,7 +401,7 @@ function ActivityHistoryPage() {
               </Button>
             )}
             <span className="ml-auto text-xs text-muted-foreground">
-              {filtered.length} of {ACTIVITY.length} events
+              {filtered.length} of {events.length} events
             </span>
           </div>
         </CardHeader>
@@ -783,7 +437,7 @@ function ActivityHistoryPage() {
                         <TableCell className="align-top">
                           <div className="font-mono text-xs text-foreground">{e.time}</div>
                           <div className="text-[10px] text-muted-foreground">
-                            {e.day === "today" ? "Today" : "Yest."}
+                            {e.day === "today" ? "Today" : e.day === "yesterday" ? "Yest." : e.date}
                           </div>
                         </TableCell>
                         <TableCell>

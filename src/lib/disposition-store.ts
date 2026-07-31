@@ -32,6 +32,8 @@ export interface DispositionRecord {
   dpd?: number;
   /** Provider-hosted recording of the call, when one is available. */
   recordingUrl?: string;
+  /** Who handled the call — drives the channel shown in Activity History. */
+  callType?: "human" | "ai" | "ivr" | "bot";
   time: string; // ISO
 }
 
@@ -97,6 +99,7 @@ export async function refreshDispositions(): Promise<void> {
     raw_notes: string | null;
     created_at: string;
     recording_url: string | null;
+    call_type: string | null;
     // Optional: present only once 20260731_call_logs_adhoc_contacts.sql has been applied.
     contact_name?: string | null;
     contact_phone?: string | null;
@@ -128,6 +131,7 @@ export async function refreshDispositions(): Promise<void> {
       loanAmount: debtor ? Number(debtor.loan_amount ?? 0) : undefined,
       dpd: debtor?.dpd ?? undefined,
       recordingUrl: l.recording_url ?? undefined,
+      callType: (l.call_type as DispositionRecord["callType"]) ?? "human",
       time: l.created_at,
     };
   });
