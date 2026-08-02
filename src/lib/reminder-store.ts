@@ -2,6 +2,7 @@
 // `reminders` table, joined against debtors at read time for display fields.
 
 import { supabase, getMyAgentRow } from "./supabase";
+import { isUuid } from "./disposition-store";
 
 export type ReminderKind = "ptp" | "callback";
 
@@ -75,11 +76,16 @@ export async function saveReminder(r: Reminder): Promise<void> {
   if (!agentUuid) throw new Error(`No agent account found for ${r.agentId}`);
 
   const me = await getMyAgentRow();
+  // reminders.debtor_id is a UUID FK. Manual Dial invents an id like
+  // `manual-1785496287078` for a number with no debtor row — passed straight through, that
+  // is rejected as an invalid UUID before RLS even runs (same bug already fixed for
+  // call_logs; this path was missed). A reminder just needs somewhere to send the follow-up,
+  // so drop the FK for an ad-hoc call rather than losing the reminder entirely.
   const { error } = await supabase.from("reminders").insert({
     id: r.id,
     client_id: me?.client_id,
     agent_id: agentUuid,
-    debtor_id: r.debtorId,
+    debtor_id: isUuid(r.debtorId) ? r.debtorId : null,
     kind: r.kind,
     amount: r.amount ?? null,
     due_date: r.dueDate,

@@ -43,8 +43,10 @@ const KEY = "recoveryai_dispositions_cache";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Distinguishes a real debtor/log id from Manual Dial's synthetic `manual-<timestamp>`. */
-function isUuid(v: string | undefined | null): boolean {
+/** Distinguishes a real debtor/log id from Manual Dial's synthetic `manual-<timestamp>`.
+ * Exported: any table with a UUID debtor_id FK needs this same ad-hoc-id guard —
+ * reminders hit the identical bug (see reminder-store.saveReminder) from omitting it. */
+export function isUuid(v: string | undefined | null): boolean {
   return typeof v === "string" && UUID_RE.test(v);
 }
 

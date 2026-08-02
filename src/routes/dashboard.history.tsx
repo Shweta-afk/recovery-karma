@@ -10,6 +10,7 @@ import {
   FileDown,
   ArrowUpRight,
   ArrowDownLeft,
+  PlayCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +73,11 @@ interface ActivityEvent {
   tone: Tone;
   detail: string;
   amount?: number | null;
+  /** Provider-hosted recording, when the provider has published one. */
+  recordingUrl?: string;
+  /** Presence (regardless of recordingUrl) means the call actually connected and has
+   * something to backfill a recording from — distinguishes "pending" from "never happened". */
+  providerCallId?: string;
   /** ISO timestamp, kept for sorting — `date`/`time` are display-only. */
   rawTime: string;
 }
@@ -186,6 +192,8 @@ export function toActivityEvents(disps: DispositionRecord[], now = new Date()): 
         tone: OUTCOME_TONE[d.outcome] ?? "neutral",
         detail: d.notes,
         amount,
+        recordingUrl: d.recordingUrl,
+        providerCallId: d.providerCallId,
         rawTime: d.time,
       };
     })
@@ -487,6 +495,25 @@ function ActivityHistoryPage() {
                           {e.amount ? (
                             <span className="text-[11px] font-semibold text-blue-600">
                               {formatINR(e.amount)}
+                            </span>
+                          ) : null}
+                          {e.recordingUrl ? (
+                            <a
+                              href={e.recordingUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                            >
+                              <PlayCircle className="h-3.5 w-3.5" />
+                              Play recording
+                            </a>
+                          ) : e.providerCallId ? (
+                            // The call reached the provider (so it may have connected), but
+                            // no recording yet: providers publish these asynchronously, which
+                            // is normal shortly after the call ends — the next Activity
+                            // History load runs the backfill again.
+                            <span className="mt-1 block text-[10px] text-muted-foreground">
+                              Recording pending
                             </span>
                           ) : null}
                         </TableCell>
