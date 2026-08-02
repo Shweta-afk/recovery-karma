@@ -1,18 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   IndianRupee,
-  CheckCircle2,
-  Clock,
   TrendingUp,
+  Clock,
   Search,
   X,
   FileDown,
-  Filter,
   CreditCard,
   Banknote,
   Smartphone,
-  RefreshCcw,
+  Link as LinkIcon,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
@@ -33,339 +31,42 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { formatINR, bucketOf, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
+import {
+  getPayments,
+  refreshPayments,
+  getSettlements,
+  refreshSettlements,
+  type PaymentRecord,
+  type PaymentStatus,
+  type PaymentMethod,
+  type SettlementRecord,
+} from "@/lib/payments-store";
 
 export const Route = createFileRoute("/dashboard/payments")({
   head: () => ({ meta: [{ title: "Payments · RecoveryAI" }] }),
   component: PaymentsPage,
 });
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type PaymentMethod = "UPI" | "NEFT" | "RTGS" | "eNACH" | "Cash" | "Cheque";
-type PaymentStatus = "confirmed" | "pending_verification" | "bounced" | "partial";
-type SettlementStatus = "approved" | "pending_approval" | "rejected";
-
-interface PaymentRecord {
-  id: string;
-  debtorName: string;
-  loanId: string;
-  phone: string;
-  portfolio: string;
-  amount: number;
-  method: PaymentMethod;
-  ref: string;
-  date: string;
-  time: string;
-  status: PaymentStatus;
-  collectedBy: "agent" | "ai" | "self";
-  agentName: string;
-  lender: string;
-  product: string;
-  dpd: number;
-  verifiedAt?: string;
-}
-
-interface SettlementRecord {
-  id: string;
-  debtorName: string;
-  loanId: string;
-  outstanding: number;
-  settlementAmount: number;
-  waiver: number;
-  date: string;
-  status: SettlementStatus;
-  approvedBy?: string;
-  agentName: string;
-  reason: string;
-}
-
-// ─── Mock data — represents confirmed collections from uploaded Excel ─────────
-
-const PAYMENTS: PaymentRecord[] = [
-  {
-    id: "RX-001",
-    debtorName: "Amit Verma",
-    loanId: "L-10211",
-    phone: "+91 99XXX XX104",
-    portfolio: "Personal Loan Q2",
-    amount: 50000,
-    method: "UPI",
-    ref: "UPI20260622AMTV1234",
-    date: "22 Jun 2026",
-    time: "09:45 AM",
-    status: "confirmed",
-    collectedBy: "agent",
-    agentName: "Ravi M.",
-    lender: "HDFC Bank",
-    product: "Personal Loan",
-    dpd: 14,
-    verifiedAt: "22 Jun 09:47 AM",
-  },
-  {
-    id: "RX-002",
-    debtorName: "Priya Iyer",
-    loanId: "L-10018",
-    phone: "+91 90XXX XX221",
-    portfolio: "Credit Card NPA",
-    amount: 87500,
-    method: "NEFT",
-    ref: "NEFT20260621PIY10018",
-    date: "21 Jun 2026",
-    time: "04:12 PM",
-    status: "confirmed",
-    collectedBy: "agent",
-    agentName: "You",
-    lender: "Bajaj Finance",
-    product: "Credit Card NPA",
-    dpd: 45,
-    verifiedAt: "21 Jun 04:20 PM",
-  },
-  {
-    id: "RX-003",
-    debtorName: "Divya Krishnan",
-    loanId: "L-10333",
-    phone: "+91 97XXX XX115",
-    portfolio: "Personal Loan Q2",
-    amount: 27500,
-    method: "UPI",
-    ref: "UPI20260622DIVK0333",
-    date: "22 Jun 2026",
-    time: "11:30 AM",
-    status: "confirmed",
-    collectedBy: "agent",
-    agentName: "You",
-    lender: "Axis Bank",
-    product: "Personal Loan",
-    dpd: 22,
-    verifiedAt: "22 Jun 11:31 AM",
-  },
-  {
-    id: "RX-004",
-    debtorName: "Rahul Sharma",
-    loanId: "L-10042",
-    phone: "+91 98XXX XX789",
-    portfolio: "Personal Loan Q2",
-    amount: 8200,
-    method: "eNACH",
-    ref: "NACH20260515RHS10042",
-    date: "15 May 2026",
-    time: "12:00 AM",
-    status: "confirmed",
-    collectedBy: "self",
-    agentName: "—",
-    lender: "HDFC Bank",
-    product: "Personal Loan",
-    dpd: 30,
-    verifiedAt: "15 May 12:02 AM",
-  },
-  {
-    id: "RX-005",
-    debtorName: "Meera Joshi",
-    loanId: "L-10277",
-    phone: "+91 98XXX XX670",
-    portfolio: "MSME Working Cap",
-    amount: 42000,
-    method: "RTGS",
-    ref: "RTGS20260620MJO10277",
-    date: "20 Jun 2026",
-    time: "02:05 PM",
-    status: "confirmed",
-    collectedBy: "agent",
-    agentName: "Pooja S.",
-    lender: "SBI",
-    product: "MSME Loan",
-    dpd: 8,
-    verifiedAt: "20 Jun 02:30 PM",
-  },
-  {
-    id: "RX-006",
-    debtorName: "Arjun Kapoor",
-    loanId: "L-10068",
-    phone: "+91 91XXX XX833",
-    portfolio: "Credit Card NPA",
-    amount: 19500,
-    method: "UPI",
-    ref: "UPI20260622AKA10068",
-    date: "22 Jun 2026",
-    time: "02:48 PM",
-    status: "confirmed",
-    collectedBy: "agent",
-    agentName: "You",
-    lender: "Bajaj Finance",
-    product: "Credit Card NPA",
-    dpd: 38,
-    verifiedAt: "22 Jun 02:49 AM",
-  },
-  {
-    id: "RX-007",
-    debtorName: "Rekha Patel",
-    loanId: "L-10350",
-    phone: "+91 91XXX XX804",
-    portfolio: "Two-Wheeler Auto",
-    amount: 6400,
-    method: "UPI",
-    ref: "UPI20260622RPT10350",
-    date: "22 Jun 2026",
-    time: "01:41 PM",
-    status: "confirmed",
-    collectedBy: "ai",
-    agentName: "AI Bot",
-    lender: "Bajaj Auto",
-    product: "Two-Wheeler Loan",
-    dpd: 20,
-    verifiedAt: "22 Jun 01:42 PM",
-  },
-  {
-    id: "RX-008",
-    debtorName: "Karthik Nair",
-    loanId: "L-10122",
-    phone: "+91 99XXX XX901",
-    portfolio: "Personal Loan Q2",
-    amount: 52000,
-    method: "NEFT",
-    ref: "NEFT20260621KNA10122",
-    date: "21 Jun 2026",
-    time: "10:10 AM",
-    status: "pending_verification",
-    collectedBy: "agent",
-    agentName: "You",
-    lender: "ICICI Bank",
-    product: "Personal Loan",
-    dpd: 55,
-  },
-  {
-    id: "RX-009",
-    debtorName: "Sneha Reddy",
-    loanId: "L-10087",
-    phone: "+91 97XXX XX556",
-    portfolio: "Personal Loan Q2",
-    amount: 9800,
-    method: "Cheque",
-    ref: "CHQ-00442",
-    date: "19 Jun 2026",
-    time: "03:20 PM",
-    status: "bounced",
-    collectedBy: "agent",
-    agentName: "Ravi M.",
-    lender: "HDFC Bank",
-    product: "Personal Loan",
-    dpd: 18,
-  },
-  {
-    id: "RX-010",
-    debtorName: "Imran Sheikh",
-    loanId: "L-10478",
-    phone: "+91 91XXX XX642",
-    portfolio: "MSME Working Cap",
-    amount: 5500,
-    method: "UPI",
-    ref: "UPI20260618ISH10478",
-    date: "18 Jun 2026",
-    time: "05:15 PM",
-    status: "partial",
-    collectedBy: "agent",
-    agentName: "Anita K.",
-    lender: "Axis Bank",
-    product: "MSME Loan",
-    dpd: 62,
-    verifiedAt: "18 Jun 05:16 PM",
-  },
-  {
-    id: "RX-011",
-    debtorName: "Sara Khan",
-    loanId: "L-10612",
-    phone: "+91 90XXX XX174",
-    portfolio: "Two-Wheeler Auto",
-    amount: 12500,
-    method: "UPI",
-    ref: "UPI20260622SKA10612",
-    date: "22 Jun 2026",
-    time: "02:28 PM",
-    status: "confirmed",
-    collectedBy: "agent",
-    agentName: "You",
-    lender: "Bajaj Auto",
-    product: "Two-Wheeler Loan",
-    dpd: 11,
-    verifiedAt: "22 Jun 02:29 PM",
-  },
-  {
-    id: "RX-012",
-    debtorName: "Manish Gupta",
-    loanId: "L-10145",
-    phone: "+91 97XXX XX461",
-    portfolio: "Personal Loan Q2",
-    amount: 9500,
-    method: "eNACH",
-    ref: "NACH20260601MGU10145",
-    date: "1 Jun 2026",
-    time: "12:00 AM",
-    status: "confirmed",
-    collectedBy: "self",
-    agentName: "—",
-    lender: "HDFC Bank",
-    product: "Personal Loan",
-    dpd: 25,
-    verifiedAt: "1 Jun 12:01 AM",
-  },
-];
-
-const SETTLEMENTS: SettlementRecord[] = [
-  {
-    id: "STL-001",
-    debtorName: "Vikram Singh",
-    loanId: "L-10309",
-    outstanding: 148000,
-    settlementAmount: 120000,
-    waiver: 19,
-    date: "20 Jun 2026",
-    status: "approved",
-    approvedBy: "Sanjay M. (Manager)",
-    agentName: "You",
-    reason: "Long-term NPA, debtor agreed to one-time settlement",
-  },
-  {
-    id: "STL-002",
-    debtorName: "Deepak Rawat",
-    loanId: "L-09655",
-    outstanding: 370000,
-    settlementAmount: 300000,
-    waiver: 19,
-    date: "18 Jun 2026",
-    status: "pending_approval",
-    agentName: "Pooja S.",
-    reason: "Dispute resolved, debtor willing to settle at 80%",
-  },
-  {
-    id: "STL-003",
-    debtorName: "Naresh Kumar",
-    loanId: "L-09488",
-    outstanding: 128000,
-    settlementAmount: 90000,
-    waiver: 30,
-    date: "15 Jun 2026",
-    status: "rejected",
-    approvedBy: "Sanjay M. (Manager)",
-    agentName: "Ravi M.",
-    reason: "Requested 30% waiver — exceeds policy threshold",
-  },
-];
-
 // ─── Status & method metadata ─────────────────────────────────────────────────
+// Mirrors the real `payments.status` / `payments.payment_method` CHECK constraints
+// (schema.sql) — not the earlier mock's invented Razorpay-flavored values.
 
 const STATUS_META: Record<PaymentStatus, { label: string; cls: string }> = {
-  confirmed: { label: "Confirmed", cls: "bg-success/8 text-success/70 border-success/15" },
-  pending_verification: {
+  completed: { label: "Confirmed", cls: "bg-success/8 text-success/70 border-success/15" },
+  pending: {
     label: "Pending Verify",
     cls: "bg-warning/8 text-warning-foreground/70 border-warning/15",
   },
-  bounced: { label: "Bounced", cls: "bg-destructive/8 text-destructive/70 border-destructive/15" },
-  partial: { label: "Partial", cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15" },
+  failed: { label: "Failed", cls: "bg-destructive/8 text-destructive/70 border-destructive/15" },
+  refunded: { label: "Refunded", cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15" },
 };
 
-const SETTLEMENT_META: Record<SettlementStatus, { label: string; cls: string }> = {
+const SETTLEMENT_META: Record<
+  SettlementRecord["status"],
+  { label: string; cls: string }
+> = {
   approved: { label: "Approved", cls: "bg-success/8 text-success/70 border-success/15" },
-  pending_approval: {
+  pending_manager: {
     label: "Pending Approval",
     cls: "bg-warning/8 text-warning-foreground/70 border-warning/15",
   },
@@ -373,22 +74,55 @@ const SETTLEMENT_META: Record<SettlementStatus, { label: string; cls: string }> 
     label: "Rejected",
     cls: "bg-destructive/8 text-destructive/70 border-destructive/15",
   },
+  sent_to_bank: { label: "Sent to Bank", cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15" },
 };
 
-const METHOD_CLS: Record<string, string> = {
-  UPI: "bg-primary/8 text-primary/70 border-primary/15",
-  NEFT: "bg-muted text-muted-foreground border-border",
-  RTGS: "bg-muted text-muted-foreground border-border",
-  eNACH: "bg-accent text-accent-foreground border-border",
-  Cash: "bg-success/8 text-success/70 border-success/15",
-  Cheque: "bg-warning/8 text-warning-foreground/70 border-warning/15",
+const METHOD_LABEL: Record<PaymentMethod, string> = {
+  upi: "UPI",
+  card: "Card",
+  netbanking: "Net Banking",
+  cash: "Cash",
+  cheque: "Cheque",
+  link: "Payment Link",
 };
 
-const COLLECTOR_CLS: Record<string, string> = {
-  agent: "bg-muted text-muted-foreground border-border",
-  ai: "bg-violet-500/8 text-violet-500/70 border-violet-400/15",
-  self: "bg-blue-500/8 text-blue-500/70 border-blue-400/15",
+const METHOD_CLS: Record<PaymentMethod, string> = {
+  upi: "bg-primary/8 text-primary/70 border-primary/15",
+  card: "bg-muted text-muted-foreground border-border",
+  netbanking: "bg-muted text-muted-foreground border-border",
+  cash: "bg-success/8 text-success/70 border-success/15",
+  cheque: "bg-warning/8 text-warning-foreground/70 border-warning/15",
+  link: "bg-accent text-accent-foreground border-border",
 };
+
+const METHOD_ICON: Record<PaymentMethod, React.ComponentType<{ className?: string }>> = {
+  upi: Smartphone,
+  card: CreditCard,
+  netbanking: Banknote,
+  cash: Banknote,
+  cheque: CreditCard,
+  link: LinkIcon,
+};
+
+function formatDate(iso?: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function isSameDay(iso: string, ref: Date): boolean {
+  return new Date(iso).toDateString() === ref.toDateString();
+}
+
+function isSameMonth(iso: string, ref: Date): boolean {
+  const d = new Date(iso);
+  return d.getMonth() === ref.getMonth() && d.getFullYear() === ref.getFullYear();
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -400,31 +134,51 @@ function PaymentsPage() {
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  const [payments, setPayments] = useState<PaymentRecord[]>(() => getPayments());
+  const [settlements, setSettlements] = useState<SettlementRecord[]>(() => getSettlements());
+
+  useEffect(() => {
+    const loadPayments = () => setPayments(getPayments());
+    const loadSettlements = () => setSettlements(getSettlements());
+    window.addEventListener("payments-updated", loadPayments);
+    window.addEventListener("settlements-updated", loadSettlements);
+    refreshPayments()
+      .then(loadPayments)
+      .catch((e) => console.warn("[payments] refresh failed:", e));
+    refreshSettlements()
+      .then(loadSettlements)
+      .catch((e) => console.warn("[settlements] refresh failed:", e));
+    return () => {
+      window.removeEventListener("payments-updated", loadPayments);
+      window.removeEventListener("settlements-updated", loadSettlements);
+    };
+  }, []);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return PAYMENTS.filter((p) => {
+    return payments.filter((p) => {
       const matchSearch =
         !q ||
         p.debtorName.toLowerCase().includes(q) ||
         p.loanId.toLowerCase().includes(q) ||
-        p.ref.toLowerCase().includes(q);
+        p.notes.toLowerCase().includes(q);
       const matchStatus = statusFilter === "all" || p.status === statusFilter;
       const matchMethod = methodFilter === "all" || p.method === methodFilter;
-      const matchBucket = bucketFilter === "all" || bucketOf(p.dpd) === bucketFilter;
+      const matchBucket = bucketFilter === "all" || bucketOf(p.dpd ?? 0) === bucketFilter;
       return matchSearch && matchStatus && matchMethod && matchBucket;
     });
-  }, [search, statusFilter, methodFilter, bucketFilter]);
+  }, [payments, search, statusFilter, methodFilter, bucketFilter]);
 
-  const confirmedToday = PAYMENTS.filter(
-    (p) => p.date === "22 Jun 2026" && p.status === "confirmed",
+  const now = new Date();
+  const confirmedToday = payments.filter(
+    (p) => p.status === "completed" && isSameDay(p.receivedAt ?? p.createdAt, now),
   );
   const confirmedAmount = confirmedToday.reduce((s, p) => s + p.amount, 0);
-  const totalMonth = PAYMENTS.filter((p) => p.status === "confirmed").reduce(
-    (s, p) => s + p.amount,
-    0,
-  );
-  const pendingCount = PAYMENTS.filter((p) => p.status === "pending_verification").length;
-  const bouncedCount = PAYMENTS.filter((p) => p.status === "bounced").length;
+  const totalMonth = payments
+    .filter((p) => p.status === "completed" && isSameMonth(p.receivedAt ?? p.createdAt, now))
+    .reduce((s, p) => s + p.amount, 0);
+  const pendingCount = payments.filter((p) => p.status === "pending").length;
+  const failedCount = payments.filter((p) => p.status === "failed").length;
 
   return (
     <div className="space-y-6">
@@ -432,7 +186,8 @@ function PaymentsPage() {
       <div className="animate-in fade-in slide-in-from-top-4 duration-500">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Payments</h1>
         <p className="text-sm text-muted-foreground">
-          Confirmed collections from uploaded portfolio. Reference numbers sourced from Excel data.
+          Collections logged against real debtor accounts. Payment links are issued by the bank —
+          not a payment gateway — so most rows are logged manually via a call outcome.
         </p>
       </div>
 
@@ -461,8 +216,8 @@ function PaymentsPage() {
             cls: "text-warning-foreground",
           },
           {
-            label: "Bounced / Failed",
-            value: bouncedCount.toString(),
+            label: "Failed",
+            value: failedCount.toString(),
             sub: "Requires follow-up",
             icon: AlertTriangle,
             cls: "text-destructive",
@@ -505,7 +260,7 @@ function PaymentsPage() {
             <div className="relative">
               <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="Search debtor, ref, loan…"
+                placeholder="Search debtor, notes, loan…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-8 h-8 text-sm w-48"
@@ -526,10 +281,10 @@ function PaymentsPage() {
               {(
                 [
                   { key: "all", label: "All" },
-                  { key: "confirmed", label: "Confirmed" },
-                  { key: "pending_verification", label: "Pending" },
-                  { key: "bounced", label: "Bounced" },
-                  { key: "partial", label: "Partial" },
+                  { key: "completed", label: "Confirmed" },
+                  { key: "pending", label: "Pending" },
+                  { key: "failed", label: "Failed" },
+                  { key: "refunded", label: "Refunded" },
                 ] as const
               ).map((f) => (
                 <button
@@ -579,10 +334,10 @@ function PaymentsPage() {
                     )}
                   >
                     <span>All Buckets</span>
-                    <span className="opacity-50">{PAYMENTS.length}</span>
+                    <span className="opacity-50">{payments.length}</span>
                   </button>
                   {(["X", "1", "2", "NPA", "WriteOff"] as DPDBucket[]).map((b) => {
-                    const count = PAYMENTS.filter((p) => bucketOf(p.dpd) === b).length;
+                    const count = payments.filter((p) => bucketOf(p.dpd ?? 0) === b).length;
                     if (count === 0) return null;
                     return (
                       <button
@@ -610,7 +365,7 @@ function PaymentsPage() {
 
             {/* Method pills */}
             <div className="flex gap-1.5 flex-wrap">
-              {(["all", "UPI", "NEFT", "RTGS", "eNACH", "Cheque"] as const).map((m) => (
+              {(["all", "upi", "netbanking", "cash", "cheque", "link"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -622,7 +377,7 @@ function PaymentsPage() {
                       : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/30",
                   )}
                 >
-                  {m === "all" ? "All methods" : m}
+                  {m === "all" ? "All methods" : METHOD_LABEL[m]}
                 </button>
               ))}
             </div>
@@ -647,20 +402,20 @@ function PaymentsPage() {
                       "Amount",
                       "Method",
                       "Status",
-                      "Reference",
-                      "Verified By",
+                      "Notes",
+                      "Agent",
                       "DPD Bucket",
                     ];
                     const rows = filtered.map((p) => [
-                      p.date,
+                      formatDate(p.receivedAt ?? p.createdAt),
                       p.debtorName,
                       p.loanId,
                       p.amount,
-                      p.method,
-                      p.status,
-                      p.ref,
-                      p.verifiedAt ?? "",
-                      p.dpd,
+                      p.method ? METHOD_LABEL[p.method] : "",
+                      STATUS_META[p.status].label,
+                      p.notes,
+                      p.agentName,
+                      p.dpd ?? "",
                     ]);
                     const escape = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
                     const csv = [headers, ...rows].map((r) => r.map(escape).join(",")).join("\n");
@@ -687,15 +442,26 @@ function PaymentsPage() {
                       <TableHead>Portfolio / Product</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
                       <TableHead>Method</TableHead>
-                      <TableHead>Reference No.</TableHead>
+                      <TableHead>Notes</TableHead>
                       <TableHead>Date</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Collected By</TableHead>
+                      <TableHead>Agent</TableHead>
                       <TableHead />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.length === 0 && (
+                    {payments.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={9}
+                          className="text-center py-12 text-sm text-muted-foreground"
+                        >
+                          No payments logged yet. Payments are recorded when an agent disposes a
+                          call as "Paid" — nothing to show until that happens.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {payments.length > 0 && filtered.length === 0 && (
                       <TableRow>
                         <TableCell
                           colSpan={9}
@@ -707,6 +473,7 @@ function PaymentsPage() {
                     )}
                     {filtered.map((p) => {
                       const sMeta = STATUS_META[p.status];
+                      const MethodIcon = p.method ? METHOD_ICON[p.method] : null;
                       const expanded = expandedId === p.id;
                       return (
                         <>
@@ -714,28 +481,30 @@ function PaymentsPage() {
                             key={p.id}
                             className={cn(
                               "hover:bg-primary/5 cursor-pointer",
-                              p.status === "bounced" && "bg-destructive/5",
+                              p.status === "failed" && "bg-destructive/5",
                             )}
                             onClick={() => setExpandedId(expanded ? null : p.id)}
                           >
                             <TableCell>
-                              <div className="font-medium text-sm">{p.debtorName}</div>
+                              <div className="font-medium text-sm">{p.debtorName || "—"}</div>
                               <div className="text-[11px] text-muted-foreground">
-                                {p.loanId} · DPD {p.dpd}d
+                                {p.loanId} · DPD {p.dpd ?? "—"}d
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div className="text-sm text-foreground">{p.portfolio}</div>
+                              <div className="text-sm text-foreground">
+                                {p.portfolioName ?? "—"}
+                              </div>
                               <div className="text-[11px] text-muted-foreground">
-                                {p.product} · {p.lender}
+                                {[p.product, p.lender].filter(Boolean).join(" · ") || "—"}
                               </div>
                             </TableCell>
                             <TableCell
                               className={cn(
                                 "text-right font-semibold text-sm",
-                                p.status === "confirmed"
+                                p.status === "completed"
                                   ? "text-success"
-                                  : p.status === "bounced"
+                                  : p.status === "failed"
                                     ? "text-destructive"
                                     : "text-foreground",
                               )}
@@ -743,20 +512,23 @@ function PaymentsPage() {
                               {formatINR(p.amount)}
                             </TableCell>
                             <TableCell>
-                              <Badge
-                                variant="outline"
-                                className={cn("text-xs", METHOD_CLS[p.method])}
-                              >
-                                {p.method}
-                              </Badge>
+                              {p.method ? (
+                                <Badge
+                                  variant="outline"
+                                  className={cn("text-xs gap-1", METHOD_CLS[p.method])}
+                                >
+                                  {MethodIcon && <MethodIcon className="h-3 w-3" />}
+                                  {METHOD_LABEL[p.method]}
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
                             </TableCell>
-                            <TableCell className="font-mono text-xs text-muted-foreground">
-                              {p.ref}
+                            <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">
+                              {p.notes || "—"}
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                              {p.date}
-                              <br />
-                              {p.time}
+                              {formatDate(p.receivedAt ?? p.createdAt)}
                             </TableCell>
                             <TableCell>
                               <Badge variant="outline" className={cn("text-xs", sMeta.cls)}>
@@ -764,16 +536,7 @@ function PaymentsPage() {
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              <Badge
-                                variant="outline"
-                                className={cn("text-xs capitalize", COLLECTOR_CLS[p.collectedBy])}
-                              >
-                                {p.collectedBy === "self"
-                                  ? "Self-pay"
-                                  : p.collectedBy === "ai"
-                                    ? "AI Bot"
-                                    : p.agentName}
-                              </Badge>
+                              <span className="text-xs text-muted-foreground">{p.agentName}</span>
                             </TableCell>
                             <TableCell>
                               {expanded ? (
@@ -793,15 +556,10 @@ function PaymentsPage() {
                               <TableCell colSpan={9} className="py-3 px-6">
                                 <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
                                   {[
-                                    ["Full Reference", p.ref],
-                                    ["Verification Time", p.verifiedAt ?? "—"],
-                                    ["Debtor Phone", p.phone],
-                                    [
-                                      "Agent",
-                                      p.collectedBy === "self"
-                                        ? "Self-pay (no agent)"
-                                        : p.agentName,
-                                    ],
+                                    ["Payment Type", p.paymentType],
+                                    ["Notes", p.notes || "—"],
+                                    ["Debtor Phone", p.phone || "—"],
+                                    ["Agent", p.agentName],
                                   ].map(([label, val]) => (
                                     <div key={String(label)}>
                                       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -813,12 +571,11 @@ function PaymentsPage() {
                                     </div>
                                   ))}
                                 </div>
-                                {p.status === "bounced" && (
+                                {p.status === "failed" && (
                                   <div className="mt-3 flex items-center gap-2">
                                     <AlertTriangle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
                                     <p className="text-xs text-destructive">
-                                      Cheque bounced — requires immediate follow-up. Re-present or
-                                      collect alternate payment.
+                                      Payment failed — requires immediate follow-up.
                                     </p>
                                     <Button
                                       size="sm"
@@ -831,15 +588,11 @@ function PaymentsPage() {
                                     </Button>
                                   </div>
                                 )}
-                                {p.status === "pending_verification" && (
+                                {p.status === "pending" && (
                                   <div className="mt-3 flex items-center gap-2">
-                                    <RefreshCcw
-                                      className="h-3.5 w-3.5 text-warning-foreground flex-shrink-0 animate-spin"
-                                      style={{ animationDuration: "3s" }}
-                                    />
+                                    <Clock className="h-3.5 w-3.5 text-warning-foreground flex-shrink-0" />
                                     <p className="text-xs text-warning-foreground">
-                                      Awaiting bank confirmation. Auto-reconciliation runs every 15
-                                      minutes.
+                                      Awaiting bank confirmation.
                                     </p>
                                   </div>
                                 )}
@@ -856,37 +609,38 @@ function PaymentsPage() {
           </Card>
 
           {/* Summary by method */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {(["UPI", "NEFT", "RTGS", "eNACH", "Cash", "Cheque"] as PaymentMethod[]).map((m) => {
-              const total = PAYMENTS.filter(
-                (p) => p.method === m && p.status === "confirmed",
-              ).reduce((s, p) => s + p.amount, 0);
-              const count = PAYMENTS.filter((p) => p.method === m).length;
-              if (count === 0) return null;
-              return (
-                <Card key={m} className="animate-in fade-in duration-400">
-                  <CardContent className="p-3">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      {m === "UPI" && <Smartphone className="h-3.5 w-3.5 text-primary" />}
-                      {(m === "NEFT" || m === "RTGS") && (
-                        <Banknote className="h-3.5 w-3.5 text-muted-foreground" />
-                      )}
-                      {(m === "eNACH" || m === "Cash" || m === "Cheque") && (
-                        <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
-                      )}
-                      <span className="text-xs font-semibold text-foreground">{m}</span>
-                    </div>
-                    <div className="text-sm font-bold text-foreground">
-                      {total > 0 ? formatINR(total) : "—"}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground">
-                      {count} transaction{count !== 1 ? "s" : ""}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+          {payments.length > 0 && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              {(["upi", "card", "netbanking", "cash", "cheque", "link"] as PaymentMethod[]).map(
+                (m) => {
+                  const total = payments
+                    .filter((p) => p.method === m && p.status === "completed")
+                    .reduce((s, p) => s + p.amount, 0);
+                  const count = payments.filter((p) => p.method === m).length;
+                  if (count === 0) return null;
+                  const Icon = METHOD_ICON[m];
+                  return (
+                    <Card key={m} className="animate-in fade-in duration-400">
+                      <CardContent className="p-3">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-xs font-semibold text-foreground">
+                            {METHOD_LABEL[m]}
+                          </span>
+                        </div>
+                        <div className="text-sm font-bold text-foreground">
+                          {total > 0 ? formatINR(total) : "—"}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {count} transaction{count !== 1 ? "s" : ""}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                },
+              )}
+            </div>
+          )}
         </TabsContent>
 
         {/* ── Settlements ── */}
@@ -912,48 +666,62 @@ function PaymentsPage() {
                       <TableHead>Date</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Raised By</TableHead>
-                      <TableHead className="min-w-[200px]">Reason</TableHead>
+                      <TableHead className="min-w-[200px]">Notes</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {SETTLEMENTS.map((s) => {
+                    {settlements.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={8}
+                          className="text-center py-12 text-sm text-muted-foreground"
+                        >
+                          No settlement requests raised yet.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {settlements.map((s) => {
                       const meta = SETTLEMENT_META[s.status];
                       return (
                         <TableRow key={s.id} className="hover:bg-primary/5 align-top">
                           <TableCell>
-                            <div className="font-medium text-sm">{s.debtorName}</div>
+                            <div className="font-medium text-sm">{s.debtorName || "—"}</div>
                             <div className="text-[11px] text-muted-foreground">{s.loanId}</div>
                           </TableCell>
                           <TableCell className="text-right font-medium text-sm">
-                            {formatINR(s.outstanding)}
+                            {formatINR(s.originalAmount)}
                           </TableCell>
                           <TableCell className="text-right font-semibold text-teal-600 text-sm">
-                            {formatINR(s.settlementAmount)}
+                            {formatINR(s.proposedAmount)}
                           </TableCell>
                           <TableCell
                             className={cn(
                               "text-right font-semibold text-sm",
-                              s.waiver > 20 ? "text-destructive" : "text-warning-foreground",
+                              s.waiverPct > 20 ? "text-destructive" : "text-warning-foreground",
                             )}
                           >
-                            {s.waiver}%
+                            {s.waiverPct}%
                           </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{s.date}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {formatDate(s.createdAt)}
+                          </TableCell>
                           <TableCell>
                             <Badge variant="outline" className={cn("text-xs", meta.cls)}>
                               {meta.label}
                             </Badge>
-                            {s.approvedBy && (
+                            {s.approvedByName && (
                               <div className="text-[10px] text-muted-foreground mt-0.5">
-                                {s.approvedBy}
+                                {s.approvedByName}
                               </div>
                             )}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
-                            {s.agentName}
+                            {s.requestedByName}
                           </TableCell>
                           <TableCell>
-                            <p className="text-xs text-foreground/80 leading-relaxed">{s.reason}</p>
+                            <p className="text-xs text-foreground/80 leading-relaxed">
+                              {s.notes || "—"}
+                            </p>
                           </TableCell>
                         </TableRow>
                       );
