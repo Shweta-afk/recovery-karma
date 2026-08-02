@@ -33,6 +33,38 @@ import {
   type UploadedPortfolio,
 } from "@/lib/portfolio-store";
 import { useAuth } from "@/lib/auth";
+import {
+  getDispositions,
+  refreshDispositions,
+  type DispositionRecord,
+} from "@/lib/disposition-store";
+
+const CALL_OUTCOME_LABEL: Record<string, string> = {
+  paid: "Paid",
+  promised: "PTP",
+  refused: "Refused",
+  no_answer: "No Answer",
+  voicemail: "Voicemail",
+  dispute: "Dispute",
+  callback: "Callback",
+  settlement: "Settlement",
+};
+
+function formatCallDate(iso: string): string {
+  return new Date(iso).toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatDuration(seconds?: number): string {
+  if (!seconds) return "—";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
 
 export const Route = createFileRoute("/dashboard/debtors")({
   head: () => ({ meta: [{ title: "Debtor Profiles · RecoveryAI" }] }),
@@ -686,6 +718,29 @@ function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }) {
     .join("")
     .toUpperCase();
 
+  // Real call_logs for this debtor — same disposition-store used by Activity History.
+  const [disps, setDisps] = useState<DispositionRecord[]>(() => getDispositions());
+  useEffect(() => {
+    const load = () => setDisps(getDispositions());
+    window.addEventListener("dispositions-updated", load);
+    refreshDispositions()
+      .then(load)
+      .catch((e) => console.warn("[debtors] disposition refresh failed:", e));
+    return () => window.removeEventListener("dispositions-updated", load);
+  }, []);
+
+  const debtorCalls = useMemo(
+    () =>
+      disps
+        .filter((r) => r.debtorId === d.id)
+        .sort((a, b) => b.time.localeCompare(a.time)),
+    [disps, d.id],
+  );
+  const debtorPayments = useMemo(
+    () => debtorCalls.filter((r) => r.outcome === "paid" && r.paidAmount),
+    [debtorCalls],
+  );
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
@@ -860,32 +915,36 @@ function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }) {
 
           {/* Call history */}
           <TabsContent value="calls" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
-            {(extra?.callHistory ?? []).length === 0 ? (
+            {debtorCalls.length === 0 ? (
               <p className="text-sm text-muted-foreground">No call history recorded.</p>
             ) : (
               <div>
-                {extra!.callHistory.map((c, i) => (
-                  <div key={i} className="flex gap-3">
+                {debtorCalls.map((c, i) => (
+                  <div key={c.id} className="flex gap-3">
                     <div className="flex flex-col items-center">
                       <div className="h-2 w-2 rounded-full bg-muted-foreground mt-1.5" />
-                      {i < (extra?.callHistory ?? []).length - 1 && (
+                      {i < debtorCalls.length - 1 && (
                         <div className="w-px flex-1 bg-border mt-1" />
                       )}
                     </div>
                     <div className="pb-4">
                       <div className="flex items-center gap-2 text-sm">
-                        <span className="font-medium text-foreground">{c.outcome}</span>
+                        <span className="font-medium text-foreground">
+                          {CALL_OUTCOME_LABEL[c.outcome] ?? c.outcome}
+                        </span>
                         <span className="text-muted-foreground">·</span>
                         <Clock className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-muted-foreground text-xs">{c.duration}</span>
+                        <span className="text-muted-foreground text-xs">
+                          {formatDuration(c.durationSeconds)}
+                        </span>
                         <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                          {c.type === "ai" ? "AI" : "Agent"}
+                          {c.callType === "human" ? "Agent" : (c.callType ?? "Agent").toUpperCase()}
                         </Badge>
                       </div>
-                      <div className="text-xs text-muted-foreground">{c.date}</div>
-                      {c.note && (
+                      <div className="text-xs text-muted-foreground">{formatCallDate(c.time)}</div>
+                      {c.notes && (
                         <div className="mt-1 text-xs bg-muted rounded px-2 py-1 text-foreground/80">
-                          {c.note}
+                          {c.notes}
                         </div>
                       )}
                     </div>
@@ -932,23 +991,26 @@ function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }) {
 
           {/* Payments */}
           <TabsContent value="payments" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
-            {(extra?.payments ?? []).length === 0 ? (
+            {debtorPayments.length === 0 ? (
               <p className="text-sm text-muted-foreground">No payments recorded.</p>
             ) : (
               <div className="space-y-2">
-                {extra!.payments.map((p, i) => (
+                {debtorPayments.map((p) => (
                   <div
-                    key={i}
+                    key={p.id}
                     className="flex items-center justify-between rounded-lg border border-border p-3 text-sm"
                   >
                     <div>
-                      <div className="font-semibold text-foreground">{formatINR(p.amount)}</div>
+                      <div className="font-semibold text-foreground">
+                        {formatINR(p.paidAmount ?? 0)}
+                      </div>
                       <div className="text-xs text-muted-foreground">
-                        {p.date} · {p.ref}
+                        {formatCallDate(p.time)}
+                        {p.notes ? ` · ${p.notes}` : ""}
                       </div>
                     </div>
                     <Badge variant="secondary" className="text-xs">
-                      {p.method}
+                      Logged by {p.agentName || "agent"}
                     </Badge>
                   </div>
                 ))}
