@@ -64,13 +64,7 @@ export function getDispositions(): DispositionRecord[] {
  * derived from team membership at read time — never stored — so it can't go stale like the
  * old localStorage version's manually-set `teamId` field did. */
 export async function refreshDispositions(): Promise<void> {
-  const [
-    { data: logs, error },
-    { data: debtorRows },
-    { data: portfolioRows },
-    { data: agentRows },
-    { data: teamAgentRows },
-  ] = await Promise.all([
+  const [callLogs, debtors, portfolios, agents, teamAgents] = await Promise.all([
     supabase
       .from("call_logs")
       // `*` rather than an explicit column list: naming contact_name/contact_phone here
@@ -84,7 +78,32 @@ export async function refreshDispositions(): Promise<void> {
     supabase.from("agents").select("id, email, name"),
     supabase.from("team_agents").select("team_id, agent_id"),
   ]);
-  if (error || !logs || !debtorRows || !portfolioRows || !agentRows || !teamAgentRows) return;
+
+  // Each query used to fail this whole function silently (a bare `return`, no log) — so a
+  // single broken table meant Activity History just showed nothing with no way to tell why.
+  // Log every failure individually, with which table it was, before bailing.
+  const named = [
+    ["call_logs", callLogs] as const,
+    ["debtors", debtors] as const,
+    ["portfolios", portfolios] as const,
+    ["agents", agents] as const,
+    ["team_agents", teamAgents] as const,
+  ];
+  let failed = false;
+  for (const [table, res] of named) {
+    if (res.error) {
+      console.error(`[dispositions] ${table} query failed:`, res.error.message, res.error);
+      failed = true;
+    }
+  }
+  if (failed) return;
+
+  const { data: logs } = callLogs;
+  const { data: debtorRows } = debtors;
+  const { data: portfolioRows } = portfolios;
+  const { data: agentRows } = agents;
+  const { data: teamAgentRows } = teamAgents;
+  if (!logs || !debtorRows || !portfolioRows || !agentRows || !teamAgentRows) return;
 
   const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
   const portfolioById = new Map(portfolioRows.map((p) => [p.id, p]));
