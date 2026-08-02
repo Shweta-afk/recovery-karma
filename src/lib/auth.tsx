@@ -27,6 +27,22 @@ const Ctx = createContext<AuthCtx | null>(null);
 /** How long a cached agent profile stays trusted before it is re-fetched. */
 const PROFILE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+/** Safety net: reproduced in production a case where two concurrent calls into this same
+ * Supabase client hung indefinitely with no error, warning, or rejection — see the
+ * `useEffect` below for the fix to the call pattern that caused it. Bounding every auth
+ * network call means a recurrence degrades to "briefly stuck, then signed out" rather than
+ * an unrecoverable blank "Loading…" screen. */
+const AUTH_CALL_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${AUTH_CALL_TIMEOUT_MS}ms`)), AUTH_CALL_TIMEOUT_MS),
+    ),
+  ]);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,12 +62,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Fetch from Supabase
-    const { data, error } = await supabase
-      .from("agents")
-      .select("name, email, role, agent_phone")
-      .eq("auth_user_id", authUserId)
-      .single();
+    // Fetch from Supabase. Wrapped in Promise.resolve(): the query builder is thenable but
+    // not a real Promise, and withTimeout's generic needs one to infer the result type.
+    const { data, error } = await withTimeout(
+      Promise.resolve(
+        supabase.from("agents").select("name, email, role, agent_phone").eq("auth_user_id", authUserId).single(),
+      ),
+      "agents lookup",
+    );
 
     if (error || !data) return null;
 
@@ -68,53 +86,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    // TEMPORARY diagnostic instrumentation: the auth effect has been observed hanging in
-    // production with `loading` never reaching false — no thrown error, no unhandled
-    // rejection, no navigator.locks held, and a freshly-constructed supabase-js client
-    // against the same stored session resolves instantly. This narrows down exactly which
-    // await point stalls. Remove once the cause is confirmed.
-    const t0 = Date.now();
-    const mark = (label: string, extra?: unknown) =>
-      console.log(`[auth] +${Date.now() - t0}ms ${label}`, extra ?? "");
+    // Diagnosed in production: onAuthStateChange fires its own INITIAL_SESSION event
+    // immediately on subscribe, so the old code below made TWO overlapping calls into
+    // fetchAgentProfile() on every page load — one from getSession().then(), one from that
+    // INITIAL_SESSION event. Verified independently that the database, RLS, the anon key
+    // and a freshly-constructed supabase-js client all resolve this exact query in under a
+    // second; only the app's already-mounted client, hit with two concurrent requests, would
+    // hang indefinitely with loading stuck true and no error, warning, or rejection of any
+    // kind. `handledInitial` makes onAuthStateChange skip that first synthetic event and
+    // handle only real, later transitions (sign-in, sign-out, token refresh) — getSession()
+    // remains the single source of truth for the session already present at load.
+    let cancelled = false;
+    let handledInitial = false;
 
-    mark("effect start");
+    // withTimeout only bounds the network call inside fetchAgentProfile; this wrapper makes
+    // that guarantee unconditional regardless of which caller invokes it, so a rejection can
+    // never leave `loading` stuck true — the failure mode becomes "signed out", not "hung".
+    async function resolveSession(session: { user: { id: string } } | null) {
+      try {
+        const profile = session?.user ? await fetchAgentProfile(session.user.id) : null;
+        if (cancelled) return;
+        setUser(profile);
+      } catch (err) {
+        console.error("[auth] failed to resolve session:", err);
+        if (!cancelled) setUser(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
 
-    // Check existing session on mount
-    mark("calling getSession()");
     supabase.auth
       .getSession()
-      .then(async ({ data: { session }, error }) => {
-        mark("getSession() resolved", { hasSession: !!session, error });
-        if (session?.user) {
-          mark("calling fetchAgentProfile()", session.user.id);
-          const profile = await fetchAgentProfile(session.user.id);
-          mark("fetchAgentProfile() resolved", profile);
-          setUser(profile);
-        }
-        mark("calling setLoading(false) [getSession path]");
-        setLoading(false);
+      .then(({ data: { session } }) => {
+        handledInitial = true;
+        return resolveSession(session);
       })
-      .catch((err) => mark("getSession() THREW", String(err)));
+      .catch((err) => {
+        console.error("[auth] getSession failed:", err);
+        handledInitial = true;
+        if (!cancelled) setLoading(false);
+      });
 
-    // Keep state in sync with Supabase auth events
-    mark("registering onAuthStateChange");
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      mark("onAuthStateChange fired", { event, hasSession: !!session });
-      if (session?.user) {
-        const profile = await fetchAgentProfile(session.user.id);
-        mark("fetchAgentProfile() resolved [onAuthStateChange path]", profile);
-        setUser(profile);
-      } else {
-        setUser(null);
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!handledInitial) {
+        // getSession() above already covers this first check; still let it flip the guard
+        // in case this event beats getSession()'s .then() to the punch.
+        handledInitial = true;
+        return;
       }
-      mark("calling setLoading(false) [onAuthStateChange path]");
-      setLoading(false);
+      void resolveSession(session);
     });
-    mark("onAuthStateChange registered");
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (
@@ -128,10 +156,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: error.message, user: null };
     }
     // Fetch profile immediately so caller gets the role for redirect
-    const profile = data.user ? await fetchAgentProfile(data.user.id) : null;
-    if (profile) setUser(profile);
-    setLoading(false);
-    return { error: null, user: profile };
+    try {
+      const profile = data.user ? await fetchAgentProfile(data.user.id) : null;
+      if (profile) setUser(profile);
+      return { error: null, user: profile };
+    } catch (err) {
+      console.error("[auth] fetchAgentProfile failed during login:", err);
+      return { error: "Signed in, but could not load your profile — please retry.", user: null };
+    } finally {
+      setLoading(false);
+    }
   };
 
   const logout = async () => {
