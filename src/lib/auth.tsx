@@ -68,27 +68,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    // TEMPORARY diagnostic instrumentation: the auth effect has been observed hanging in
+    // production with `loading` never reaching false — no thrown error, no unhandled
+    // rejection, no navigator.locks held, and a freshly-constructed supabase-js client
+    // against the same stored session resolves instantly. This narrows down exactly which
+    // await point stalls. Remove once the cause is confirmed.
+    const t0 = Date.now();
+    const mark = (label: string, extra?: unknown) =>
+      console.log(`[auth] +${Date.now() - t0}ms ${label}`, extra ?? "");
+
+    mark("effect start");
+
     // Check existing session on mount
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const profile = await fetchAgentProfile(session.user.id);
-        setUser(profile);
-      }
-      setLoading(false);
-    });
+    mark("calling getSession()");
+    supabase.auth
+      .getSession()
+      .then(async ({ data: { session }, error }) => {
+        mark("getSession() resolved", { hasSession: !!session, error });
+        if (session?.user) {
+          mark("calling fetchAgentProfile()", session.user.id);
+          const profile = await fetchAgentProfile(session.user.id);
+          mark("fetchAgentProfile() resolved", profile);
+          setUser(profile);
+        }
+        mark("calling setLoading(false) [getSession path]");
+        setLoading(false);
+      })
+      .catch((err) => mark("getSession() THREW", String(err)));
 
     // Keep state in sync with Supabase auth events
+    mark("registering onAuthStateChange");
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
+      mark("onAuthStateChange fired", { event, hasSession: !!session });
       if (session?.user) {
         const profile = await fetchAgentProfile(session.user.id);
+        mark("fetchAgentProfile() resolved [onAuthStateChange path]", profile);
         setUser(profile);
       } else {
         setUser(null);
       }
+      mark("calling setLoading(false) [onAuthStateChange path]");
       setLoading(false);
     });
+    mark("onAuthStateChange registered");
 
     return () => subscription.unsubscribe();
   }, []);
