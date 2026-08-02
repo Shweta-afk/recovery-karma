@@ -19,3 +19,22 @@ COMMENT ON COLUMN call_logs.contact_phone IS
 -- Ad-hoc calls are looked up by number when reconciling them against a debtor later.
 CREATE INDEX IF NOT EXISTS idx_call_logs_contact_phone
   ON call_logs(contact_phone) WHERE contact_phone IS NOT NULL;
+
+-- ────────────────────────────────────────────────────────────
+-- Correlate a saved call log back to the provider's own call
+-- ────────────────────────────────────────────────────────────
+-- recording_url has existed since the original schema but is almost always NULL at the
+-- moment an agent dispositions: the provider produces recordings asynchronously and its
+-- hangup webhook carries `"recording_url": ""`. Filling it in later means asking the
+-- provider about a specific call, and nothing on call_logs identified one — so the id
+-- returned when the call was placed (Tata's ref_id) is stored here.
+
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS provider_call_id TEXT;
+
+COMMENT ON COLUMN call_logs.provider_call_id IS
+  'Provider''s id for this call (Tata ref_id). Used to backfill recording_url from the CDR.';
+
+-- Supports "find my logs still missing a recording", the backfill's driving query.
+CREATE INDEX IF NOT EXISTS idx_call_logs_pending_recording
+  ON call_logs(provider_call_id)
+  WHERE provider_call_id IS NOT NULL AND recording_url IS NULL;

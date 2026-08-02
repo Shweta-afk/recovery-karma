@@ -50,6 +50,15 @@ function getAuthHeaders(): Record<string, string> {
   };
 }
 
+/** Raw CDR rows from the last `minutesAgo`, for callers that need fields the normalized
+ * CallStatusEvent drops — notably recording_url, which is published asynchronously. */
+export async function fetchRecentCallRecords(
+  minutesAgo = 180,
+): Promise<Array<Record<string, unknown>>> {
+  const records = await fetchTataCallRecords(minutesAgo);
+  return Array.isArray(records) ? (records as Array<Record<string, unknown>>) : [];
+}
+
 async function fetchTataCallRecords(minutesAgo: number): Promise<unknown> {
   if (!TATA_ACCESS_TOKEN) {
     console.warn("[polling] TATA_ACCESS_TOKEN not set — skipping Tata API call");

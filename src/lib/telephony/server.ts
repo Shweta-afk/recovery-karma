@@ -22,7 +22,7 @@ import type { SimProvider } from "./sim-provider";
 import { isTerminal } from "./call-machine";
 import type { TelephonyEvent, CallStatusEvent } from "./types";
 import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-disposition";
-import { startPollingJob } from "./polling";
+import { startPollingJob, fetchRecentCallRecords } from "./polling";
 
 // ─── Process-wide state + event fan-out ─────────────────────────────────────────
 //
@@ -298,6 +298,38 @@ export const startCall = createServerFn({ method: "POST" })
       hints: { aiScore: data.aiScore, ivr: data.ivr },
     });
     return { providerCallId };
+  });
+
+/**
+ * Look up recordings for calls we already logged.
+ *
+ * Providers publish recordings asynchronously — Tata's hangup webhook arrives with
+ * `"recording_url": ""` — so a call dispositioned promptly is saved with no recording and
+ * nothing would ever fill it in. The browser asks for the missing ones by provider call id;
+ * the CDR lookup happens here because it needs the API token, and the caller writes the
+ * result to its own row under its own session (no service-role key needed).
+ *
+ * Returns only the ids that now have a recording.
+ */
+export const fetchRecordings = createServerFn({ method: "POST" })
+  .inputValidator((d: { providerCallIds: string[] }) => d)
+  .handler(async ({ data }) => {
+    const wanted = new Set(data.providerCallIds.filter(Boolean));
+    if (!wanted.size) return {} as Record<string, string>;
+
+    const records = await fetchRecentCallRecords();
+    const found: Record<string, string> = {};
+    for (const r of records) {
+      const rec = r.recording_url;
+      if (!rec || typeof rec !== "string") continue;
+      for (const key of [r.ref_id, r.call_id, r.uuid]) {
+        if (typeof key === "string" && wanted.has(key)) {
+          found[key] = rec;
+          break;
+        }
+      }
+    }
+    return found;
   });
 
 export const hangupCall = createServerFn({ method: "POST" })

@@ -33,6 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/mock-debtors";
 import {
+  backfillRecordings,
   getDispositions,
   refreshDispositions,
   type DispositionRecord,
@@ -208,7 +209,15 @@ function ActivityHistoryPage() {
   useEffect(() => {
     const load = () => setDisps(getDispositions());
     window.addEventListener("dispositions-updated", load);
-    refreshDispositions().finally(load);
+    refreshDispositions()
+      .then(() => {
+        load();
+        // Recordings are published after the call is logged, so ask the provider for any
+        // that were still missing. Failures are non-fatal — history renders regardless.
+        return backfillRecordings(getDispositions());
+      })
+      .catch((e) => console.warn("[history] recording backfill skipped:", e))
+      .finally(load);
     return () => window.removeEventListener("dispositions-updated", load);
   }, []);
 

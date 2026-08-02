@@ -34,6 +34,8 @@ export interface DispositionRecord {
   recordingUrl?: string;
   /** Who handled the call — drives the channel shown in Activity History. */
   callType?: "human" | "ai" | "ivr" | "bot";
+  /** Provider's id for the call, used to backfill the recording once it is published. */
+  providerCallId?: string;
   time: string; // ISO
 }
 
@@ -100,6 +102,7 @@ export async function refreshDispositions(): Promise<void> {
     created_at: string;
     recording_url: string | null;
     call_type: string | null;
+    provider_call_id?: string | null;
     // Optional: present only once 20260731_call_logs_adhoc_contacts.sql has been applied.
     contact_name?: string | null;
     contact_phone?: string | null;
@@ -132,6 +135,7 @@ export async function refreshDispositions(): Promise<void> {
       dpd: debtor?.dpd ?? undefined,
       recordingUrl: l.recording_url ?? undefined,
       callType: (l.call_type as DispositionRecord["callType"]) ?? "human",
+      providerCallId: l.provider_call_id ?? undefined,
       time: l.created_at,
     };
   });
@@ -169,6 +173,7 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     promise_date: d.outcome === "promised" ? (d.ptpDate ?? null) : null,
     raw_notes: d.notes,
     recording_url: d.recordingUrl ?? null,
+    provider_call_id: d.providerCallId ?? null,
   });
   if (error) throw error;
 
@@ -249,4 +254,44 @@ export function calcStats(disps: DispositionRecord[]) {
         )
       : 0;
   return { total, ptps: ptps.length, paid: paid.length, ptpAmount, paidAmount, contactRate };
+}
+
+/**
+ * Attach recordings that the provider published after the call was logged.
+ *
+ * Providers produce recordings asynchronously — Tata's hangup webhook arrives with an empty
+ * recording_url — so rows are saved without one and would stay that way forever. The lookup
+ * runs server-side (it needs the provider API token); the UPDATE runs here under the user's
+ * own session, so RLS covers it and no service-role key is involved.
+ *
+ * Returns how many rows were filled in.
+ */
+export async function backfillRecordings(records: DispositionRecord[]): Promise<number> {
+  const pending = records.filter((r) => r.providerCallId && !r.recordingUrl);
+  if (!pending.length) return 0;
+
+  const { fetchRecordings } = await import("@/lib/telephony/server");
+  const found = await fetchRecordings({
+    data: { providerCallIds: pending.map((r) => r.providerCallId!) },
+  });
+
+  let filled = 0;
+  for (const rec of pending) {
+    const url = found[rec.providerCallId!];
+    if (!url) continue;
+    const { error } = await supabase
+      .from("call_logs")
+      // Cast for the same reason as the reads above: the generated Supabase types don't
+      // cover this table's columns, so writes widen to `never`.
+      .update({ recording_url: url } as never)
+      .eq("id", rec.id);
+    if (error) {
+      console.warn(`[dispositions] could not attach recording to ${rec.id}: ${error.message}`);
+      continue;
+    }
+    filled++;
+  }
+
+  if (filled) await refreshDispositions();
+  return filled;
 }

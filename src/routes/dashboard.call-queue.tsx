@@ -423,6 +423,8 @@ function CallQueuePage() {
         // Tata publishes these asynchronously, so this is often still empty here and the
         // recording has to be backfilled from the CDR afterwards.
         recordingUrl: activeCall?.recordingUrl,
+        // Lets the recording be attached later, once the provider publishes it.
+        providerCallId: activeCall?.providerCallId,
         time: now.toISOString(),
       };
       saveDisposition(record).catch((e) =>
