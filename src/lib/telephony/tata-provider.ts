@@ -64,14 +64,36 @@ const TATA_STATUS_MAP: Record<string, CallStatus> = {
   failed: "failed",
 };
 
+// startCall records the ref_id it returns; hangup only ever receives that same ref_id back,
+// with no agent context. /live_calls carries no ref_id/custom_identifier at all (confirmed
+// against a real live call — see resolveLiveCallId), so the only way to find the matching
+// entry is by the agent's own number, which has to be remembered from dial time.
+// globalThis-backed for the same reason as telephony/server.ts's state: startCall and hangup
+// are both plain server functions reaching this module through the same import graph, but
+// nothing rules out them landing in different bundled instances, and a Map that silently
+// isn't shared fails exactly like this class of bug already did once before.
+const g = globalThis as typeof globalThis & { __tataAgentByRefId?: Map<string, string> };
+g.__tataAgentByRefId ??= new Map();
+const agentByRefId = g.__tataAgentByRefId;
+
 /**
- * Find the provider's own call id for an in-flight call we know only by ref_id.
+ * Find the provider's own call id for an in-flight call we know only by our ref_id.
  *
- * The exact field names on /live_calls are not documented and we have not yet observed a
- * live payload, so this checks every plausible carrier of our ref_id and logs the raw entry
- * the first time it runs — one real cancellation will confirm the shape.
+ * Confirmed directly against a live call — /live_calls returns entries shaped like:
+ *   { call_id: "DR5-D2-1785677202.884852", source: "+918169119135",
+ *     destination: "+919326058140,...", state: "Answered", agent_name: "...", ... }
+ * There is no ref_id or custom_identifier anywhere in it (the earlier version of this
+ * function searched for exactly those two fields, which is why hangup never worked — the
+ * match was always empty). `source` is the agent's number, which we do know; `call_id` is
+ * what /call/hangup actually wants.
  */
 async function resolveLiveCallId(refId: string): Promise<string | null> {
+  const agentNumber = agentByRefId.get(refId);
+  if (!agentNumber) {
+    console.warn(`[tata-provider] hangup: no agent number recorded for ref_id ${refId}`);
+    return null;
+  }
+
   try {
     const res = await fetch(`${TATA_BASE_URL}/live_calls`, { headers: getAuthHeaders() });
     if (!res.ok) {
@@ -85,20 +107,19 @@ async function resolveLiveCallId(refId: string): Promise<string | null> {
           (body as { data?: unknown[] }).data ??
           []) as Array<Record<string, unknown>>);
 
-    if (calls.length) {
-      console.log("[tata-provider] live_calls sample:", JSON.stringify(calls[0]));
+    // Same agent can only be on one call at a time, so matching on `source` is unambiguous
+    // even with several agents dialing concurrently.
+    const match = calls.find((c) => c.source === agentNumber);
+    if (!match) {
+      console.warn(
+        `[tata-provider] hangup: no live call with source=${agentNumber} in`,
+        JSON.stringify(calls),
+      );
+      return null;
     }
 
-    const match = calls.find((c) =>
-      ["ref_id", "custom_identifier", "customIdentifier"].some((k) => c[k] === refId),
-    );
-    if (!match) return null;
-
-    for (const k of ["call_id", "uuid", "id"]) {
-      const v = match[k];
-      if (typeof v === "string" && v) return v;
-    }
-    return null;
+    const callId = match.call_id;
+    return typeof callId === "string" && callId ? callId : null;
   } catch (err) {
     console.warn(
       "[tata-provider] live_calls lookup error:",
@@ -170,6 +191,10 @@ export const tataProvider: TelephonyProvider = {
         throw new Error(`Tata returned no call ID: ${data.message || "unknown error"}`);
       }
 
+      // Remembered so a later hangup(callId) can find this call on /live_calls, which
+      // carries no ref_id of its own — only the agent's number (`source`).
+      agentByRefId.set(callId, req.agentNumber);
+
       return {
         providerCallId: callId,
       };
@@ -200,21 +225,26 @@ export const tataProvider: TelephonyProvider = {
     };
 
     try {
+      console.log(`[tata-provider] hangup: POST /call/hangup call_id=${liveId}`);
       const response = await fetch(url, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(body),
       });
 
+      const responseText = await response.text();
+      console.log(`[tata-provider] hangup response: ${response.status} ${responseText}`);
+
       if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(`Tata hangup warning: ${response.status} ${errorText}`);
+        console.warn(`Tata hangup warning: ${response.status} ${responseText}`);
         // Don't throw — hangup is best-effort. Call may already be ended.
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`tataProvider.hangup warning: ${msg}`);
       // Best-effort — don't fail the whole operation
+    } finally {
+      agentByRefId.delete(providerCallId);
     }
   },
 
