@@ -78,8 +78,15 @@ export function useSingleCall(
   const stateRef = useRef<CallState>("queued");
   const pidRef = useRef<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  // clearInterval only stops FUTURE ticks — it does nothing to a poll that's already mid-await
+  // when hangup() fires. That poll still resolves afterward and calls setActiveCall with
+  // whatever status it already had in flight, silently reasserting "connected" right after the
+  // user just ended the call. Checked right after every await in the poll loop, before any
+  // state update; reset() raises it, dial() lowers it for the call it's about to start.
+  const stoppedRef = useRef(true);
 
   const reset = useCallback(() => {
+    stoppedRef.current = true;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
     unsubRef.current?.();
@@ -115,6 +122,7 @@ export function useSingleCall(
               },
             });
             pidRef.current = result.providerCallId;
+            stoppedRef.current = false;
             // The provider reports progress out-of-band (webhook, or the server's fallback
             // poll of the call-records API). A single agent call belongs to no DialerRun, so
             // nothing pushes those events at this component — poll the server for the latest
@@ -123,7 +131,10 @@ export function useSingleCall(
               const status = await serverGetCallStatus({
                 data: { keys: [result.providerCallId, debtor.id] },
               });
-              if (!status) return;
+              // hangup() (or a fresh dial) may have run while this request was in flight —
+              // stoppedRef catches that even though clearInterval already fired, since
+              // clearInterval only prevents the NEXT tick, not this one finishing late.
+              if (stoppedRef.current || !status) return;
               const phase = toCallPhase(callStateFor(status.status));
               setActiveCall((c) =>
                 c
