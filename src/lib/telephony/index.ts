@@ -4,6 +4,7 @@
 import type { TelephonyProvider } from "./types";
 import { tataProvider } from "./tata-provider";
 import { kookooProvider } from "./kookoo-provider";
+import { exotelProvider } from "./exotel-provider";
 import { createSimProvider, type SimProvider } from "./sim-provider";
 
 export * from "./types";
@@ -22,11 +23,14 @@ const PROVIDERS: Record<string, () => TelephonyProvider> = {
   sim: getSimProvider,
   tata: () => tataProvider,
   kookoo: () => kookooProvider,
+  exotel: () => exotelProvider,
 };
 
 /** The active provider. Defaults to the simulated provider until a real SIP vendor is
- * wired via TELEPHONY_PROVIDER (server-side env). Guarded so a stray client import can't
- * throw on a missing `process`. */
+ * wired via TELEPHONY_PROVIDER (server-side env). Tata is the production default (active
+ * account, click-to-call live — see .env.example); exotel is wired for evaluation only —
+ * its provider code is untested against a real account and the trial is still KYC-gated.
+ * Guarded so a stray client import can't throw on a missing `process`. */
 export function getTelephonyProvider(): TelephonyProvider {
   const key =
     (typeof process !== "undefined" ? process.env?.TELEPHONY_PROVIDER : undefined) ?? "sim";
