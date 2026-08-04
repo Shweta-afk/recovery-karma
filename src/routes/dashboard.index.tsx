@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
 import {
   PhoneCall,
   PhoneIncoming,
@@ -37,6 +37,16 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatINR, MOCK_DEBTORS } from "@/lib/mock-debtors";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useAuth } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
+import {
+  getAgentDispositions,
+  calcStats,
+  refreshDispositions,
+  type DispositionRecord,
+} from "@/lib/disposition-store";
+import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { useStorageSync } from "@/lib/storage-sync";
 
 export const Route = createFileRoute("/dashboard/")({
   head: () => ({
@@ -49,6 +59,13 @@ export const Route = createFileRoute("/dashboard/")({
 });
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
+// Everything in this section is still fabricated placeholder data — deferred separately
+// from the real KPI wiring below. Each needs a concept that doesn't exist in the schema/app
+// yet: QUEUE_BREAKDOWN and DEBTOR_INTENSITY need real per-category/per-debtor call_logs
+// aggregation (more involved than the top-level KPI cards); RETAINED_DEBTORS needs a
+// "carried over from last month's portfolio" flag that isn't tracked anywhere; TIME_TRACKING
+// needs real agent session/activity tracking (ringing/idle/break time), which nothing in the
+// telephony layer currently records.
 
 type Period = "today" | "month" | "custom";
 
@@ -136,9 +153,6 @@ const QUEUE_BREAKDOWN = [
   },
 ];
 
-// Total principal currently under management across the whole queue (period-independent)
-const PORTFOLIO_TOTAL_PRINCIPAL = QUEUE_BREAKDOWN.reduce((s, r) => s + r.principal, 0);
-
 // Map a breakdown category to the matching call-queue filter (falls back to "all")
 type QueueFilter =
   | "all"
@@ -159,45 +173,114 @@ const CATEGORY_TO_FILTER: Record<string, QueueFilter> = {
   dispute: "escalated",
 };
 
-// Derive "today" KPIs from QUEUE_BREAKDOWN so they stay in sync
-const _qb = (key: string) => QUEUE_BREAKDOWN.find((r) => r.key === key)!;
-const KPI_BY_PERIOD: Record<
+// AI Bot metrics have no real backing yet — no AI/bot calling integration exists in the
+// telephony layer (see project notes; deferred deliberately, not an oversight). Everything
+// else on this page is computed from real call_logs via useAgentPeriodStats below.
+const AI_BOT_BY_PERIOD: Record<
   Exclude<Period, "custom">,
-  {
-    totalCalling: number;
-    totalCallback: number;
-    todayPTP: number;
-    totalPTPAmount: number;
-    todayPaid: number;
-    todayPaidAmount: number;
-    aiCallsHandled: number;
-    aiPTPs: number;
-    aiEscalated: number;
-  }
+  { aiCallsHandled: number; aiPTPs: number; aiEscalated: number; aiNoAnswer: number }
 > = {
-  today: {
-    totalCalling: 47,
-    totalCallback: _qb("callback").count, // 8
-    todayPTP: _qb("ptp").count, // 14
-    totalPTPAmount: _qb("ptp").ptpAmount ?? 245000,
-    todayPaid: 6,
-    todayPaidAmount: 48500,
-    aiCallsHandled: 28,
-    aiPTPs: 9,
-    aiEscalated: 3,
-  },
-  month: {
-    totalCalling: 1140,
-    totalCallback: 192,
-    todayPTP: 318,
-    totalPTPAmount: 5820000,
-    todayPaid: 148,
-    todayPaidAmount: 1162000,
-    aiCallsHandled: 672,
-    aiPTPs: 214,
-    aiEscalated: 71,
-  },
+  today: { aiCallsHandled: 28, aiPTPs: 9, aiEscalated: 3, aiNoAnswer: 11 },
+  month: { aiCallsHandled: 672, aiPTPs: 214, aiEscalated: 71, aiNoAnswer: 264 },
 };
+
+// Per-metric targets a manager sets for an agent. Only `calls` has a real backing column
+// (agents.daily_target) — fetched live in useAgentPeriodStats. The rest are placeholder
+// defaults until a real per-metric target-setting feature exists; "actual" values next to
+// them are real, only the targets are not.
+const TARGETS = {
+  calls: 80, // overwritten with the real agents.daily_target once fetched
+  ptpCount: 18,
+  ptpAmount: 350000,
+  collections: 80000,
+  talkTime: 240,
+  contactRate: 75,
+};
+
+function isSameDay(iso: string, now: Date): boolean {
+  const d = new Date(iso);
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+function isSameMonth(iso: string, now: Date): boolean {
+  const d = new Date(iso);
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
+
+/** calcStats() (disposition-store.ts) covers total/ptps/paid/ptpAmount/paidAmount/contactRate;
+ * callback count and talk time aren't part of that shared shape, so they're added here. */
+function extendedStats(disps: DispositionRecord[]) {
+  const base = calcStats(disps);
+  const callbacks = disps.filter((d) => d.outcome === "callback").length;
+  const talkTimeMins = Math.round(
+    disps.reduce((s, d) => s + (d.durationSeconds ?? 0), 0) / 60,
+  );
+  return { ...base, callbacks, talkTimeMins };
+}
+
+type PeriodStats = ReturnType<typeof extendedStats>;
+
+/** Real, Supabase-backed KPIs for the logged-in agent — replaces the old hardcoded
+ * KPI_BY_PERIOD/PORTFOLIO_TOTAL_PRINCIPAL constants. Same cache-first + event-subscription
+ * pattern as manager.index.tsx's useTeamStats. */
+function useAgentPeriodStats(agentId: string) {
+  const compute = () => {
+    const now = new Date();
+    const disps = agentId ? getAgentDispositions(agentId) : [];
+    const today = extendedStats(disps.filter((d) => isSameDay(d.time, now)));
+    const month = extendedStats(disps.filter((d) => isSameMonth(d.time, now)));
+
+    let assignedPOS = 0;
+    if (agentId) {
+      const slices = getAgentDebtorIds(agentId);
+      const portfolios = getPortfolios();
+      for (const { portfolioId, debtorIds } of slices) {
+        const p = portfolios.find((p) => p.id === portfolioId);
+        if (!p) continue;
+        const idSet = new Set(debtorIds);
+        for (const row of p.rows) if (idSet.has(row.id)) assignedPOS += row.loanAmount;
+      }
+    }
+    return { today, month, assignedPOS };
+  };
+
+  const [stats, setStats] = useState(compute);
+  useEffect(() => {
+    const reload = () => setStats(compute());
+    reload();
+    window.addEventListener("dispositions-updated", reload);
+    window.addEventListener("portfolios-updated", reload);
+    refreshDispositions();
+    refreshPortfolios();
+    return () => {
+      window.removeEventListener("dispositions-updated", reload);
+      window.removeEventListener("portfolios-updated", reload);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
+  useStorageSync(() => setStats(compute()));
+  return stats;
+}
+
+/** The one field with a real per-agent target column (agents.daily_target). */
+function useDailyCallTarget(authUserId: string | undefined): number {
+  const [target, setTarget] = useState(TARGETS.calls);
+  useEffect(() => {
+    if (!authUserId) return;
+    supabase
+      .from("agents")
+      .select("daily_target")
+      .eq("auth_user_id", authUserId)
+      .single()
+      .then(({ data }) => {
+        if (data?.daily_target) setTarget(data.daily_target as number);
+      });
+  }, [authUserId]);
+  return target;
+}
 
 // Debtor call intensity — contacts attempted vs connected, with a heat score
 const DEBTOR_INTENSITY = MOCK_DEBTORS.slice(0, 12)
@@ -285,16 +368,6 @@ const PREV_OUTCOME_CLS: Record<string, string> = {
   "No Answer": "bg-muted text-muted-foreground border-border",
 };
 
-// Daily targets set by manager for this agent
-const DAILY_TARGETS = {
-  calls: { target: 60, actual: 47, unit: "calls" },
-  ptpCount: { target: 18, actual: 14, unit: "PTPs" },
-  ptpAmount: { target: 350000, actual: 245000, unit: "₹" },
-  collections: { target: 80000, actual: 48500, unit: "₹" },
-  talkTime: { target: 240, actual: 165, unit: "min" },
-  contactRate: { target: 75, actual: 61, unit: "%" },
-};
-
 const TIME_TRACKING = {
   ringing: 72,
   talking: 165,
@@ -361,13 +434,27 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
     if (interactive) navigate({ to: "/dashboard/call-queue", search: { filter } });
   };
 
-  const kpi =
-    period === "custom"
-      ? KPI_BY_PERIOD.today // use today's data as placeholder for custom date
-      : KPI_BY_PERIOD[period];
+  const { user } = useAuth();
+  const agentId = user?.email ?? user?.id ?? "";
+  const dailyCallTarget = useDailyCallTarget(user?.id);
+  const { today, month, assignedPOS } = useAgentPeriodStats(agentId);
+
+  // "custom" has no real query behind it yet — same placeholder-on-today fallback the old
+  // mock data used, kept so the UI doesn't break when that toggle is picked.
+  const periodStats = period === "month" ? month : today;
+  const aiBot = AI_BOT_BY_PERIOD[period === "month" ? "month" : "today"];
+
+  const kpi = {
+    totalCalling: periodStats.total,
+    totalCallback: periodStats.callbacks,
+    todayPTP: periodStats.ptps,
+    totalPTPAmount: periodStats.ptpAmount,
+    todayPaid: periodStats.paid,
+    todayPaidAmount: periodStats.paidAmount,
+  };
 
   // Today's PTP generation — always today's stock, independent of the period toggle
-  const todayGeneration = _qb("ptp");
+  const todayGeneration = { count: today.ptps, ptpAmount: today.ptpAmount };
   const projectedRecovery = kpi.totalPTPAmount + kpi.todayPaidAmount;
 
   return (
@@ -433,9 +520,11 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
 
         {/* ── Collections: Target / Shortfall / Run Rate / EOD Projection ── */}
         {(() => {
-          const target = DAILY_TARGETS.collections.target;
-          const actual = DAILY_TARGETS.collections.actual;
+          const target = TARGETS.collections; // placeholder — no real per-agent ₹ target field yet
+          const actual = today.paidAmount; // real, from call_logs
           const shortfall = Math.max(0, target - actual);
+          // 6.5hrs-into-a-9hr-shift is a simplifying assumption — there's no real shift-start
+          // tracking to compute "hours elapsed so far" from.
           const dailyRunRate = Math.round((actual / 6.5) * 9);
           const projection = dailyRunRate;
           return (
@@ -604,12 +693,12 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
                 AI Bot
               </span>
               {[
-                { label: "Handled", value: kpi.aiCallsHandled, cls: "text-foreground" },
-                { label: "AI PTPs", value: kpi.aiPTPs, cls: "text-blue-500" },
-                { label: "Escalated", value: kpi.aiEscalated, cls: "text-amber-500" },
+                { label: "Handled", value: aiBot.aiCallsHandled, cls: "text-foreground" },
+                { label: "AI PTPs", value: aiBot.aiPTPs, cls: "text-blue-500" },
+                { label: "Escalated", value: aiBot.aiEscalated, cls: "text-amber-500" },
                 {
                   label: "No Answer",
-                  value: period === "month" ? 264 : 11,
+                  value: aiBot.aiNoAnswer,
                   cls: "text-muted-foreground",
                 },
               ].map((s) => (
@@ -650,12 +739,12 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
                 className="rounded-lg border border-border bg-muted/20 p-2.5 text-center flex flex-col justify-center transition-all hover:border-foreground/30 hover:shadow-sm focus:outline-none focus:ring-1 focus:ring-primary"
               >
                 <div className="text-base font-bold text-foreground tabular-nums leading-tight">
-                  {formatINR(PORTFOLIO_TOTAL_PRINCIPAL)}
+                  {formatINR(assignedPOS)}
                 </div>
                 <div className="text-[10px] font-medium text-foreground leading-tight mt-1">
                   Total Principal
                 </div>
-                <div className="text-[9px] text-muted-foreground leading-tight">portfolio</div>
+                <div className="text-[9px] text-muted-foreground leading-tight">assigned to you</div>
               </Nav>
               <Nav
                 to="/dashboard/call-queue"
@@ -1085,10 +1174,7 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
         <section>
           <div className="flex items-center justify-between">
             <SectionLabel>My Performance vs Target · Today</SectionLabel>
-            <span className="text-[11px] text-muted-foreground">
-              Targets set by{" "}
-              <span className="font-medium text-foreground">Sanjay M. (Manager)</span>
-            </span>
+            <span className="text-[11px] text-muted-foreground">Targets set by your manager</span>
           </div>
 
           <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
@@ -1097,48 +1183,48 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
                 {
                   key: "calls",
                   label: "Calls",
-                  target: DAILY_TARGETS.calls.target,
-                  actual: DAILY_TARGETS.calls.actual,
+                  target: dailyCallTarget, // real — agents.daily_target
+                  actual: today.total,
                   fmt: (v: number) => String(v),
                   filter: "all" as const,
                 },
                 {
                   key: "ptpCount",
                   label: "PTPs",
-                  target: DAILY_TARGETS.ptpCount.target,
-                  actual: DAILY_TARGETS.ptpCount.actual,
+                  target: TARGETS.ptpCount, // placeholder — no real per-metric target field yet
+                  actual: today.ptps,
                   fmt: (v: number) => String(v),
                   filter: "ptp" as const,
                 },
                 {
                   key: "ptpAmount",
                   label: "PTP ₹",
-                  target: DAILY_TARGETS.ptpAmount.target,
-                  actual: DAILY_TARGETS.ptpAmount.actual,
+                  target: TARGETS.ptpAmount,
+                  actual: today.ptpAmount,
                   fmt: (v: number) => formatINR(v),
                   filter: "ptp" as const,
                 },
                 {
                   key: "collections",
                   label: "Collected",
-                  target: DAILY_TARGETS.collections.target,
-                  actual: DAILY_TARGETS.collections.actual,
+                  target: TARGETS.collections,
+                  actual: today.paidAmount,
                   fmt: (v: number) => formatINR(v),
                   filter: "paid" as const,
                 },
                 {
                   key: "talkTime",
                   label: "Talk Time",
-                  target: DAILY_TARGETS.talkTime.target,
-                  actual: DAILY_TARGETS.talkTime.actual,
+                  target: TARGETS.talkTime,
+                  actual: today.talkTimeMins,
                   fmt: (v: number) => fmtMins(v),
                   filter: "all" as const,
                 },
                 {
                   key: "contactRate",
                   label: "Contact %",
-                  target: DAILY_TARGETS.contactRate.target,
-                  actual: DAILY_TARGETS.contactRate.actual,
+                  target: TARGETS.contactRate,
+                  actual: today.contactRate,
                   fmt: (v: number) => `${v}%`,
                   filter: "all" as const,
                 },
