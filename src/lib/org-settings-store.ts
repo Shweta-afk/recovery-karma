@@ -13,9 +13,9 @@ export interface OrgSettings {
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
-  companyName: "Axiotta Risk Management Pvt Ltd",
-  supportEmail: "support@axiotta.in",
-  supportPhone: "+91 22 4000 1234",
+  companyName: "Your Company",
+  supportEmail: "",
+  supportPhone: "",
   callStartTime: "09:00",
   callEndTime: "18:00",
   enforceDnc: true,

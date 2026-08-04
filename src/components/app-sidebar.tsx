@@ -104,8 +104,10 @@ export function AppSidebar({ role }: { role: Role }) {
           </SidebarGroup>
         )}
 
-        {/* Manager — visible to manager + admin */}
-        {(role === "manager" || role === "admin") && (
+        {/* Manager — manager only. Admins get their own Administration section below
+            instead — they don't need the day-to-day call queue/audit/portfolio-upload
+            operational views a manager uses. */}
+        {role === "manager" && (
           <SidebarGroup>
             <SidebarGroupLabel>Manager</SidebarGroupLabel>
             <SidebarGroupContent>

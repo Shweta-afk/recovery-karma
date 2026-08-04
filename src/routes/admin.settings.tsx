@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Building2, Clock, Shield, Plug, Save } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { getOrgSettings, saveOrgSettings, type OrgSettings } from "@/lib/org-settings-store";
+import { getMyClient, updateCompanyName } from "@/lib/client-store";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({ meta: [{ title: "Settings · RecoveryAI Admin" }] }),
@@ -69,10 +70,28 @@ function SettingRow({
 
 function AdminSettingsPage() {
   const [cfg, setCfg] = useState<OrgSettings>(() => getOrgSettings());
+  const [companyNameLoading, setCompanyNameLoading] = useState(true);
   const set = <K extends keyof OrgSettings>(k: K, v: OrgSettings[K]) =>
     setCfg((p) => ({ ...p, [k]: v }));
 
-  const handleSave = () => {
+  // Company name is real, tenant-scoped data (clients.company_name) — everything else in
+  // OrgSettings stays in localStorage (org-settings-store.ts), unrelated to RLS/tenant identity.
+  useEffect(() => {
+    getMyClient()
+      .then((client) => {
+        if (client) set("companyName", client.company_name);
+      })
+      .finally(() => setCompanyNameLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSave = async () => {
+    try {
+      await updateCompanyName(cfg.companyName);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save company name");
+      return;
+    }
     saveOrgSettings(cfg);
     toast.success("Settings saved", { description: "Org-wide defaults updated." });
   };
@@ -101,6 +120,7 @@ function AdminSettingsPage() {
           <Input
             value={cfg.companyName}
             onChange={(e) => set("companyName", e.target.value)}
+            disabled={companyNameLoading}
             className="w-64 h-8 text-xs"
           />
         </SettingRow>
