@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { sendSms, sendWhatsAppMessage } from "@/lib/telephony/server";
 
 export type MessageChannel = "whatsapp" | "sms" | "email";
 export type MessageDirection = "outbound" | "inbound";
@@ -97,10 +98,15 @@ export async function refreshMessages(): Promise<void> {
   window.dispatchEvent(new CustomEvent("messages-updated"));
 }
 
-/** Records an outbound message against a real debtor. This writes the `messages` row and
- * nothing else — there is no WhatsApp/SMS gateway wired up yet (see CLAUDE.md's sendWhatsApp
- * server function, never built), so `status` is optimistically "sent" but nothing actually
- * reaches the debtor's phone until that gateway integration exists. */
+/** Records an outbound message against a real debtor, and — for whatsapp/sms — actually
+ * sends it via the Exotel gateway (see telephony/exotel-provider.ts) before writing the row.
+ * `status` reflects whether the provider accepted the send, not just an optimistic "sent".
+ *
+ * Note on templates: `templateName` here is UI copy (see WA_TEMPLATES in
+ * dashboard.messages.tsx), not necessarily a Meta-approved WhatsApp template name yet — until
+ * each one is registered and approved, WhatsApp sends will fail (caught below, row still
+ * written with status "failed" so the failure is visible instead of silently pretending
+ * to succeed). */
 export async function sendMessage(m: {
   debtorId: string;
   agentEmail: string;
@@ -109,8 +115,46 @@ export async function sendMessage(m: {
   templateName?: string;
   paymentLinkUrl?: string;
 }): Promise<void> {
-  const { data: agentRows } = await supabase.from("agents").select("id, email");
+  const [{ data: agentRows }, { data: debtorRows }] = await Promise.all([
+    supabase.from("agents").select("id, email"),
+    supabase.from("debtors").select("phone_primary").eq("id", m.debtorId),
+  ]);
   const agentUuid = (agentRows ?? []).find((a) => a.email === m.agentEmail)?.id ?? null;
+  const phone = debtorRows?.[0]?.phone_primary;
+
+  let status: MessageStatus = "sent";
+  if (m.channel === "whatsapp" || m.channel === "sms") {
+    if (!phone) {
+      console.error(`[messages] cannot send ${m.channel}: no phone on file for debtor ${m.debtorId}`);
+      status = "failed";
+    } else {
+      try {
+        if (m.channel === "whatsapp") {
+          await sendWhatsAppMessage({
+            data: {
+              to: phone,
+              templateName: m.templateName ?? "generic_update",
+              templateParams: [m.content],
+            },
+          });
+        } else {
+          await sendSms({
+            data: {
+              to: phone,
+              templateId: m.templateName ?? "generic_update",
+              templateParams: [m.content],
+            },
+          });
+        }
+      } catch (err) {
+        console.error(
+          `[messages] ${m.channel} send failed:`,
+          err instanceof Error ? err.message : String(err),
+        );
+        status = "failed";
+      }
+    }
+  }
 
   const { error } = await supabase.from("messages").insert({
     debtor_id: m.debtorId,
@@ -119,7 +163,7 @@ export async function sendMessage(m: {
     direction: "outbound",
     template_name: m.templateName ?? null,
     content: m.content,
-    status: "sent",
+    status,
     payment_link_url: m.paymentLinkUrl ?? null,
   });
   if (error) throw error;

@@ -18,6 +18,7 @@ import type { PortfolioSettings } from "@/lib/portfolio-store";
 import * as engine from "@/lib/dialer/engine";
 import type { DialerRun, DialTarget } from "@/lib/dialer/engine";
 import { getTelephonyProvider } from "./index";
+import { sendWhatsApp as sendWhatsAppExotel } from "./exotel-provider";
 import type { SimProvider } from "./sim-provider";
 import { isTerminal } from "./call-machine";
 import type { TelephonyEvent, CallStatusEvent } from "./types";
@@ -348,6 +349,21 @@ export const sendSms = createServerFn({ method: "POST" })
       templateParams: data.templateParams,
     });
     return res;
+  });
+
+// WhatsApp isn't part of TelephonyProvider (voice + SMS only — see ./types.ts), so this
+// calls the Exotel sender directly rather than going through getTelephonyProvider(). Only
+// works when EXOTEL_* credentials are set, regardless of TELEPHONY_PROVIDER.
+export const sendWhatsAppMessage = createServerFn({ method: "POST" })
+  .inputValidator(
+    (d: { to: string; templateName: string; templateParams: string[] }) => d,
+  )
+  .handler(async ({ data }) => {
+    return sendWhatsAppExotel({
+      to: data.to,
+      templateName: data.templateName,
+      templateParams: data.templateParams,
+    });
   });
 
 // ─── Webhook ingest ──────────────────────────────────────────────────────────────
