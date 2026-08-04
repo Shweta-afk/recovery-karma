@@ -15,6 +15,8 @@ import {
   ChevronDown,
   Check,
   X,
+  Copy,
+  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -281,7 +283,12 @@ function AdminUsersPage() {
         </CardContent>
       </Card>
 
-      <InviteDialog open={showInvite} onClose={() => setShowInvite(false)} onInvited={load} />
+      <InviteDialog
+        open={showInvite}
+        onClose={() => setShowInvite(false)}
+        onInvited={load}
+        managers={agents.filter((a) => a.role === "manager")}
+      />
       {editAgent && (
         <EditUserDialog agent={editAgent} onClose={() => setEditAgent(null)} onSaved={load} />
       )}
@@ -449,144 +456,222 @@ function InviteDialog({
   open,
   onClose,
   onInvited,
+  managers,
 }: {
   open: boolean;
   onClose: () => void;
   onInvited: () => void;
+  managers: AgentRow[];
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("agent");
+  const [managerId, setManagerId] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  // Set once the invite succeeds — switches the dialog into the one-time credential view.
+  // There's no email infra to deliver a password any other way, so this is the only handoff.
+  const [created, setCreated] = useState<{ name: string; email: string; password: string } | null>(
+    null,
+  );
+
+  const reset = () => {
+    setName("");
+    setEmail("");
+    setRole("agent");
+    setManagerId("");
+    setCreated(null);
+  };
 
   const handleInvite = async () => {
     if (!name || !email) {
       toast.error("Fill all fields");
       return;
     }
-
     setSaving(true);
 
-    // Supabase Auth accounts can only be created with a service-role key (Edge Function
-    // or dashboard), never from a browser client with the anon key — so this creates the
-    // agent's profile row now (auth_user_id null) and lets an admin link the real login
-    // afterwards via Edit Details, once it's created in Supabase Dashboard → Authentication.
     const {
-      data: { user: currentAuthUser },
-    } = await supabase.auth.getUser();
-    let clientId: string | null = null;
-    if (currentAuthUser) {
-      const { data: self } = await supabase
-        .from("agents")
-        .select("client_id")
-        .eq("auth_user_id", currentAuthUser.id)
-        .single();
-      clientId = self?.client_id ?? null;
-    }
-
-    const { error: agentErr } = await supabase.from("agents").insert({
-      name,
-      email,
-      role,
-      client_id: clientId,
-      auth_user_id: null,
-    });
-    if (agentErr) {
-      toast.error(agentErr.message);
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) {
+      toast.error("Your session has expired — please sign in again.");
       setSaving(false);
       return;
     }
-    toast.success(`${name} added as ${role}`, {
-      description:
-        "Create their login in Supabase Dashboard → Authentication → Users, then link it via Edit Details.",
+
+    // Dynamically imported so server-only code never ships in the eager client bundle —
+    // same convention as src/lib/dialer/use-dialer-run.ts's server-mode dial calls.
+    const { inviteUser } = await import("@/lib/user-admin-actions.server");
+    const result = await inviteUser({
+      data: {
+        accessToken: session.access_token,
+        name,
+        email,
+        role,
+        managerId: role === "agent" && managerId ? managerId : undefined,
+      },
     });
-    refreshRoster();
 
     setSaving(false);
-    setName("");
-    setEmail("");
-    setRole("agent");
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+
+    refreshRoster();
     onInvited();
-    onClose();
+    setCreated({ name: result.name, email: result.email, password: result.temporaryPassword });
   };
 
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        if (!o) onClose();
+        if (!o) {
+          onClose();
+          reset();
+        }
       }}
     >
       <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Invite New User</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3 py-1">
-          <div className="space-y-1.5">
-            <Label className="text-xs">
-              Full Name <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              placeholder="Priya Singh"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">
-              Work Email <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              type="email"
-              placeholder="priya@yourcompany.in"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Role</Label>
-            <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-              <SelectTrigger className="h-9 text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="agent">Agent</SelectItem>
-                <SelectItem value="manager">Manager</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <p className="text-[11px] text-muted-foreground pt-1">
-            This creates their profile. To let them sign in, create a matching login in Supabase
-            Dashboard → Authentication → Users, then paste its ID via Edit Details.
-          </p>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleInvite}
-            disabled={saving || !name || !email}
-            className="gap-1.5"
-          >
-            {saving ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <UserPlus className="h-3.5 w-3.5" />
-            )}
-            Invite
-          </Button>
-        </DialogFooter>
+        {created ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-primary" />
+                {created.name} is ready to sign in
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-1">
+              <p className="text-xs text-muted-foreground">
+                This password is shown once — share it with {created.name} securely. They can sign
+                in immediately at <span className="font-medium text-foreground">{created.email}</span>.
+              </p>
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+                <code className="flex-1 text-sm font-mono">{created.password}</code>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(created.password);
+                    toast.success("Password copied");
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy
+                </Button>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  reset();
+                }}
+              >
+                Done
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>Invite New User</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-1">
+              <div className="space-y-1.5">
+                <Label className="text-xs">
+                  Full Name <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  placeholder="Priya Singh"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">
+                  Work Email <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  type="email"
+                  placeholder="priya@yourcompany.in"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Role</Label>
+                <Select
+                  value={role}
+                  onValueChange={(v) => {
+                    setRole(v as Role);
+                    if (v !== "agent") setManagerId("");
+                  }}
+                >
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="agent">Agent</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {role === "agent" && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Reports to (optional)</Label>
+                  <Select value={managerId || "none"} onValueChange={(v) => setManagerId(v === "none" ? "" : v)}>
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="No manager" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No manager</SelectItem>
+                      {managers.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    Puts this agent on the manager's team, so the manager sees them right away.
+                  </p>
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground pt-1">
+                Creates a real login immediately — the password is shown once on the next screen.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleInvite}
+                disabled={saving || !name || !email}
+                className="gap-1.5"
+              >
+                {saving ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <UserPlus className="h-3.5 w-3.5" />
+                )}
+                Invite
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
 // ─── Edit user dialog ──────────────────────────────────────────────────────────
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function EditUserDialog({
   agent,
@@ -599,23 +684,16 @@ function EditUserDialog({
 }) {
   const [name, setName] = useState(agent.name);
   const [role, setRole] = useState<Role>(agent.role);
-  const [authUserId, setAuthUserId] = useState(agent.auth_user_id ?? "");
   const [agentPhone, setAgentPhone] = useState(agent.agent_phone ?? "");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
-    const trimmed = authUserId.trim();
-    if (trimmed && !UUID_RE.test(trimmed)) {
-      toast.error("Auth User ID must be a valid UUID from Supabase Dashboard");
-      return;
-    }
     setSaving(true);
     const { error } = await supabase
       .from("agents")
       .update({
         name,
         role,
-        auth_user_id: trimmed || null,
         agent_phone: agentPhone.trim() || null,
       })
       .eq("id", agent.id);
@@ -665,29 +743,18 @@ function EditUserDialog({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Auth User ID</Label>
+            <Label className="text-xs">Agent Number (Tata SmartFlo)</Label>
             <Input
-              placeholder="Paste UUID from Supabase Dashboard"
-              value={authUserId}
-              onChange={(e) => setAuthUserId(e.target.value)}
-              className="font-mono text-xs"
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Create the login in Supabase Dashboard → Authentication → Users, then paste its ID
-              here to activate sign-in. Leave blank to keep this profile pending.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Agent Phone (Tata SmartFlo)</Label>
-            <Input
-              placeholder="e.g., 050XXXXXXX0"
+              placeholder="e.g., 050XXXXXXX0 or extension"
               value={agentPhone}
               onChange={(e) => setAgentPhone(e.target.value)}
               className="font-mono text-xs"
             />
             <p className="text-[11px] text-muted-foreground">
-              The phone number or extension assigned to this agent in Tata SmartFlo for handling
-              calls.
+              Whatever click-to-call rings for this agent — their personal Call Forward Number,
+              or their Tata Agent Extension if they're set up on the Smartflo Softphone app (no
+              personal phone rings; calls come into the softphone instead). Must match exactly
+              what's configured for them in Tata SmartFlo → Users.
             </p>
           </div>
         </div>
