@@ -23,6 +23,7 @@ import {
   Bell,
   Filter,
   FileDown,
+  PhoneOutgoing,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -1242,6 +1243,46 @@ function CallQueuePage() {
             >
               <FileDown className="h-3.5 w-3.5" />
               Export
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 text-xs"
+              title="CSV formatted for Tata SmartFlo's Lead List upload — use it to feed a real Dialer Campaign (predictive/power/preview) instead of this queue's 1:1 dialing."
+              onClick={() =>
+                exportCSV(
+                  "tata-dialer-lead-list.csv",
+                  [
+                    "Mobile Number",
+                    "Name",
+                    "Email ID",
+                    "Address",
+                    "Company Name",
+                    "Alternate Phone Number",
+                    "Loan Reference",
+                    "Outstanding Balance (INR)",
+                    "DPD",
+                    "AI Score",
+                    "RecoveryAI Debtor ID",
+                  ],
+                  filteredQueue.map((d) => [
+                    d.phone,
+                    d.name,
+                    d.email ?? "",
+                    d.address ?? "",
+                    d.portfolio ?? "",
+                    d.altPhone ?? "",
+                    d.loanReference ?? d.id,
+                    d.loanAmount,
+                    d.dpd,
+                    d.aiScore,
+                    d.id,
+                  ]),
+                )
+              }
+            >
+              <PhoneOutgoing className="h-3.5 w-3.5" />
+              Export for Tata Dialer
             </Button>
           </div>
         </div>
