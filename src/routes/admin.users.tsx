@@ -38,6 +38,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { refreshRoster } from "@/lib/team-store";
@@ -316,8 +323,6 @@ function UserRow({
   onResetPassword: () => void;
   onDelete: (a: AgentRow) => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [roleOpen, setRoleOpen] = useState(false);
   const meta = ROLE_META[agent.role];
   const initials = agent.name
     .split(" ")
@@ -358,45 +363,37 @@ function UserRow({
 
       {/* Role selector */}
       <td className="py-3 px-3">
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setRoleOpen((o) => !o)}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all hover:opacity-80",
-              meta.cls,
-            )}
-          >
-            <meta.icon className="h-2.5 w-2.5" />
-            {meta.label}
-            <ChevronDown className="h-2.5 w-2.5 opacity-60" />
-          </button>
-          {roleOpen && (
-            <div className="absolute left-0 top-full mt-1 z-50 w-36 rounded-md border border-border bg-card shadow-lg py-1">
-              {(["agent", "manager", "admin"] as Role[]).map((r) => {
-                const rm = ROLE_META[r];
-                return (
-                  <button
-                    type="button"
-                    key={r}
-                    onClick={() => {
-                      onRoleChange(agent, r);
-                      setRoleOpen(false);
-                    }}
-                    className={cn(
-                      "w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors",
-                      agent.role === r && "font-medium",
-                    )}
-                  >
-                    <rm.icon className="h-3 w-3" />
-                    <span>{rm.label}</span>
-                    {agent.role === r && <Check className="h-3 w-3 ml-auto" />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all hover:opacity-80",
+                meta.cls,
+              )}
+            >
+              <meta.icon className="h-2.5 w-2.5" />
+              {meta.label}
+              <ChevronDown className="h-2.5 w-2.5 opacity-60" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-36">
+            {(["agent", "manager", "admin"] as Role[]).map((r) => {
+              const rm = ROLE_META[r];
+              return (
+                <DropdownMenuItem
+                  key={r}
+                  onClick={() => onRoleChange(agent, r)}
+                  className={cn("text-xs gap-2", agent.role === r && "font-medium")}
+                >
+                  <rm.icon className="h-3 w-3" />
+                  <span>{rm.label}</span>
+                  {agent.role === r && <Check className="h-3 w-3 ml-auto" />}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </td>
 
       {/* Joined date */}
@@ -404,64 +401,45 @@ function UserRow({
 
       {/* Actions */}
       <td className="py-3 pr-4">
-        <div className="relative flex justify-end">
-          <button
-            type="button"
-            onClick={() => setMenuOpen((o) => !o)}
-            className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 z-50 w-40 rounded-md border border-border bg-card shadow-lg py-1">
+        <div className="flex justify-end">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                onClick={() => {
-                  onEdit();
-                  setMenuOpen(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+                className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
               >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onClick={onEdit} className="text-xs gap-2">
                 <User className="h-3.5 w-3.5" />
                 Edit Details
-              </button>
-              <button
-                type="button"
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 onClick={() => {
                   navigator.clipboard?.writeText(agent.email);
                   toast.success("Email copied");
-                  setMenuOpen(false);
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+                className="text-xs gap-2"
               >
                 <Mail className="h-3.5 w-3.5" />
                 Copy Email
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onResetPassword();
-                  setMenuOpen(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
-              >
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onResetPassword} className="text-xs gap-2">
                 <KeyRound className="h-3.5 w-3.5" />
                 {agent.auth_user_id ? "Reset Password" : "Create Login"}
-              </button>
-              <div className="border-t border-border my-1" />
-              <button
-                type="button"
-                onClick={() => {
-                  onDelete(agent);
-                  setMenuOpen(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-destructive hover:bg-destructive/5 transition-colors"
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => onDelete(agent)}
+                className="text-xs gap-2 text-destructive focus:text-destructive"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Remove User
-              </button>
-            </div>
-          )}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </td>
     </tr>
