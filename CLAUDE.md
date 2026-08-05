@@ -20,10 +20,10 @@
 
 ### Build & Deploy
 
-- **Vite config:** Uses `@lovable.dev/vite-tanstack-config` with `nitro: { preset: "node" }` for Render
+- **Vite config:** Uses `@lovable.dev/vite-tanstack-config` with `nitro: { preset: "node" }`
 - **Build output:** `dist/` (client) + `.output/server/` (nitro server)
 - **Start command:** `node .output/server/index.mjs`
-- **Deployment:** render.yaml configured for Singapore region, starter plan
+- **Deployment:** Railway (`railway.json`, nixpacks builder). Project `bubbly-communication`, service `recoveryai-app`. Custom domain `axiora.axiotta.com` is configured on the service (DNS on Cloudflare, `axiotta.com` zone) alongside the default `*.up.railway.app` domain.
 
 ### Database Schema (9 tables)
 
@@ -549,24 +549,28 @@ Opens http://localhost:5173 with hot reload.
 
 ---
 
-## Deployment to Render
+## Deployment to Railway
 
 ### Pre-deploy checklist
 
-1. ✅ render.yaml at root with `nitro: { preset: "node" }` in vite.config.ts
+1. ✅ railway.json at root (`builder: nixpacks`, start command, healthcheck)
 2. ✅ package.json has `"start": "node .output/server/index.mjs"`
 3. ✅ .env.example has all env vars (VITE_SUPABASE_URL, ANTHROPIC_API_KEY, etc.)
 4. ✅ .gitignore ignores .env but not .env.example
 
 ### Steps
 
-1. `git push origin main`
-2. Go to https://dashboard.render.com
-3. New → Web Service → Select GitHub repo
-4. Render auto-detects render.yaml
-5. Set env vars (copy values from local .env)
-6. Deploy
-7. Test on the `.onrender.com` URL
+1. `git push origin main` (service auto-deploys on push to `main`, GitHub repo `Shweta-afk/recovery-karma`)
+2. Go to https://railway.com/dashboard → project `bubbly-communication` → service `recoveryai-app`
+3. Set env vars under the service's Variables tab (copy values from local .env)
+4. Test on the generated `*.up.railway.app` URL, or the custom domain once DNS is verified
+
+### Custom domain (e.g. `axiora.axiotta.com`)
+
+1. In Railway: service → Settings → Networking → **Custom Domain** → enter the domain, select the detected port, Add Domain
+2. Railway shows a CNAME + TXT record to add. Add both **exactly as shown** in Cloudflare DNS (zone = the domain's registrar/DNS provider), with the CNAME set to **DNS only** (grey cloud, not proxied) — Railway needs direct traffic to issue the Let's Encrypt cert
+3. Wait for Railway to mark the domain as verified/active (cert issuance can take a few minutes up to ~an hour)
+4. Free Railway plans have a **custom domain limit per service** — if you hit it, either remove an unused domain or upgrade the plan before adding another
 
 ---
 
@@ -582,7 +586,7 @@ Opens http://localhost:5173 with hot reload.
 | `src/routes/login.tsx`       | Auth entry point                             |
 | `src/supabase/schema.sql`    | DB schema (reference only)                   |
 | `src/supabase/seed.sql`      | Seed data (ran once)                         |
-| `render.yaml`                | Render deployment config                     |
+| `railway.json`               | Railway deployment config                    |
 | `.env.example`               | Template for env vars                        |
 
 ---
@@ -628,7 +632,7 @@ queryClient.invalidateQueries({ queryKey: ["callLogs"] }); // auto-refetch
 6. **Create server actions** in `src/lib/server/` for call logging, WhatsApp, Razorpay
 7. **Wire server actions to components** (call button, send message button, etc.)
 8. **Test with real Interakt/Razorpay credentials** (or sandbox)
-9. **Push to GitHub + deploy to Render**
+9. **Push to GitHub** — Railway auto-deploys on push to `main`
 
 ---
 

@@ -34,31 +34,38 @@ function SetupPage() {
     setLoading(true);
     setError(null);
 
-    // Dynamically imported so server-only code never ships in the eager client bundle —
-    // same convention as src/lib/dialer/use-dialer-run.ts's server-mode dial calls.
-    const { createCompany } = await import("@/lib/setup-actions.server");
-    const result = await createCompany({
-      data: { companyName, adminName, adminEmail, adminPassword },
-    });
+    try {
+      // Dynamically imported so server-only code never ships in the eager client bundle —
+      // same convention as src/lib/dialer/use-dialer-run.ts's server-mode dial calls.
+      const { createCompany } = await import("@/lib/setup-actions.server");
+      const result = await createCompany({
+        data: { companyName, adminName, adminEmail, adminPassword },
+      });
 
-    if (!result.ok) {
-      setError(result.error);
+      if (!result.ok) {
+        setError(result.error);
+        setLoading(false);
+        return;
+      }
+
+      // Sign straight in with the account just created rather than bouncing back to /login.
+      const { error: loginError } = await supabase.auth.signInWithPassword({
+        email: adminEmail,
+        password: adminPassword,
+      });
+      if (loginError) {
+        setError(`Company created, but sign-in failed: ${loginError.message}. Try signing in manually.`);
+        setLoading(false);
+        return;
+      }
+
+      navigate({ to: "/admin" });
+    } catch (err) {
+      // A thrown/rejected call (network blip talking to the server function or Supabase)
+      // must still clear the spinner — otherwise the form hangs forever with no feedback.
+      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       setLoading(false);
-      return;
     }
-
-    // Sign straight in with the account just created rather than bouncing back to /login.
-    const { error: loginError } = await supabase.auth.signInWithPassword({
-      email: adminEmail,
-      password: adminPassword,
-    });
-    if (loginError) {
-      setError(`Company created, but sign-in failed: ${loginError.message}. Try signing in manually.`);
-      setLoading(false);
-      return;
-    }
-
-    navigate({ to: "/admin" });
   };
 
   return (
