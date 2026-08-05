@@ -58,14 +58,12 @@ function LoginPage() {
     <div className="flex min-h-screen w-full bg-background">
       {/* Left brand panel */}
       <div className="relative hidden w-1/2 flex-col justify-between bg-[var(--brand-navy)] p-12 text-white lg:flex">
-        <div className="inline-flex w-fit rounded-md bg-white px-3 py-1.5">
-          <img src="/logo.png" alt="SamvadX" className="h-6 w-auto object-contain" />
+        <div className="inline-flex w-fit rounded-md bg-white px-4 py-2">
+          <img src="/logo.png" alt="SamvadX" className="h-10 w-auto object-contain" />
         </div>
 
         <div className="space-y-5">
-          <h1 className="text-3xl font-semibold leading-tight">
-            India's modern collections platform for NBFCs &amp; ARCs.
-          </h1>
+          <h1 className="text-3xl font-semibold leading-tight">India's modern platform for NBFCs &amp; ARCs.</h1>
           <p className="max-w-md text-sm text-white/70">
             Run compliant outbound calling, SMS &amp; UPI collection workflows from one operator
             console. Built for RBI fair-practice guidelines.
@@ -77,14 +75,17 @@ function LoginPage() {
           </ul>
         </div>
 
-        <p className="text-xs text-white/40">© 2026 SamvadX Technologies Pvt. Ltd.</p>
+        <div className="space-y-0.5">
+          <p className="text-xs text-white/40">© 2026 SamvadX Technologies Pvt. Ltd.</p>
+          <p className="text-xs italic text-white/40">Powered by Axiotta Technologies</p>
+        </div>
       </div>
 
       {/* Right form panel */}
       <div className="flex w-full items-center justify-center px-4 py-12 lg:w-1/2">
         <div className="w-full max-w-sm">
-          <div className="mb-8 inline-flex w-fit rounded-md bg-white px-3 py-1.5 lg:hidden">
-            <img src="/logo.png" alt="SamvadX" className="h-6 w-auto object-contain" />
+          <div className="mb-8 inline-flex w-fit rounded-md bg-white px-4 py-2 lg:hidden">
+            <img src="/logo.png" alt="SamvadX" className="h-10 w-auto object-contain" />
           </div>
 
           <Card className="border-border shadow-sm">
