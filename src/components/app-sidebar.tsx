@@ -22,7 +22,6 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -70,11 +69,14 @@ export function AppSidebar({ role }: { role: Role }) {
     <Sidebar collapsible="offcanvas">
       <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
         <Link to="/dashboard" className="flex flex-col items-start gap-1.5">
-          <div className="rounded-md bg-white px-2 py-1">
-            <img src="/logo.png" alt="SamvadX" className="h-5 w-auto object-contain" />
+          <div className="rounded-md bg-white px-3 py-1.5">
+            <img src="/logo.png" alt="SamvadX" className="h-7 w-auto object-contain" />
           </div>
           <span className="text-[10px] uppercase tracking-wider text-sidebar-foreground/60">
             Collections Platform
+          </span>
+          <span className="text-[10px] italic text-sidebar-foreground/40">
+            Powered by Axiotta Technologies Private Limited
           </span>
         </Link>
       </SidebarHeader>
@@ -146,12 +148,6 @@ export function AppSidebar({ role }: { role: Role }) {
           </SidebarGroup>
         )}
       </SidebarContent>
-
-      <SidebarFooter className="border-t border-sidebar-border px-4 py-3">
-        <p className="text-[10px] italic text-sidebar-foreground/40">
-          Powered by Axiotta Technologies Private Limited
-        </p>
-      </SidebarFooter>
     </Sidebar>
   );
 }
