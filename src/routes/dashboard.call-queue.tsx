@@ -108,11 +108,13 @@ import {
 import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { toast } from "sonner";
+import { TataCampaignDialog } from "@/components/tata-campaign-dialog";
+import type { TataLeadRow } from "@/lib/server/tata-dialer-actions";
 
 export const Route = createFileRoute("/dashboard/call-queue")({
   head: () => ({
     meta: [
-      { title: "Call Queue · Axiora" },
+      { title: "Call Queue · SamvadX" },
       {
         name: "description",
         content: "Agent and AI call queue with filters and full call history.",
@@ -245,6 +247,7 @@ function CallQueuePage() {
   // Caller ID shown to the debtor — must be a DID on the Tata account, never a personal number.
   const [manualDialCallerId, setManualDialCallerId] = useState<string>(SMARTFLO_DIDS[0]);
   const [retainedOpen, setRetainedOpen] = useState(false);
+  const [campaignDialogOpen, setCampaignDialogOpen] = useState(false);
   const [predictiveNotif, setPredictiveNotif] = useState<string | null>(null);
   // A call the AI has connected and is handing to the agent WHILE they're already on another call
   const [incomingTransfer, setIncomingTransfer] = useState<{
@@ -438,8 +441,8 @@ function CallQueuePage() {
         const dueDate = isPTP ? disposition.ptpDate : disposition.callbackDate;
         const amt = disposition.ptpAmount ? formatINR(parseFloat(disposition.ptpAmount)) : "";
         const sms = isPTP
-          ? `Dear ${debtor.name}, we've recorded your promise to pay ${amt} by ${dueDate || "the agreed date"}. Thank you — Axiora`
-          : `Dear ${debtor.name}, our agent will call you back on ${disposition.callbackDate || "the agreed date"}${disposition.callbackTime ? ` at ${disposition.callbackTime}` : ""}. — Axiora`;
+          ? `Dear ${debtor.name}, we've recorded your promise to pay ${amt} by ${dueDate || "the agreed date"}. Thank you — SamvadX`
+          : `Dear ${debtor.name}, our agent will call you back on ${disposition.callbackDate || "the agreed date"}${disposition.callbackTime ? ` at ${disposition.callbackTime}` : ""}. — SamvadX`;
         toast.success(`SMS sent to ${debtor.name}`, { description: sms });
 
         if (dueDate) {
@@ -1263,7 +1266,7 @@ function CallQueuePage() {
                     "Outstanding Balance (INR)",
                     "DPD",
                     "AI Score",
-                    "Axiora Debtor ID",
+                    "SamvadX Debtor ID",
                   ],
                   filteredQueue.map((d) => [
                     d.phone,
@@ -1284,8 +1287,38 @@ function CallQueuePage() {
               <PhoneOutgoing className="h-3.5 w-3.5" />
               Export for Tata Dialer
             </Button>
+            <Button
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              title="Create the lead list, upload leads, and start a Dialer Campaign on Tata SmartFlo directly — no manual CSV upload."
+              onClick={() => setCampaignDialogOpen(true)}
+            >
+              <PhoneOutgoing className="h-3.5 w-3.5" />
+              Create Tata Dialer Campaign
+            </Button>
           </div>
         </div>
+
+        <TataCampaignDialog
+          open={campaignDialogOpen}
+          onOpenChange={setCampaignDialogOpen}
+          callerIdOptions={SMARTFLO_DIDS}
+          leads={filteredQueue.map(
+            (d): TataLeadRow => ({
+              phone: d.phone,
+              name: d.name,
+              email: d.email ?? "",
+              address: d.address ?? "",
+              company: d.portfolio ?? "",
+              altPhone: d.altPhone ?? "",
+              loanReference: d.loanReference ?? d.id,
+              outstanding: d.loanAmount,
+              dpd: d.dpd,
+              aiScore: d.aiScore,
+              debtorId: d.id,
+            }),
+          )}
+        />
 
         <Card className="animate-in fade-in duration-400">
           <CardContent className="p-0">

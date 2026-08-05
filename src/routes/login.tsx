@@ -11,11 +11,11 @@ import { useAuth } from "@/lib/auth";
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Sign in · Axiora" },
+      { title: "Sign in · SamvadX" },
       {
         name: "description",
         content:
-          "Sign in to Axiora, the collections operations platform for Indian loan recovery teams.",
+          "Sign in to SamvadX, the collections operations platform for Indian loan recovery teams.",
       },
     ],
   }),
@@ -58,9 +58,8 @@ function LoginPage() {
     <div className="flex min-h-screen w-full bg-background">
       {/* Left brand panel */}
       <div className="relative hidden w-1/2 flex-col justify-between bg-[var(--brand-navy)] p-12 text-white lg:flex">
-        <div className="flex items-center gap-2">
-          <img src="/logo.png" alt="Axiora" className="h-9 w-9 object-contain" />
-          <span className="text-lg font-semibold">Axiora</span>
+        <div className="inline-flex w-fit rounded-md bg-white px-3 py-1.5">
+          <img src="/logo.png" alt="SamvadX" className="h-6 w-auto object-contain" />
         </div>
 
         <div className="space-y-5">
@@ -78,15 +77,14 @@ function LoginPage() {
           </ul>
         </div>
 
-        <p className="text-xs text-white/40">© 2026 Axiora Technologies Pvt. Ltd.</p>
+        <p className="text-xs text-white/40">© 2026 SamvadX Technologies Pvt. Ltd.</p>
       </div>
 
       {/* Right form panel */}
       <div className="flex w-full items-center justify-center px-4 py-12 lg:w-1/2">
         <div className="w-full max-w-sm">
-          <div className="mb-8 flex items-center gap-2 lg:hidden">
-            <img src="/logo.png" alt="Axiora" className="h-9 w-9 object-contain" />
-            <span className="text-lg font-semibold text-foreground">Axiora</span>
+          <div className="mb-8 inline-flex w-fit rounded-md bg-white px-3 py-1.5 lg:hidden">
+            <img src="/logo.png" alt="SamvadX" className="h-6 w-auto object-contain" />
           </div>
 
           <Card className="border-border shadow-sm">

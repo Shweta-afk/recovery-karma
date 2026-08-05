@@ -30,7 +30,7 @@ import { useStorageSync } from "@/lib/storage-sync";
 export const Route = createFileRoute("/dashboard/")({
   head: () => ({
     meta: [
-      { title: "Agent Dashboard · Axiora" },
+      { title: "Agent Dashboard · SamvadX" },
       { name: "description", content: "Agent dashboard with KPIs and today's summary." },
     ],
   }),

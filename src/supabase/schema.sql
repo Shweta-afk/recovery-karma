@@ -1,5 +1,5 @@
 -- ============================================================
--- Axiora — complete database schema
+-- SamvadX — complete database schema
 -- Run this in Supabase SQL Editor (Dashboard → SQL Editor → New query)
 -- ============================================================
 

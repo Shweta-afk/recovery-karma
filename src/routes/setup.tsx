@@ -14,7 +14,7 @@ import { supabase } from "@/lib/supabase";
 // the login page.
 export const Route = createFileRoute("/setup")({
   head: () => ({
-    meta: [{ title: "Set up a company · Axiora" }],
+    meta: [{ title: "Set up a company · SamvadX" }],
   }),
   component: SetupPage,
 });
@@ -71,9 +71,8 @@ function SetupPage() {
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-background px-4 py-12">
       <div className="w-full max-w-sm">
-        <div className="mb-8 flex items-center gap-2">
-          <img src="/logo.png" alt="Axiora" className="h-9 w-9 object-contain" />
-          <span className="text-lg font-semibold text-foreground">Axiora</span>
+        <div className="mb-8 inline-flex w-fit rounded-md bg-white px-3 py-1.5">
+          <img src="/logo.png" alt="SamvadX" className="h-6 w-auto object-contain" />
         </div>
 
         <Card className="border-border shadow-sm">

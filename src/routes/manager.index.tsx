@@ -72,7 +72,7 @@ import { AgentDashboardContent } from "./dashboard.index";
 export const Route = createFileRoute("/manager/")({
   head: () => ({
     meta: [
-      { title: "Manager Dashboard · Axiora" },
+      { title: "Manager Dashboard · SamvadX" },
       { name: "description", content: "Team analytics, live per-agent view, and reports." },
     ],
   }),

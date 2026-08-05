@@ -12,7 +12,7 @@ import { getOrgSettings, saveOrgSettings, type OrgSettings } from "@/lib/org-set
 import { getMyClient, updateCompanyName } from "@/lib/client-store";
 
 export const Route = createFileRoute("/admin/settings")({
-  head: () => ({ meta: [{ title: "Settings · Axiora Admin" }] }),
+  head: () => ({ meta: [{ title: "Settings · SamvadX Admin" }] }),
   component: AdminSettingsPage,
 });
 

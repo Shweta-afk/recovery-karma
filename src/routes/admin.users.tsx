@@ -44,7 +44,7 @@ import { refreshRoster } from "@/lib/team-store";
 import type { Role } from "@/lib/auth";
 
 export const Route = createFileRoute("/admin/users")({
-  head: () => ({ meta: [{ title: "User Management · Axiora Admin" }] }),
+  head: () => ({ meta: [{ title: "User Management · SamvadX Admin" }] }),
   component: AdminUsersPage,
 });
 

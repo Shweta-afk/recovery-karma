@@ -80,14 +80,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Axiora · Collections Platform" },
+      { title: "SamvadX · Collections Platform" },
       {
         name: "description",
         content:
-          "Axiora — modern loan collections platform for Indian NBFCs, banks and recovery agencies.",
+          "SamvadX — modern loan collections platform for Indian NBFCs, banks and recovery agencies.",
       },
-      { name: "author", content: "Axiora" },
-      { property: "og:title", content: "Axiora · Collections Platform" },
+      { name: "author", content: "SamvadX" },
+      { property: "og:title", content: "SamvadX · Collections Platform" },
       {
         property: "og:description",
         content: "Modern, compliant loan recovery operations for Indian financial services teams.",

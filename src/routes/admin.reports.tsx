@@ -33,7 +33,7 @@ import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
 import { formatINR } from "@/lib/mock-debtors";
 
 export const Route = createFileRoute("/admin/reports")({
-  head: () => ({ meta: [{ title: "Reports · Axiora Admin" }] }),
+  head: () => ({ meta: [{ title: "Reports · SamvadX Admin" }] }),
   component: AdminReportsPage,
 });
 

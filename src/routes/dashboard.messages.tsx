@@ -64,7 +64,7 @@ import {
 } from "@/lib/disposition-store";
 
 export const Route = createFileRoute("/dashboard/messages")({
-  head: () => ({ meta: [{ title: "Messages · Axiora" }] }),
+  head: () => ({ meta: [{ title: "Messages · SamvadX" }] }),
   component: MessagesPage,
 });
 

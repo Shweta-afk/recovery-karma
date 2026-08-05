@@ -67,14 +67,13 @@ export function AppSidebar({ role }: { role: Role }) {
   return (
     <Sidebar collapsible="offcanvas">
       <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
-        <Link to="/dashboard" className="flex items-center gap-2">
-          <img src="/logo.png" alt="Axiora" className="h-8 w-8 object-contain" />
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold text-sidebar-foreground">Axiora</span>
-            <span className="text-[10px] uppercase tracking-wider text-sidebar-foreground/60">
-              Collections Platform
-            </span>
+        <Link to="/dashboard" className="flex flex-col items-start gap-1.5">
+          <div className="rounded-md bg-white px-2 py-1">
+            <img src="/logo.png" alt="SamvadX" className="h-5 w-auto object-contain" />
           </div>
+          <span className="text-[10px] uppercase tracking-wider text-sidebar-foreground/60">
+            Collections Platform
+          </span>
         </Link>
       </SidebarHeader>
 

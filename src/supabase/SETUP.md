@@ -1,4 +1,4 @@
-# Axiora — Account & Data Setup
+# SamvadX — Account & Data Setup
 
 The app is fully Supabase-backed — accounts, teams, portfolios/debtors, call outcomes,
 notifications, escalations, reminders and CSV column-mapping templates all live in Postgres,

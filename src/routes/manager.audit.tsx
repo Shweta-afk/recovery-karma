@@ -36,7 +36,7 @@ import {
 import { useStorageSync } from "@/lib/storage-sync";
 
 export const Route = createFileRoute("/manager/audit")({
-  head: () => ({ meta: [{ title: "Call Audit · Axiora" }] }),
+  head: () => ({ meta: [{ title: "Call Audit · SamvadX" }] }),
   component: CallAuditPage,
 });
 

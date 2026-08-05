@@ -43,7 +43,7 @@ import {
 } from "@/lib/payments-store";
 
 export const Route = createFileRoute("/dashboard/payments")({
-  head: () => ({ meta: [{ title: "Payments · Axiora" }] }),
+  head: () => ({ meta: [{ title: "Payments · SamvadX" }] }),
   component: PaymentsPage,
 });
 

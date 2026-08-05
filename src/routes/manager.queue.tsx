@@ -49,6 +49,7 @@ import {
   type DispositionForm,
 } from "@/routes/dashboard.call-queue";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
+import { useSingleCall } from "@/lib/dialer/use-single-call";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import {
   getOpenEscalations,
@@ -73,7 +74,7 @@ import { useAuth } from "@/lib/auth";
 export const Route = createFileRoute("/manager/queue")({
   head: () => ({
     meta: [
-      { title: "Call Queue · Axiora" },
+      { title: "Call Queue · SamvadX" },
       {
         name: "description",
         content: "Live per-agent queues, team overview, and the manager's own escalation queue.",
@@ -609,8 +610,13 @@ function ManagerQueuePage() {
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [activeEscalationId, setActiveEscalationId] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<DispositionForm>(EMPTY_DISPOSITION);
+  // Places a real call through Tata SmartFlo (mode: "server") — this used to be a fake
+  // setTimeout(3000ms) that flipped straight to "connected" with no provider call at all,
+  // which is why manager-initiated calls (manual dial, escalation calls) never actually rang.
+  const singleCall = useSingleCall(setActiveCall, { mode: "server" });
 
   const startCall = (debtor: QueueDebtor, escalationId: string | null) => {
+    singleCall.reset();
     setActiveEscalationId(escalationId);
     setActiveCall({
       debtor,
@@ -621,10 +627,10 @@ function ManagerQueuePage() {
       elapsed: 0,
     });
     setDisposition(EMPTY_DISPOSITION);
-    setTimeout(() => setActiveCall((c) => (c ? { ...c, phase: "connected" } : null)), 3000);
+    singleCall.dial(debtor);
   };
 
-  const endCall = () => setActiveCall((c) => (c ? { ...c, phase: "ended" } : null));
+  const endCall = () => singleCall.hangup();
 
   const submitDisposition = () => {
     if (!disposition.outcome) {
@@ -649,6 +655,8 @@ function ManagerQueuePage() {
         paidRef: disposition.paidRef || undefined,
         loanAmount: debtor.loanAmount,
         dpd: debtor.dpd,
+        recordingUrl: activeCall.recordingUrl,
+        providerCallId: activeCall.providerCallId,
         time: new Date().toISOString(),
       };
       saveDisposition(record).catch((e) =>

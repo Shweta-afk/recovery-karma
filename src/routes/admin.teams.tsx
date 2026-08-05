@@ -39,7 +39,7 @@ import {
 import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
 
 export const Route = createFileRoute("/admin/teams")({
-  head: () => ({ meta: [{ title: "Teams · Axiora Admin" }] }),
+  head: () => ({ meta: [{ title: "Teams · SamvadX Admin" }] }),
   component: AdminTeamsPage,
 });
 

@@ -19,7 +19,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 
 export const Route = createFileRoute("/dashboard/settings")({
-  head: () => ({ meta: [{ title: "Settings · Axiora" }] }),
+  head: () => ({ meta: [{ title: "Settings · SamvadX" }] }),
   component: AgentSettingsPage,
 });
 

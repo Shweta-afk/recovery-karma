@@ -1,5 +1,5 @@
 -- ============================================================
--- Axiora — migrate localStorage-backed features to Supabase
+-- SamvadX — migrate localStorage-backed features to Supabase
 -- Run ONCE in Supabase → SQL Editor, after schema.sql + seed.sql.
 --
 -- Adds: teams, team_agents, notifications, escalations, reminders,
