@@ -109,7 +109,7 @@ import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { toast } from "sonner";
 import { TataCampaignDialog } from "@/components/tata-campaign-dialog";
-import type { TataLeadRow } from "@/lib/server/tata-dialer-actions";
+import type { TataLeadRow } from "@/lib/tata-dialer-actions.server";
 
 export const Route = createFileRoute("/dashboard/call-queue")({
   head: () => ({

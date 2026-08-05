@@ -26,7 +26,7 @@ import {
   type TataAgentOption,
   type TataDispositionListOption,
   type TataLeadRow,
-} from "@/lib/server/tata-dialer-actions";
+} from "@/lib/tata-dialer-actions.server";
 
 interface TataCampaignDialogProps {
   open: boolean;
