@@ -24,8 +24,14 @@ interface AuthCtx {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
-/** How long a cached agent profile stays trusted before it is re-fetched. */
-const PROFILE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+/** How long a cached agent profile stays trusted before it is re-fetched.
+ *
+ * Was 1 hour — too long for agent_phone specifically: click_to_call rings whatever this
+ * field holds, so an admin fixing a misconfigured/colliding number left every already-signed-
+ * in agent silently dialing with the STALE value for up to an hour, with nothing telling
+ * them why calls still weren't going through. Short enough that a page reload after an admin
+ * edit picks it up almost immediately, long enough not to re-query on every mount/tab-focus. */
+const PROFILE_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 
 /** Safety net: reproduced in production a case where two concurrent calls into this same
  * Supabase client hung indefinitely with no error, warning, or rejection — see the
