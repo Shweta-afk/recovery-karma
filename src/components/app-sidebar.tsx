@@ -22,6 +22,7 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -145,6 +146,12 @@ export function AppSidebar({ role }: { role: Role }) {
           </SidebarGroup>
         )}
       </SidebarContent>
+
+      <SidebarFooter className="border-t border-sidebar-border px-4 py-3">
+        <p className="text-[10px] italic text-sidebar-foreground/40">
+          Powered by Axiotta Technologies Private Limited
+        </p>
+      </SidebarFooter>
     </Sidebar>
   );
 }
