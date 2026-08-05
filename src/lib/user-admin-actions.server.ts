@@ -144,3 +144,77 @@ async function addAgentToManagerTeam(
     .upsert({ team_id: teamId, agent_id: agentId }, { onConflict: "team_id,agent_id" });
   return memberErr?.message ?? null;
 }
+
+/**
+ * Admin-only: (re)issue a login password for an existing agent row.
+ *
+ * Handles both cases the Users table can show: an agent who already has a working login
+ * (auth_user_id set) gets their password overwritten via updateUserById; a "Pending login"
+ * agent (a profile row with no auth_user_id — e.g. added before invite-with-login existed)
+ * gets a brand-new auth user created and linked, same as inviteUser's first step. Either way
+ * the admin sees one new one-time password to hand off, same UX as the original invite.
+ */
+export const resetUserPassword = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; agentId: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) {
+      return { ok: false as const, error: "Your session has expired — please sign in again." };
+    }
+    if (caller.role !== "admin") {
+      return { ok: false as const, error: "Only admins can reset passwords." };
+    }
+
+    const admin = getSupabaseAdmin();
+    const { data: agent, error: agentErr } = await admin
+      .from("agents")
+      .select("id, name, email, auth_user_id")
+      .eq("id", data.agentId)
+      .eq("client_id", caller.clientId)
+      .single();
+    if (agentErr || !agent) {
+      return { ok: false as const, error: "User not found in this company." };
+    }
+
+    const temporaryPassword = generatePassword();
+    const authUserId = agent.auth_user_id as string | null;
+
+    if (authUserId) {
+      const { error: updateErr } = await admin.auth.admin.updateUserById(authUserId, {
+        password: temporaryPassword,
+      });
+      if (updateErr) {
+        return { ok: false as const, error: updateErr.message };
+      }
+    } else {
+      // No login yet — create one and link it, same as inviteUser.
+      const { data: authData, error: createErr } = await admin.auth.admin.createUser({
+        email: agent.email as string,
+        password: temporaryPassword,
+        email_confirm: true,
+      });
+      if (createErr || !authData.user) {
+        return { ok: false as const, error: createErr?.message ?? "Could not create the login." };
+      }
+      const { error: linkErr } = await admin
+        .from("agents")
+        .update({ auth_user_id: authData.user.id })
+        .eq("id", agent.id);
+      if (linkErr) {
+        await admin.auth.admin.deleteUser(authData.user.id).catch((err) => {
+          console.error(
+            `[resetUserPassword] failed to roll back orphaned auth user ${authData.user.id} after agents link failure:`,
+            err,
+          );
+        });
+        return { ok: false as const, error: linkErr.message };
+      }
+    }
+
+    return {
+      ok: true as const,
+      temporaryPassword,
+      name: agent.name as string,
+      email: agent.email as string,
+    };
+  });

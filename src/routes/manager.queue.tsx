@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { SMARTFLO_DIDS } from "@/lib/telephony/caller-ids";
 import { formatINR, bucketOf, BUCKET_META } from "@/lib/mock-debtors";
 import { useManagerTeamAgents, type AgentRef } from "@/lib/team-store";
 import {
@@ -428,7 +429,7 @@ function MyQueueTab({
   startCall,
   hasActiveCall,
 }: {
-  startCall: (debtor: QueueDebtor, escalationId: string | null) => void;
+  startCall: (debtor: QueueDebtor, escalationId: string | null, callerId?: string) => void;
   hasActiveCall: boolean;
 }) {
   const [escalations, setEscalations] = useState<Escalation[]>(() => getOpenEscalations());
@@ -443,6 +444,7 @@ function MyQueueTab({
 
   const [manualNumber, setManualNumber] = useState("");
   const [manualName, setManualName] = useState("");
+  const [manualCallerId, setManualCallerId] = useState<string>(SMARTFLO_DIDS[0]);
   const [dialingManual, setDialingManual] = useState(false);
 
   const callEscalation = (e: Escalation) => {
@@ -473,6 +475,7 @@ function MyQueueTab({
           scheduledAt: "—",
         },
         null,
+        manualCallerId,
       );
       setManualNumber("");
       setManualName("");
@@ -511,6 +514,21 @@ function MyQueueTab({
               onChange={(e) => setManualNumber(e.target.value)}
               className="h-9 w-48 font-mono"
             />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Caller ID (SmartFlo DID)</label>
+            <Select value={manualCallerId} onValueChange={setManualCallerId}>
+              <SelectTrigger className="h-9 w-40 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SMARTFLO_DIDS.map((did) => (
+                  <SelectItem key={did} value={did}>
+                    {did}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Button
             className="h-9 gap-1.5"
@@ -615,7 +633,7 @@ function ManagerQueuePage() {
   // which is why manager-initiated calls (manual dial, escalation calls) never actually rang.
   const singleCall = useSingleCall(setActiveCall, { mode: "server" });
 
-  const startCall = (debtor: QueueDebtor, escalationId: string | null) => {
+  const startCall = (debtor: QueueDebtor, escalationId: string | null, callerId?: string) => {
     singleCall.reset();
     setActiveEscalationId(escalationId);
     setActiveCall({
@@ -627,7 +645,7 @@ function ManagerQueuePage() {
       elapsed: 0,
     });
     setDisposition(EMPTY_DISPOSITION);
-    singleCall.dial(debtor);
+    singleCall.dial(debtor, { callerId });
   };
 
   const endCall = () => singleCall.hangup();

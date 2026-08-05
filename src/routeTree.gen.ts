@@ -19,6 +19,7 @@ import { Route as ManagerIndexRouteImport } from './routes/manager.index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
+import { Route as ManagerTeamRouteImport } from './routes/manager.team'
 import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
 import { Route as ManagerChannelsRouteImport } from './routes/manager.channels'
@@ -84,6 +85,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
 const ManagerUploadRoute = ManagerUploadRouteImport.update({
   id: '/upload',
   path: '/upload',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerTeamRoute = ManagerTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => ManagerRoute,
 } as any)
 const ManagerQueueRoute = ManagerQueueRouteImport.update({
@@ -190,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/manager/channels': typeof ManagerChannelsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
+  '/manager/team': typeof ManagerTeamRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/admin/': typeof AdminIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
@@ -215,6 +222,7 @@ export interface FileRoutesByTo {
   '/manager/channels': typeof ManagerChannelsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
+  '/manager/team': typeof ManagerTeamRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/admin': typeof AdminIndexRoute
   '/dashboard': typeof DashboardIndexRoute
@@ -244,6 +252,7 @@ export interface FileRoutesById {
   '/manager/channels': typeof ManagerChannelsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
+  '/manager/team': typeof ManagerTeamRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/admin/': typeof AdminIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
@@ -274,6 +283,7 @@ export interface FileRouteTypes {
     | '/manager/channels'
     | '/manager/portfolio'
     | '/manager/queue'
+    | '/manager/team'
     | '/manager/upload'
     | '/admin/'
     | '/dashboard/'
@@ -299,6 +309,7 @@ export interface FileRouteTypes {
     | '/manager/channels'
     | '/manager/portfolio'
     | '/manager/queue'
+    | '/manager/team'
     | '/manager/upload'
     | '/admin'
     | '/dashboard'
@@ -327,6 +338,7 @@ export interface FileRouteTypes {
     | '/manager/channels'
     | '/manager/portfolio'
     | '/manager/queue'
+    | '/manager/team'
     | '/manager/upload'
     | '/admin/'
     | '/dashboard/'
@@ -412,6 +424,13 @@ declare module '@tanstack/react-router' {
       path: '/upload'
       fullPath: '/manager/upload'
       preLoaderRoute: typeof ManagerUploadRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/team': {
+      id: '/manager/team'
+      path: '/team'
+      fullPath: '/manager/team'
+      preLoaderRoute: typeof ManagerTeamRouteImport
       parentRoute: typeof ManagerRoute
     }
     '/manager/queue': {
@@ -580,6 +599,7 @@ interface ManagerRouteChildren {
   ManagerChannelsRoute: typeof ManagerChannelsRoute
   ManagerPortfolioRoute: typeof ManagerPortfolioRoute
   ManagerQueueRoute: typeof ManagerQueueRoute
+  ManagerTeamRoute: typeof ManagerTeamRoute
   ManagerUploadRoute: typeof ManagerUploadRoute
   ManagerIndexRoute: typeof ManagerIndexRoute
 }
@@ -589,6 +609,7 @@ const ManagerRouteChildren: ManagerRouteChildren = {
   ManagerChannelsRoute: ManagerChannelsRoute,
   ManagerPortfolioRoute: ManagerPortfolioRoute,
   ManagerQueueRoute: ManagerQueueRoute,
+  ManagerTeamRoute: ManagerTeamRoute,
   ManagerUploadRoute: ManagerUploadRoute,
   ManagerIndexRoute: ManagerIndexRoute,
 }

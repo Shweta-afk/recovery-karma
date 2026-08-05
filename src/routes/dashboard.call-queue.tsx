@@ -111,6 +111,7 @@ import { useCallSession } from "@/lib/call-session";
 import { toast } from "sonner";
 import { TataCampaignDialog } from "@/components/tata-campaign-dialog";
 import type { TataLeadRow } from "@/lib/tata-dialer-actions.server";
+import { SMARTFLO_DIDS } from "@/lib/telephony/caller-ids";
 
 export const Route = createFileRoute("/dashboard/call-queue")({
   head: () => ({
@@ -132,15 +133,6 @@ export const Route = createFileRoute("/dashboard/call-queue")({
   component: CallQueuePage,
 });
 
-/** DIDs assigned to the Tata SmartFlo account, usable as outbound caller IDs. Tata rejects
- * any caller_id that isn't one of these with a 422 ("DID Selected is either disabled…"). */
-const SMARTFLO_DIDS = [
-  "917965810560",
-  "917965810601",
-  "917965810606",
-  "917965810614",
-  "917965810618",
-] as const;
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
 

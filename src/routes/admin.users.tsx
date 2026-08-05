@@ -81,6 +81,7 @@ function AdminUsersPage() {
   const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
   const [showInvite, setShowInvite] = useState(false);
   const [editAgent, setEditAgent] = useState<AgentRow | null>(null);
+  const [resetAgent, setResetAgent] = useState<AgentRow | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -273,6 +274,7 @@ function AdminUsersPage() {
                       agent={agent}
                       onRoleChange={handleRoleChange}
                       onEdit={() => setEditAgent(agent)}
+                      onResetPassword={() => setResetAgent(agent)}
                       onDelete={handleDelete}
                     />
                   ))}
@@ -292,6 +294,9 @@ function AdminUsersPage() {
       {editAgent && (
         <EditUserDialog agent={editAgent} onClose={() => setEditAgent(null)} onSaved={load} />
       )}
+      {resetAgent && (
+        <ResetPasswordDialog agent={resetAgent} onClose={() => setResetAgent(null)} />
+      )}
     </div>
   );
 }
@@ -302,11 +307,13 @@ function UserRow({
   agent,
   onRoleChange,
   onEdit,
+  onResetPassword,
   onDelete,
 }: {
   agent: AgentRow;
   onRoleChange: (a: AgentRow, r: Role) => void;
   onEdit: () => void;
+  onResetPassword: () => void;
   onDelete: (a: AgentRow) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -429,6 +436,17 @@ function UserRow({
               >
                 <Mail className="h-3.5 w-3.5" />
                 Copy Email
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onResetPassword();
+                  setMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+              >
+                <KeyRound className="h-3.5 w-3.5" />
+                {agent.auth_user_id ? "Reset Password" : "Create Login"}
               </button>
               <div className="border-t border-border my-1" />
               <button
@@ -699,7 +717,12 @@ function EditUserDialog({
       .eq("id", agent.id);
 
     if (error) {
-      toast.error(error.message);
+      // 23505 = unique_violation — agents_client_phone_unique (see the 20260805 migration).
+      toast.error(
+        error.code === "23505"
+          ? "That phone number is already assigned to another agent — each agent needs their own."
+          : error.message,
+      );
       setSaving(false);
       return;
     }
@@ -743,7 +766,10 @@ function EditUserDialog({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Agent Number (Tata SmartFlo)</Label>
+            <Label className="text-xs">
+              Agent Number (Tata SmartFlo)
+              {role === "agent" && <span className="text-destructive"> *</span>}
+            </Label>
             <Input
               placeholder="e.g., 050XXXXXXX0 or extension"
               value={agentPhone}
@@ -754,8 +780,14 @@ function EditUserDialog({
               Whatever click-to-call rings for this agent — their personal Call Forward Number,
               or their Tata Agent Extension if they're set up on the Smartflo Softphone app (no
               personal phone rings; calls come into the softphone instead). Must match exactly
-              what's configured for them in Tata SmartFlo → Users.
+              what's configured for them in Tata SmartFlo → Users, and must be unique — no two
+              agents can share one.
             </p>
+            {role === "agent" && !agentPhone.trim() && (
+              <p className="text-[11px] text-destructive">
+                Without this, manual dial falls back to a placeholder that rings no one.
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter>
@@ -766,6 +798,106 @@ function EditUserDialog({
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Reset password dialog ──────────────────────────────────────────────────────
+
+function ResetPasswordDialog({ agent, onClose }: { agent: AgentRow; onClose: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [password, setPassword] = useState<string | null>(null);
+  const hasLogin = !!agent.auth_user_id;
+
+  const handleReset = async () => {
+    setSaving(true);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) {
+      toast.error("Your session has expired — please sign in again.");
+      setSaving(false);
+      return;
+    }
+
+    const { resetUserPassword } = await import("@/lib/user-admin-actions.server");
+    const result = await resetUserPassword({
+      data: { accessToken: session.access_token, agentId: agent.id },
+    });
+
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    setPassword(result.temporaryPassword);
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        {password ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-primary" />
+                New password for {agent.name}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-1">
+              <p className="text-xs text-muted-foreground">
+                Their old password no longer works. This is shown once — share it with{" "}
+                {agent.name} securely.
+              </p>
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+                <code className="flex-1 text-sm font-mono">{password}</code>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(password);
+                    toast.success("Password copied");
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy
+                </Button>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button size="sm" onClick={onClose}>
+                Done
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>{hasLogin ? "Reset password?" : "Create a login?"}</DialogTitle>
+            </DialogHeader>
+            <p className="py-1 text-xs text-muted-foreground">
+              {hasLogin
+                ? `This immediately invalidates ${agent.name}'s current password and issues a new one-time password.`
+                : `${agent.name} doesn't have a login yet — this creates one and issues a one-time password for ${agent.email}.`}
+            </p>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleReset} disabled={saving} className="gap-1.5">
+                {saving ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <KeyRound className="h-3.5 w-3.5" />
+                )}
+                {hasLogin ? "Reset Password" : "Create Login"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -42,6 +42,7 @@ const agentItems = [
 const managerItems = [
   { title: "Dashboard", url: "/manager", icon: BarChart3 },
   { title: "Call Queue", url: "/manager/queue", icon: PhoneCall },
+  { title: "My Team", url: "/manager/team", icon: Users },
   { title: "Channel Contribution", url: "/manager/channels", icon: Radio },
   { title: "Portfolio Overview", url: "/manager/portfolio", icon: FolderOpen },
   { title: "Portfolio Upload", url: "/manager/upload", icon: Upload },

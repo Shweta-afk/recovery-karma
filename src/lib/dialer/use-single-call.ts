@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useTransition } from "react";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { applyEvent, isTerminal } from "@/lib/telephony/call-machine";
 import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provider";
@@ -65,13 +66,18 @@ export interface UseSingleCallArgs {
   agentPhone?: string;
 }
 
+/** Sentinel used when the signed-in agent has no `agents.agent_phone` configured. Never a
+ * real number Tata can ring — dial() refuses to place a server-mode call with this, rather
+ * than silently sending a placeholder every unconfigured agent would otherwise share. */
+const NO_AGENT_PHONE = "agent-self";
+
 export function useSingleCall(
   setActiveCall: Dispatch<SetStateAction<ActiveCall | null>>,
   args?: UseSingleCallArgs,
 ): UseSingleCall {
   const { user } = useAuth();
   const mode = args?.mode ?? "local";
-  const agentPhone = args?.agentPhone ?? user?.agentPhone ?? "agent-self";
+  const agentPhone = args?.agentPhone ?? user?.agentPhone ?? NO_AGENT_PHONE;
   const simRef = useRef<SimProvider | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -98,9 +104,17 @@ export function useSingleCall(
 
   const dial = useCallback(
     (debtor: QueueDebtor, opts?: DialOptions) => {
-      reset();
       // Use provided phone (manual dial) or fall back to auth context phone
       const phoneToUse = opts?.agentPhone ?? agentPhone;
+
+      if (mode === "server" && phoneToUse === NO_AGENT_PHONE) {
+        toast.error(
+          "You don't have a phone number on file — ask an admin to set your Agent Number under Admin → Users before you can dial.",
+        );
+        return;
+      }
+
+      reset();
 
       if (mode === "server") {
         // Server mode: call real provider via server function

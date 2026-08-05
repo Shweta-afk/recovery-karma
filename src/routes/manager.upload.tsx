@@ -424,7 +424,9 @@ function PortfolioUploadPage() {
         });
         return {
           id: crypto.randomUUID(),
-          loanReference: get("loan_id") || `ROW-${i + 1}`,
+          // No fallback placeholder — an empty Loan/Account ID is a bad row, surfaced via
+          // rowsMissingLoanId below and blocked at upload, not silently papered over.
+          loanReference: get("loan_id"),
           name: get("name"),
           phone: get("phone"),
           loanAmount: parseFloat(get("loan_amount").replace(/[,₹\s]/g, "")) || 0,
@@ -443,6 +445,17 @@ function PortfolioUploadPage() {
         };
       }),
     [rawRows, rawHeaders, mapping],
+  );
+
+  // 1-indexed CSV row numbers (header row + 1-indexing) for rows with a blank Loan/Account ID,
+  // even though the column itself is mapped — a mapped column can still have empty cells.
+  const rowsMissingLoanId = useMemo(
+    () =>
+      mappedRows.reduce<number[]>((acc, r, i) => {
+        if (!r.loanReference.trim()) acc.push(i + 2);
+        return acc;
+      }, []),
+    [mappedRows],
   );
 
   const processFile = useCallback(
@@ -499,6 +512,12 @@ function PortfolioUploadPage() {
     const missing = required.filter((k) => !mapping[k]);
     if (missing.length) {
       toast.error(`Map required columns first: ${missing.join(", ")}`);
+      return;
+    }
+    if (rowsMissingLoanId.length) {
+      toast.error(
+        `${rowsMissingLoanId.length} row${rowsMissingLoanId.length === 1 ? "" : "s"} missing Loan / Account ID (CSV row${rowsMissingLoanId.length === 1 ? "" : "s"} ${rowsMissingLoanId.slice(0, 5).join(", ")}${rowsMissingLoanId.length > 5 ? ", …" : ""}) — fix the source file and re-upload.`,
+      );
       return;
     }
     if (!portfolioName || !lenderName) {
@@ -1086,6 +1105,17 @@ function PortfolioUploadPage() {
                     )}
                   </div>
 
+                  {rowsMissingLoanId.length > 0 && (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                      {rowsMissingLoanId.length} row{rowsMissingLoanId.length === 1 ? "" : "s"}{" "}
+                      {rowsMissingLoanId.length === 1 ? "has" : "have"} a blank Loan / Account ID
+                      (CSV row{rowsMissingLoanId.length === 1 ? "" : "s"}{" "}
+                      {rowsMissingLoanId.slice(0, 10).join(", ")}
+                      {rowsMissingLoanId.length > 10 ? ", …" : ""}). Fix the source file and
+                      re-upload — every account needs one.
+                    </div>
+                  )}
+
                   {uploading && (
                     <div className="space-y-1.5">
                       <div className="flex justify-between text-xs text-muted-foreground">
@@ -1096,7 +1126,11 @@ function PortfolioUploadPage() {
                     </div>
                   )}
 
-                  <Button className="w-full gap-2" onClick={handleUpload} disabled={uploading}>
+                  <Button
+                    className="w-full gap-2"
+                    onClick={handleUpload}
+                    disabled={uploading || rowsMissingLoanId.length > 0}
+                  >
                     <Upload className="h-4 w-4" />
                     Upload &amp; Assign {mappedRows.length} Accounts
                   </Button>
