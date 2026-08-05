@@ -162,14 +162,28 @@ export function useSingleCall(
                     }
                   : c,
               );
+              if (status.status === "failed") {
+                // Tata accepted the dial (no throw above, ref_id issued) but the call never
+                // actually connected — the "200 OK, agent leg never rings" pattern: silent
+                // without this, since the poll loop otherwise just reset()s with no feedback.
+                toast.error(
+                  "Call didn't connect — Tata accepted the request but the line never rang. Check the agent's number matches Tata SmartFlo exactly.",
+                );
+              }
               if (status.status !== "ringing" && status.status !== "connected") reset();
             }, STATUS_POLL_MS);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error("Failed to start call:", msg);
+            // The caller's own toast (e.g. "Calling X…") fires synchronously, right after
+            // dial() is invoked — well before this async API call has resolved either way,
+            // so it can never actually report failure. This is the ONLY place that learns
+            // the real outcome, so it has to be the one to tell the agent, or a failed dial
+            // silently looks identical to a successful one until the call just ends itself.
+            toast.error(`Call failed to start: ${msg}`);
             // "failed" is not a CallPhase ("ringing" | "connected" | "ended") and there is
             // no errorMessage field, so the old shape left the panel stuck on a phase
-            // nothing renders. End the call — the error is surfaced by the caller's toast.
+            // nothing renders. End the call now that the agent has been told why.
             setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
             reset();
           }
