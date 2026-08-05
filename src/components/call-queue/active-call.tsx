@@ -63,6 +63,7 @@ import {
 import { exportCSV } from "@/lib/call-queue/mock-data";
 
 import { saveEscalation } from "@/lib/escalation-store";
+import type { PtpFollowup } from "@/lib/disposition-store";
 
 import { toast } from "sonner";
 
@@ -1364,125 +1365,34 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
 
 // ─── PTP Follow-up Tracker ───────────────────────────────────────────────────
 
-const PTP_FOLLOWUPS = [
-  {
-    id: "P-001",
-    debtorName: "Rahul Sharma",
-    loanId: "L-10042",
-    phone: "+91 98XXX XX789",
-    ptpAmount: 8200,
-    ptpDate: "Today",
-    daysLeft: 0,
-    prevAttempts: 2,
-    notes: "Confirmed UPI transfer by EOD",
-  },
-  {
-    id: "P-002",
-    debtorName: "Ananya Bose",
-    loanId: "L-10455",
-    phone: "+91 91XXX XX334",
-    ptpAmount: 15000,
-    ptpDate: "Tomorrow",
-    daysLeft: 1,
-    prevAttempts: 1,
-    notes: "Salary credited 24th — will pay immediately",
-  },
-  {
-    id: "P-003",
-    debtorName: "Divya Krishnan",
-    loanId: "L-10333",
-    phone: "+91 97XXX XX115",
-    ptpAmount: 27500,
-    ptpDate: "Tomorrow",
-    daysLeft: 1,
-    prevAttempts: 3,
-    notes: "Has cash — transferring tonight or tomorrow",
-  },
-  {
-    id: "P-004",
-    debtorName: "Bhavna Shah",
-    loanId: "L-09512",
-    phone: "+91 99XXX XX308",
-    ptpAmount: 9000,
-    ptpDate: "23 Jun",
-    daysLeft: 1,
-    prevAttempts: 1,
-    notes: "Retained — kept PTP last month",
-  },
-  {
-    id: "P-005",
-    debtorName: "Imran Sheikh",
-    loanId: "L-10478",
-    phone: "+91 91XXX XX642",
-    ptpAmount: 11000,
-    ptpDate: "Friday",
-    daysLeft: 2,
-    prevAttempts: 1,
-    notes: "Reliable track record",
-  },
-  {
-    id: "P-006",
-    debtorName: "Firoz Khan",
-    loanId: "L-10388",
-    phone: "+91 91XXX XX220",
-    ptpAmount: 12000,
-    ptpDate: "25 Jun",
-    daysLeft: 3,
-    prevAttempts: 0,
-    notes: "AI captured — IVR keypress 1",
-  },
-  {
-    id: "P-007",
-    debtorName: "Karthik Nair",
-    loanId: "L-10122",
-    phone: "+91 99XXX XX901",
-    ptpAmount: 52000,
-    ptpDate: "24 Jun",
-    daysLeft: 2,
-    prevAttempts: 0,
-    notes: "AI captured — bot script confirmed",
-  },
-  {
-    id: "P-008",
-    debtorName: "Manish Gupta",
-    loanId: "L-10145",
-    phone: "+91 97XXX XX461",
-    ptpAmount: 9500,
-    ptpDate: "25 Jun",
-    daysLeft: 3,
-    prevAttempts: 2,
-    notes: "Extension approved, new date set",
-  },
-  {
-    id: "P-009",
-    debtorName: "Naresh Kumar",
-    loanId: "L-09488",
-    phone: "+91 90XXX XX155",
-    ptpAmount: 18000,
-    ptpDate: "27 Jun",
-    daysLeft: 5,
-    prevAttempts: 4,
-    notes: "Retained — phone inactive, try WhatsApp",
-  },
-];
+/** "Today" / "Tomorrow" / "3d overdue" / "25 Jun" — matches the display format the tracker
+ * used when its dates were hand-authored mock strings. */
+function formatPtpDate(daysLeft: number, iso: string): string {
+  if (daysLeft === 0) return "Today";
+  if (daysLeft === 1) return "Tomorrow";
+  if (daysLeft < 0) return `${Math.abs(daysLeft)}d overdue`;
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
 
 export function PTPTracker({
   onCall,
   onView,
   queue,
+  followups,
   bucketFilter,
   search,
 }: {
   onCall: (d: QueueDebtor) => void;
   onView: (d: QueueDebtor) => void;
   queue: QueueDebtor[];
+  followups: PtpFollowup[];
   bucketFilter: DPDBucket | "all";
   search: string;
 }) {
   const [filter, setFilter] = useState<"all" | "today" | "tomorrow" | "later">("all");
 
-  // Find the matching QueueDebtor for each PTP follow-up to apply bucket/search filters
-  const rows = PTP_FOLLOWUPS.filter((p) => {
+  // Find the matching QueueDebtor for each PTP follow-up to apply search + display its loan ref
+  const rows = followups.filter((p) => {
     const dateOk =
       filter === "all"
         ? true
@@ -1492,27 +1402,25 @@ export function PTPTracker({
             ? p.daysLeft === 1
             : p.daysLeft >= 2;
     if (!dateOk) return false;
+    const loanRef = queue.find((d) => d.id === p.debtorId)?.loanReference ?? p.debtorId;
     // Apply search
     const q = search.trim().toLowerCase();
     if (
       q &&
       !p.debtorName.toLowerCase().includes(q) &&
-      !p.loanId.toLowerCase().includes(q) &&
+      !loanRef.toLowerCase().includes(q) &&
       !p.phone.includes(q)
     )
       return false;
-    // Apply bucket filter via the matching queue debtor's dpd
-    if (bucketFilter !== "all") {
-      const qd = queue.find((d) => d.id === p.loanId);
-      if (qd && bucketOf(qd.dpd) !== bucketFilter) return false;
-    }
+    // Apply bucket filter — dpd is captured on the disposition itself, no queue lookup needed
+    if (bucketFilter !== "all" && p.dpd != null && bucketOf(p.dpd) !== bucketFilter) return false;
     return true;
   });
 
-  const todayCount = PTP_FOLLOWUPS.filter((p) => p.daysLeft === 0).length;
-  const tomorrowCount = PTP_FOLLOWUPS.filter((p) => p.daysLeft === 1).length;
-  const laterCount = PTP_FOLLOWUPS.filter((p) => p.daysLeft >= 2).length;
-  const totalAmount = PTP_FOLLOWUPS.reduce((s, p) => s + p.ptpAmount, 0);
+  const todayCount = followups.filter((p) => p.daysLeft === 0).length;
+  const tomorrowCount = followups.filter((p) => p.daysLeft === 1).length;
+  const laterCount = followups.filter((p) => p.daysLeft >= 2).length;
+  const totalAmount = followups.reduce((s, p) => s + p.ptpAmount, 0);
 
   return (
     <section>
@@ -1544,7 +1452,7 @@ export function PTPTracker({
         <div className="flex gap-2 flex-wrap items-center">
           {(
             [
-              { key: "all", label: "All", count: PTP_FOLLOWUPS.length },
+              { key: "all", label: "All", count: followups.length },
               { key: "today", label: "Due Today", count: todayCount },
               { key: "tomorrow", label: "Tomorrow", count: tomorrowCount },
               { key: "later", label: "Later", count: laterCount },
@@ -1589,21 +1497,12 @@ export function PTPTracker({
                   "Attempts",
                   "Notes",
                 ],
-                PTP_FOLLOWUPS.filter(
-                  (p) =>
-                    filter === "all" ||
-                    p.ptpDate ===
-                      (filter === "today"
-                        ? "Today"
-                        : filter === "tomorrow"
-                          ? "Tomorrow"
-                          : p.ptpDate),
-                ).map((p) => [
+                rows.map((p) => [
                   p.debtorName,
-                  p.loanId,
+                  queue.find((q) => q.id === p.debtorId)?.loanReference ?? p.debtorId,
                   p.phone,
                   p.ptpAmount,
-                  p.ptpDate,
+                  formatPtpDate(p.daysLeft, p.ptpDateIso),
                   p.daysLeft,
                   p.prevAttempts,
                   p.notes,
@@ -1650,11 +1549,13 @@ export function PTPTracker({
                         : p.daysLeft === 1
                           ? "text-warning-foreground"
                           : "text-muted-foreground";
+                    const matched = queue.find((q) => q.id === p.debtorId);
+                    const loanRef = matched?.loanReference ?? p.debtorId;
                     return (
                       <TableRow key={p.id} className="hover:bg-primary/5">
                         <TableCell>
                           <div className="font-medium text-sm">{p.debtorName}</div>
-                          <div className="text-[11px] text-muted-foreground">{p.loanId}</div>
+                          <div className="text-[11px] text-muted-foreground">{loanRef}</div>
                         </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
                           {p.phone}
@@ -1664,7 +1565,7 @@ export function PTPTracker({
                         </TableCell>
                         <TableCell>
                           <span className={cn("text-xs font-semibold", urgency)}>
-                            {p.ptpDate}
+                            {formatPtpDate(p.daysLeft, p.ptpDateIso)}
                             {p.daysLeft === 0 && (
                               <span className="ml-1 text-[10px] bg-destructive/15 text-destructive px-1 rounded">
                                 Overdue risk
@@ -1693,21 +1594,21 @@ export function PTPTracker({
                               onClick={() => {
                                 // Fall back to a debtor built from this row when it isn't in the
                                 // live queue, so Call always opens a working call — never a toast.
-                                const d: QueueDebtor = queue.find((q) => q.id === p.loanId) ?? {
-                                  id: p.loanId,
+                                const d: QueueDebtor = matched ?? {
+                                  id: p.debtorId,
                                   name: p.debtorName,
                                   phone: p.phone,
                                   loanAmount: p.ptpAmount,
-                                  dpd: 0,
+                                  dpd: p.dpd ?? 0,
                                   aiScore: 7,
                                   scoreReason: p.notes,
                                   lastContacted: null,
                                   portfolio: "PTP Follow-up",
                                   language: "English",
                                   queueStatus: "ptp",
-                                  scheduledAt: p.ptpDate,
+                                  scheduledAt: p.ptpDateIso,
                                   ptpAmount: p.ptpAmount,
-                                  loanReference: p.loanId,
+                                  loanReference: p.debtorId,
                                 };
                                 onCall(d);
                               }}

@@ -93,6 +93,7 @@ export { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active
 import {
   saveDisposition,
   getAgentDispositions,
+  getPtpFollowups,
   refreshDispositions,
   type DispositionRecord,
   type CallOutcome as StoredOutcome,
@@ -235,6 +236,9 @@ function CallQueuePage() {
     });
     return map;
   });
+
+  // Recomputed whenever a call is logged (loggedOutcomes changes right after saveDisposition).
+  const ptpFollowups = useMemo(() => getPtpFollowups(agentId), [agentId, loggedOutcomes]);
 
   // Predictive dialer driven by the real engine + simulated provider (src/lib/dialer).
   // Legs progress through the actual call state machine; mode: "server" later moves it
@@ -828,6 +832,7 @@ function CallQueuePage() {
         onCall={startCall}
         onView={setProfileDebtor}
         queue={allQueue}
+        followups={ptpFollowups}
         bucketFilter={bucketFilter}
         search={queueSearch}
       />

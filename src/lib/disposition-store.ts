@@ -255,6 +255,66 @@ export function getAgentDispositions(agentId: string): DispositionRecord[] {
   return getDispositions().filter((d) => d.agentId === agentId);
 }
 
+export interface PtpFollowup {
+  id: string;
+  debtorId: string;
+  debtorName: string;
+  phone: string;
+  ptpAmount: number;
+  /** ISO date the debtor promised to pay by. */
+  ptpDateIso: string;
+  /** Negative when overdue. */
+  daysLeft: number;
+  /** Times this debtor was dispositioned before the promise that's currently active. */
+  prevAttempts: number;
+  notes: string;
+  dpd?: number;
+}
+
+/**
+ * Debtors whose most recent logged call is still an open promise-to-pay — i.e. no later
+ * disposition (paid, refused, another promise, ...) has superseded it. Replaces the
+ * PTP_FOLLOWUPS mock fixture that used to feed the Call Queue's "PTP Follow-up Tracker".
+ */
+export function getPtpFollowups(agentId: string): PtpFollowup[] {
+  const byDebtor = new Map<string, DispositionRecord[]>();
+  for (const d of getAgentDispositions(agentId)) {
+    const list = byDebtor.get(d.debtorId);
+    if (list) list.push(d);
+    else byDebtor.set(d.debtorId, [d]);
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const rows: PtpFollowup[] = [];
+  for (const [debtorId, records] of byDebtor) {
+    const sorted = [...records].sort(
+      (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime(),
+    );
+    const latest = sorted[0];
+    if (latest.outcome !== "promised" || !latest.ptpDate || latest.ptpAmount == null) continue;
+
+    const daysLeft = Math.round(
+      (new Date(latest.ptpDate).getTime() - today.getTime()) / 86_400_000,
+    );
+    rows.push({
+      id: latest.id,
+      debtorId,
+      debtorName: latest.debtorName,
+      phone: latest.phone,
+      ptpAmount: latest.ptpAmount,
+      ptpDateIso: latest.ptpDate,
+      daysLeft,
+      prevAttempts: sorted.length - 1,
+      notes: latest.notes,
+      dpd: latest.dpd,
+    });
+  }
+
+  return rows.sort((a, b) => a.daysLeft - b.daysLeft);
+}
+
 export function getTeamDispositions(teamId: string): DispositionRecord[] {
   return getDispositions().filter((d) => d.teamId === teamId);
 }
