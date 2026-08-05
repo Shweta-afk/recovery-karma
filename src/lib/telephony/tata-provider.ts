@@ -34,6 +34,30 @@ const CALL_TIMEOUT_SECONDS = Number(
   (typeof process !== "undefined" ? process.env?.TATA_CALL_TIMEOUT : undefined) ?? 45,
 );
 
+/** How long to wait for Tata's API to respond before giving up. Plain fetch() has no default
+ * timeout — if Tata's servers stall (network issue, IP allowlist stuck, overloaded), the
+ * request just hangs forever with no rejection, which looks IDENTICAL to a genuinely slow
+ * call from the UI's perspective: stuck on "ringing," no error, nothing to catch. This is
+ * what makes that failure mode surface as an actual error instead of silence. */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(
+        `Tata API did not respond within ${REQUEST_TIMEOUT_MS / 1000}s (request to ${url})`,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function requireApiKey() {
   if (!TATA_ACCESS_TOKEN) {
     throw new Error(
@@ -164,7 +188,7 @@ export const tataProvider: TelephonyProvider = {
       console.log("[tata-provider] Will connect to debtor:", req.debtorNumber);
       console.log("[tata-provider] caller_id (DID):", callerId ?? "(pilot number)");
 
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(body),
@@ -226,7 +250,7 @@ export const tataProvider: TelephonyProvider = {
 
     try {
       console.log(`[tata-provider] hangup: POST /call/hangup call_id=${liveId}`);
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(body),

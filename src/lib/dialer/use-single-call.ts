@@ -28,6 +28,19 @@ import type { ActiveCall, QueueDebtor } from "@/routes/dashboard.call-queue";
 const TICK_MS = 500;
 /** How often the browser asks the server what the provider last said about this call. */
 const STATUS_POLL_MS = 2000;
+/** tata-provider.ts's own fetchWithTimeout bounds server→Tata; this bounds browser→our
+ * server, so a stall anywhere in the chain (not just at Tata) still surfaces as an error
+ * instead of leaving the call stuck on "ringing" with no explanation. */
+const START_CALL_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms),
+    ),
+  ]);
+}
 
 /** The coarse provider status maps onto the call-machine's state vocabulary. */
 function callStateFor(status: CallStatus): CallState {
@@ -126,15 +139,19 @@ export function useSingleCall(
 
         startTransition(async () => {
           try {
-            const result = await serverStartCall({
-              data: {
-                callLogId: debtor.id,
-                agentNumber: phoneToUse,
-                debtorNumber: debtor.phone,
-                callerId: opts?.callerId,
-                aiScore: debtor.aiScore,
-              },
-            });
+            const result = await withTimeout(
+              serverStartCall({
+                data: {
+                  callLogId: debtor.id,
+                  agentNumber: phoneToUse,
+                  debtorNumber: debtor.phone,
+                  callerId: opts?.callerId,
+                  aiScore: debtor.aiScore,
+                },
+              }),
+              START_CALL_TIMEOUT_MS,
+              "Starting the call",
+            );
             pidRef.current = result.providerCallId;
             stoppedRef.current = false;
             // The provider reports progress out-of-band (webhook, or the server's fallback
