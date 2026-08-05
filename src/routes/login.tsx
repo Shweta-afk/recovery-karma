@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { ShieldCheck, Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,11 +11,11 @@ import { useAuth } from "@/lib/auth";
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Sign in · RecoveryAI" },
+      { title: "Sign in · Axiora" },
       {
         name: "description",
         content:
-          "Sign in to RecoveryAI, the collections operations platform for Indian loan recovery teams.",
+          "Sign in to Axiora, the collections operations platform for Indian loan recovery teams.",
       },
     ],
   }),
@@ -59,10 +59,8 @@ function LoginPage() {
       {/* Left brand panel */}
       <div className="relative hidden w-1/2 flex-col justify-between bg-[var(--brand-navy)] p-12 text-white lg:flex">
         <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--brand-blue)]">
-            <ShieldCheck className="h-5 w-5" />
-          </div>
-          <span className="text-lg font-semibold">RecoveryAI</span>
+          <img src="/logo.png" alt="Axiora" className="h-9 w-9 object-contain" />
+          <span className="text-lg font-semibold">Axiora</span>
         </div>
 
         <div className="space-y-5">
@@ -80,17 +78,15 @@ function LoginPage() {
           </ul>
         </div>
 
-        <p className="text-xs text-white/40">© 2026 RecoveryAI Technologies Pvt. Ltd.</p>
+        <p className="text-xs text-white/40">© 2026 Axiora Technologies Pvt. Ltd.</p>
       </div>
 
       {/* Right form panel */}
       <div className="flex w-full items-center justify-center px-4 py-12 lg:w-1/2">
         <div className="w-full max-w-sm">
           <div className="mb-8 flex items-center gap-2 lg:hidden">
-            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <span className="text-lg font-semibold text-foreground">RecoveryAI</span>
+            <img src="/logo.png" alt="Axiora" className="h-9 w-9 object-contain" />
+            <span className="text-lg font-semibold text-foreground">Axiora</span>
           </div>
 
           <Card className="border-border shadow-sm">

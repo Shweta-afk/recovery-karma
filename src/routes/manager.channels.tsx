@@ -33,7 +33,7 @@ import { useAuth } from "@/lib/auth";
 export const Route = createFileRoute("/manager/channels")({
   head: () => ({
     meta: [
-      { title: "Channel Contribution · RecoveryAI" },
+      { title: "Channel Contribution · Axiora" },
       {
         name: "description",
         content: "How Agent calls, AI, IVR, SMS and WhatsApp each contribute to recovery.",

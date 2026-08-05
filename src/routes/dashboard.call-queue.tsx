@@ -112,7 +112,7 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/dashboard/call-queue")({
   head: () => ({
     meta: [
-      { title: "Call Queue · RecoveryAI" },
+      { title: "Call Queue · Axiora" },
       {
         name: "description",
         content: "Agent and AI call queue with filters and full call history.",
@@ -438,8 +438,8 @@ function CallQueuePage() {
         const dueDate = isPTP ? disposition.ptpDate : disposition.callbackDate;
         const amt = disposition.ptpAmount ? formatINR(parseFloat(disposition.ptpAmount)) : "";
         const sms = isPTP
-          ? `Dear ${debtor.name}, we've recorded your promise to pay ${amt} by ${dueDate || "the agreed date"}. Thank you — RecoveryAI`
-          : `Dear ${debtor.name}, our agent will call you back on ${disposition.callbackDate || "the agreed date"}${disposition.callbackTime ? ` at ${disposition.callbackTime}` : ""}. — RecoveryAI`;
+          ? `Dear ${debtor.name}, we've recorded your promise to pay ${amt} by ${dueDate || "the agreed date"}. Thank you — Axiora`
+          : `Dear ${debtor.name}, our agent will call you back on ${disposition.callbackDate || "the agreed date"}${disposition.callbackTime ? ` at ${disposition.callbackTime}` : ""}. — Axiora`;
         toast.success(`SMS sent to ${debtor.name}`, { description: sms });
 
         if (dueDate) {
@@ -1263,7 +1263,7 @@ function CallQueuePage() {
                     "Outstanding Balance (INR)",
                     "DPD",
                     "AI Score",
-                    "RecoveryAI Debtor ID",
+                    "Axiora Debtor ID",
                   ],
                   filteredQueue.map((d) => [
                     d.phone,

@@ -73,7 +73,7 @@ import { useAuth } from "@/lib/auth";
 export const Route = createFileRoute("/manager/queue")({
   head: () => ({
     meta: [
-      { title: "Call Queue · RecoveryAI" },
+      { title: "Call Queue · Axiora" },
       {
         name: "description",
         content: "Live per-agent queues, team overview, and the manager's own escalation queue.",

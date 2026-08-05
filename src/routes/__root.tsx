@@ -80,14 +80,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "RecoveryAI · Collections Platform" },
+      { title: "Axiora · Collections Platform" },
       {
         name: "description",
         content:
-          "RecoveryAI — modern loan collections platform for Indian NBFCs, banks and recovery agencies.",
+          "Axiora — modern loan collections platform for Indian NBFCs, banks and recovery agencies.",
       },
-      { name: "author", content: "RecoveryAI" },
-      { property: "og:title", content: "RecoveryAI · Collections Platform" },
+      { name: "author", content: "Axiora" },
+      { property: "og:title", content: "Axiora · Collections Platform" },
       {
         property: "og:description",
         content: "Modern, compliant loan recovery operations for Indian financial services teams.",
@@ -96,7 +96,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:card", content: "summary" },
     ],
     links: [
-      { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+      { rel: "icon", href: "/favicon-32.png", type: "image/png" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
       { rel: "stylesheet", href: appCss },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },

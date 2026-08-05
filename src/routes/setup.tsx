@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { Building2, Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,7 @@ import { supabase } from "@/lib/supabase";
 // the login page.
 export const Route = createFileRoute("/setup")({
   head: () => ({
-    meta: [{ title: "Set up a company · RecoveryAI" }],
+    meta: [{ title: "Set up a company · Axiora" }],
   }),
   component: SetupPage,
 });
@@ -65,10 +65,8 @@ function SetupPage() {
     <div className="flex min-h-screen w-full items-center justify-center bg-background px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Building2 className="h-5 w-5" />
-          </div>
-          <span className="text-lg font-semibold text-foreground">RecoveryAI</span>
+          <img src="/logo.png" alt="Axiora" className="h-9 w-9 object-contain" />
+          <span className="text-lg font-semibold text-foreground">Axiora</span>
         </div>
 
         <Card className="border-border shadow-sm">

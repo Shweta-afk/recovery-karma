@@ -39,7 +39,7 @@ import { cn } from "@/lib/utils";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 
 export const Route = createFileRoute("/manager/audit")({
-  head: () => ({ meta: [{ title: "Call Audit · RecoveryAI" }] }),
+  head: () => ({ meta: [{ title: "Call Audit · Axiora" }] }),
   component: CallAuditPage,
 });
 
@@ -103,7 +103,7 @@ const MOCK_CALLS: CallRecord[] = [
       {
         speaker: "agent",
         ts: "0:00",
-        text: "Namaste Rahul ji, main Priya bol rahi hoon RecoveryAI se. Aapke HDFC personal loan ke baare mein baat karni thi.",
+        text: "Namaste Rahul ji, main Priya bol rahi hoon Axiora se. Aapke HDFC personal loan ke baare mein baat karni thi.",
         sentiment: "neutral",
       },
       {
@@ -164,7 +164,7 @@ const MOCK_CALLS: CallRecord[] = [
       {
         speaker: "ai",
         ts: "0:00",
-        text: "Namaskar, main RecoveryAI se call kar raha hoon Tarun Desai ji ke liye. Aapka loan account L-10366 ke baare mein baat karni hai.",
+        text: "Namaskar, main Axiora se call kar raha hoon Tarun Desai ji ke liye. Aapka loan account L-10366 ke baare mein baat karni hai.",
         sentiment: "neutral",
       },
       {
@@ -228,7 +228,7 @@ const MOCK_CALLS: CallRecord[] = [
       {
         speaker: "agent",
         ts: "0:00",
-        text: "Good morning Sandeep ji. Ravi Mehta here from RecoveryAI. Calling regarding your MSME loan L-10199.",
+        text: "Good morning Sandeep ji. Ravi Mehta here from Axiora. Calling regarding your MSME loan L-10199.",
         sentiment: "neutral",
       },
       {
@@ -286,7 +286,7 @@ const MOCK_CALLS: CallRecord[] = [
       {
         speaker: "ai",
         ts: "0:00",
-        text: "Hello Divya ji. RecoveryAI calling regarding your credit card outstanding of ₹8,200.",
+        text: "Hello Divya ji. Axiora calling regarding your credit card outstanding of ₹8,200.",
         sentiment: "neutral",
       },
       {
@@ -385,7 +385,7 @@ const MOCK_CALLS: CallRecord[] = [
       {
         speaker: "agent",
         ts: "0:00",
-        text: "Arjun ji, Mohit here from RecoveryAI. Your two-wheeler EMI of ₹4,500 is overdue.",
+        text: "Arjun ji, Mohit here from Axiora. Your two-wheeler EMI of ₹4,500 is overdue.",
         sentiment: "neutral",
       },
       {
@@ -431,7 +431,7 @@ const MOCK_CALLS: CallRecord[] = [
       {
         speaker: "ai",
         ts: "0:00",
-        text: "Namaskar Rohan ji. RecoveryAI calling regarding your MSME loan outstanding.",
+        text: "Namaskar Rohan ji. Axiora calling regarding your MSME loan outstanding.",
         sentiment: "neutral",
       },
       { speaker: "debtor", ts: "0:08", text: "[call disconnected]", sentiment: "neutral" },
@@ -462,7 +462,7 @@ const MOCK_CALLS: CallRecord[] = [
       {
         speaker: "agent",
         ts: "0:00",
-        text: "Geeta ji, Leena calling from RecoveryAI. I'm calling about your two-wheeler loan.",
+        text: "Geeta ji, Leena calling from Axiora. I'm calling about your two-wheeler loan.",
         sentiment: "neutral",
       },
       {

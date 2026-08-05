@@ -67,7 +67,7 @@ function formatDuration(seconds?: number): string {
 }
 
 export const Route = createFileRoute("/dashboard/debtors")({
-  head: () => ({ meta: [{ title: "Debtor Profiles · RecoveryAI" }] }),
+  head: () => ({ meta: [{ title: "Debtor Profiles · Axiora" }] }),
   component: DebtorsPage,
 });
 

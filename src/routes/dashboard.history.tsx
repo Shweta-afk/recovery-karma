@@ -43,7 +43,7 @@ import {
 export const Route = createFileRoute("/dashboard/history")({
   head: () => ({
     meta: [
-      { title: "Activity History · RecoveryAI" },
+      { title: "Activity History · Axiora" },
       {
         name: "description",
         content: "Full contact history across calls, IVR, SMS and WhatsApp with filters.",

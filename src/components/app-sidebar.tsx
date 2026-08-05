@@ -10,7 +10,6 @@ import {
   Upload,
   UserCog,
   Settings,
-  ShieldCheck,
   BarChart3,
   Layers,
   AudioLines,
@@ -69,11 +68,9 @@ export function AppSidebar({ role }: { role: Role }) {
     <Sidebar collapsible="offcanvas">
       <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
         <Link to="/dashboard" className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-            <ShieldCheck className="h-5 w-5" />
-          </div>
+          <img src="/logo.png" alt="Axiora" className="h-8 w-8 object-contain" />
           <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold text-sidebar-foreground">RecoveryAI</span>
+            <span className="text-sm font-semibold text-sidebar-foreground">Axiora</span>
             <span className="text-[10px] uppercase tracking-wider text-sidebar-foreground/60">
               Collections Platform
             </span>

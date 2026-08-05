@@ -1,5 +1,5 @@
 -- ============================================================
--- RecoveryAI — account seed (5 users: 1 admin, 1 manager, 3 agents)
+-- Axiora — account seed (5 users: 1 admin, 1 manager, 3 agents)
 -- Run AFTER schema.sql, in Supabase → SQL Editor.
 --
 -- BEFORE running, create the 5 login users in

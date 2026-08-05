@@ -1,5 +1,5 @@
 -- ============================================================
--- RecoveryAI — complete database schema
+-- Axiora — complete database schema
 -- Run this in Supabase SQL Editor (Dashboard → SQL Editor → New query)
 -- ============================================================
 

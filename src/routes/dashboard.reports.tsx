@@ -27,7 +27,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/reports")({
-  head: () => ({ meta: [{ title: "Reports · RecoveryAI" }] }),
+  head: () => ({ meta: [{ title: "Reports · Axiora" }] }),
   component: ReportsPage,
 });
 

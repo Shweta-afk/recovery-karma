@@ -43,7 +43,7 @@ import { useStorageSync } from "@/lib/storage-sync";
 import { AssignAgentsStep } from "@/components/assign-agents-step";
 
 export const Route = createFileRoute("/manager/portfolio")({
-  head: () => ({ meta: [{ title: "Portfolio Overview · RecoveryAI" }] }),
+  head: () => ({ meta: [{ title: "Portfolio Overview · Axiora" }] }),
   component: PortfolioOverviewPage,
 });
 

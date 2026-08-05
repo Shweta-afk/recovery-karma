@@ -35,7 +35,7 @@ import { useStorageSync } from "@/lib/storage-sync";
 export const Route = createFileRoute("/admin/portfolio")({
   head: () => ({
     meta: [
-      { title: "Portfolio Assignment · RecoveryAI" },
+      { title: "Portfolio Assignment · Axiora" },
       { name: "description", content: "Assign uploaded portfolios to a manager and notify them." },
     ],
   }),

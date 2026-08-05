@@ -56,7 +56,7 @@ import { AssignAgentsStep } from "@/components/assign-agents-step";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/manager/upload")({
-  head: () => ({ meta: [{ title: "Portfolio Upload · RecoveryAI" }] }),
+  head: () => ({ meta: [{ title: "Portfolio Upload · Axiora" }] }),
   component: PortfolioUploadPage,
 });
 
