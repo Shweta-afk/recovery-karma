@@ -47,10 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function fetchAgentProfile(authUserId: string): Promise<AuthUser | null> {
+  async function fetchAgentProfile(authUserId: string, forceRefresh = false): Promise<AuthUser | null> {
     // Check cache first (avoid redundant queries on auth state changes)
     const cacheKey = `agent-profile-${authUserId}`;
-    const cached = localStorage.getItem(cacheKey);
+    const cached = forceRefresh ? null : localStorage.getItem(cacheKey);
     if (cached) {
       try {
         const { profile, at } = JSON.parse(cached) as { profile: AuthUser; at: number };
@@ -155,9 +155,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return { error: error.message, user: null };
     }
-    // Fetch profile immediately so caller gets the role for redirect
+    // Fetch profile immediately so caller gets the role for redirect. Force a fresh fetch —
+    // trusting the cache here is how a role promotion made after the last login silently
+    // reverted on the user's next sign-in.
     try {
-      const profile = data.user ? await fetchAgentProfile(data.user.id) : null;
+      const profile = data.user ? await fetchAgentProfile(data.user.id, true) : null;
       if (profile) setUser(profile);
       return { error: null, user: profile };
     } catch (err) {
