@@ -14,9 +14,7 @@ import {
   Clock,
   XCircle,
   PhoneOff,
-  CreditCard,
   MessageCircle,
-  Zap,
   Send,
   FileDown,
   LayoutDashboard,
@@ -102,6 +100,52 @@ function monthLabel(key: string): string {
   const [y, m] = key.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
 }
+function sameCalendarDay(iso: string, d: Date): boolean {
+  const a = new Date(iso);
+  return (
+    a.getFullYear() === d.getFullYear() &&
+    a.getMonth() === d.getMonth() &&
+    a.getDate() === d.getDate()
+  );
+}
+function timeAgo(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+const OUTCOME_ICON: Record<string, { icon: typeof CheckCircle2; color: string }> = {
+  paid: { icon: CheckCircle2, color: "text-success" },
+  promised: { icon: MessageCircle, color: "text-primary" },
+  refused: { icon: XCircle, color: "text-destructive" },
+  no_answer: { icon: PhoneOff, color: "text-muted-foreground" },
+  callback: { icon: Clock, color: "text-muted-foreground" },
+  voicemail: { icon: Phone, color: "text-muted-foreground" },
+  dispute: { icon: XCircle, color: "text-destructive" },
+  settlement: { icon: IndianRupee, color: "text-success" },
+};
+function outcomeText(d: DispositionRecord): string {
+  switch (d.outcome) {
+    case "paid":
+      return `${d.agentName} collected ${formatINR(d.paidAmount ?? 0)} from ${d.debtorName}`;
+    case "promised":
+      return `${d.agentName} secured a PTP from ${d.debtorName} · ${formatINR(d.ptpAmount ?? 0)}`;
+    case "refused":
+      return `${d.debtorName} refused to pay — logged by ${d.agentName}`;
+    case "no_answer":
+      return `${d.agentName} called ${d.debtorName} — no answer`;
+    case "callback":
+      return `${d.agentName} scheduled a callback with ${d.debtorName}`;
+    case "dispute":
+      return `${d.debtorName} disputed the outstanding — flagged by ${d.agentName}`;
+    case "settlement":
+      return `${d.agentName} logged a settlement for ${d.debtorName}`;
+    default:
+      return `${d.agentName} logged a call with ${d.debtorName} — ${d.outcome}`;
+  }
+}
 
 interface AgentComputedStat {
   id: string;
@@ -181,138 +225,6 @@ function formatINR(n: number) {
   return `₹${n.toLocaleString("en-IN")}`;
 }
 
-/* ─── mock data — illustrative team-wide charts kept as-is (Team Analytics) ── */
-
-const STATS = [
-  { label: "Calls Today", value: "847", hint: "+12% vs yesterday", icon: Phone, tone: "primary" },
-  {
-    label: "Daily Target",
-    value: "1,000",
-    hint: "847 / 1,000 completed",
-    icon: Target,
-    tone: "muted",
-  },
-  {
-    label: "Recovery Rate",
-    value: "38.4%",
-    hint: "+2.1 pts this week",
-    icon: TrendingUp,
-    tone: "success",
-    trend: "up",
-  },
-  {
-    label: "Amount Recovered",
-    value: "₹28.4L",
-    hint: "Today across all agents",
-    icon: IndianRupee,
-    tone: "success",
-  },
-  {
-    label: "Portfolio Coverage",
-    value: "61.2%",
-    hint: "Accounts contacted",
-    icon: PieIcon,
-    tone: "primary",
-  },
-  {
-    label: "Pending Follow-ups",
-    value: "214",
-    hint: "Due before EOD",
-    icon: Bell,
-    tone: "warning",
-  },
-];
-
-const TREND_DATA = Array.from({ length: 30 }, (_, i) => ({
-  day: i + 1,
-  thisMonth: +(32 + Math.sin(i / 3) * 4 + i * 0.22 + ((i * 7) % 3) * 0.6).toFixed(1),
-  lastMonth: +(28 + Math.sin(i / 3.5) * 3 + i * 0.12 + ((i * 11) % 3) * 0.5).toFixed(1),
-}));
-
-const OUTCOMES = [
-  { name: "Paid", value: 124, color: "oklch(0.65 0.16 152)" },
-  { name: "Promised", value: 213, color: "oklch(0.58 0.18 258)" },
-  { name: "Refused", value: 87, color: "oklch(0.58 0.22 27)" },
-  { name: "No Answer", value: 318, color: "oklch(0.25 0.03 258)" },
-  { name: "Other", value: 105, color: "oklch(0.22 0.04 258)" },
-];
-const OUTCOMES_TOTAL = OUTCOMES.reduce((s, o) => s + o.value, 0);
-
-const ACTIVITY: { icon: typeof CheckCircle2; color: string; text: string; ago: string }[] = [
-  {
-    icon: CheckCircle2,
-    color: "text-success",
-    text: "Rahul Sharma paid ₹45,000 via UPI link",
-    ago: "2m ago",
-  },
-  {
-    icon: MessageCircle,
-    color: "text-primary",
-    text: "Priya Bot secured PTP from Amit Verma · ₹1.25L by Fri",
-    ago: "5m ago",
-  },
-  {
-    icon: CreditCard,
-    color: "text-success",
-    text: "eNACH auto-collected ₹8,200 from Divya Krishnan",
-    ago: "9m ago",
-  },
-  {
-    icon: Phone,
-    color: "text-primary",
-    text: "Ravi Mehta connected with Sandeep Yadav after 4 attempts",
-    ago: "14m ago",
-  },
-  {
-    icon: XCircle,
-    color: "text-destructive",
-    text: "Tarun Desai dispute escalated to legal track",
-    ago: "18m ago",
-  },
-  {
-    icon: Zap,
-    color: "text-warning-foreground",
-    text: "AI scored 210 new accounts in Personal Loan Q1",
-    ago: "22m ago",
-  },
-  {
-    icon: CheckCircle2,
-    color: "text-success",
-    text: "Ananya Bose settled ₹1,78,000 — full & final",
-    ago: "31m ago",
-  },
-  {
-    icon: Clock,
-    color: "text-muted-foreground",
-    text: "Mohit Rao PTP callback scheduled for Pooja Bhatt 4 PM",
-    ago: "38m ago",
-  },
-  {
-    icon: MessageCircle,
-    color: "text-primary",
-    text: "WhatsApp campaign sent to 84 DPD-31-60 debtors",
-    ago: "45m ago",
-  },
-  {
-    icon: PhoneOff,
-    color: "text-muted-foreground",
-    text: "12 accounts marked unreachable — re-queue tomorrow",
-    ago: "52m ago",
-  },
-  {
-    icon: IndianRupee,
-    color: "text-success",
-    text: "Vikram Singh partial payment ₹15,000 received",
-    ago: "1h ago",
-  },
-  {
-    icon: Activity,
-    color: "text-primary",
-    text: "Daily target reached for Credit Card NPA portfolio",
-    ago: "1h 10m ago",
-  },
-];
-
 const RANK_STYLE: Record<number, string> = {
   0: "bg-yellow-500/20 text-yellow-400 border-yellow-500/40 shadow-sm shadow-yellow-500/20",
   1: "bg-slate-400/20 text-slate-300 border-slate-400/40",
@@ -331,9 +243,18 @@ const TOOLTIP = {
   itemStyle: { color: "var(--color-muted-foreground)" },
 };
 
-/* ─── sub-components — Team Analytics (unchanged visuals) ───────────────── */
+/* ─── sub-components — Team Analytics ────────────────────────────────────── */
 
-function StatCard({ stat, index }: { stat: (typeof STATS)[number]; index: number }) {
+interface StatDef {
+  label: string;
+  value: string;
+  hint: string;
+  icon: typeof Phone;
+  tone: "primary" | "muted" | "success" | "warning";
+  trend?: "up" | "down";
+}
+
+function StatCard({ stat, index }: { stat: StatDef; index: number }) {
   const iconColor =
     stat.tone === "success"
       ? "text-success"
@@ -374,10 +295,16 @@ function StatCard({ stat, index }: { stat: (typeof STATS)[number]; index: number
   );
 }
 
-function RecoveryTrendChart() {
+interface TrendPoint {
+  day: number;
+  thisMonth: number;
+  lastMonth: number;
+}
+
+function RecoveryTrendChart({ data }: { data: TrendPoint[] }) {
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <AreaChart data={TREND_DATA} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+      <AreaChart data={data} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
         <defs>
           <linearGradient id="thisMonthGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor="oklch(0.58 0.18 258)" stopOpacity={0.25} />
@@ -454,13 +381,26 @@ function RecoveryTrendChart() {
   );
 }
 
-function OutcomesDonut() {
+interface OutcomeSlice {
+  name: string;
+  value: number;
+  color: string;
+}
+
+function OutcomesDonut({ outcomes, total }: { outcomes: OutcomeSlice[]; total: number }) {
+  if (total === 0) {
+    return (
+      <p className="py-14 text-center text-xs text-muted-foreground">
+        No dispositions logged today yet — this fills in as the team logs calls.
+      </p>
+    );
+  }
   return (
     <div className="flex flex-col gap-3">
       <ResponsiveContainer width="100%" height={180}>
         <PieChart>
           <Pie
-            data={OUTCOMES}
+            data={outcomes}
             cx="50%"
             cy="50%"
             innerRadius={52}
@@ -469,18 +409,18 @@ function OutcomesDonut() {
             dataKey="value"
             strokeWidth={0}
           >
-            {OUTCOMES.map((o, i) => (
+            {outcomes.map((o, i) => (
               <Cell key={i} fill={o.color} />
             ))}
           </Pie>
           <Tooltip
             {...TOOLTIP}
-            formatter={(v: number) => [`${v} (${((v / OUTCOMES_TOTAL) * 100).toFixed(1)}%)`]}
+            formatter={(v: number) => [`${v} (${((v / total) * 100).toFixed(1)}%)`]}
           />
         </PieChart>
       </ResponsiveContainer>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 px-1">
-        {OUTCOMES.map((o) => (
+        {outcomes.map((o) => (
           <div key={o.name} className="flex items-center gap-2">
             <span
               className="h-2.5 w-2.5 rounded-full flex-shrink-0"
@@ -488,9 +428,7 @@ function OutcomesDonut() {
             />
             <span className="text-xs text-muted-foreground">
               {o.name} <span className="text-foreground font-medium">{o.value}</span>{" "}
-              <span className="text-[10px]">
-                ({((o.value / OUTCOMES_TOTAL) * 100).toFixed(0)}%)
-              </span>
+              <span className="text-[10px]">({((o.value / total) * 100).toFixed(0)}%)</span>
             </span>
           </div>
         ))}
@@ -499,22 +437,32 @@ function OutcomesDonut() {
   );
 }
 
-function ActivityFeed() {
+function ActivityFeed({ recent }: { recent: DispositionRecord[] }) {
+  if (recent.length === 0) {
+    return (
+      <p className="py-14 text-center text-xs text-muted-foreground">
+        No calls logged yet — real dispositions from your team will show up here as they happen.
+      </p>
+    );
+  }
   return (
     <ScrollArea className="h-[320px] pr-1">
       <div className="space-y-0.5">
-        {ACTIVITY.map((a, i) => (
-          <div
-            key={i}
-            className="flex gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-accent/50"
-          >
-            <a.icon className={cn("h-4 w-4 mt-0.5 flex-shrink-0", a.color)} />
-            <div className="flex-1 min-w-0">
-              <p className="text-xs text-foreground leading-snug">{a.text}</p>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">{a.ago}</p>
+        {recent.map((d) => {
+          const cfg = OUTCOME_ICON[d.outcome] ?? { icon: Activity, color: "text-muted-foreground" };
+          return (
+            <div
+              key={d.id}
+              className="flex gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-accent/50"
+            >
+              <cfg.icon className={cn("h-4 w-4 mt-0.5 flex-shrink-0", cfg.color)} />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-foreground leading-snug">{outcomeText(d)}</p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">{timeAgo(d.time)}</p>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </ScrollArea>
   );
@@ -1194,6 +1142,120 @@ function ManagerDashboardPage() {
   const managerId = user?.email ?? user?.id ?? "";
   const agents = useManagerTeamAgents(managerId);
   const agentStats = useTeamStats(agents);
+
+  // Real, team-scoped dispositions — replaces the old hardcoded STATS/TREND_DATA/OUTCOMES/
+  // ACTIVITY constants. `tick` (30s poll) is in the deps so this recomputes on the same
+  // cadence the "Live" badge advertises.
+  const teamAgentIds = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
+  const teamDisps = useMemo(
+    () => getDispositions().filter((d) => teamAgentIds.has(d.agentId)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [teamAgentIds, tick],
+  );
+  const todayDisps = useMemo(() => teamDisps.filter((d) => isToday(d.time)), [teamDisps]);
+  const todayTeamStats = useMemo(() => calcStats(todayDisps), [todayDisps]);
+
+  const OUTCOME_LABEL: Record<string, string> = {
+    paid: "Paid",
+    promised: "Promised",
+    refused: "Refused",
+    no_answer: "No Answer",
+    callback: "Callback",
+    voicemail: "Voicemail",
+    dispute: "Dispute",
+    settlement: "Settlement",
+  };
+  const OUTCOME_COLOR: Record<string, string> = {
+    paid: "oklch(0.65 0.16 152)",
+    promised: "oklch(0.58 0.18 258)",
+    refused: "oklch(0.58 0.22 27)",
+    no_answer: "oklch(0.25 0.03 258)",
+  };
+  const FALLBACK_COLORS = ["oklch(0.6 0.15 300)", "oklch(0.55 0.15 80)", "oklch(0.5 0.1 200)"];
+  const outcomeSlices: OutcomeSlice[] = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const d of todayDisps) counts[d.outcome] = (counts[d.outcome] ?? 0) + 1;
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([outcome, value], i) => ({
+        name: OUTCOME_LABEL[outcome] ?? outcome,
+        value,
+        color: OUTCOME_COLOR[outcome] ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayDisps]);
+
+  const recentActivity = useMemo(
+    () => [...teamDisps].sort((a, b) => (a.time < b.time ? 1 : -1)).slice(0, 12),
+    [teamDisps],
+  );
+
+  const trendData: TrendPoint[] = useMemo(() => {
+    const now = new Date();
+    const rows: TrendPoint[] = [];
+    for (let day = 1; day <= now.getDate(); day++) {
+      const thisD = new Date(now.getFullYear(), now.getMonth(), day);
+      const lastD = new Date(now.getFullYear(), now.getMonth() - 1, day);
+      rows.push({
+        day,
+        thisMonth: calcStats(teamDisps.filter((d) => sameCalendarDay(d.time, thisD))).contactRate,
+        lastMonth: calcStats(teamDisps.filter((d) => sameCalendarDay(d.time, lastD))).contactRate,
+      });
+    }
+    return rows;
+  }, [teamDisps]);
+
+  const teamCallsToday = agentStats.reduce((s, a) => s + a.callsToday, 0);
+  const teamTarget = DEFAULT_DAILY_TARGET * Math.max(agents.length, 1);
+  const teamPaidToday = agentStats.reduce((s, a) => s + a.paidToday, 0);
+  const teamPtpAmountToday = agentStats.reduce((s, a) => s + a.ptpAmountToday, 0);
+  const teamOpenEscalations = agentStats.reduce((s, a) => s + a.openEscalations, 0);
+
+  const stats: StatDef[] = [
+    {
+      label: "Calls Today",
+      value: teamCallsToday.toLocaleString("en-IN"),
+      hint: `of ${teamTarget.toLocaleString("en-IN")} target`,
+      icon: Phone,
+      tone: "primary",
+    },
+    {
+      label: "Daily Target",
+      value: teamTarget.toLocaleString("en-IN"),
+      hint: `${teamCallsToday} / ${teamTarget} completed`,
+      icon: Target,
+      tone: "muted",
+    },
+    {
+      label: "Contact Rate",
+      value: `${todayTeamStats.contactRate}%`,
+      hint: "of today's calls connected",
+      icon: TrendingUp,
+      tone: "success",
+    },
+    {
+      label: "Amount Recovered",
+      value: formatINR(teamPaidToday),
+      hint: "Today across the team",
+      icon: IndianRupee,
+      tone: "success",
+    },
+    {
+      label: "PTP Value Today",
+      value: formatINR(teamPtpAmountToday),
+      hint: `${todayTeamStats.ptps} promise${todayTeamStats.ptps === 1 ? "" : "s"} today`,
+      icon: HandCoins,
+      tone: "primary",
+    },
+    {
+      label: "Open Escalations",
+      value: teamOpenEscalations.toString(),
+      hint: "need manager attention",
+      icon: Bell,
+      tone: teamOpenEscalations > 0 ? "warning" : "muted",
+    },
+  ];
+
   const [selectedAgentId, setSelectedAgentId] = useState<string>(agents[0]?.id ?? "");
   useEffect(() => {
     if (!agents.some((a) => a.id === selectedAgentId)) setSelectedAgentId(agents[0]?.id ?? "");
@@ -1241,44 +1303,8 @@ function ManagerDashboardPage() {
         {/* ── Team Analytics ── */}
         <TabsContent value="team" className="space-y-6 mt-4">
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-            {STATS.map((s, i) => (
+            {stats.map((s, i) => (
               <StatCard key={s.label} stat={s} index={i} />
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 animate-in fade-in duration-400">
-            {[
-              { label: "Recovery Rate", this: "38.4%", last: "36.3%", better: true },
-              { label: "Calls Made", this: "1,140", last: "1,082", better: true },
-              { label: "Amount Recovered", this: "₹28.4L", last: "₹24.1L", better: true },
-              { label: "PTP Count", this: "318", last: "341", better: false },
-            ].map((s, i) => (
-              <div
-                key={s.label}
-                className="rounded-xl border border-border bg-card px-4 py-3 animate-in fade-in duration-300"
-                style={{ animationDelay: `${i * 50}ms` }}
-              >
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                  {s.label}
-                </div>
-                <div className="flex items-end gap-2">
-                  <span className="text-lg font-bold text-foreground">{s.this}</span>
-                  <div
-                    className={cn(
-                      "flex items-center gap-0.5 text-xs font-medium mb-0.5",
-                      s.better ? "text-success" : "text-destructive",
-                    )}
-                  >
-                    {s.better ? (
-                      <TrendingUp className="h-3 w-3" />
-                    ) : (
-                      <TrendingDown className="h-3 w-3" />
-                    )}
-                    <span>vs {s.last}</span>
-                  </div>
-                </div>
-                <div className="text-[10px] text-muted-foreground">last month: {s.last}</div>
-              </div>
             ))}
           </div>
 
@@ -1295,7 +1321,7 @@ function ManagerDashboardPage() {
                 </p>
               </CardHeader>
               <CardContent className="pt-4">
-                <RecoveryTrendChart />
+                <RecoveryTrendChart data={trendData} />
               </CardContent>
             </Card>
             <Card className="lg:col-span-2">
@@ -1304,12 +1330,12 @@ function ManagerDashboardPage() {
                   <PieIcon className="h-4 w-4 text-primary" />
                   Today's Outcomes
                   <span className="ml-auto text-xs font-normal text-muted-foreground">
-                    {OUTCOMES_TOTAL} calls
+                    {todayDisps.length} calls
                   </span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4">
-                <OutcomesDonut />
+                <OutcomesDonut outcomes={outcomeSlices} total={todayDisps.length} />
               </CardContent>
             </Card>
           </div>
@@ -1340,7 +1366,7 @@ function ManagerDashboardPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-3 px-3">
-                <ActivityFeed />
+                <ActivityFeed recent={recentActivity} />
               </CardContent>
             </Card>
           </div>
