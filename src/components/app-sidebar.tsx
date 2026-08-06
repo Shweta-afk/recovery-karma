@@ -69,7 +69,7 @@ export function AppSidebar({ role }: { role: Role }) {
     <Sidebar collapsible="offcanvas">
       <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
         <Link to="/dashboard" className="flex flex-col items-start gap-1.5">
-          <div className="rounded-md bg-white px-3 py-1.5">
+          <div className="rounded-md px-3 py-1.5 dark:bg-white">
             <img src="/logo.png" alt="SamvadX" className="h-7 w-auto object-contain" />
           </div>
           <span className="text-[10px] italic text-sidebar-foreground/40">

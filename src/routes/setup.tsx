@@ -71,7 +71,7 @@ function SetupPage() {
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-background px-4 py-12">
       <div className="w-full max-w-sm">
-        <div className="mb-2 inline-flex w-fit rounded-md bg-white px-4 py-2">
+        <div className="mb-2 inline-flex w-fit rounded-md px-4 py-2 dark:bg-white">
           <img src="/logo.png" alt="SamvadX" className="h-10 w-auto object-contain" />
         </div>
         <p className="mb-8 text-xs italic text-muted-foreground">
