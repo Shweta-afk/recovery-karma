@@ -63,8 +63,8 @@ interface AgentRow {
   name: string;
   email: string;
   role: Role;
-  agent_phone: string | null; // Tata SmartFlo phone/extension (e.g., 050XXXXXXX0)
-  provider_agent_id: string | null; // Tata's internal agent ID
+  agent_phone: string | null; // Phone/extension registered with the telephony provider
+  provider_agent_id: string | null; // Provider's internal agent ID
   created_at: string;
 }
 
@@ -745,20 +745,20 @@ function EditUserDialog({
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">
-              Agent Number (Tata SmartFlo)
+              Agent Number (Exotel)
               {role === "agent" && <span className="text-destructive"> *</span>}
             </Label>
             <Input
-              placeholder="e.g., 050XXXXXXX0 or extension"
+              placeholder="e.g., +919876543210 or extension"
               value={agentPhone}
               onChange={(e) => setAgentPhone(e.target.value)}
               className="font-mono text-xs"
             />
             <p className="text-[11px] text-muted-foreground">
-              Whatever click-to-call rings for this agent — their personal Call Forward Number,
-              or their Tata Agent Extension if they're set up on the Smartflo Softphone app (no
-              personal phone rings; calls come into the softphone instead). Must match exactly
-              what's configured for them in Tata SmartFlo → Users, and must be unique — no two
+              Whatever click-to-call rings for this agent — their personal number, or their
+              Exotel extension if they're set up as a user on the account (no personal phone
+              rings; calls come into the extension instead). Must match exactly what's
+              configured for them in the Exotel dashboard → Users, and must be unique — no two
               agents can share one.
             </p>
             {role === "agent" && !agentPhone.trim() && (

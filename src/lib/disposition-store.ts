@@ -343,8 +343,8 @@ export function calcStats(disps: DispositionRecord[]) {
 /**
  * Attach recordings that the provider published after the call was logged.
  *
- * Providers produce recordings asynchronously — Tata's hangup webhook arrives with an empty
- * recording_url — so rows are saved without one and would stay that way forever. The lookup
+ * Some providers publish recordings asynchronously, arriving after the row is already saved
+ * with no recording. The lookup
  * runs server-side (it needs the provider API token); the UPDATE runs here under the user's
  * own session, so RLS covers it and no service-role key is involved.
  *

@@ -80,8 +80,8 @@ function RecordingPlayer({ url }: { url?: string }) {
     return (
       <div className="flex items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
         <Mic className="h-4 w-4 shrink-0" />
-        No recording available for this call — Tata publishes recordings asynchronously, so it may
-        still arrive later.
+        No recording available for this call — some providers publish recordings asynchronously,
+        so it may still arrive later.
       </div>
     );
   }

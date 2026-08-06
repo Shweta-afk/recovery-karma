@@ -9,7 +9,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: Role;
-  agentPhone: string | null; // Tata SmartFlo phone/extension
+  agentPhone: string | null; // Phone/extension registered with the telephony provider
 }
 
 interface AuthCtx {

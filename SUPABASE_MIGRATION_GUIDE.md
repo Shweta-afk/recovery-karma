@@ -1,6 +1,6 @@
 # Supabase Migration Guide
 
-How to apply database migrations for RecoveryAI Tata Tele integration.
+How to apply database migrations for RecoveryAI.
 
 ---
 
@@ -85,8 +85,8 @@ export interface Agent {
   role: "agent" | "manager" | "admin";
   daily_target: number;
   is_active: boolean;
-  tata_agent_number?: string;  // NEW
-  tata_agent_id?: string;       // NEW
+  agent_phone?: string;         // NEW
+  provider_agent_id?: string;   // NEW
   created_at: string;
 }
 ```
@@ -120,8 +120,8 @@ If a migration causes issues:
 ### Rollback Option 1: Delete the columns (if not critical)
 
 ```sql
-ALTER TABLE agents DROP COLUMN tata_agent_number;
-ALTER TABLE agents DROP COLUMN tata_agent_id;
+ALTER TABLE agents DROP COLUMN agent_phone;
+ALTER TABLE agents DROP COLUMN provider_agent_id;
 ```
 
 Then revert the code changes (git checkout previous commit).
@@ -153,7 +153,6 @@ YYYYMMDD_snake_case_description.sql
 
 Examples:
 - 20260728_add_tata_fields_to_agents.sql
-- 20260801_create_tata_webhook_logs.sql
 - 20260815_add_call_recording_index.sql
 ```
 

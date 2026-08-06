@@ -23,7 +23,6 @@ import type { SimProvider } from "./sim-provider";
 import { isTerminal } from "./call-machine";
 import type { TelephonyEvent, CallStatusEvent } from "./types";
 import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-disposition";
-import { startPollingJob, fetchRecentCallRecords } from "./polling";
 
 // ─── Process-wide state + event fan-out ─────────────────────────────────────────
 //
@@ -63,15 +62,6 @@ function ensureSubscribed(): void {
   getTelephonyProvider().subscribe?.((event: TelephonyEvent) => {
     for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, event));
   });
-}
-
-// ─── Polling Job Initialization ───────────────────────────────────────────
-
-// Start the background polling job on module load.
-// Polling periodically fetches call records from Tata as a fallback if webhooks fail.
-// This runs server-side and is automatically started when this module is imported.
-if (typeof process !== "undefined") {
-  startPollingJob();
 }
 
 /** Release due simulated events (real providers push via ingestProviderWebhook instead). */
@@ -302,35 +292,20 @@ export const startCall = createServerFn({ method: "POST" })
   });
 
 /**
- * Look up recordings for calls we already logged.
+ * Look up recordings for calls we already logged, backfilling any that weren't on the
+ * hangup webhook yet.
  *
- * Providers publish recordings asynchronously — Tata's hangup webhook arrives with
- * `"recording_url": ""` — so a call dispositioned promptly is saved with no recording and
- * nothing would ever fill it in. The browser asks for the missing ones by provider call id;
- * the CDR lookup happens here because it needs the API token, and the caller writes the
- * result to its own row under its own session (no service-role key needed).
- *
- * Returns only the ids that now have a recording.
+ * Tata (the previous provider) published recordings asynchronously — its hangup webhook
+ * arrived with `"recording_url": ""` — so this used to poll a CDR endpoint afterward.
+ * Exotel's StatusCallback carries `RecordingUrl` directly (see exotel-provider.ts's
+ * parseStatusWebhook), and Exotel has no documented CDR-polling endpoint to fall back to,
+ * so there is nothing to backfill from yet. Returns {} until a real CDR endpoint is
+ * confirmed against the live Exotel account and wired in here.
  */
 export const fetchRecordings = createServerFn({ method: "POST" })
   .inputValidator((d: { providerCallIds: string[] }) => d)
-  .handler(async ({ data }) => {
-    const wanted = new Set(data.providerCallIds.filter(Boolean));
-    if (!wanted.size) return {} as Record<string, string>;
-
-    const records = await fetchRecentCallRecords();
-    const found: Record<string, string> = {};
-    for (const r of records) {
-      const rec = r.recording_url;
-      if (!rec || typeof rec !== "string") continue;
-      for (const key of [r.ref_id, r.call_id, r.uuid]) {
-        if (typeof key === "string" && wanted.has(key)) {
-          found[key] = rec;
-          break;
-        }
-      }
-    }
-    return found;
+  .handler(async () => {
+    return {} as Record<string, string>;
   });
 
 export const hangupCall = createServerFn({ method: "POST" })

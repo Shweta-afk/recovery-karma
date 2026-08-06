@@ -4,7 +4,7 @@ RecoveryAI is configured to deploy on Railway.app for India-focused operations.
 
 ## Why Railway?
 
-- ✅ **Always-on** — No spin-down (critical for webhooks from Razorpay, Interakt, Tata)
+- ✅ **Always-on** — No spin-down (critical for webhooks from Razorpay, Interakt, Exotel)
 - ✅ **Better pricing** — ~$5/month vs Render's $7-12/month
 - ✅ **Automatic scaling** — Pay for usage, no plan upgrades needed
 - ✅ **Simple setup** — railway.json handles build/start commands
@@ -40,14 +40,18 @@ RAZORPAY_KEY_ID=rzp_live_...
 RAZORPAY_KEY_SECRET=your-secret
 ELEVENLABS_API_KEY=your-elevenlabs-key
 ELEVENLABS_VOICE_ID=your-voice-id
-TELEPHONY_PROVIDER=tata
-TATA_ACCESS_TOKEN=your-tata-token
-TATA_BASE_URL=https://api-smartflo.tatateleservices.com/v1
-TATA_WEBHOOK_URL=https://your-railway-app.railway.app/api/telephony/webhook
+TELEPHONY_PROVIDER=exotel
+EXOTEL_SID=your-exotel-sid
+EXOTEL_API_KEY=your-exotel-api-key
+EXOTEL_API_TOKEN=your-exotel-api-token
+EXOTEL_SUBDOMAIN=api.exotel.com
+EXOTEL_CALLER_ID=your-exophone
+EXOTEL_WEBHOOK_URL=https://your-railway-app.railway.app/api/telephony/webhook
+VITE_TELEPHONY_CALLER_IDS=your-exophone
 VITE_APP_URL=https://your-railway-app.railway.app
 ```
 
-**Get your Railway URL:** After first deploy, Railway assigns a URL like `https://recovery-karma-abc123.railway.app`. Use this for `TATA_WEBHOOK_URL` and `VITE_APP_URL`.
+**Get your Railway URL:** After first deploy, Railway assigns a URL like `https://recovery-karma-abc123.railway.app`. Use this for `EXOTEL_WEBHOOK_URL` and `VITE_APP_URL`.
 
 ### 3. Deploy
 
@@ -55,12 +59,12 @@ VITE_APP_URL=https://your-railway-app.railway.app
 - Watch build logs in dashboard (should take ~2-3 min)
 - Once green, app is live at your Railway URL
 
-### 4. Update Tata Webhook (if using telephony)
+### 4. Update Exotel Webhook (if using telephony)
 
 Once you have your Railway URL from step 2:
 
-1. Update `TATA_WEBHOOK_URL` in Railway Variables to point to your live app
-2. Notify your Tata account manager to update webhook endpoint on their side
+1. Update `EXOTEL_WEBHOOK_URL` in Railway Variables to point to your live app
+2. Update the StatusCallback URL on the Exotel account/app config to match
 
 ## Monitoring
 
@@ -115,9 +119,9 @@ Check **Logs** tab for error messages. Most common:
 
 ### Webhooks not firing
 
-- Verify `TATA_WEBHOOK_URL` matches your Railway domain
+- Verify `EXOTEL_WEBHOOK_URL` matches your Railway domain
 - Check Railway logs for incoming requests
-- Confirm Tata account manager has updated their webhook config
+- Confirm the Exotel account/app's StatusCallback config points at it
 
 ## Useful Commands (Railway CLI)
 
@@ -155,4 +159,4 @@ railway status
 2. Add env vars from `.env.example`
 3. Push to main → auto-deploy
 4. Test login page
-5. Update TATA_WEBHOOK_URL once you have live domain
+5. Update EXOTEL_WEBHOOK_URL once you have live domain

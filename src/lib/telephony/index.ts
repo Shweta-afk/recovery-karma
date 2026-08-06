@@ -1,8 +1,7 @@
 // Single entry point for telephony — call queue UI, server routes, and the dialer engine
 // should import from here, not from a specific vendor file, so switching providers later
-// (e.g. sim -> tata -> plivo) never touches feature code.
+// never touches feature code.
 import type { TelephonyProvider } from "./types";
-import { tataProvider } from "./tata-provider";
 import { kookooProvider } from "./kookoo-provider";
 import { exotelProvider } from "./exotel-provider";
 import { createSimProvider, type SimProvider } from "./sim-provider";
@@ -21,15 +20,13 @@ export function getSimProvider(): SimProvider {
 
 const PROVIDERS: Record<string, () => TelephonyProvider> = {
   sim: getSimProvider,
-  tata: () => tataProvider,
   kookoo: () => kookooProvider,
   exotel: () => exotelProvider,
 };
 
 /** The active provider. Defaults to the simulated provider until a real SIP vendor is
- * wired via TELEPHONY_PROVIDER (server-side env). Tata is the production default (active
- * account, click-to-call live — see .env.example); exotel is wired for evaluation only —
- * its provider code is untested against a real account and the trial is still KYC-gated.
+ * wired via TELEPHONY_PROVIDER (server-side env). Exotel is the production default (see
+ * .env.example) — Tata SmartFlo was evaluated and dropped; its provider code is removed.
  * Guarded so a stray client import can't throw on a missing `process`. */
 export function getTelephonyProvider(): TelephonyProvider {
   const key =

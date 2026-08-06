@@ -27,12 +27,12 @@ CREATE INDEX IF NOT EXISTS idx_call_logs_contact_phone
 -- moment an agent dispositions: the provider produces recordings asynchronously and its
 -- hangup webhook carries `"recording_url": ""`. Filling it in later means asking the
 -- provider about a specific call, and nothing on call_logs identified one — so the id
--- returned when the call was placed (Tata's ref_id) is stored here.
+-- returned when the call was placed (e.g. Exotel's Call Sid) is stored here.
 
 ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS provider_call_id TEXT;
 
 COMMENT ON COLUMN call_logs.provider_call_id IS
-  'Provider''s id for this call (Tata ref_id). Used to backfill recording_url from the CDR.';
+  'Provider''s id for this call (e.g. Exotel Call Sid). Used to backfill recording_url from the CDR.';
 
 -- Supports "find my logs still missing a recording", the backfill's driving query.
 CREATE INDEX IF NOT EXISTS idx_call_logs_pending_recording

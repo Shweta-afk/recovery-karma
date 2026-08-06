@@ -7,11 +7,11 @@
 //
 // Server-side only — never import from client code (needs EXOTEL_API_KEY/TOKEN).
 //
-// NOT YET TESTED AGAINST A REAL ACCOUNT: written from Exotel's public docs before an
-// Exotel account existed, same starting point kookoo-provider.ts was in. tata-provider.ts
-// shows the kind of gotcha that only shows up against a live account (its hangup endpoint
-// needed a completely different id than the one startCall returns) — expect similar surprises
-// here, especially around `hangup`, which Exotel's docs never actually document (see below).
+// NOT YET FULLY VERIFIED AGAINST A LIVE ACCOUNT: written from Exotel's public docs. Every
+// vendor integrated here so far has had at least one live-account gotcha that its docs didn't
+// mention (a hangup endpoint needing a different id than the one startCall returns, wrong
+// field ordering on webhook correlation, etc.) — expect similar surprises here, especially
+// around `hangup`, which Exotel's docs never actually document (see below).
 
 import type {
   TelephonyProvider,
@@ -35,8 +35,8 @@ const EXOTEL_API_TOKEN = env("EXOTEL_API_TOKEN");
  * your Exotel account was provisioned in; it's shown on the account dashboard. */
 const EXOTEL_SUBDOMAIN = env("EXOTEL_SUBDOMAIN") ?? "api.in.exotel.com";
 /** ExoPhone (virtual number) shown to the debtor. Falls back to whatever the account's
- * default is if omitted — same caveat as Tata's caller id: this must be a number Exotel
- * has assigned to the account, not an agent's personal number. */
+ * default is if omitted — this must be a number Exotel has assigned to the account, not an
+ * agent's personal number. */
 const EXOTEL_CALLER_ID = env("EXOTEL_CALLER_ID");
 
 function baseUrl(): string {
@@ -78,7 +78,7 @@ export const exotelProvider: TelephonyProvider = {
     requireCredentials();
 
     // Connect rings `From` (the agent) first, then bridges `To` (the debtor) once the
-    // agent picks up — same call shape as Tata's click_to_call.
+    // agent picks up.
     const callerId = req.callerId ?? EXOTEL_CALLER_ID;
     const body = new URLSearchParams({
       From: req.agentNumber,
@@ -123,8 +123,7 @@ export const exotelProvider: TelephonyProvider = {
     // module comment above). This POSTs Status=completed to the call resource, mirroring
     // the Twilio-style convention Exotel's API is modeled on, but it has never been
     // verified against a real account. Confirm against the actual dashboard/API reference
-    // once EXOTEL_* credentials exist, the same way tata-provider.ts's hangup was fixed
-    // after testing against a live call (see resolveLiveCallId's history there).
+    // once a real hangup has been tested against the live account.
     try {
       const response = await fetch(`${baseUrl()}/Calls/${providerCallId}.json`, {
         method: "POST",
@@ -195,7 +194,7 @@ export const exotelProvider: TelephonyProvider = {
 
   parseStatusWebhook(payload: unknown): CallStatusEvent {
     // Exotel's StatusCallback currently only fires on the terminal event (no separate
-    // ringing/answered callbacks — same limitation Tata has, see tata-provider.ts note 2).
+    // ringing/answered callbacks).
     const p = payload as Record<string, unknown>;
     const pick = <T>(...keys: string[]): T | undefined => {
       for (const k of keys) {

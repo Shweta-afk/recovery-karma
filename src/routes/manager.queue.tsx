@@ -33,7 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { SMARTFLO_DIDS } from "@/lib/telephony/caller-ids";
+import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
 import { formatINR, bucketOf, BUCKET_META } from "@/lib/mock-debtors";
 import { useManagerTeamAgents, type AgentRef } from "@/lib/team-store";
 import {
@@ -444,7 +444,7 @@ function MyQueueTab({
 
   const [manualNumber, setManualNumber] = useState("");
   const [manualName, setManualName] = useState("");
-  const [manualCallerId, setManualCallerId] = useState<string>(SMARTFLO_DIDS[0]);
+  const [manualCallerId, setManualCallerId] = useState<string>(TELEPHONY_CALLER_IDS[0] ?? "");
   const [dialingManual, setDialingManual] = useState(false);
 
   const callEscalation = (e: Escalation) => {
@@ -516,13 +516,13 @@ function MyQueueTab({
             />
           </div>
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Caller ID (SmartFlo DID)</label>
+            <label className="text-xs text-muted-foreground">Caller ID (ExoPhone)</label>
             <Select value={manualCallerId} onValueChange={setManualCallerId}>
               <SelectTrigger className="h-9 w-40 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {SMARTFLO_DIDS.map((did) => (
+                {TELEPHONY_CALLER_IDS.map((did) => (
                   <SelectItem key={did} value={did}>
                     {did}
                   </SelectItem>
@@ -628,7 +628,7 @@ function ManagerQueuePage() {
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [activeEscalationId, setActiveEscalationId] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<DispositionForm>(EMPTY_DISPOSITION);
-  // Places a real call through Tata SmartFlo (mode: "server") — this used to be a fake
+  // Places a real call through the telephony provider (mode: "server") — this used to be a fake
   // setTimeout(3000ms) that flipped straight to "connected" with no provider call at all,
   // which is why manager-initiated calls (manual dial, escalation calls) never actually rang.
   const singleCall = useSingleCall(setActiveCall, { mode: "server" });

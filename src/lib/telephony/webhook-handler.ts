@@ -1,4 +1,4 @@
-// Public HTTP endpoint for provider call-status callbacks (Tata SmartFlo posts here).
+// Public HTTP endpoint for provider call-status callbacks (the active telephony provider posts here).
 //
 // This is mounted directly on the server fetch entry (src/server.ts) rather than as a route
 // file: this version of TanStack Start has no stable server-route convention, and a route

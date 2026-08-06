@@ -28,9 +28,9 @@ import type { ActiveCall, QueueDebtor } from "@/routes/dashboard.call-queue";
 const TICK_MS = 500;
 /** How often the browser asks the server what the provider last said about this call. */
 const STATUS_POLL_MS = 2000;
-/** tata-provider.ts's own fetchWithTimeout bounds server→Tata; this bounds browser→our
- * server, so a stall anywhere in the chain (not just at Tata) still surfaces as an error
- * instead of leaving the call stuck on "ringing" with no explanation. */
+/** The provider's own fetchWithTimeout bounds server→provider; this bounds browser→our
+ * server, so a stall anywhere in the chain (not just at the provider) still surfaces as an
+ * error instead of leaving the call stuck on "ringing" with no explanation. */
 const START_CALL_TIMEOUT_MS = 20_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -59,9 +59,9 @@ function callStateFor(status: CallStatus): CallState {
 }
 
 export interface DialOptions {
-  /** Override the agent leg (the number Tata rings first). Defaults to the signed-in agent. */
+  /** Override the agent leg (the number the provider rings first). Defaults to the signed-in agent. */
   agentPhone?: string;
-  /** DID shown to the debtor as caller ID. Must be a DID on the Tata account. */
+  /** DID shown to the debtor as caller ID. Must be a DID/ExoPhone on the account. */
   callerId?: string;
 }
 
@@ -80,8 +80,8 @@ export interface UseSingleCallArgs {
 }
 
 /** Sentinel used when the signed-in agent has no `agents.agent_phone` configured. Never a
- * real number Tata can ring — dial() refuses to place a server-mode call with this, rather
- * than silently sending a placeholder every unconfigured agent would otherwise share. */
+ * real number the provider can ring — dial() refuses to place a server-mode call with this,
+ * rather than silently sending a placeholder every unconfigured agent would otherwise share. */
 const NO_AGENT_PHONE = "agent-self";
 
 export function useSingleCall(
@@ -180,11 +180,12 @@ export function useSingleCall(
                   : c,
               );
               if (status.status === "failed") {
-                // Tata accepted the dial (no throw above, ref_id issued) but the call never
-                // actually connected — the "200 OK, agent leg never rings" pattern: silent
-                // without this, since the poll loop otherwise just reset()s with no feedback.
+                // Provider accepted the dial (no throw above, a call id was issued) but the
+                // call never actually connected — the "200 OK, agent leg never rings" pattern:
+                // silent without this, since the poll loop otherwise just reset()s with no
+                // feedback.
                 toast.error(
-                  "Call didn't connect — Tata accepted the request but the line never rang. Check the agent's number matches Tata SmartFlo exactly.",
+                  "Call didn't connect — the provider accepted the request but the line never rang. Check the agent's number matches the telephony account exactly.",
                 );
               }
               if (status.status !== "ringing" && status.status !== "connected") reset();

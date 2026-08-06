@@ -1,9 +1,9 @@
 // Who the dialer may ring, sourced from OUR database rather than the telephony vendor's CRM.
 //
-// The provider identifies an agent by the phone number it rings — for Tata SmartFlo that is
-// the agent's "Call Forward Number", which is what agents.agent_phone must hold. If the two
-// drift apart the provider reports agent_name: null and the leg is rejected before it rings,
-// so this is the one field that has to stay in sync with the vendor dashboard.
+// The provider identifies an agent by the phone number it rings — for Exotel that is the
+// agent's registered number/extension, which is what agents.agent_phone must hold. If the two
+// drift apart the provider can't route the leg to the right agent, so this is the one field
+// that has to stay in sync with the vendor dashboard.
 
 import { supabase } from "@/lib/supabase";
 
