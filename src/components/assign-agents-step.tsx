@@ -36,7 +36,15 @@ const LOAN_ID_HEADERS = new Set([
   "loan_reference",
   "loanreference",
 ]);
-const AGENT_ID_HEADERS = new Set(["agent_id", "agentid", "agent_email", "agentemail", "email"]);
+const AGENT_ID_HEADERS = new Set([
+  "agent_id",
+  "agentid",
+  "agent_email",
+  "agentemail",
+  "email",
+  "agent",
+  "agent_email_or_name", // normHeader() of the "agent (email or name)" label used in the UI/template
+]);
 
 export interface AssignAgentsStepProps {
   agents: AgentRef[];
@@ -98,7 +106,7 @@ export function AssignAgentsStep({
       ),
   );
 
-  // CSV mode — loan_id → agent_id mapping file
+  // CSV mode — loan_id → agent (email or name) mapping file
   const csvFileInputRef = useRef<HTMLInputElement>(null);
   const [csvFileName, setCsvFileName] = useState("");
   const [csvAllocation, setCsvAllocation] = useState<Record<string, string[]>>({});
@@ -173,7 +181,7 @@ export function AssignAgentsStep({
       const agentIdx = headers.findIndex((h) => AGENT_ID_HEADERS.has(h));
       if (loanIdx === -1 || agentIdx === -1) {
         setCsvError(
-          `CSV must include a "loan_id" column and an "agent_id" column (found: ${headers.join(", ") || "none"})`,
+          `CSV must include a "loan_id" column and an "agent (email or name)" column (found: ${headers.join(", ") || "none"})`,
         );
         return;
       }
@@ -228,7 +236,7 @@ export function AssignAgentsStep({
   const downloadCsvTemplate = () => {
     downloadCsv(
       "assignment-template.csv",
-      ["loan_id", "agent_id"],
+      ["loan_id", "agent (email or name)"],
       rows.slice(0, 10).map((r, i) => [r.loanReference, agents[i % agents.length]?.id ?? ""]),
     );
   };
@@ -320,7 +328,7 @@ export function AssignAgentsStep({
               <span className="text-sm font-semibold text-foreground">CSV Upload</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Upload a loan_id → agent_id mapping file.
+              Upload a loan_id → agent (email or name) mapping file.
             </p>
           </button>
         </div>
@@ -336,8 +344,7 @@ export function AssignAgentsStep({
               <p className="text-xs text-muted-foreground">
                 Two columns: <code className="rounded bg-muted px-1 py-0.5">loan_id</code> (matches
                 each account's Loan / Account ID) and{" "}
-                <code className="rounded bg-muted px-1 py-0.5">agent_id</code> (agent's email or
-                name).
+                <code className="rounded bg-muted px-1 py-0.5">agent (email or name)</code>.
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
