@@ -8,6 +8,7 @@ import {
   updatePortfolioMeta,
   setPortfolioAgentTargets,
   mergePortfolioRows,
+  remapPortfolioFields,
   PRODUCT_LABEL_TO_ENUM,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
@@ -15,6 +16,7 @@ import {
   type PortfolioSettings,
   type AgentTarget,
 } from "@/lib/portfolio-store";
+import { STD_FIELDS, slotsFromDebtor, type StdFieldKey } from "@/lib/csv-fields";
 import {
   Briefcase,
   TrendingUp,
@@ -29,6 +31,7 @@ import {
   Pencil,
   Target,
   Upload,
+  Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCsv } from "@/lib/csv-export";
@@ -40,6 +43,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Select,
   SelectContent,
@@ -531,6 +544,12 @@ function ReassignDialog({
 
 /* ─── Edit Portfolio dialog ──────────────────────────────────────────────── */
 
+function identityRemap(): Record<StdFieldKey, StdFieldKey> {
+  const m = {} as Record<StdFieldKey, StdFieldKey>;
+  for (const f of STD_FIELDS) m[f.key] = f.key;
+  return m;
+}
+
 function EditPortfolioDialog({
   portfolio,
   agents,
@@ -549,6 +568,9 @@ function EditPortfolioDialog({
   const [csvKey, setCsvKey] = useState(0); // bumped to remount CsvImportStep after a successful import
   const [csvResult, setCsvResult] = useState<CsvImportResult | null>(null);
   const [importing, setImporting] = useState(false);
+  const [remap, setRemap] = useState<Record<StdFieldKey, StdFieldKey>>(identityRemap);
+  const [remapConfirmOpen, setRemapConfirmOpen] = useState(false);
+  const [remapping, setRemapping] = useState(false);
 
   // Re-seed local state whenever a different portfolio is opened for editing
   useEffect(() => {
@@ -561,6 +583,7 @@ function EditPortfolioDialog({
     setTargets(portfolio.agentTargets ?? {});
     setCsvResult(null);
     setCsvKey((k) => k + 1);
+    setRemap(identityRemap());
   }, [portfolio]);
 
   if (!portfolio) return null;
@@ -608,155 +631,277 @@ function EditPortfolioDialog({
     }
   };
 
+  const remapChanged = STD_FIELDS.some((f) => remap[f.key] !== f.key);
+
+  const handleRemap = async () => {
+    setRemapConfirmOpen(false);
+    setRemapping(true);
+    try {
+      const count = await remapPortfolioFields(portfolio.id, remap);
+      toast.success(`${count} account${count === 1 ? "" : "s"} remapped`, {
+        description: portfolio.name,
+      });
+      setRemap(identityRemap());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remap fields");
+    } finally {
+      setRemapping(false);
+    }
+  };
+
   return (
-    <Dialog
-      open={!!portfolio}
-      onOpenChange={(o) => {
-        if (!o) onClose();
-      }}
-    >
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="text-sm">Edit Portfolio · {portfolio.name}</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={!!portfolio}
+        onOpenChange={(o) => {
+          if (!o) onClose();
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Edit Portfolio · {portfolio.name}</DialogTitle>
+          </DialogHeader>
 
-        <div className="space-y-5">
-          {/* Details */}
-          <div className="space-y-3">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Details
+          <div className="space-y-5">
+            {/* Details */}
+            <div className="space-y-3">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Details
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-pname">Portfolio Name</Label>
+                  <Input id="edit-pname" value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-lender">Lender / Client</Label>
+                  <Input
+                    id="edit-lender"
+                    value={lender}
+                    onChange={(e) => setLender(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Product Type</Label>
+                  <Select value={product} onValueChange={setProduct}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select product" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.keys(PRODUCT_LABEL_TO_ENUM).map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {p}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-pname">Portfolio Name</Label>
-                <Input id="edit-pname" value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-lender">Lender / Client</Label>
-                <Input
-                  id="edit-lender"
-                  value={lender}
-                  onChange={(e) => setLender(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label>Product Type</Label>
-                <Select value={product} onValueChange={setProduct}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select product" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.keys(PRODUCT_LABEL_TO_ENUM).map((p) => (
-                      <SelectItem key={p} value={p}>
-                        {p}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
 
-          {/* Add / re-upload accounts */}
-          <div className="space-y-3 border-t border-border pt-4">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              <Upload className="h-3.5 w-3.5" />
-              Add / Re-upload Accounts
+            {/* Remap fields (no re-upload) */}
+            <div className="space-y-3 border-t border-border pt-4">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                <Wand2 className="h-3.5 w-3.5" />
+                Remap Fields
+              </div>
+              <p className="-mt-1 text-[11px] text-muted-foreground">
+                Fix a wrong original column mapping on the {portfolio.rows.length} account
+                {portfolio.rows.length === 1 ? "" : "s"} already here — no re-upload needed. For
+                each field, pick which field's current data should actually be treated as it.
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {STD_FIELDS.map(({ key, label }) => (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-xs">{label}</Label>
+                    <Select
+                      value={remap[key]}
+                      onValueChange={(v) =>
+                        setRemap((prev) => ({ ...prev, [key]: v as StdFieldKey }))
+                      }
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STD_FIELDS.map((f) => (
+                          <SelectItem key={f.key} value={f.key}>
+                            {f.key === key ? `${f.label} (unchanged)` : f.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+
+              {remapChanged && portfolio.rows.length > 0 && (
+                <div className="space-y-2 rounded-md border border-amber-400/30 bg-amber-500/5 px-3 py-2 text-xs">
+                  <p className="font-medium text-amber-700">
+                    Preview — {portfolio.rows.length} account
+                    {portfolio.rows.length === 1 ? "" : "s"} will be rewritten:
+                  </p>
+                  {portfolio.rows.slice(0, 3).map((r) => {
+                    const oldSlots = slotsFromDebtor(r);
+                    return (
+                      <div key={r.id} className="space-y-0.5">
+                        <p className="text-[11px] font-medium text-foreground">
+                          {r.name || r.loanReference}
+                        </p>
+                        {STD_FIELDS.filter((f) => remap[f.key] !== f.key).map((f) => (
+                          <p key={f.key} className="text-[11px] text-muted-foreground">
+                            {f.label}:{" "}
+                            <span className="line-through">{oldSlots[f.key] || "—"}</span> →{" "}
+                            <span className="text-foreground">{oldSlots[remap[f.key]] || "—"}</span>
+                          </p>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!remapChanged}
+                  onClick={() => setRemap(identityRemap())}
+                >
+                  Reset
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={!remapChanged || remapping}
+                  onClick={() => setRemapConfirmOpen(true)}
+                >
+                  {remapping && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Apply Remap
+                </Button>
+              </div>
             </div>
-            <p className="-mt-1 text-[11px] text-muted-foreground">
-              Upload a CSV to add new accounts or update existing ones — matched by Loan / Account
-              ID. Nothing is deleted or reassigned.
-            </p>
-            <CsvImportStep key={csvKey} lenderName={lender} onChange={setCsvResult} />
-            {csvResult && csvResult.rows.length > 0 && (
-              <Button
-                size="sm"
-                className="gap-1.5"
-                disabled={!csvResult.valid || importing}
-                onClick={handleImport}
-              >
-                {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Import {csvResult.rows.length} Account{csvResult.rows.length === 1 ? "" : "s"}
-              </Button>
+
+            {/* Add / re-upload accounts */}
+            <div className="space-y-3 border-t border-border pt-4">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                <Upload className="h-3.5 w-3.5" />
+                Add / Re-upload Accounts
+              </div>
+              <p className="-mt-1 text-[11px] text-muted-foreground">
+                Upload a CSV to add new accounts or update existing ones — matched by Loan / Account
+                ID. Nothing is deleted or reassigned.
+              </p>
+              <CsvImportStep key={csvKey} lenderName={lender} onChange={setCsvResult} />
+              {csvResult && csvResult.rows.length > 0 && (
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={!csvResult.valid || importing}
+                  onClick={handleImport}
+                >
+                  {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Import {csvResult.rows.length} Account{csvResult.rows.length === 1 ? "" : "s"}
+                </Button>
+              )}
+            </div>
+
+            {/* Dial settings */}
+            <div className="space-y-3 border-t border-border pt-4">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Dial Settings
+              </div>
+              <PortfolioSettingsStep settings={settings} onChange={setSettings} />
+            </div>
+
+            {/* Agent targets */}
+            {agents.length > 0 && (
+              <div className="space-y-3 border-t border-border pt-4">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <Target className="h-3.5 w-3.5" />
+                  Agent Targets
+                </div>
+                <p className="-mt-1 text-[11px] text-muted-foreground">
+                  Optional collection goal per agent for this portfolio — separate from account
+                  allocation.
+                </p>
+                <div className="divide-y divide-border rounded-lg border border-border">
+                  {agents.map((a) => {
+                    const t = targets[a.id] ?? {};
+                    return (
+                      <div key={a.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+                        <div className="min-w-[100px] flex-1 text-sm font-medium text-foreground">
+                          {a.name}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Label className="text-[10px] text-muted-foreground">₹ Target</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            className="h-7 w-28 text-xs"
+                            value={t.targetAmount ?? ""}
+                            placeholder="—"
+                            onChange={(e) =>
+                              setTarget(a.id, {
+                                targetAmount: e.target.value === "" ? undefined : +e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Label className="text-[10px] text-muted-foreground">Accounts</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            className="h-7 w-20 text-xs"
+                            value={t.targetAccounts ?? ""}
+                            placeholder="—"
+                            onChange={(e) =>
+                              setTarget(a.id, {
+                                targetAccounts: e.target.value === "" ? undefined : +e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
 
-          {/* Dial settings */}
-          <div className="space-y-3 border-t border-border pt-4">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Dial Settings
-            </div>
-            <PortfolioSettingsStep settings={settings} onChange={setSettings} />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Save Changes
+            </Button>
           </div>
-
-          {/* Agent targets */}
-          {agents.length > 0 && (
-            <div className="space-y-3 border-t border-border pt-4">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                <Target className="h-3.5 w-3.5" />
-                Agent Targets
-              </div>
-              <p className="-mt-1 text-[11px] text-muted-foreground">
-                Optional collection goal per agent for this portfolio — separate from account
-                allocation.
-              </p>
-              <div className="divide-y divide-border rounded-lg border border-border">
-                {agents.map((a) => {
-                  const t = targets[a.id] ?? {};
-                  return (
-                    <div key={a.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
-                      <div className="min-w-[100px] flex-1 text-sm font-medium text-foreground">
-                        {a.name}
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Label className="text-[10px] text-muted-foreground">₹ Target</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          className="h-7 w-28 text-xs"
-                          value={t.targetAmount ?? ""}
-                          placeholder="—"
-                          onChange={(e) =>
-                            setTarget(a.id, {
-                              targetAmount: e.target.value === "" ? undefined : +e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Label className="text-[10px] text-muted-foreground">Accounts</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          className="h-7 w-20 text-xs"
-                          value={t.targetAccounts ?? ""}
-                          placeholder="—"
-                          onChange={(e) =>
-                            setTarget(a.id, {
-                              targetAccounts: e.target.value === "" ? undefined : +e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
-            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Save Changes
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={remapConfirmOpen} onOpenChange={setRemapConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remap {portfolio.rows.length} accounts?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This rewrites the changed field
+              {STD_FIELDS.filter((f) => remap[f.key] !== f.key).length === 1 ? "" : "s"} on every
+              account in {portfolio.name}. This cannot be undone — check the preview above before
+              confirming.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRemap}>
+              Yes, remap {portfolio.rows.length} accounts
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 

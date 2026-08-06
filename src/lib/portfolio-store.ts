@@ -1,5 +1,6 @@
 import type { DPDBucket } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
+import { STD_FIELDS, slotsFromDebtor, debtorFieldsFromSlots, type StdFieldKey } from "./csv-fields";
 
 // The upload/edit forms show human-readable product labels, but portfolios.product_type has
 // a CHECK constraint restricting it to this fixed snake_case enum (see schema.sql) — sending
@@ -308,6 +309,69 @@ export async function mergePortfolioRows(
 
   await refreshPortfolios();
   return { updated: toUpdate.length, added: toInsert.length };
+}
+
+/** Fixes a wrong original column mapping on data that's already been uploaded — no CSV
+ * needed. `fieldMap[target] = source`: for each of the 12 canonical fields, which field's
+ * *current* value should actually be treated as `target` (a field mapping to itself is a
+ * no-op). Reads every debtor's current values before writing any of them, so a straight
+ * swap (A←B, B←A) applies correctly instead of the second write clobbering the first's
+ * source. Never touches assigned_agent_id or status. Returns the number of debtors rewritten
+ * (0 if fieldMap is the identity — nothing to do). */
+export async function remapPortfolioFields(
+  portfolioId: string,
+  fieldMap: Record<StdFieldKey, StdFieldKey>,
+): Promise<number> {
+  if (STD_FIELDS.every((f) => fieldMap[f.key] === f.key)) return 0;
+
+  const { data: rows, error: fetchErr } = await supabase
+    .from("debtors")
+    .select("id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra")
+    .eq("portfolio_id", portfolioId);
+  if (fetchErr) throw fetchErr;
+  if (!rows || !rows.length) return 0;
+
+  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + CHUNK_SIZE);
+    const results = await Promise.all(
+      chunk.map((row) => {
+        const prevExtra = (row.extra as Record<string, string>) ?? {};
+        const oldSlots = slotsFromDebtor({
+          loanReference: (row.loan_reference as string | null) ?? "",
+          name: (row.name as string | null) ?? "",
+          phone: (row.phone_primary as string | null) ?? "",
+          loanAmount: Number(row.loan_amount ?? 0),
+          dpd: (row.dpd as number | null) ?? 0,
+          email: (row.email as string | null) ?? "",
+          extra: prevExtra,
+        });
+        const newSlots = {} as Record<StdFieldKey, string>;
+        for (const f of STD_FIELDS) newSlots[f.key] = oldSlots[fieldMap[f.key]];
+        const fields = debtorFieldsFromSlots(newSlots);
+
+        return supabase
+          .from("debtors")
+          .update({
+            loan_reference: fields.loanReference,
+            name: fields.name,
+            phone_primary: fields.phone,
+            email: fields.email || null,
+            loan_amount: fields.loanAmount,
+            outstanding_balance: fields.loanAmount,
+            dpd: fields.dpd,
+            // Spread prevExtra first so any column that was never a STD_FIELD (still sitting
+            // in extra from the original upload) survives the remap untouched.
+            extra: { ...prevExtra, ...fields.extra },
+          })
+          .eq("id", row.id as string);
+      }),
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw failed.error;
+  }
+
+  await refreshPortfolios();
+  return rows.length;
 }
 
 /** Updates portfolio-level metadata (ownership/settings/details) — never touches debtor rows. */

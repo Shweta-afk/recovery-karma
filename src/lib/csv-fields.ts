@@ -28,3 +28,56 @@ export function mappingFromResult(result: MappingResult): Record<StdFieldKey, st
   for (const { key } of STD_FIELDS) m[key] = result[key]?.column ?? "";
   return m;
 }
+
+export type StdFieldSlots = Record<StdFieldKey, string>;
+
+interface DebtorLike {
+  loanReference: string;
+  name: string;
+  phone: string;
+  loanAmount: number;
+  dpd: number;
+  email: string;
+  extra: Record<string, string>;
+}
+
+/** Reads a debtor row's current values back into the same 12 "slots" the upload wizard's
+ * mapping grid offers — used by the portfolio field-remap tool to fix a wrong original
+ * mapping on data that's already imported, without needing the source CSV again. */
+export function slotsFromDebtor(row: DebtorLike): StdFieldSlots {
+  return {
+    loan_id: row.loanReference,
+    name: row.name,
+    phone: row.phone,
+    loan_amount: String(row.loanAmount),
+    dpd: String(row.dpd),
+    email: row.email,
+    address: row.extra.address ?? "",
+    city: row.extra.city ?? "",
+    state: row.extra.state ?? "",
+    dob: row.extra.dob ?? "",
+    employer: row.extra.employer ?? "",
+    income: row.extra.income ?? "",
+  };
+}
+
+/** Inverse of slotsFromDebtor: rebuilds debtor fields from a (possibly remapped) slot map,
+ * applying the same numeric parsing the upload wizard uses for loan_amount/dpd. */
+export function debtorFieldsFromSlots(slots: StdFieldSlots): DebtorLike {
+  return {
+    loanReference: slots.loan_id.trim(),
+    name: slots.name.trim(),
+    phone: slots.phone.trim(),
+    loanAmount: parseFloat(slots.loan_amount.replace(/[,₹\s]/g, "")) || 0,
+    dpd: parseInt(slots.dpd, 10) || 0,
+    email: slots.email.trim(),
+    extra: {
+      address: slots.address,
+      city: slots.city,
+      state: slots.state,
+      dob: slots.dob,
+      employer: slots.employer,
+      income: slots.income,
+    },
+  };
+}
