@@ -15,7 +15,6 @@ import {
   CalendarClock,
   IndianRupee,
   AlertTriangle,
-  X,
   Clock,
   CheckCheck,
   FileText,
@@ -1793,11 +1792,9 @@ function getDebtorExtra(id: string) {
 
 export function DebtorProfileSheet({
   debtor,
-  onClose,
   onCall,
 }: {
   debtor: QueueDebtor;
-  onClose: () => void;
   onCall: (d: QueueDebtor) => void;
 }) {
   const extra = getDebtorExtra(debtor.id);
@@ -1812,21 +1809,17 @@ export function DebtorProfileSheet({
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <SheetHeader className="px-6 py-4 border-b border-border flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-              {initials}
-            </div>
-            <div>
-              <SheetTitle className="text-base">{debtor.name}</SheetTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {debtor.loanReference ?? debtor.id} · {debtor.phone} · {debtor.language}
-              </p>
-            </div>
+        {/* SheetContent already renders its own top-right close (×) — no second one here */}
+        <div className="flex items-center gap-3 pr-8">
+          <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+            {initials}
           </div>
-          <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
+          <div>
+            <SheetTitle className="text-base">{debtor.name}</SheetTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {debtor.loanReference ?? debtor.id} · {debtor.phone} · {debtor.language}
+            </p>
+          </div>
         </div>
       </SheetHeader>
 

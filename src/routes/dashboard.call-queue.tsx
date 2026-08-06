@@ -23,7 +23,6 @@ import {
   Bell,
   Filter,
   FileDown,
-  PhoneOutgoing,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -109,9 +108,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { toast } from "sonner";
-import { TataCampaignDialog } from "@/components/tata-campaign-dialog";
-import type { TataLeadRow } from "@/lib/tata-dialer-actions.server";
-import { SMARTFLO_DIDS } from "@/lib/telephony/caller-ids";
+import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
 
 export const Route = createFileRoute("/dashboard/call-queue")({
   head: () => ({
@@ -240,10 +237,11 @@ function CallQueuePage() {
   const [manualDialPageOpen, setManualDialPageOpen] = useState(false);
   const [manualDialNumber, setManualDialNumber] = useState("");
   const [manualDialName, setManualDialName] = useState("");
-  // Caller ID shown to the debtor — must be a DID on the Tata account, never a personal number.
-  const [manualDialCallerId, setManualDialCallerId] = useState<string>(SMARTFLO_DIDS[0]);
+  // Caller ID shown to the debtor — must be a DID/ExoPhone on the account, never a personal number.
+  const [manualDialCallerId, setManualDialCallerId] = useState<string>(
+    TELEPHONY_CALLER_IDS[0] ?? "",
+  );
   const [retainedOpen, setRetainedOpen] = useState(false);
-  const [campaignDialogOpen, setCampaignDialogOpen] = useState(false);
   const [predictiveNotif, setPredictiveNotif] = useState<string | null>(null);
   // A call the AI has connected and is handing to the agent WHILE they're already on another call
   const [incomingTransfer, setIncomingTransfer] = useState<{
@@ -290,7 +288,7 @@ function CallQueuePage() {
   // Active call state — lives in CallSessionProvider (mounted above the dashboard's <Outlet/>)
   // so it survives navigating away from this page, letting the minimized call bar keep showing.
   const { activeCall, setActiveCall, disposition, setDisposition } = useCallSession();
-  // Single-call mode: use "server" to place real calls through Tata SmartFlo (not simulator)
+  // Single-call mode: use "server" to place real calls through the telephony provider (not simulator)
   const singleCall = useSingleCall(setActiveCall, { mode: "server" });
   // Keep a ref to the live active call so async dialer callbacks can read the latest value
   const activeCallRef = useRef<ActiveCall | null>(null);
@@ -420,8 +418,8 @@ function CallQueuePage() {
         loanAmount: debtor.loanAmount,
         dpd: debtor.dpd,
         // Present only if the provider published a recording before the agent dispositioned.
-        // Tata publishes these asynchronously, so this is often still empty here and the
-        // recording has to be backfilled from the CDR afterwards.
+        // Some providers publish these asynchronously, so this is often still empty here and
+        // has to be backfilled later once the provider makes it available.
         recordingUrl: activeCall?.recordingUrl,
         // Lets the recording be attached later, once the provider publishes it.
         providerCallId: activeCall?.providerCallId,
@@ -502,9 +500,6 @@ function CallQueuePage() {
       no_answer: allQueue.filter((d) => d.queueStatus === "no_answer").length,
       fresh: allQueue.filter((d) => d.queueStatus === "fresh").length,
       escalated: allQueue.filter((d) => d.queueStatus === "escalated").length,
-      switch_off: 5,
-      nc: 8,
-      paid: 6,
     }),
     [allQueue],
   );
@@ -603,7 +598,10 @@ function CallQueuePage() {
     qSortDir,
   ]);
 
-  const FILTERS: { key: QueueFilter; label: string }[] = [
+  // Narrower than QueueFilter — only the statuses filterCounts actually computes from real
+  // queueStatus data. switch_off/nc/paid exist in QueueFilter for URL back-compat but were
+  // never wired to real counts or filtering, so they're not offered as pills here.
+  const FILTERS: { key: Extract<QueueFilter, keyof typeof filterCounts>; label: string }[] = [
     { key: "all", label: "All" },
     { key: "retained", label: "Retained" },
     { key: "callback", label: "Callback" },
@@ -744,15 +742,13 @@ function CallQueuePage() {
                   <span className="text-xs text-muted-foreground">(debtor responded)</span>
                 </div>
                 <span className="text-lg font-bold text-success">
-                  {filterCounts.callback + filterCounts.ptp + 3 + 6}
+                  {filterCounts.callback + filterCounts.ptp}
                 </span>
               </div>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 {[
                   { label: "Callback", value: filterCounts.callback, cls: "text-amber-500" },
                   { label: "PTP", value: filterCounts.ptp, cls: "text-blue-500" },
-                  { label: "Partial Paid", value: 3, cls: "text-emerald-500" },
-                  { label: "Paid", value: 6, cls: "text-success" },
                 ].map((s) => (
                   <div
                     key={s.label}
@@ -790,17 +786,17 @@ function CallQueuePage() {
                   <span className="text-xs text-muted-foreground">(no response)</span>
                 </div>
                 <span className="text-lg font-bold text-muted-foreground">
-                  {filterCounts.fresh + filterCounts.no_answer + filterCounts.escalated + 5 + 8}
+                  {filterCounts.fresh + filterCounts.no_answer + filterCounts.escalated}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 {[
                   { label: "Ringing / Fresh", value: filterCounts.fresh, cls: "text-blue-400" },
-                  { label: "Switch Off", value: 5, cls: "text-orange-500" },
+                  { label: "No Answer", value: filterCounts.no_answer, cls: "text-destructive" },
                   {
-                    label: "NC (No Contact)",
-                    value: filterCounts.no_answer + 8,
-                    cls: "text-destructive",
+                    label: "Escalated",
+                    value: filterCounts.escalated,
+                    cls: "text-orange-500",
                   },
                 ].map((s) => (
                   <div
@@ -872,14 +868,14 @@ function CallQueuePage() {
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs text-muted-foreground">
-                      Caller ID (SmartFlo DID)
+                      Caller ID (ExoPhone)
                     </label>
                     <Select value={manualDialCallerId} onValueChange={setManualDialCallerId}>
                       <SelectTrigger className="h-8 text-sm">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {SMARTFLO_DIDS.map((did) => (
+                        {TELEPHONY_CALLER_IDS.map((did) => (
                           <SelectItem key={did} value={did}>
                             {did}
                           </SelectItem>
@@ -1244,78 +1240,8 @@ function CallQueuePage() {
               <FileDown className="h-3.5 w-3.5" />
               Export
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 gap-1 text-xs"
-              title="CSV formatted for Tata SmartFlo's Lead List upload — use it to feed a real Dialer Campaign (predictive/power/preview) instead of this queue's 1:1 dialing."
-              onClick={() =>
-                exportCSV(
-                  "tata-dialer-lead-list.csv",
-                  [
-                    "Mobile Number",
-                    "Name",
-                    "Email ID",
-                    "Address",
-                    "Company Name",
-                    "Alternate Phone Number",
-                    "Loan Reference",
-                    "Outstanding Balance (INR)",
-                    "DPD",
-                    "AI Score",
-                    "SamvadX Debtor ID",
-                  ],
-                  filteredQueue.map((d) => [
-                    d.phone,
-                    d.name,
-                    d.email ?? "",
-                    d.address ?? "",
-                    d.portfolio ?? "",
-                    d.altPhone ?? "",
-                    d.loanReference ?? d.id,
-                    d.loanAmount,
-                    d.dpd,
-                    d.aiScore,
-                    d.id,
-                  ]),
-                )
-              }
-            >
-              <PhoneOutgoing className="h-3.5 w-3.5" />
-              Export for Tata Dialer
-            </Button>
-            <Button
-              size="sm"
-              className="h-7 gap-1 text-xs"
-              title="Create the lead list, upload leads, and start a Dialer Campaign on Tata SmartFlo directly — no manual CSV upload."
-              onClick={() => setCampaignDialogOpen(true)}
-            >
-              <PhoneOutgoing className="h-3.5 w-3.5" />
-              Create Tata Dialer Campaign
-            </Button>
           </div>
         </div>
-
-        <TataCampaignDialog
-          open={campaignDialogOpen}
-          onOpenChange={setCampaignDialogOpen}
-          callerIdOptions={SMARTFLO_DIDS}
-          leads={filteredQueue.map(
-            (d): TataLeadRow => ({
-              phone: d.phone,
-              name: d.name,
-              email: d.email ?? "",
-              address: d.address ?? "",
-              company: d.portfolio ?? "",
-              altPhone: d.altPhone ?? "",
-              loanReference: d.loanReference ?? d.id,
-              outstanding: d.loanAmount,
-              dpd: d.dpd,
-              aiScore: d.aiScore,
-              debtorId: d.id,
-            }),
-          )}
-        />
 
         <Card className="animate-in fade-in duration-400">
           <CardContent className="p-0">
@@ -1658,13 +1584,7 @@ function CallQueuePage() {
           side="right"
           className="w-full max-w-2xl p-0 overflow-hidden flex flex-col sm:max-w-2xl"
         >
-          {profileDebtor && (
-            <DebtorProfileSheet
-              debtor={profileDebtor}
-              onClose={() => setProfileDebtor(null)}
-              onCall={startCall}
-            />
-          )}
+          {profileDebtor && <DebtorProfileSheet debtor={profileDebtor} onCall={startCall} />}
         </SheetContent>
       </Sheet>
     </div>
