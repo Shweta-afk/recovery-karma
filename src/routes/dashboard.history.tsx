@@ -35,10 +35,11 @@ import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/mock-debtors";
 import {
   backfillRecordings,
-  getDispositions,
+  getAgentDispositions,
   refreshDispositions,
   type DispositionRecord,
 } from "@/lib/disposition-store";
+import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/dashboard/history")({
   head: () => ({
@@ -214,24 +215,30 @@ function ActivityHistoryPage() {
   const [day, setDay] = useState<"all" | DayBucket>("all");
   const [search, setSearch] = useState("");
 
+  const { user } = useAuth();
+  const myId = user?.email ?? user?.id ?? "";
+
   // Render the cached dispositions immediately, then refresh from call_logs. The store
   // broadcasts `dispositions-updated` after each write, so a call dispositioned elsewhere
-  // in the app shows up here without a reload.
-  const [disps, setDisps] = useState<DispositionRecord[]>(() => getDispositions());
+  // in the app shows up here without a reload. Filtered to the viewer's own calls — RLS
+  // already scopes call_logs, but a manager's fetch also includes their team's calls (for
+  // Call Audit), so this page still needs its own filter to stay "my history" for everyone,
+  // agent and manager alike.
+  const [disps, setDisps] = useState<DispositionRecord[]>(() => getAgentDispositions(myId));
   useEffect(() => {
-    const load = () => setDisps(getDispositions());
+    const load = () => setDisps(getAgentDispositions(myId));
     window.addEventListener("dispositions-updated", load);
     refreshDispositions()
       .then(() => {
         load();
         // Recordings are published after the call is logged, so ask the provider for any
         // that were still missing. Failures are non-fatal — history renders regardless.
-        return backfillRecordings(getDispositions());
+        return backfillRecordings(getAgentDispositions(myId));
       })
       .catch((e) => console.warn("[history] recording backfill skipped:", e))
       .finally(load);
     return () => window.removeEventListener("dispositions-updated", load);
-  }, []);
+  }, [myId]);
 
   const events = useMemo(() => toActivityEvents(disps), [disps]);
 

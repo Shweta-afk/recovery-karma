@@ -22,7 +22,6 @@ import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
 import { Route as ManagerTeamRouteImport } from './routes/manager.team'
 import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
-import { Route as ManagerChannelsRouteImport } from './routes/manager.channels'
 import { Route as ManagerAuditRouteImport } from './routes/manager.audit'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard.settings'
 import { Route as DashboardReportsRouteImport } from './routes/dashboard.reports'
@@ -100,11 +99,6 @@ const ManagerQueueRoute = ManagerQueueRouteImport.update({
 const ManagerPortfolioRoute = ManagerPortfolioRouteImport.update({
   id: '/portfolio',
   path: '/portfolio',
-  getParentRoute: () => ManagerRoute,
-} as any)
-const ManagerChannelsRoute = ManagerChannelsRouteImport.update({
-  id: '/channels',
-  path: '/channels',
   getParentRoute: () => ManagerRoute,
 } as any)
 const ManagerAuditRoute = ManagerAuditRouteImport.update({
@@ -193,7 +187,6 @@ export interface FileRoutesByFullPath {
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/manager/audit': typeof ManagerAuditRoute
-  '/manager/channels': typeof ManagerChannelsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/team': typeof ManagerTeamRoute
@@ -219,7 +212,6 @@ export interface FileRoutesByTo {
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/manager/audit': typeof ManagerAuditRoute
-  '/manager/channels': typeof ManagerChannelsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/team': typeof ManagerTeamRoute
@@ -249,7 +241,6 @@ export interface FileRoutesById {
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/manager/audit': typeof ManagerAuditRoute
-  '/manager/channels': typeof ManagerChannelsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/team': typeof ManagerTeamRoute
@@ -280,7 +271,6 @@ export interface FileRouteTypes {
     | '/dashboard/reports'
     | '/dashboard/settings'
     | '/manager/audit'
-    | '/manager/channels'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/team'
@@ -306,7 +296,6 @@ export interface FileRouteTypes {
     | '/dashboard/reports'
     | '/dashboard/settings'
     | '/manager/audit'
-    | '/manager/channels'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/team'
@@ -335,7 +324,6 @@ export interface FileRouteTypes {
     | '/dashboard/reports'
     | '/dashboard/settings'
     | '/manager/audit'
-    | '/manager/channels'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/team'
@@ -445,13 +433,6 @@ declare module '@tanstack/react-router' {
       path: '/portfolio'
       fullPath: '/manager/portfolio'
       preLoaderRoute: typeof ManagerPortfolioRouteImport
-      parentRoute: typeof ManagerRoute
-    }
-    '/manager/channels': {
-      id: '/manager/channels'
-      path: '/channels'
-      fullPath: '/manager/channels'
-      preLoaderRoute: typeof ManagerChannelsRouteImport
       parentRoute: typeof ManagerRoute
     }
     '/manager/audit': {
@@ -596,7 +577,6 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
 
 interface ManagerRouteChildren {
   ManagerAuditRoute: typeof ManagerAuditRoute
-  ManagerChannelsRoute: typeof ManagerChannelsRoute
   ManagerPortfolioRoute: typeof ManagerPortfolioRoute
   ManagerQueueRoute: typeof ManagerQueueRoute
   ManagerTeamRoute: typeof ManagerTeamRoute
@@ -606,7 +586,6 @@ interface ManagerRouteChildren {
 
 const ManagerRouteChildren: ManagerRouteChildren = {
   ManagerAuditRoute: ManagerAuditRoute,
-  ManagerChannelsRoute: ManagerChannelsRoute,
   ManagerPortfolioRoute: ManagerPortfolioRoute,
   ManagerQueueRoute: ManagerQueueRoute,
   ManagerTeamRoute: ManagerTeamRoute,
