@@ -7,6 +7,7 @@ import {
   transferDebtor,
   updatePortfolioMeta,
   setPortfolioAgentTargets,
+  mergePortfolioRows,
   PRODUCT_LABEL_TO_ENUM,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
@@ -27,9 +28,11 @@ import {
   ArrowLeftRight,
   Pencil,
   Target,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCsv } from "@/lib/csv-export";
+import { saveTemplate } from "@/lib/mapping-template-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,6 +55,7 @@ import { useAuth } from "@/lib/auth";
 import { useStorageSync } from "@/lib/storage-sync";
 import { AssignAgentsStep } from "@/components/assign-agents-step";
 import { PortfolioSettingsStep } from "@/components/portfolio-settings-step";
+import { CsvImportStep, type CsvImportResult } from "@/components/csv-import-step";
 
 export const Route = createFileRoute("/manager/portfolio")({
   head: () => ({ meta: [{ title: "Portfolio Overview · SamvadX" }] }),
@@ -542,6 +546,9 @@ function EditPortfolioDialog({
   const [settings, setSettings] = useState<PortfolioSettings>(DEFAULT_PORTFOLIO_SETTINGS);
   const [targets, setTargets] = useState<Record<string, AgentTarget>>({});
   const [saving, setSaving] = useState(false);
+  const [csvKey, setCsvKey] = useState(0); // bumped to remount CsvImportStep after a successful import
+  const [csvResult, setCsvResult] = useState<CsvImportResult | null>(null);
+  const [importing, setImporting] = useState(false);
 
   // Re-seed local state whenever a different portfolio is opened for editing
   useEffect(() => {
@@ -552,6 +559,8 @@ function EditPortfolioDialog({
     setSettings(portfolio.settings);
     // Falls back to {} for a portfolio cached in localStorage before agentTargets existed
     setTargets(portfolio.agentTargets ?? {});
+    setCsvResult(null);
+    setCsvKey((k) => k + 1);
   }, [portfolio]);
 
   if (!portfolio) return null;
@@ -577,6 +586,25 @@ function EditPortfolioDialog({
       toast.error(e instanceof Error ? e.message : "Failed to save portfolio");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!csvResult || !csvResult.valid || csvResult.rows.length === 0) return;
+    setImporting(true);
+    try {
+      const { updated, added } = await mergePortfolioRows(portfolio.id, csvResult.rows);
+      // Learn this bank's mapping so a future upload/re-upload auto-applies it, same as the wizard.
+      await saveTemplate(lender, csvResult.rawHeaders, csvResult.mapping);
+      toast.success(`${updated} account${updated === 1 ? "" : "s"} updated, ${added} added`, {
+        description: portfolio.name,
+      });
+      setCsvResult(null);
+      setCsvKey((k) => k + 1);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to import accounts");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -627,6 +655,30 @@ function EditPortfolioDialog({
                 </Select>
               </div>
             </div>
+          </div>
+
+          {/* Add / re-upload accounts */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              <Upload className="h-3.5 w-3.5" />
+              Add / Re-upload Accounts
+            </div>
+            <p className="-mt-1 text-[11px] text-muted-foreground">
+              Upload a CSV to add new accounts or update existing ones — matched by Loan / Account
+              ID. Nothing is deleted or reassigned.
+            </p>
+            <CsvImportStep key={csvKey} lenderName={lender} onChange={setCsvResult} />
+            {csvResult && csvResult.rows.length > 0 && (
+              <Button
+                size="sm"
+                className="gap-1.5"
+                disabled={!csvResult.valid || importing}
+                onClick={handleImport}
+              >
+                {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Import {csvResult.rows.length} Account{csvResult.rows.length === 1 ? "" : "s"}
+              </Button>
+            )}
           </div>
 
           {/* Dial settings */}

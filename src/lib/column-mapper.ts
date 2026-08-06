@@ -5,7 +5,7 @@
 // inference — then greedily assigns the best non-conflicting matches. A saved per-bank
 // template (if supplied) is applied first at full confidence.
 //
-// NOTE: the field keys here must stay in sync with STD_FIELDS in manager.upload.tsx.
+// NOTE: the field keys here must stay in sync with STD_FIELDS in csv-fields.ts.
 
 export type MappingSource = "template" | "alias" | "fuzzy" | "value" | "none";
 

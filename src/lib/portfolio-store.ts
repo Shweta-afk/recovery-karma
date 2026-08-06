@@ -233,6 +233,83 @@ export async function createPortfolio(
   await refreshPortfolios();
 }
 
+/** Merges a re-uploaded/appended CSV into an existing portfolio: a row whose Loan/Account ID
+ * matches an existing debtor updates that debtor's data (name/phone/amount/dpd/email/extra);
+ * an unmatched row is inserted as a new, unassigned debtor. Never deletes a debtor and never
+ * touches assigned_agent_id on a matched one — reassignment stays a separate, deliberate step
+ * (Reassign / per-account transfer), not a side effect of fixing a typo in the source file. */
+export async function mergePortfolioRows(
+  portfolioId: string,
+  rows: UploadedDebtor[],
+): Promise<{ updated: number; added: number }> {
+  const me = await getMyAgentRow();
+  const { data: existing, error: exErr } = await supabase
+    .from("debtors")
+    .select("id, loan_reference")
+    .eq("portfolio_id", portfolioId);
+  if (exErr) throw exErr;
+
+  const idByLoanRef = new Map(
+    (existing ?? [])
+      .filter((d) => d.loan_reference)
+      .map((d) => [(d.loan_reference as string).trim().toLowerCase(), d.id as string]),
+  );
+
+  const toUpdate: { id: string; row: UploadedDebtor }[] = [];
+  const toInsert: UploadedDebtor[] = [];
+  for (const r of rows) {
+    const existingId = idByLoanRef.get(r.loanReference.trim().toLowerCase());
+    if (existingId) toUpdate.push({ id: existingId, row: r });
+    else toInsert.push(r);
+  }
+
+  // Updates touch different rows with the same shape, so they can run concurrently — chunked
+  // to avoid opening hundreds of simultaneous requests on a large re-upload.
+  for (let i = 0; i < toUpdate.length; i += CHUNK_SIZE) {
+    const chunk = toUpdate.slice(i, i + CHUNK_SIZE);
+    const results = await Promise.all(
+      chunk.map(({ id, row }) =>
+        supabase
+          .from("debtors")
+          .update({
+            name: row.name,
+            phone_primary: row.phone,
+            email: row.email || null,
+            loan_amount: row.loanAmount,
+            outstanding_balance: row.loanAmount,
+            dpd: row.dpd,
+            extra: row.extra,
+          })
+          .eq("id", id),
+      ),
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw failed.error;
+  }
+
+  for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+    const chunk = toInsert.slice(i, i + CHUNK_SIZE).map((r) => ({
+      id: r.id,
+      client_id: me?.client_id,
+      portfolio_id: portfolioId,
+      assigned_agent_id: null,
+      name: r.name,
+      phone_primary: r.phone,
+      email: r.email || null,
+      loan_amount: r.loanAmount,
+      outstanding_balance: r.loanAmount,
+      dpd: r.dpd,
+      loan_reference: r.loanReference,
+      extra: r.extra,
+    }));
+    const { error } = await supabase.from("debtors").insert(chunk);
+    if (error) throw error;
+  }
+
+  await refreshPortfolios();
+  return { updated: toUpdate.length, added: toInsert.length };
+}
+
 /** Updates portfolio-level metadata (ownership/settings/details) — never touches debtor rows. */
 export async function updatePortfolioMeta(
   id: string,

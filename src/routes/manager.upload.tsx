@@ -53,6 +53,12 @@ import {
 import { findTemplate, saveTemplate, refreshMappingTemplates } from "@/lib/mapping-template-store";
 import { AssignAgentsStep } from "@/components/assign-agents-step";
 import { PortfolioSettingsStep, CALL_MODE_META } from "@/components/portfolio-settings-step";
+import {
+  STD_FIELDS,
+  REQUIRED_STD_FIELDS,
+  mappingFromResult,
+  type StdFieldKey,
+} from "@/lib/csv-fields";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/manager/upload")({
@@ -74,31 +80,6 @@ const STEP_LABELS: Record<Step, string> = {
   preview: "6. Review & Upload",
   done: "Done",
 };
-
-// Standard fields we need from the CSV
-const STD_FIELDS = [
-  { key: "loan_id", label: "Loan / Account ID", required: true },
-  { key: "name", label: "Borrower Name", required: true },
-  { key: "phone", label: "Phone Number", required: true },
-  { key: "loan_amount", label: "Outstanding Amount", required: true },
-  { key: "dpd", label: "Days Past Due", required: true },
-  { key: "email", label: "Email Address", required: false },
-  { key: "address", label: "Address", required: false },
-  { key: "city", label: "City", required: false },
-  { key: "state", label: "State", required: false },
-  { key: "dob", label: "Date of Birth", required: false },
-  { key: "employer", label: "Employer", required: false },
-  { key: "income", label: "Monthly Income", required: false },
-] as const;
-
-type StdFieldKey = (typeof STD_FIELDS)[number]["key"];
-
-// Extract the chosen source header per field from a resolver result
-function mappingFromResult(result: MappingResult): Record<StdFieldKey, string> {
-  const m = {} as Record<StdFieldKey, string>;
-  for (const { key } of STD_FIELDS) m[key] = result[key]?.column ?? "";
-  return m;
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -248,7 +229,7 @@ function PortfolioUploadPage() {
   // doesn't mean every cell in it is filled. 1-indexed CSV row numbers (header row + 1) so
   // managers can jump straight to the offending cell in their source file, and each entry
   // names which field(s) were blank rather than a single generic "something's empty".
-  const requiredFields = useMemo(() => STD_FIELDS.filter((f) => f.required), []);
+  const requiredFields = REQUIRED_STD_FIELDS;
   const rowIssues = useMemo(
     () =>
       rawRows.reduce<{ row: number; fields: string[] }[]>((acc, vals, i) => {
@@ -397,7 +378,7 @@ function PortfolioUploadPage() {
     setUploadProgress(0);
   };
 
-  const unmappedRequired = STD_FIELDS.filter((f) => f.required && !mapping[f.key]);
+  const unmappedRequired = REQUIRED_STD_FIELDS.filter((f) => !mapping[f.key]);
 
   return (
     <div className="space-y-6">
@@ -972,7 +953,7 @@ function PortfolioUploadPage() {
               </CardHeader>
               <CardContent className="pt-3">
                 <div className="space-y-2">
-                  {STD_FIELDS.filter((f) => f.required).map(({ key, label }) => (
+                  {REQUIRED_STD_FIELDS.map(({ key, label }) => (
                     <div key={key} className="text-xs">
                       <div className="flex items-center gap-1.5 mb-0.5">
                         <Badge variant="default" className="text-[9px] h-4">
