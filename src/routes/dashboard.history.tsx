@@ -165,6 +165,10 @@ const OUTCOME_LABEL: Record<string, string> = {
   settlement: "Settlement",
 };
 
+// Canonical display order for the disposition chip row below — same fixed set regardless
+// of what's actually in the data, matching how the channel chip row above it behaves.
+const OUTCOME_ORDER = Object.keys(OUTCOME_LABEL);
+
 function channelFor(callType: DispositionRecord["callType"]): Channel {
   if (callType === "ai" || callType === "bot") return "call_ai";
   if (callType === "ivr") return "ivr";
@@ -237,10 +241,14 @@ function ActivityHistoryPage() {
     return counts;
   }, [events]);
 
-  const resultOptions = useMemo(
-    () => Array.from(new Set(events.map((e) => e.result))).sort(),
-    [events],
-  );
+  const resultCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: events.length };
+    for (const key of OUTCOME_ORDER) {
+      const label = OUTCOME_LABEL[key];
+      counts[label] = events.filter((e) => e.result === label).length;
+    }
+    return counts;
+  }, [events]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -369,6 +377,43 @@ function ActivityHistoryPage() {
         })}
       </div>
 
+      {/* Disposition filter chips */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-0.5 text-[11px] font-medium text-muted-foreground">Disposition:</span>
+        <button
+          type="button"
+          onClick={() => setResult("all")}
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all",
+            result === "all"
+              ? "border-foreground/40 bg-muted/40 text-foreground"
+              : "border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+          )}
+        >
+          All <span className="opacity-60">({resultCounts.all})</span>
+        </button>
+        {OUTCOME_ORDER.map((key) => {
+          const label = OUTCOME_LABEL[key];
+          const tone = OUTCOME_TONE[key] ?? "neutral";
+          const active = result === label;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setResult(label)}
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all",
+                active
+                  ? TONE_CLS[tone]
+                  : "border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+              )}
+            >
+              {label} <span className="opacity-60">({resultCounts[label]})</span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Filter bar */}
       <Card>
         <CardHeader className="pb-3 border-b border-border">
@@ -382,19 +427,6 @@ function ActivityHistoryPage() {
                 className="pl-8 h-9 text-sm"
               />
             </div>
-            <Select value={result} onValueChange={setResult}>
-              <SelectTrigger className="h-9 w-[150px] text-sm">
-                <SelectValue placeholder="Result" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All results</SelectItem>
-                {resultOptions.map((r) => (
-                  <SelectItem key={r} value={r}>
-                    {r}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Select value={day} onValueChange={(v) => setDay(v as typeof day)}>
               <SelectTrigger className="h-9 w-[130px] text-sm">
                 <SelectValue placeholder="Date" />
