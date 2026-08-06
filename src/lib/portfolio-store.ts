@@ -1,11 +1,11 @@
 import type { DPDBucket } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
 
-// The upload form shows human-readable product labels, but portfolios.product_type has a
-// CHECK constraint restricting it to this fixed snake_case enum (see schema.sql) — sending
-// the raw label straight through fails that constraint on every upload where a product is
-// picked. Keep these two maps in sync with each other and with manager.upload.tsx's options.
-const PRODUCT_LABEL_TO_ENUM: Record<string, string> = {
+// The upload/edit forms show human-readable product labels, but portfolios.product_type has
+// a CHECK constraint restricting it to this fixed snake_case enum (see schema.sql) — sending
+// the raw label straight through fails that constraint on every save where a product is
+// picked. Exported so every picker (upload wizard, edit dialog) reads the same option list.
+export const PRODUCT_LABEL_TO_ENUM: Record<string, string> = {
   "Personal Loan": "personal_loan",
   "Credit Card NPA": "credit_card",
   "MSME Working Capital": "business_loan",
@@ -68,6 +68,13 @@ export const DEFAULT_PORTFOLIO_SETTINGS: PortfolioSettings = {
   abandonRateTarget: 3,
 };
 
+/** A manager-set collection goal for one agent on one portfolio — distinct from the agent's
+ * account-wide agents.daily_target. Either field may be set alone. */
+export interface AgentTarget {
+  targetAmount?: number;
+  targetAccounts?: number;
+}
+
 export interface UploadedPortfolio {
   id: string;
   name: string;
@@ -78,6 +85,7 @@ export interface UploadedPortfolio {
   managerId?: string; // owning manager's account email; undefined = unassigned
   teamId?: string;
   settings: PortfolioSettings;
+  agentTargets: Record<string, AgentTarget>; // keyed by agent email
 }
 
 const KEY = "recoveryai_portfolios_cache";
@@ -116,6 +124,30 @@ export async function refreshPortfolios(): Promise<void> {
 
   const emailById = new Map(agentRows.map((a) => [a.id, a.email]));
 
+  // Best-effort: queried separately, and swallowed on failure (e.g. the
+  // 20260806_portfolio_agent_targets.sql migration not applied yet) so a missing/broken
+  // targets table never blocks the rest of the portfolio sync.
+  const targetsByPortfolio = new Map<string, Record<string, AgentTarget>>();
+  try {
+    const { data: targetRows, error: tErr } = await supabase
+      .from("portfolio_agent_targets")
+      .select("portfolio_id, agent_id, target_amount, target_accounts");
+    if (!tErr && targetRows) {
+      for (const t of targetRows) {
+        const email = emailById.get(t.agent_id);
+        if (!email) continue;
+        const forPortfolio = targetsByPortfolio.get(t.portfolio_id) ?? {};
+        forPortfolio[email] = {
+          targetAmount: t.target_amount != null ? Number(t.target_amount) : undefined,
+          targetAccounts: t.target_accounts ?? undefined,
+        };
+        targetsByPortfolio.set(t.portfolio_id, forPortfolio);
+      }
+    }
+  } catch {
+    // ignore — targets are supplementary, not required for the rest of the app to work
+  }
+
   const portfolios: UploadedPortfolio[] = portfolioRows.map((p) => ({
     id: p.id,
     name: p.name,
@@ -125,6 +157,7 @@ export async function refreshPortfolios(): Promise<void> {
     managerId: p.manager_id ? emailById.get(p.manager_id) : undefined,
     teamId: p.team_id ?? undefined,
     settings: (p.settings as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
+    agentTargets: targetsByPortfolio.get(p.id) ?? {},
     rows: debtorRows
       .filter((d) => d.portfolio_id === p.id)
       .map((d) => ({
@@ -200,10 +233,17 @@ export async function createPortfolio(
   await refreshPortfolios();
 }
 
-/** Updates portfolio-level metadata only (ownership/settings) — never touches debtor rows. */
+/** Updates portfolio-level metadata (ownership/settings/details) — never touches debtor rows. */
 export async function updatePortfolioMeta(
   id: string,
-  patch: { managerId?: string; teamId?: string; settings?: PortfolioSettings },
+  patch: {
+    managerId?: string;
+    teamId?: string;
+    settings?: PortfolioSettings;
+    name?: string;
+    lender?: string;
+    product?: string;
+  },
 ): Promise<void> {
   const update: Record<string, unknown> = {};
   if (patch.managerId !== undefined) {
@@ -213,9 +253,66 @@ export async function updatePortfolioMeta(
   }
   if (patch.teamId !== undefined) update.team_id = patch.teamId || null;
   if (patch.settings !== undefined) update.settings = patch.settings;
+  if (patch.name !== undefined) update.name = patch.name;
+  if (patch.lender !== undefined) update.lender_name = patch.lender;
+  if (patch.product !== undefined)
+    update.product_type = patch.product ? (PRODUCT_LABEL_TO_ENUM[patch.product] ?? null) : null;
 
   const { error } = await supabase.from("portfolios").update(update).eq("id", id);
   if (error) throw error;
+  await refreshPortfolios();
+}
+
+/** Upserts each agent's collection target for one portfolio. Passing an entry with both
+ * fields undefined deletes that agent's row (clears the target back to "not set"). */
+export async function setPortfolioAgentTargets(
+  portfolioId: string,
+  targets: Record<string, AgentTarget>, // keyed by agent email
+): Promise<void> {
+  const me = await getMyAgentRow();
+  const { data: agentRows } = await supabase.from("agents").select("id, email");
+  const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
+
+  const toUpsert: {
+    client_id?: string;
+    portfolio_id: string;
+    agent_id: string;
+    target_amount: number | null;
+    target_accounts: number | null;
+  }[] = [];
+  const toClear: string[] = [];
+
+  for (const [email, t] of Object.entries(targets)) {
+    const agentId = idByEmail.get(email);
+    if (!agentId) continue;
+    if (t.targetAmount == null && t.targetAccounts == null) {
+      toClear.push(agentId);
+      continue;
+    }
+    toUpsert.push({
+      client_id: me?.client_id,
+      portfolio_id: portfolioId,
+      agent_id: agentId,
+      target_amount: t.targetAmount ?? null,
+      target_accounts: t.targetAccounts ?? null,
+    });
+  }
+
+  if (toUpsert.length) {
+    const { error } = await supabase
+      .from("portfolio_agent_targets")
+      .upsert(toUpsert, { onConflict: "portfolio_id,agent_id" });
+    if (error) throw error;
+  }
+  if (toClear.length) {
+    const { error } = await supabase
+      .from("portfolio_agent_targets")
+      .delete()
+      .eq("portfolio_id", portfolioId)
+      .in("agent_id", toClear);
+    if (error) throw error;
+  }
+
   await refreshPortfolios();
 }
 

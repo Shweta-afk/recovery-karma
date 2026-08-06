@@ -66,19 +66,40 @@ function distributeEvenly(agentIds: string[], total: number): Record<string, num
   return result;
 }
 
-/** Slice the portfolio's row IDs into per-agent chunks matching `counts`, in agent order. */
+/** Splits rows across agents matching each agent's target `counts`, while also balancing
+ * total loan amount (principal) per agent — not just headcount. A plain sequential slice
+ * (take rows in upload order until each agent's count is filled) hits the count target but
+ * leaves the actual ₹ split up to whatever order the accounts happened to arrive in, which
+ * regularly stacks the high-value accounts onto whichever agent's slice landed first.
+ *
+ * Uses a greedy longest-processing-time-first heuristic: place the largest remaining loan
+ * with whichever agent (still under their count target) currently has the smallest running
+ * total — a standard, cheap way to balance sums across fixed-size buckets. */
 function toIdSlices(
   rows: UploadedDebtor[],
   agents: AgentRef[],
   counts: Record<string, number>,
 ): Record<string, string[]> {
-  const ids = rows.map((r) => r.id);
-  let offset = 0;
   const result: Record<string, string[]> = {};
+  const remaining: Record<string, number> = {};
+  const totals: Record<string, number> = {};
   for (const a of agents) {
-    const count = counts[a.id] ?? 0;
-    result[a.id] = ids.slice(offset, offset + count);
-    offset += count;
+    result[a.id] = [];
+    remaining[a.id] = counts[a.id] ?? 0;
+    totals[a.id] = 0;
+  }
+
+  const sorted = [...rows].sort((a, b) => b.loanAmount - a.loanAmount);
+  for (const r of sorted) {
+    let best: string | null = null;
+    for (const a of agents) {
+      if (remaining[a.id] <= 0) continue;
+      if (best === null || totals[a.id] < totals[best]) best = a.id;
+    }
+    if (best === null) break; // every agent's count target is already filled
+    result[best].push(r.id);
+    remaining[best] -= 1;
+    totals[best] += r.loanAmount;
   }
   return result;
 }

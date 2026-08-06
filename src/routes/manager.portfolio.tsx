@@ -5,8 +5,14 @@ import {
   refreshPortfolios,
   assignDebtors,
   transferDebtor,
+  updatePortfolioMeta,
+  setPortfolioAgentTargets,
+  PRODUCT_LABEL_TO_ENUM,
+  DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
   type UploadedDebtor,
+  type PortfolioSettings,
+  type AgentTarget,
 } from "@/lib/portfolio-store";
 import {
   Briefcase,
@@ -19,12 +25,16 @@ import {
   Shuffle,
   Loader2,
   ArrowLeftRight,
+  Pencil,
+  Target,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCsv } from "@/lib/csv-export";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -41,6 +51,7 @@ import { getAgentDispositions, refreshDispositions, calcStats } from "@/lib/disp
 import { useAuth } from "@/lib/auth";
 import { useStorageSync } from "@/lib/storage-sync";
 import { AssignAgentsStep } from "@/components/assign-agents-step";
+import { PortfolioSettingsStep } from "@/components/portfolio-settings-step";
 
 export const Route = createFileRoute("/manager/portfolio")({
   head: () => ({ meta: [{ title: "Portfolio Overview · SamvadX" }] }),
@@ -259,12 +270,14 @@ function PortfolioDetail({
   agents,
   onClose,
   onReassign,
+  onEdit,
 }: {
   p: Portfolio;
   raw: UploadedPortfolio | null;
   agents: AgentRef[];
   onClose: () => void;
   onReassign: () => void;
+  onEdit: () => void;
 }) {
   const recoveryPct =
     p.totalOutstanding > 0 ? ((p.recovered / p.totalOutstanding) * 100).toFixed(1) : "0.0";
@@ -288,13 +301,19 @@ function PortfolioDetail({
               {p.lender} · {p.id} · Uploaded {p.uploadedOn}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground text-xs border border-border rounded px-2 py-1"
-          >
-            ✕ Close
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={onEdit}>
+              <Pencil className="h-3 w-3" />
+              Edit
+            </Button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground text-xs border border-border rounded px-2 py-1"
+            >
+              ✕ Close
+            </button>
+          </div>
         </div>
 
         <div className="p-5 space-y-5">
@@ -506,6 +525,189 @@ function ReassignDialog({
   );
 }
 
+/* ─── Edit Portfolio dialog ──────────────────────────────────────────────── */
+
+function EditPortfolioDialog({
+  portfolio,
+  agents,
+  onClose,
+}: {
+  portfolio: UploadedPortfolio | null;
+  agents: AgentRef[];
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [lender, setLender] = useState("");
+  const [product, setProduct] = useState("");
+  const [settings, setSettings] = useState<PortfolioSettings>(DEFAULT_PORTFOLIO_SETTINGS);
+  const [targets, setTargets] = useState<Record<string, AgentTarget>>({});
+  const [saving, setSaving] = useState(false);
+
+  // Re-seed local state whenever a different portfolio is opened for editing
+  useEffect(() => {
+    if (!portfolio) return;
+    setName(portfolio.name);
+    setLender(portfolio.lender);
+    setProduct(portfolio.product);
+    setSettings(portfolio.settings);
+    // Falls back to {} for a portfolio cached in localStorage before agentTargets existed
+    setTargets(portfolio.agentTargets ?? {});
+  }, [portfolio]);
+
+  if (!portfolio) return null;
+
+  const setTarget = (agentId: string, patch: Partial<AgentTarget>) => {
+    setTargets((prev) => ({ ...prev, [agentId]: { ...prev[agentId], ...patch } }));
+  };
+
+  const handleSave = async () => {
+    if (!name.trim() || !lender.trim()) {
+      toast.error("Portfolio name and lender can't be empty");
+      return;
+    }
+    setSaving(true);
+    try {
+      await Promise.all([
+        updatePortfolioMeta(portfolio.id, { name, lender, product, settings }),
+        setPortfolioAgentTargets(portfolio.id, targets),
+      ]);
+      toast.success("Portfolio updated");
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save portfolio");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={!!portfolio}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-sm">Edit Portfolio · {portfolio.name}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-5">
+          {/* Details */}
+          <div className="space-y-3">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Details
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-pname">Portfolio Name</Label>
+                <Input id="edit-pname" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-lender">Lender / Client</Label>
+                <Input
+                  id="edit-lender"
+                  value={lender}
+                  onChange={(e) => setLender(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>Product Type</Label>
+                <Select value={product} onValueChange={setProduct}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select product" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(PRODUCT_LABEL_TO_ENUM).map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          {/* Dial settings */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Dial Settings
+            </div>
+            <PortfolioSettingsStep settings={settings} onChange={setSettings} />
+          </div>
+
+          {/* Agent targets */}
+          {agents.length > 0 && (
+            <div className="space-y-3 border-t border-border pt-4">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                <Target className="h-3.5 w-3.5" />
+                Agent Targets
+              </div>
+              <p className="-mt-1 text-[11px] text-muted-foreground">
+                Optional collection goal per agent for this portfolio — separate from account
+                allocation.
+              </p>
+              <div className="divide-y divide-border rounded-lg border border-border">
+                {agents.map((a) => {
+                  const t = targets[a.id] ?? {};
+                  return (
+                    <div key={a.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+                      <div className="min-w-[100px] flex-1 text-sm font-medium text-foreground">
+                        {a.name}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-[10px] text-muted-foreground">₹ Target</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          className="h-7 w-28 text-xs"
+                          value={t.targetAmount ?? ""}
+                          placeholder="—"
+                          onChange={(e) =>
+                            setTarget(a.id, {
+                              targetAmount: e.target.value === "" ? undefined : +e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-[10px] text-muted-foreground">Accounts</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          className="h-7 w-20 text-xs"
+                          value={t.targetAccounts ?? ""}
+                          placeholder="—"
+                          onChange={(e) =>
+                            setTarget(a.id, {
+                              targetAccounts: e.target.value === "" ? undefined : +e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Save Changes
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ─── page ───────────────────────────────────────────────────────────────── */
 
 function PortfolioOverviewPage() {
@@ -516,6 +718,7 @@ function PortfolioOverviewPage() {
   const [statusFilter, setStatusFilter] = useState<Portfolio["status"] | "all">("all");
   const [selected, setSelected] = useState<Portfolio | null>(null);
   const [reassignTarget, setReassignTarget] = useState<UploadedPortfolio | null>(null);
+  const [editTarget, setEditTarget] = useState<UploadedPortfolio | null>(null);
   const [rawPortfolios, setRawPortfolios] = useState<UploadedPortfolio[]>(() =>
     getPortfolios().filter((p) => p.managerId === managerId),
   );
@@ -553,6 +756,11 @@ function PortfolioOverviewPage() {
   const openReassign = (p: Portfolio) => {
     const raw = rawPortfolios.find((r) => r.id === p.id);
     if (raw) setReassignTarget(raw);
+  };
+
+  const openEdit = (p: Portfolio) => {
+    const raw = rawPortfolios.find((r) => r.id === p.id);
+    if (raw) setEditTarget(raw);
   };
 
   return (
@@ -803,6 +1011,14 @@ function PortfolioOverviewPage() {
                                 <Shuffle className="h-3 w-3" />
                                 {p.assignedAccounts === 0 ? "Assign" : "Reassign"}
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => openEdit(p)}
+                                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-all"
+                              >
+                                <Pencil className="h-3 w-3" />
+                                Edit
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -826,9 +1042,18 @@ function PortfolioOverviewPage() {
             openReassign(selected);
             setSelected(null);
           }}
+          onEdit={() => {
+            openEdit(selected);
+            setSelected(null);
+          }}
         />
       )}
       <ReassignDialog portfolio={reassignTarget} onClose={() => setReassignTarget(null)} />
+      <EditPortfolioDialog
+        portfolio={editTarget}
+        agents={agents}
+        onClose={() => setEditTarget(null)}
+      />
     </div>
   );
 }
