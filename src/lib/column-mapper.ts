@@ -279,10 +279,17 @@ function scoreFieldColumn(
   const headerScore = Math.max(0, ...spec.aliases.map((a) => headerSim(colNorm, a)));
   const valueScore = spec.detect ? spec.detect(values) : 0;
 
-  // Strong header hit dominates; otherwise blend header + value evidence
+  // Strong header hit dominates; otherwise blend header + value evidence. The blended score
+  // is capped below 0.92 (the "strong header hit" threshold above) so a fuzzy/value-inferred
+  // guess can never tie with, let alone beat, a genuine alias match — without this cap, a
+  // header like "Company Name" (an exact alias for employer) could blend its way up to the
+  // same 1.0 ceiling as "name"'s fuzzy contains-match ("company_name" contains "name") plus
+  // its value match (an all-letters column looks like a human name too), and the greedy
+  // assigner's tie-break would then hand that column to whichever field is declared first —
+  // silently mapping the lender's own company name onto every debtor's "name".
   if (headerScore >= 0.92)
     return { score: Math.min(1, headerScore + valueScore * 0.05), source: "alias" };
-  const blended = Math.min(1, 0.7 * headerScore + 0.5 * valueScore);
+  const blended = Math.min(0.9, 0.7 * headerScore + 0.5 * valueScore);
   const source: MappingSource = headerScore >= valueScore ? "fuzzy" : "value";
   return { score: blended, source };
 }

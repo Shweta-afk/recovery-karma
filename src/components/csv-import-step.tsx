@@ -140,7 +140,9 @@ export function CsvImportStep({
 
   const unmappedRequired = REQUIRED_STD_FIELDS.filter((f) => !mapping[f.key]);
   const hasFile = rawHeaders.length > 0;
-  const valid = hasFile && unmappedRequired.length === 0 && rowIssues.length === 0;
+  // Not gated on unmappedRequired/rowIssues — those are shown as warnings below, but a row
+  // missing name/phone just gets skipped at import time (reported back), not blocked here.
+  const valid = hasFile;
 
   useEffect(() => {
     onChange({ rows: mappedRows, valid, rawHeaders, mapping });
@@ -342,16 +344,18 @@ export function CsvImportStep({
           </div>
 
           {unmappedRequired.length > 0 && (
-            <p className="text-xs text-destructive flex items-center gap-1">
-              <span className="font-semibold">Missing required:</span>{" "}
-              {unmappedRequired.map((f) => f.label).join(", ")}
+            <p className="text-xs text-amber-600 flex items-center gap-1">
+              <span className="font-semibold">Not mapped:</span>{" "}
+              {unmappedRequired.map((f) => f.label).join(", ")} — rows missing these will be
+              skipped, everything else still goes through.
             </p>
           )}
 
           {rowIssues.length > 0 && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive space-y-1.5">
+            <div className="rounded-md border border-amber-400/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 space-y-1.5">
               <p>
-                {rowIssues.length} row{rowIssues.length === 1 ? "" : "s"} missing required data.
+                {rowIssues.length} row{rowIssues.length === 1 ? "" : "s"} missing name or phone —
+                will be skipped, everything else still goes through.
               </p>
               <ul className="list-disc space-y-0.5 pl-4">
                 {rowIssues.slice(0, 10).map((r) => (

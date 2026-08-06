@@ -180,6 +180,7 @@ function PortfolioUploadPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [uploadedCount, setUploadedCount] = useState(0);
+  const [uploadedSkipped, setUploadedSkipped] = useState(0);
 
   // Derive mapped rows from raw + mapping. Memoized so the array reference stays stable
   // across renders — AssignAgentsStep depends on `rows` identity in an effect, and an
@@ -202,8 +203,8 @@ function PortfolioUploadPage() {
         });
         return {
           id: crypto.randomUUID(),
-          // No fallback placeholder — a blank required field is a bad row, surfaced via
-          // rowIssues below and blocked at upload, not silently papered over.
+          // No fallback placeholder — a blank required field (name/phone) is surfaced via
+          // rowIssues below and skipped at upload (createPortfolio), not silently papered over.
           loanReference: get("loan_id"),
           name: get("name"),
           phone: get("phone"),
@@ -297,21 +298,10 @@ function PortfolioUploadPage() {
   const allocationComplete = managerAgents.length === 0 || totalAllocated === mappedRows.length;
 
   const handleUpload = async () => {
-    const missing = requiredFields.filter((f) => !mapping[f.key]);
-    if (missing.length) {
-      toast.error(`Map required columns first: ${missing.map((f) => f.label).join(", ")}`);
-      return;
-    }
-    if (rowIssues.length) {
-      const detail = rowIssues
-        .slice(0, 5)
-        .map((r) => `row ${r.row} (${r.fields.join(", ")})`)
-        .join("; ");
-      toast.error(
-        `${rowIssues.length} row${rowIssues.length === 1 ? "" : "s"} missing required data — ${detail}${rowIssues.length > 5 ? ", …" : ""}. Fix the source file and re-upload.`,
-      );
-      return;
-    }
+    // Unmapped required columns / blank required cells are surfaced as warnings elsewhere in
+    // this step (not blocked here) — a row that's missing name or phone just gets skipped at
+    // insert time (createPortfolio reports how many), rather than the whole batch being
+    // refused over a handful of bad rows in an otherwise-good file.
     if (!portfolioName || !lenderName) {
       toast.error("Fill portfolio name and lender");
       return;
@@ -342,18 +332,25 @@ function PortfolioUploadPage() {
         settings,
         agentTargets: {},
       };
-      await createPortfolio(portfolio, team && managerAgents.length > 0 ? allocation : {});
+      const { uploaded, skipped } = await createPortfolio(
+        portfolio,
+        team && managerAgents.length > 0 ? allocation : {},
+      );
       // Learn this bank's mapping so future uploads auto-apply it
       await saveTemplate(lenderName, rawHeaders, mapping);
 
       clearInterval(tick);
       setUploadProgress(100);
-      setUploadedCount(mappedRows.length);
+      setUploadedCount(uploaded);
+      setUploadedSkipped(skipped);
       setUploading(false);
       setStep("done");
-      toast.success(`${mappedRows.length} accounts uploaded and assigned`, {
-        description: `${portfolioName} · ${lenderName} · mapping saved for next time`,
-      });
+      toast.success(
+        skipped > 0
+          ? `${uploaded} accounts uploaded, ${skipped} skipped (missing name or phone)`
+          : `${uploaded} accounts uploaded and assigned`,
+        { description: `${portfolioName} · ${lenderName} · mapping saved for next time` },
+      );
     } catch (e) {
       clearInterval(tick);
       setUploading(false);
@@ -423,6 +420,15 @@ function PortfolioUploadPage() {
             <p className="text-sm text-muted-foreground max-w-xs">
               <strong>{uploadedCount} accounts</strong> are now visible in the debtor list,
               portfolio overview, and each agent's queue.
+              {uploadedSkipped > 0 && (
+                <>
+                  {" "}
+                  <span className="text-orange-600">
+                    {uploadedSkipped} row{uploadedSkipped === 1 ? "" : "s"} skipped
+                  </span>{" "}
+                  — missing a name or phone number.
+                </>
+              )}
             </p>
             <div className="flex items-center gap-2 mt-2">
               <Button onClick={resetForm} variant="outline" className="gap-2">
@@ -698,18 +704,15 @@ function PortfolioUploadPage() {
                   </div>
 
                   {unmappedRequired.length > 0 && (
-                    <p className="mt-3 text-xs text-destructive flex items-center gap-1">
-                      <span className="font-semibold">Missing required:</span>{" "}
-                      {unmappedRequired.map((f) => f.label).join(", ")}
+                    <p className="mt-3 text-xs text-amber-600 flex items-center gap-1">
+                      <span className="font-semibold">Not mapped:</span>{" "}
+                      {unmappedRequired.map((f) => f.label).join(", ")} — rows missing these will be
+                      skipped at upload, everything else still goes through.
                     </p>
                   )}
 
                   {step === "map" && (
-                    <Button
-                      className="mt-4 w-full"
-                      disabled={unmappedRequired.length > 0}
-                      onClick={() => setStep("settings")}
-                    >
+                    <Button className="mt-4 w-full" onClick={() => setStep("settings")}>
                       Continue to Settings <ArrowRight className="h-3.5 w-3.5 ml-1" />
                     </Button>
                   )}
@@ -891,10 +894,11 @@ function PortfolioUploadPage() {
                   </div>
 
                   {rowIssues.length > 0 && (
-                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive space-y-1.5">
+                    <div className="rounded-md border border-amber-400/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 space-y-1.5">
                       <p>
-                        {rowIssues.length} row{rowIssues.length === 1 ? "" : "s"} missing required
-                        data. Fix the source file and re-upload — every account needs these fields.
+                        {rowIssues.length} row{rowIssues.length === 1 ? "" : "s"} missing name or
+                        phone — these will be skipped on upload, everything else still goes through.
+                        Fix the source file and re-upload later if you want them included.
                       </p>
                       <ul className="list-disc space-y-0.5 pl-4">
                         {rowIssues.slice(0, 10).map((r) => (
@@ -917,13 +921,11 @@ function PortfolioUploadPage() {
                     </div>
                   )}
 
-                  <Button
-                    className="w-full gap-2"
-                    onClick={handleUpload}
-                    disabled={uploading || rowIssues.length > 0}
-                  >
+                  <Button className="w-full gap-2" onClick={handleUpload} disabled={uploading}>
                     <Upload className="h-4 w-4" />
-                    Upload &amp; Assign {mappedRows.length} Accounts
+                    Upload &amp; Assign {mappedRows.length - rowIssues.length} Account
+                    {mappedRows.length - rowIssues.length === 1 ? "" : "s"}
+                    {rowIssues.length > 0 && ` (${rowIssues.length} skipped)`}
                   </Button>
                 </CardContent>
               </Card>

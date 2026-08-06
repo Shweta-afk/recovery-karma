@@ -185,7 +185,7 @@ export async function refreshPortfolios(): Promise<void> {
 export async function createPortfolio(
   p: UploadedPortfolio,
   allocation: Record<string, string[]> = {},
-): Promise<void> {
+): Promise<{ uploaded: number; skipped: number }> {
   const me = await getMyAgentRow();
   const { data: agentRows } = await supabase.from("agents").select("id, email");
   const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
@@ -198,6 +198,13 @@ export async function createPortfolio(
     for (const debtorId of debtorIds) assignedIdFor.set(debtorId, agentUuid);
   }
 
+  // debtors.name/phone_primary are the only NOT NULL columns among the uploaded fields — a
+  // row missing either would fail the insert outright. Skip just those rows (reported back
+  // to the caller) rather than failing the whole batch over a handful of bad rows; everything
+  // else the manager can fix later (Remap Fields) without needing a clean file from the start.
+  const uploadable = p.rows.filter((r) => r.name.trim() && r.phone.trim());
+  const skipped = p.rows.length - uploadable.length;
+
   const { error: pErr } = await supabase.from("portfolios").insert({
     id: p.id,
     client_id: me?.client_id,
@@ -205,15 +212,15 @@ export async function createPortfolio(
     lender_name: p.lender,
     product_type: p.product ? (PRODUCT_LABEL_TO_ENUM[p.product] ?? null) : null,
     uploaded_by: me?.id,
-    total_accounts: p.rows.length,
+    total_accounts: uploadable.length,
     manager_id: managerAgentId,
     team_id: p.teamId,
     settings: p.settings,
   });
   if (pErr) throw pErr;
 
-  for (let i = 0; i < p.rows.length; i += CHUNK_SIZE) {
-    const chunk = p.rows.slice(i, i + CHUNK_SIZE).map((r) => ({
+  for (let i = 0; i < uploadable.length; i += CHUNK_SIZE) {
+    const chunk = uploadable.slice(i, i + CHUNK_SIZE).map((r) => ({
       id: r.id,
       client_id: me?.client_id,
       portfolio_id: p.id,
@@ -232,6 +239,7 @@ export async function createPortfolio(
   }
 
   await refreshPortfolios();
+  return { uploaded: uploadable.length, skipped };
 }
 
 /** Merges a re-uploaded/appended CSV into an existing portfolio: a row whose Loan/Account ID
@@ -242,7 +250,7 @@ export async function createPortfolio(
 export async function mergePortfolioRows(
   portfolioId: string,
   rows: UploadedDebtor[],
-): Promise<{ updated: number; added: number }> {
+): Promise<{ updated: number; added: number; skipped: number }> {
   const me = await getMyAgentRow();
   const { data: existing, error: exErr } = await supabase
     .from("debtors")
@@ -258,10 +266,18 @@ export async function mergePortfolioRows(
 
   const toUpdate: { id: string; row: UploadedDebtor }[] = [];
   const toInsert: UploadedDebtor[] = [];
+  let skipped = 0;
   for (const r of rows) {
     const existingId = idByLoanRef.get(r.loanReference.trim().toLowerCase());
-    if (existingId) toUpdate.push({ id: existingId, row: r });
-    else toInsert.push(r);
+    if (existingId) {
+      toUpdate.push({ id: existingId, row: r });
+    } else if (r.name.trim() && r.phone.trim()) {
+      toInsert.push(r);
+    } else {
+      // No existing account to update and not enough to create a new one — skip rather than
+      // insert a blank-name/blank-phone row.
+      skipped++;
+    }
   }
 
   // Updates touch different rows with the same shape, so they can run concurrently — chunked
@@ -269,20 +285,20 @@ export async function mergePortfolioRows(
   for (let i = 0; i < toUpdate.length; i += CHUNK_SIZE) {
     const chunk = toUpdate.slice(i, i + CHUNK_SIZE);
     const results = await Promise.all(
-      chunk.map(({ id, row }) =>
-        supabase
-          .from("debtors")
-          .update({
-            name: row.name,
-            phone_primary: row.phone,
-            email: row.email || null,
-            loan_amount: row.loanAmount,
-            outstanding_balance: row.loanAmount,
-            dpd: row.dpd,
-            extra: row.extra,
-          })
-          .eq("id", id),
-      ),
+      chunk.map(({ id, row }) => {
+        // A blank cell in the re-uploaded row shouldn't blow away a perfectly good existing
+        // name/phone — only overwrite when the new value actually has something in it.
+        const update: Record<string, unknown> = {
+          email: row.email || null,
+          loan_amount: row.loanAmount,
+          outstanding_balance: row.loanAmount,
+          dpd: row.dpd,
+          extra: row.extra,
+        };
+        if (row.name.trim()) update.name = row.name;
+        if (row.phone.trim()) update.phone_primary = row.phone;
+        return supabase.from("debtors").update(update).eq("id", id);
+      }),
     );
     const failed = results.find((r) => r.error);
     if (failed?.error) throw failed.error;
@@ -308,7 +324,7 @@ export async function mergePortfolioRows(
   }
 
   await refreshPortfolios();
-  return { updated: toUpdate.length, added: toInsert.length };
+  return { updated: toUpdate.length, added: toInsert.length, skipped };
 }
 
 /** Fixes a wrong original column mapping on data that's already been uploaded — no CSV

@@ -3,12 +3,17 @@
 // Keep in sync with column-mapper.ts's alias/detector specs, which key off these same names.
 import type { MappingResult } from "./column-mapper";
 
+// "required" here means the debtors table actually rejects the row without it (name and
+// phone_primary are the only NOT NULL columns among these — see schema.sql). loan_id/amount/
+// dpd are nullable/defaulted, so a blank cell there is a data-quality warning, not a reason
+// to refuse the whole upload — a manager should be able to fix those later (Remap Fields, or
+// a corrected re-upload) rather than being blocked from getting anything in at all.
 export const STD_FIELDS = [
-  { key: "loan_id", label: "Loan / Account ID", required: true },
+  { key: "loan_id", label: "Loan / Account ID", required: false },
   { key: "name", label: "Borrower Name", required: true },
   { key: "phone", label: "Phone Number", required: true },
-  { key: "loan_amount", label: "Outstanding Amount", required: true },
-  { key: "dpd", label: "Days Past Due", required: true },
+  { key: "loan_amount", label: "Outstanding Amount", required: false },
+  { key: "dpd", label: "Days Past Due", required: false },
   { key: "email", label: "Email Address", required: false },
   { key: "address", label: "Address", required: false },
   { key: "city", label: "City", required: false },

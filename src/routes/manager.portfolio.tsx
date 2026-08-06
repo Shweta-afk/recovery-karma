@@ -616,12 +616,14 @@ function EditPortfolioDialog({
     if (!csvResult || !csvResult.valid || csvResult.rows.length === 0) return;
     setImporting(true);
     try {
-      const { updated, added } = await mergePortfolioRows(portfolio.id, csvResult.rows);
+      const { updated, added, skipped } = await mergePortfolioRows(portfolio.id, csvResult.rows);
       // Learn this bank's mapping so a future upload/re-upload auto-applies it, same as the wizard.
       await saveTemplate(lender, csvResult.rawHeaders, csvResult.mapping);
-      toast.success(`${updated} account${updated === 1 ? "" : "s"} updated, ${added} added`, {
-        description: portfolio.name,
-      });
+      toast.success(
+        `${updated} account${updated === 1 ? "" : "s"} updated, ${added} added` +
+          (skipped > 0 ? `, ${skipped} skipped (missing name or phone)` : ""),
+        { description: portfolio.name },
+      );
       setCsvResult(null);
       setCsvKey((k) => k + 1);
     } catch (e) {
