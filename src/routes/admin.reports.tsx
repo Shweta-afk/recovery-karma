@@ -31,6 +31,7 @@ import {
 } from "@/lib/disposition-store";
 import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
 import { formatINR } from "@/lib/mock-debtors";
+import { getAgentTimeStats, formatDuration, formatClockTime } from "@/lib/agent-time-stats";
 
 export const Route = createFileRoute("/admin/reports")({
   head: () => ({ meta: [{ title: "Reports · SamvadX Admin" }] }),
@@ -38,6 +39,15 @@ export const Route = createFileRoute("/admin/reports")({
 });
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+
+function isSameDay(iso: string, now: Date): boolean {
+  const d = new Date(iso);
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
 
 function sanitize(v: string | number) {
   const s = String(v);
@@ -146,25 +156,44 @@ function AdminReportsPage() {
   );
 
   // Per-team stats
-  const teamStats = useMemo(
-    () =>
-      teams.map((team) => {
-        const teamDisps = disps.filter((d) => d.teamId === team.id);
-        const teamPortfolios = portfolios.filter((p) => p.teamId === team.id);
-        const assignedCount = teamPortfolios.reduce(
-          (s, p) => s + p.rows.filter((r) => r.assignedAgentId).length,
-          0,
+  const teamStats = useMemo(() => {
+    const now = new Date();
+    return teams.map((team) => {
+      const teamDisps = disps.filter((d) => d.teamId === team.id);
+      const teamPortfolios = portfolios.filter((p) => p.teamId === team.id);
+      const assignedCount = teamPortfolios.reduce(
+        (s, p) => s + p.rows.filter((r) => r.assignedAgentId).length,
+        0,
+      );
+      // Today's time breakdown per agent — see agent-time-stats.ts for what's real (calling)
+      // vs. estimated (idle/disposition/login-logout) pending a real presence-log table.
+      const todayTimeStats = team.agentIds.map((aid) => {
+        const todayDisps = teamDisps.filter(
+          (d) => d.agentId === aid && isSameDay(d.time, now),
         );
-        return {
-          team,
-          stats: calcStats(teamDisps),
-          assignedCount,
-          disps: teamDisps,
-          portfolios: teamPortfolios,
-        };
-      }),
-    [teams, disps, portfolios],
-  );
+        return getAgentTimeStats(aid, todayDisps);
+      });
+      const avgIdlePct =
+        todayTimeStats.length > 0
+          ? Math.round(
+              (todayTimeStats.reduce(
+                (s, t) => s + (t.loggedInSeconds > 0 ? t.idleSeconds / t.loggedInSeconds : 0),
+                0,
+              ) /
+                todayTimeStats.length) *
+                100,
+            )
+          : 0;
+      return {
+        team,
+        stats: calcStats(teamDisps),
+        assignedCount,
+        disps: teamDisps,
+        portfolios: teamPortfolios,
+        avgIdlePct,
+      };
+    });
+  }, [teams, disps, portfolios]);
 
   // All agents across all teams with stats
   const agentStats = useMemo(() => {
@@ -266,7 +295,7 @@ function AdminReportsPage() {
               No teams created yet. Go to Admin → Teams to create one.
             </p>
           )}
-          {teamStats.map(({ team, stats, assignedCount, disps: td, portfolios: tp }) => {
+          {teamStats.map(({ team, stats, assignedCount, disps: td, portfolios: tp, avgIdlePct }) => {
             const open = expandedTeam === team.id;
             return (
               <Card key={team.id} className="overflow-hidden">
@@ -312,6 +341,24 @@ function AdminReportsPage() {
                         <div className="text-muted-foreground">Collected</div>
                       </div>
                     )}
+                    <div
+                      className="text-center hidden md:block"
+                      title="Estimated — real presence tracking is coming soon"
+                    >
+                      <div
+                        className={cn(
+                          "font-semibold",
+                          avgIdlePct > 40
+                            ? "text-destructive"
+                            : avgIdlePct > 20
+                              ? "text-warning-foreground"
+                              : "text-foreground",
+                        )}
+                      >
+                        {avgIdlePct}%
+                      </div>
+                      <div className="text-muted-foreground">Avg Idle*</div>
+                    </div>
                     <button
                       type="button"
                       onClick={(e) => {
@@ -369,6 +416,15 @@ function AdminReportsPage() {
                             <th className="py-2 px-3 text-center font-medium text-muted-foreground">
                               Contact%
                             </th>
+                            <th className="py-2 px-3 text-left font-medium text-muted-foreground">
+                              Shift (today)*
+                            </th>
+                            <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                              Calling*
+                            </th>
+                            <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                              Idle*
+                            </th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
@@ -376,6 +432,8 @@ function AdminReportsPage() {
                             const ad = td.filter((d) => d.agentId === aid);
                             const as_ = calcStats(ad);
                             const ref = getAgentById(aid);
+                            const todayAd = ad.filter((d) => isSameDay(d.time, new Date()));
+                            const ts = getAgentTimeStats(aid, todayAd);
                             return (
                               <tr key={aid} className="hover:bg-muted/20">
                                 <td className="py-2 px-3 font-medium text-foreground">
@@ -401,12 +459,26 @@ function AdminReportsPage() {
                                     "—"
                                   )}
                                 </td>
+                                <td className="py-2 px-3 text-left text-muted-foreground whitespace-nowrap">
+                                  {formatClockTime(ts.loginTime)} –{" "}
+                                  {ts.logoutTime ? formatClockTime(ts.logoutTime) : "now"}
+                                </td>
+                                <td className="py-2 px-3 text-right text-foreground font-medium tabular-nums">
+                                  {formatDuration(ts.callingSeconds)}
+                                </td>
+                                <td className="py-2 px-3 text-right text-muted-foreground tabular-nums">
+                                  {formatDuration(ts.idleSeconds)}
+                                </td>
                               </tr>
                             );
                           })}
                         </tbody>
                       </table>
                     </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      * Shift/Calling/Idle are today's figures — Idle, Shift start/end are
+                      estimated pending real presence tracking; Calling time is real.
+                    </p>
 
                     {/* Portfolios for team */}
                     {tp.length > 0 && (

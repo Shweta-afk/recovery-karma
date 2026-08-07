@@ -23,6 +23,7 @@ import { Route as ManagerTeamRouteImport } from './routes/manager.team'
 import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
 import { Route as ManagerAuditRouteImport } from './routes/manager.audit'
+import { Route as DashboardTeamRouteImport } from './routes/dashboard.team'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard.settings'
 import { Route as DashboardReportsRouteImport } from './routes/dashboard.reports'
 import { Route as DashboardPaymentsRouteImport } from './routes/dashboard.payments'
@@ -106,6 +107,11 @@ const ManagerAuditRoute = ManagerAuditRouteImport.update({
   path: '/audit',
   getParentRoute: () => ManagerRoute,
 } as any)
+const DashboardTeamRoute = DashboardTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -186,6 +192,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/dashboard/team': typeof DashboardTeamRoute
   '/manager/audit': typeof ManagerAuditRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
@@ -211,6 +218,7 @@ export interface FileRoutesByTo {
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/dashboard/team': typeof DashboardTeamRoute
   '/manager/audit': typeof ManagerAuditRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
@@ -240,6 +248,7 @@ export interface FileRoutesById {
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/dashboard/team': typeof DashboardTeamRoute
   '/manager/audit': typeof ManagerAuditRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
@@ -270,6 +279,7 @@ export interface FileRouteTypes {
     | '/dashboard/payments'
     | '/dashboard/reports'
     | '/dashboard/settings'
+    | '/dashboard/team'
     | '/manager/audit'
     | '/manager/portfolio'
     | '/manager/queue'
@@ -295,6 +305,7 @@ export interface FileRouteTypes {
     | '/dashboard/payments'
     | '/dashboard/reports'
     | '/dashboard/settings'
+    | '/dashboard/team'
     | '/manager/audit'
     | '/manager/portfolio'
     | '/manager/queue'
@@ -323,6 +334,7 @@ export interface FileRouteTypes {
     | '/dashboard/payments'
     | '/dashboard/reports'
     | '/dashboard/settings'
+    | '/dashboard/team'
     | '/manager/audit'
     | '/manager/portfolio'
     | '/manager/queue'
@@ -442,6 +454,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ManagerAuditRouteImport
       parentRoute: typeof ManagerRoute
     }
+    '/dashboard/team': {
+      id: '/dashboard/team'
+      path: '/team'
+      fullPath: '/dashboard/team'
+      preLoaderRoute: typeof DashboardTeamRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/settings': {
       id: '/dashboard/settings'
       path: '/settings'
@@ -557,6 +576,7 @@ interface DashboardRouteChildren {
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
   DashboardReportsRoute: typeof DashboardReportsRoute
   DashboardSettingsRoute: typeof DashboardSettingsRoute
+  DashboardTeamRoute: typeof DashboardTeamRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
@@ -568,6 +588,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardPaymentsRoute: DashboardPaymentsRoute,
   DashboardReportsRoute: DashboardReportsRoute,
   DashboardSettingsRoute: DashboardSettingsRoute,
+  DashboardTeamRoute: DashboardTeamRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
 

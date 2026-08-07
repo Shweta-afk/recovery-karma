@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, useMemo } from "react";
 import {
   PhoneCall,
   PhoneIncoming,
@@ -11,6 +11,11 @@ import {
   Users,
   ExternalLink,
   CalendarDays,
+  LogIn,
+  LogOut,
+  Timer,
+  ClipboardList,
+  Info,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -24,6 +29,7 @@ import {
   refreshDispositions,
   type DispositionRecord,
 } from "@/lib/disposition-store";
+import { getAgentTimeStats, formatDuration, formatClockTime } from "@/lib/agent-time-stats";
 import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
 import { useStorageSync } from "@/lib/storage-sync";
 
@@ -190,6 +196,15 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
   const dailyCallTarget = useDailyCallTarget(user?.id);
   const { today, month, assignedPOS } = useAgentPeriodStats(agentId);
 
+  // Today's raw call logs, for the time-breakdown panel below — calling time is computed
+  // straight from these (real); everything else getAgentTimeStats derives is a placeholder
+  // pending a real presence/status-log table (see agent-time-stats.ts).
+  const todayDisps = useMemo(
+    () => (agentId ? getAgentDispositions(agentId).filter((d) => isSameDay(d.time, new Date())) : []),
+    [agentId, today],
+  );
+  const myTimeStats = useMemo(() => getAgentTimeStats(agentId, todayDisps), [agentId, todayDisps]);
+
   // "custom" has no real query behind it yet — same placeholder-on-today fallback the old
   // mock data used, kept so the UI doesn't break when that toggle is picked.
   const periodStats = period === "month" ? month : today;
@@ -340,6 +355,59 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
             </div>
           );
         })()}
+
+        {/* ── My Activity Today: idle / calling / disposition / login-logout ── */}
+        <div className="rounded-xl border border-border bg-card p-3">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              My Activity Today
+            </span>
+            <span
+              className="flex items-center gap-1 text-[10px] text-muted-foreground"
+              title="Calling time is real, from your logged calls. Idle, disposition and login/logout times are estimated — real tracking is coming soon."
+            >
+              <Info className="h-3 w-3" />
+              Idle/disposition/login times are estimated
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <KPICard
+              label="Login Time"
+              value={formatClockTime(myTimeStats.loginTime)}
+              hint="Start of shift"
+              icon={LogIn}
+              index={0}
+            />
+            <KPICard
+              label="Logout Time"
+              value={myTimeStats.logoutTime ? formatClockTime(myTimeStats.logoutTime) : "Active"}
+              hint={myTimeStats.logoutTime ? "End of shift" : "Still logged in"}
+              icon={LogOut}
+              index={1}
+            />
+            <KPICard
+              label="Calling Time"
+              value={formatDuration(myTimeStats.callingSeconds)}
+              hint="On live calls today"
+              icon={PhoneCall}
+              index={2}
+            />
+            <KPICard
+              label="Disposition Time"
+              value={formatDuration(myTimeStats.dispositionSeconds)}
+              hint="Wrap-up after calls"
+              icon={ClipboardList}
+              index={3}
+            />
+            <KPICard
+              label="Idle Time"
+              value={formatDuration(myTimeStats.idleSeconds)}
+              hint="Available, not on a call"
+              icon={Timer}
+              index={4}
+            />
+          </div>
+        </div>
 
         {/* ── Performance + Queue Overview side by side ── */}
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[3fr_2fr]">

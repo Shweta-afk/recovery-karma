@@ -14,6 +14,7 @@ import {
   Layers,
   AudioLines,
   FolderOpen,
+  Timer,
 } from "lucide-react";
 import {
   Sidebar,
@@ -33,6 +34,7 @@ const agentItems = [
   { title: "Call Queue", url: "/dashboard/call-queue", icon: PhoneCall },
   { title: "Activity History", url: "/dashboard/history", icon: History },
   { title: "Debtors", url: "/dashboard/debtors", icon: Users },
+  { title: "Team Activity", url: "/dashboard/team", icon: Timer },
   { title: "Messages", url: "/dashboard/messages", icon: MessageSquare },
   { title: "Payments", url: "/dashboard/payments", icon: CreditCard },
   { title: "Reports", url: "/dashboard/reports", icon: FileBarChart },
