@@ -1,6 +1,12 @@
-import type { DPDBucket } from "./mock-debtors";
+import type { DPDBucket, Debtor } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
-import { STD_FIELDS, slotsFromDebtor, debtorFieldsFromSlots, type StdFieldKey } from "./csv-fields";
+import {
+  STD_FIELDS,
+  slotsFromDebtor,
+  debtorFieldsFromSlots,
+  resolveRemapSource,
+  type StdFieldKey,
+} from "./csv-fields";
 
 // The upload/edit forms show human-readable product labels, but portfolios.product_type has
 // a CHECK constraint restricting it to this fixed snake_case enum (see schema.sql) — sending
@@ -31,6 +37,9 @@ export interface UploadedDebtor {
   assignedAgentId?: string; // agent's email — undefined = unassigned (debtors.assigned_agent_id)
   // any extra columns from the CSV land here
   extra: Record<string, string>;
+  // Numbers an agent has added after the upload (see addDebtorPhone) — separate from the CSV's
+  // own phone_alternate column, which nothing in the app ever writes to.
+  altPhones: string[];
 }
 
 // Moved here (from dashboard.call-queue.tsx) — call mode is a property of the portfolio,
@@ -117,7 +126,7 @@ export async function refreshPortfolios(): Promise<void> {
     supabase
       .from("debtors")
       .select(
-        "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id",
+        "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id, status",
       ),
     supabase.from("agents").select("id, email"),
   ]);
@@ -149,6 +158,21 @@ export async function refreshPortfolios(): Promise<void> {
     // ignore — targets are supplementary, not required for the rest of the app to work
   }
 
+  // Best-effort, same reasoning as targetsByPortfolio above: alt_phones is a newer column
+  // (migrations/20260807_debtors_alt_phones.sql) that may not exist in the live DB yet —
+  // queried separately and defaulted to [] on failure so it never blocks portfolio sync.
+  const altPhonesById = new Map<string, string[]>();
+  try {
+    const { data: altRows, error: aErr } = await supabase.from("debtors").select("id, alt_phones");
+    if (!aErr && altRows) {
+      for (const r of altRows) {
+        altPhonesById.set(r.id as string, (r.alt_phones as string[] | null) ?? []);
+      }
+    }
+  } catch {
+    // ignore — alt phones are supplementary until the migration is applied
+  }
+
   const portfolios: UploadedPortfolio[] = portfolioRows.map((p) => ({
     id: p.id,
     name: p.name,
@@ -160,7 +184,10 @@ export async function refreshPortfolios(): Promise<void> {
     settings: (p.settings as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
     agentTargets: targetsByPortfolio.get(p.id) ?? {},
     rows: debtorRows
-      .filter((d) => d.portfolio_id === p.id)
+      // Soft-removed debtors (see removeDebtor()) are excluded from every normal view — call
+      // queue, portfolio counts, assignment/transfer — without touching their call_logs/
+      // payments/etc. history. Recoverable via getRemovedDebtors()/restoreDebtor().
+      .filter((d) => d.portfolio_id === p.id && d.status !== "removed")
       .map((d) => ({
         id: d.id,
         loanReference: d.loan_reference ?? d.id,
@@ -172,6 +199,7 @@ export async function refreshPortfolios(): Promise<void> {
         email: d.email ?? "",
         assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
         extra: (d.extra as Record<string, string>) ?? {},
+        altPhones: altPhonesById.get(d.id) ?? [],
       })),
   }));
 
@@ -328,15 +356,18 @@ export async function mergePortfolioRows(
 }
 
 /** Fixes a wrong original column mapping on data that's already been uploaded — no CSV
- * needed. `fieldMap[target] = source`: for each of the 12 canonical fields, which field's
- * *current* value should actually be treated as `target` (a field mapping to itself is a
- * no-op). Reads every debtor's current values before writing any of them, so a straight
- * swap (A←B, B←A) applies correctly instead of the second write clobbering the first's
- * source. Never touches assigned_agent_id or status. Returns the number of debtors rewritten
- * (0 if fieldMap is the identity — nothing to do). */
+ * needed. `fieldMap[target] = source`: for each of the 12 canonical fields, which source
+ * should actually be treated as `target` (a field mapping to itself is a no-op). `source` is
+ * either another StdFieldKey (swap between our own fields) or an extraRemapSource() — a raw
+ * column from the original file that was never mapped to any STD_FIELD and is still sitting
+ * untouched in `extra` under its literal header name (see leftoverExtraKeys). Reads every
+ * debtor's current values before writing any of them, so a straight swap (A←B, B←A) applies
+ * correctly instead of the second write clobbering the first's source. Never touches
+ * assigned_agent_id or status. Returns the number of debtors rewritten (0 if fieldMap is the
+ * identity — nothing to do). */
 export async function remapPortfolioFields(
   portfolioId: string,
-  fieldMap: Record<StdFieldKey, StdFieldKey>,
+  fieldMap: Record<StdFieldKey, string>,
 ): Promise<number> {
   if (STD_FIELDS.every((f) => fieldMap[f.key] === f.key)) return 0;
 
@@ -362,7 +393,8 @@ export async function remapPortfolioFields(
           extra: prevExtra,
         });
         const newSlots = {} as Record<StdFieldKey, string>;
-        for (const f of STD_FIELDS) newSlots[f.key] = oldSlots[fieldMap[f.key]];
+        for (const f of STD_FIELDS)
+          newSlots[f.key] = resolveRemapSource(fieldMap[f.key], oldSlots, prevExtra);
         const fields = debtorFieldsFromSlots(newSlots);
 
         return supabase
@@ -554,6 +586,73 @@ export async function transferDebtor(debtorId: string, agentId: string | null): 
   await refreshPortfolios();
 }
 
+/** Reassigns several specific debtors to one agent (or unassigns them, when agentId is null)
+ * in a single write — the multi-select complement to transferDebtor()'s one-at-a-time move and
+ * assignDebtors()'s whole-portfolio re-split. Lets a manager pick, say, 5 debtors out of 200
+ * and move just those, without re-splitting everyone else. */
+export async function transferDebtors(debtorIds: string[], agentId: string | null): Promise<void> {
+  if (!debtorIds.length) return;
+  let agentUuid: string | null = null;
+  if (agentId) {
+    const { data: agentRows } = await supabase
+      .from("agents")
+      .select("id, email")
+      .eq("email", agentId);
+    agentUuid = agentRows?.[0]?.id ?? null;
+    if (!agentUuid) throw new Error(`Agent "${agentId}" not found`);
+  }
+  const { error } = await supabase
+    .from("debtors")
+    .update({ assigned_agent_id: agentUuid })
+    .in("id", debtorIds);
+  if (error) throw error;
+  await refreshPortfolios();
+}
+
+/** Soft-removes a debtor: sets status to 'removed' rather than deleting the row, since
+ * call_logs/messages/payments/disputes/settlement_requests all reference debtor_id with no
+ * ON DELETE cascade — a hard delete would fail (or destroy history, if forced) for any debtor
+ * who's already been contacted. refreshPortfolios() excludes 'removed' rows from its cache, so
+ * this debtor disappears from the call queue, portfolio counts, and assignment/transfer UI
+ * everywhere. Reversible via restoreDebtor(). Requires the 'removed' value to exist in
+ * debtors.status's CHECK constraint — see migrations/20260807_debtors_removed_status.sql. */
+export async function removeDebtor(debtorId: string): Promise<void> {
+  const { error } = await supabase.from("debtors").update({ status: "removed" }).eq("id", debtorId);
+  if (error) throw error;
+  await refreshPortfolios();
+}
+
+/** Undoes removeDebtor() — brings a soft-removed debtor back into every normal view. */
+export async function restoreDebtor(debtorId: string): Promise<void> {
+  const { error } = await supabase.from("debtors").update({ status: "active" }).eq("id", debtorId);
+  if (error) throw error;
+  await refreshPortfolios();
+}
+
+export interface RemovedDebtor {
+  id: string;
+  name: string;
+  phone: string;
+  loanReference: string;
+}
+
+/** Lists soft-removed debtors for one portfolio. Queried directly (not from the cache) since
+ * refreshPortfolios() deliberately excludes 'removed' rows from what it caches. */
+export async function getRemovedDebtors(portfolioId: string): Promise<RemovedDebtor[]> {
+  const { data, error } = await supabase
+    .from("debtors")
+    .select("id, name, phone_primary, loan_reference")
+    .eq("portfolio_id", portfolioId)
+    .eq("status", "removed");
+  if (error) throw error;
+  return (data ?? []).map((d) => ({
+    id: d.id as string,
+    name: (d.name as string | null) ?? "",
+    phone: (d.phone_primary as string | null) ?? "",
+    loanReference: (d.loan_reference as string | null) ?? "",
+  }));
+}
+
 /** Returns all debtor IDs assigned to a specific agent across all portfolios — derived
  * directly from the cached portfolios/debtors, no separate assignment ledger to keep in sync. */
 export function getAgentDebtorIds(agentId: string): { portfolioId: string; debtorIds: string[] }[] {
@@ -571,4 +670,75 @@ export function dpd2bucket(dpd: number): DPDBucket {
   if (dpd <= 90) return "2";
   if (dpd <= 179) return "NPA";
   return "WriteOff";
+}
+
+/** Adds a number an agent has learned (e.g. from the debtor or a family member during a call)
+ * to a debtor's alt_phones list. Read-modify-write on the current array rather than a raw SQL
+ * append, consistent with how every other single-record edit in this file works. Throws if the
+ * number is already on file (as the primary or an existing alt) so the UI can surface that
+ * instead of silently no-opping. Requires migrations/20260807_debtors_alt_phones.sql. */
+export async function addDebtorPhone(debtorId: string, phone: string): Promise<void> {
+  const trimmed = phone.trim();
+  if (!trimmed) return;
+  const { data, error: fetchErr } = await supabase
+    .from("debtors")
+    .select("phone_primary, alt_phones")
+    .eq("id", debtorId)
+    .single();
+  if (fetchErr) throw fetchErr;
+  const existing: string[] = (data?.alt_phones as string[] | null) ?? [];
+  if (data?.phone_primary === trimmed || existing.includes(trimmed)) {
+    throw new Error("That number is already on file for this debtor");
+  }
+  const { error } = await supabase
+    .from("debtors")
+    .update({ alt_phones: [...existing, trimmed] })
+    .eq("id", debtorId);
+  if (error) throw error;
+  await refreshPortfolios();
+}
+
+/** Converts one uploaded debtor row + its owning portfolio into the `Debtor` shape the
+ * dashboard/call-queue UI reads — the single source of truth for that conversion so the debtor
+ * profile page and the call-queue/active-call view never drift apart on which fields get
+ * populated (they used to: the queue's own copy of this logic dropped everything except a
+ * handful of columns, which is why debtor info looked "half" mid-call). Named fields are filled
+ * in from the same `extra` sub-keys CsvImportStep always reserves (address/city/state/dob/
+ * employer/income); the raw bag is also kept as `_uploadedExtra` for the generic "every CSV
+ * column" fallback view the debtor page already renders. */
+export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio): Debtor {
+  const extra = row.extra ?? {};
+  const income = parseFloat((extra.income ?? "").replace(/[,₹\s]/g, ""));
+  return {
+    id: row.id,
+    name: row.name || "(unknown)",
+    phone: row.phone || "—",
+    altPhones: row.altPhones ?? [],
+    email: row.email || undefined,
+    loanAmount: row.loanAmount,
+    dpd: row.dpd,
+    aiScore: Math.max(1, Math.min(10, Math.round(10 - row.dpd / 20))),
+    scoreReason: `Uploaded via ${portfolio.lender}${portfolio.product ? ` · ${portfolio.product}` : ""}`,
+    lastContacted: "—",
+    portfolio: portfolio.name,
+    language: "English",
+    dob: extra.dob || undefined,
+    city: extra.city || undefined,
+    state: extra.state || undefined,
+    address: extra.address || undefined,
+    lender: portfolio.lender,
+    loanType: portfolio.product || undefined,
+    loanId: row.loanReference || undefined,
+    employer: extra.employer || undefined,
+    monthlyIncome: Number.isFinite(income) && income > 0 ? income : undefined,
+    _uploadedExtra: extra,
+    _lender: portfolio.lender,
+    _product: portfolio.product,
+    _loanReference: row.loanReference,
+  } as Debtor & {
+    _uploadedExtra?: Record<string, string>;
+    _lender?: string;
+    _product?: string;
+    _loanReference?: string;
+  };
 }

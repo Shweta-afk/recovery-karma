@@ -221,6 +221,7 @@ function PortfolioUploadPage() {
             income: get("income"),
             ...extra,
           },
+          altPhones: [],
         };
       }),
     [rawRows, rawHeaders, mapping],

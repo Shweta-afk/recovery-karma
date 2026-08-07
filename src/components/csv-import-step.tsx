@@ -116,6 +116,7 @@ export function CsvImportStep({
             income: get("income"),
             ...extra,
           },
+          altPhones: [],
         };
       }),
     [rawRows, rawHeaders, mapping],

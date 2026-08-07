@@ -29,6 +29,8 @@ import {
   ArrowRightLeft,
   Hash,
   FileDown,
+  Loader2,
+  Plus,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -80,6 +82,53 @@ function fmtElapsed(s: number) {
   return `${m}:${sec}`;
 }
 
+/** Inline "add a number" control for the Contact Details card — lets an agent record a number
+ * they just learned (from the debtor or a family member) against the debtor's file. Keeps
+ * whatever was typed if the save fails (e.g. duplicate number) instead of clearing it. */
+function AddPhoneRow({ onAdd }: { onAdd: (phone: string) => Promise<void> }) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleAdd = async () => {
+    const trimmed = value.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    try {
+      await onAdd(trimmed);
+      setValue("");
+    } catch {
+      // caller already surfaced a toast — leave the input as-is so the agent can fix it
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <Input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleAdd();
+        }}
+        placeholder="Add another number…"
+        className="h-8 text-sm"
+      />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1 flex-shrink-0"
+        disabled={!value.trim() || saving}
+        onClick={handleAdd}
+      >
+        {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+        Add
+      </Button>
+    </div>
+  );
+}
+
 function ActiveCallContent({
   call,
   disposition,
@@ -90,6 +139,8 @@ function ActiveCallContent({
   onSubmit,
   onSwitchView,
   onMinimize,
+  onAddPhone,
+  onCallNumber,
 }: CallControlProps) {
   const { debtor, phase, muted, held, elapsed } = call;
 
@@ -330,10 +381,10 @@ function ActiveCallContent({
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-300">
       {/* ── TOP BAR ── */}
-      <div className="flex items-center justify-between gap-4 px-6 py-3 border-b border-border bg-card flex-shrink-0">
+      <div className="flex items-center justify-between gap-4 px-6 py-3 border-b border-border bg-card flex-shrink-0 flex-wrap">
         {/* Identity + status */}
-        <div className="flex items-center gap-4">
-          <div className="relative">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="relative flex-shrink-0">
             <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
               {debtor.name
                 .split(" ")
@@ -345,13 +396,15 @@ function ActiveCallContent({
               <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card" />
             )}
           </div>
-          <div>
-            <div className="font-semibold text-foreground text-base leading-tight">
+          <div className="min-w-0">
+            <div className="font-semibold text-foreground text-base leading-tight truncate">
               {debtor.name}
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-xs text-muted-foreground truncate">
               {debtor.loanReference ?? debtor.id} · {debtor.phone}
-              {debtor.altPhone ? ` · Alt: ${debtor.altPhone}` : ""}
+              {debtor.altPhones && debtor.altPhones.length > 0
+                ? ` · ${debtor.altPhones.length} alt number${debtor.altPhones.length === 1 ? "" : "s"}`
+                : ""}
             </div>
           </div>
           <span
@@ -1095,17 +1148,52 @@ function ActiveCallContent({
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Contact Details
                   </div>
-                  {[
-                    ["Phone", debtor.phone],
-                    ["Alt Phone", debtor.altPhone ?? "—"],
-                    ["Email", debtor.email ?? "—"],
-                    ["Last Contacted", debtor.lastContacted ?? "Never"],
-                  ].map(([k, v]) => (
-                    <div key={k} className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">{k}</span>
-                      <span className="font-mono text-foreground font-medium text-right">{v}</span>
-                    </div>
-                  ))}
+                  <div className="space-y-1.5">
+                    {[
+                      { label: "Primary", number: debtor.phone },
+                      ...(debtor.altPhones ?? []).map((number, i) => ({
+                        label: `Alt ${i + 1}`,
+                        number,
+                      })),
+                    ].map(({ label, number }) => (
+                      <div key={label} className="flex items-center justify-between text-sm">
+                        <div className="min-w-0">
+                          <span className="text-muted-foreground">{label}</span>
+                          <span className="ml-2 font-mono text-foreground font-medium">
+                            {number}
+                          </span>
+                        </div>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          className="h-7 w-7 flex-shrink-0"
+                          disabled={phase !== "ended"}
+                          title={
+                            phase !== "ended"
+                              ? "End the current call to call this number"
+                              : `Call ${number}`
+                          }
+                          onClick={() => onCallNumber(number)}
+                        >
+                          <Phone className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                  <AddPhoneRow onAdd={onAddPhone} />
+                  <div className="flex items-center justify-between text-sm pt-1 border-t border-border">
+                    <span className="text-muted-foreground">Email</span>
+                    <span className="font-mono text-foreground font-medium text-right">
+                      {debtor.email ?? "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Last Contacted</span>
+                    <span className="font-mono text-foreground font-medium text-right">
+                      {debtor.lastContacted ?? "Never"}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="rounded-xl border border-border bg-card p-4 space-y-3">
@@ -1798,6 +1886,13 @@ export function DebtorProfileSheet({
   onCall: (d: QueueDebtor) => void;
 }) {
   const extra = getDebtorExtra(debtor.id);
+  // debtorFromRow() (portfolio-store.ts) stashes every raw CSV column here for real debtors —
+  // rendered generically below the named fields, same approach as the debtor profile page.
+  // getDebtorExtra()'s DEBTOR_EXTRA table only ever matches a couple of hardcoded mock IDs, so
+  // without this every real debtor fell into its fallback and showed a fabricated "Axis Bank /
+  // Personal Loan" as if it were their actual lender.
+  const csvFields = (debtor as QueueDebtor & { _uploadedExtra?: Record<string, string> })
+    ._uploadedExtra ?? {};
   const initials = debtor.name
     .split(" ")
     .map((n) => n[0])
@@ -1855,7 +1950,11 @@ export function DebtorProfileSheet({
                   : "text-destructive",
             ),
           },
-          { label: "Principal Amount", value: extra.pos || "—", cls: "text-foreground truncate" },
+          {
+            label: "Principal Amount",
+            value: csvFields["pos"] || csvFields["Principal"] || "—",
+            cls: "text-foreground truncate",
+          },
         ].map(({ label, value, cls }) => (
           <div key={label}>
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -1890,15 +1989,10 @@ export function DebtorProfileSheet({
               </p>
               <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 {[
-                  ["Lender", extra.lender],
-                  ["Product", extra.product],
-                  ["Account No.", extra.accountNumber],
-                  ["Disbursed On", extra.disbursedOn],
-                  ["Original Amount", formatINR(extra.originalAmount)],
-                  ["EMI", formatINR(extra.emi)],
-                  ["Tenure", `${extra.tenure} months`],
-                  ["Principal Amount", extra.pos],
+                  ["Lender", debtor.lender || "—"],
+                  ["Product", debtor.loanType || "—"],
                   ["Portfolio", debtor.portfolio],
+                  ["DPD", String(debtor.dpd)],
                   [
                     "Status",
                     <Badge
@@ -1913,6 +2007,17 @@ export function DebtorProfileSheet({
                   <div key={String(label)}>
                     <div className="text-xs text-muted-foreground">{label}</div>
                     <div className="font-medium text-foreground mt-0.5">{val}</div>
+                  </div>
+                ))}
+                {/* Every other raw CSV column, same generic dump as the debtor profile page */}
+                {Object.entries(csvFields).map(([col, val]) => (
+                  <div key={col}>
+                    <div className="text-xs text-muted-foreground capitalize">
+                      {col.replace(/_/g, " ")}
+                    </div>
+                    <div className="font-medium text-foreground mt-0.5 break-all">
+                      {val || "—"}
+                    </div>
                   </div>
                 ))}
               </div>

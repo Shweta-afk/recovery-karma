@@ -53,6 +53,8 @@ import {
   getPortfolios,
   getAgentDebtorIds,
   refreshPortfolios,
+  debtorFromRow,
+  addDebtorPhone,
   DEFAULT_PORTFOLIO_SETTINGS,
   type CallMode,
 } from "@/lib/portfolio-store";
@@ -146,19 +148,12 @@ export function buildAssignedQueue(agentId: string): QueueDebtor[] {
     for (const row of portfolio.rows) {
       if (!idSet.has(row.id)) continue;
       result.push({
-        id: row.id,
+        // debtorFromRow() is the same conversion the debtor profile page uses — keeps this
+        // queue's debtor info (address, employer, DOB, lender, alt numbers, etc.) from
+        // silently dropping fields the way the old inline object literal here used to.
+        ...debtorFromRow(row, portfolio),
         loanReference: row.loanReference,
-        name: row.name || "(unknown)",
-        phone: row.phone || "—",
-        loanAmount: row.loanAmount,
-        dpd: row.dpd,
-        aiScore: Math.max(1, Math.min(10, Math.round(10 - row.dpd / 20))),
-        scoreReason: `From ${portfolio.name} · ${portfolio.lender}`,
-        lastContacted: "—",
-        portfolio: portfolio.name,
         portfolioId: portfolio.id,
-        language: "English",
-        email: row.email,
         queueStatus: "fresh",
         scheduledAt: "—",
         ptpAmount: 0,
@@ -332,6 +327,35 @@ function CallQueuePage() {
   };
 
   const endCall = () => singleCall.hangup();
+
+  // Records a number the agent just learned (e.g. from the debtor or a family member) against
+  // the debtor being called, and reflects it on the in-progress call's snapshot immediately —
+  // `activeCall.debtor` is a point-in-time copy, not reactively bound to the portfolio store,
+  // so without this the newly added number wouldn't show up until the call was re-opened.
+  const handleAddPhone = async (phone: string) => {
+    const current = activeCallRef.current;
+    if (!current) return;
+    try {
+      await addDebtorPhone(current.debtor.id, phone);
+      setActiveCall((c) =>
+        c
+          ? { ...c, debtor: { ...c.debtor, altPhones: [...(c.debtor.altPhones ?? []), phone] } }
+          : c,
+      );
+      toast.success("Number added");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to add number");
+      throw e; // let the input keep what was typed instead of clearing on failure
+    }
+  };
+
+  // Places a fresh call to a specific number for the debtor already on screen (their primary
+  // or one of their alt numbers) — e.g. after the primary number goes unanswered.
+  const handleCallNumber = (phone: string) => {
+    const current = activeCallRef.current;
+    if (!current) return;
+    startCall({ ...current.debtor, phone });
+  };
 
   // AI has a live debtor to hand over. If the agent is free, connect them straight away.
   // If they're already on a connected call, surface a Take / Forward notification instead.
@@ -1521,6 +1545,8 @@ function CallQueuePage() {
           onSubmit={submitDisposition}
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
           onMinimize={() => setActiveCall((c) => (c ? { ...c, view: "minimized" } : null))}
+          onAddPhone={handleAddPhone}
+          onCallNumber={handleCallNumber}
         />
       )}
       {activeCall && activeCall.view === "modal" && (
@@ -1534,6 +1560,8 @@ function CallQueuePage() {
           onSubmit={submitDisposition}
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "panel" } : null))}
           onMinimize={() => setActiveCall((c) => (c ? { ...c, view: "minimized" } : null))}
+          onAddPhone={handleAddPhone}
+          onCallNumber={handleCallNumber}
         />
       )}
 

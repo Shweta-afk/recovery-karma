@@ -169,4 +169,9 @@ export interface CallControlProps {
   onSubmit: () => void;
   onSwitchView: () => void;
   onMinimize: () => void;
+  /** Adds a number the agent just learned to the debtor's file. Throws on failure (e.g.
+   * duplicate) so the input can keep what was typed instead of clearing it. */
+  onAddPhone: (phone: string) => Promise<void>;
+  /** Places a fresh call to a specific number for the debtor already on screen. */
+  onCallNumber: (phone: string) => void;
 }

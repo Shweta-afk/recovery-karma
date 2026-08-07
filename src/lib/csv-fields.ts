@@ -66,6 +66,49 @@ export function slotsFromDebtor(row: DebtorLike): StdFieldSlots {
   };
 }
 
+// Extra sub-fields that always get their own STD_FIELD slot at import time (see
+// CsvImportStep) — every OTHER key that ends up in `extra` is a column from the original file
+// that was never mapped to any of our 12 canonical fields, still sitting there untouched under
+// its literal header name.
+const KNOWN_EXTRA_SUBFIELDS = new Set(["address", "city", "state", "dob", "employer", "income"]);
+
+/** The original file columns a manager can still recover for remapping — every `extra` key
+ * across a portfolio's rows that isn't one of the 6 STD_FIELDS that always reserve a slot
+ * there. Used by the "Remap Fields" tool so it can offer the *actual* source columns, not just
+ * our own 12 field labels. */
+export function leftoverExtraKeys(rows: { extra: Record<string, string> }[]): string[] {
+  const keys = new Set<string>();
+  for (const r of rows) {
+    for (const k of Object.keys(r.extra ?? {})) {
+      if (!KNOWN_EXTRA_SUBFIELDS.has(k)) keys.add(k);
+    }
+  }
+  return Array.from(keys).sort();
+}
+
+// Prefix marking a remap source as a raw leftover file column (see leftoverExtraKeys) rather
+// than one of the 12 canonical STD_FIELDS — keeps the two namespaces from colliding even if a
+// file happens to have a column literally named e.g. "name".
+const EXTRA_SOURCE_PREFIX = "extra:";
+
+export function extraRemapSource(rawHeader: string): string {
+  return EXTRA_SOURCE_PREFIX + rawHeader;
+}
+
+/** Resolves a Remap Fields source (either a StdFieldKey or an extraRemapSource()) to its
+ * current value on one debtor row — shared by the live preview (manager.portfolio.tsx) and the
+ * actual rewrite (remapPortfolioFields in portfolio-store.ts) so they never disagree. */
+export function resolveRemapSource(
+  source: string,
+  slots: StdFieldSlots,
+  extra: Record<string, string>,
+): string {
+  if (source.startsWith(EXTRA_SOURCE_PREFIX)) {
+    return extra[source.slice(EXTRA_SOURCE_PREFIX.length)] ?? "";
+  }
+  return slots[source as StdFieldKey] ?? "";
+}
+
 /** Inverse of slotsFromDebtor: rebuilds debtor fields from a (possibly remapped) slot map,
  * applying the same numeric parsing the upload wizard uses for loan_amount/dpd. */
 export function debtorFieldsFromSlots(slots: StdFieldSlots): DebtorLike {

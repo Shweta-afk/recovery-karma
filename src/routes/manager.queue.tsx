@@ -66,6 +66,7 @@ import {
 import {
   createAdHocDebtor,
   getPortfolios,
+  addDebtorPhone,
   DEFAULT_PORTFOLIO_SETTINGS,
   type CallMode,
 } from "@/lib/portfolio-store";
@@ -650,6 +651,27 @@ function ManagerQueuePage() {
 
   const endCall = () => singleCall.hangup();
 
+  const handleAddPhone = async (phone: string) => {
+    if (!activeCall) return;
+    try {
+      await addDebtorPhone(activeCall.debtor.id, phone);
+      setActiveCall((c) =>
+        c
+          ? { ...c, debtor: { ...c.debtor, altPhones: [...(c.debtor.altPhones ?? []), phone] } }
+          : c,
+      );
+      toast.success("Number added");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to add number");
+      throw e;
+    }
+  };
+
+  const handleCallNumber = (phone: string) => {
+    if (!activeCall) return;
+    startCall({ ...activeCall.debtor, phone }, activeEscalationId);
+  };
+
   const submitDisposition = () => {
     if (!disposition.outcome) {
       toast.error("Select an outcome before submitting");
@@ -747,6 +769,8 @@ function ManagerQueuePage() {
           onSubmit={submitDisposition}
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
           onMinimize={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
+          onAddPhone={handleAddPhone}
+          onCallNumber={handleCallNumber}
         />
       )}
       {activeCall && activeCall.view === "modal" && (
@@ -760,6 +784,8 @@ function ManagerQueuePage() {
           onSubmit={submitDisposition}
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "panel" } : null))}
           onMinimize={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
+          onAddPhone={handleAddPhone}
+          onCallNumber={handleCallNumber}
         />
       )}
     </div>

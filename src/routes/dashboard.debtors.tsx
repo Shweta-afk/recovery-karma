@@ -29,8 +29,7 @@ import {
   getPortfolios,
   getAgentDebtorIds,
   refreshPortfolios,
-  type UploadedDebtor,
-  type UploadedPortfolio,
+  debtorFromRow,
 } from "@/lib/portfolio-store";
 import { useAuth } from "@/lib/auth";
 import {
@@ -235,32 +234,9 @@ function getExtra(id: string) {
 
 const BUCKET_ORDER: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
 
-// Convert uploaded debtor to the Debtor shape expected by this page
-function toDebtor(u: UploadedDebtor, portfolio: UploadedPortfolio): Debtor {
-  return {
-    id: u.id,
-    name: u.name || "(unknown)",
-    phone: u.phone || "—",
-    loanAmount: u.loanAmount,
-    dpd: u.dpd,
-    aiScore: Math.max(1, Math.min(10, Math.round(10 - u.dpd / 20))),
-    portfolio: portfolio.name,
-    language: "English",
-    lastContacted: "—",
-    scoreReason: `Uploaded via ${portfolio.lender} · ${portfolio.product || ""}`,
-    email: u.email,
-    // extra fields stored in the debtor for detail panel
-    _uploadedExtra: u.extra,
-    _lender: portfolio.lender,
-    _product: portfolio.product,
-    _loanReference: u.loanReference,
-  } as Debtor & {
-    _uploadedExtra?: Record<string, string>;
-    _lender?: string;
-    _product?: string;
-    _loanReference?: string;
-  };
-}
+// Convert uploaded debtor to the Debtor shape expected by this page — shared with the call
+// queue's buildAssignedQueue() via debtorFromRow() so both surfaces show the same info.
+const toDebtor = debtorFromRow;
 
 // d.id is a real (opaque) row identifier; _loanReference (when present, for uploaded
 // portfolios) is the human-readable loan/account ID from the source CSV — prefer that

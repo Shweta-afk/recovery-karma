@@ -5,18 +5,31 @@ import {
   refreshPortfolios,
   assignDebtors,
   transferDebtor,
+  transferDebtors,
   updatePortfolioMeta,
   setPortfolioAgentTargets,
   mergePortfolioRows,
   remapPortfolioFields,
+  dpd2bucket,
+  removeDebtor,
+  restoreDebtor,
+  getRemovedDebtors,
   PRODUCT_LABEL_TO_ENUM,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
   type UploadedDebtor,
   type PortfolioSettings,
   type AgentTarget,
+  type RemovedDebtor,
 } from "@/lib/portfolio-store";
-import { STD_FIELDS, slotsFromDebtor, type StdFieldKey } from "@/lib/csv-fields";
+import {
+  STD_FIELDS,
+  slotsFromDebtor,
+  leftoverExtraKeys,
+  extraRemapSource,
+  resolveRemapSource,
+  type StdFieldKey,
+} from "@/lib/csv-fields";
 import {
   Briefcase,
   TrendingUp,
@@ -30,7 +43,10 @@ import {
   ArrowLeftRight,
   Pencil,
   Target,
+  Trash2,
+  RotateCcw,
   Upload,
+  UserPlus,
   Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -39,6 +55,7 @@ import { saveTemplate } from "@/lib/mapping-template-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -57,6 +74,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -206,6 +224,11 @@ const UNASSIGNED = "__unassigned__";
  * without re-splitting the rest of the portfolio, unlike the bulk Reassign dialog. */
 function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: AgentRef[] }) {
   const [transferringId, setTransferringId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<UploadedDebtor | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkAgent, setBulkAgent] = useState<string>(UNASSIGNED);
+  const [bulkMoving, setBulkMoving] = useState(false);
 
   const handleTransfer = async (debtorId: string, value: string) => {
     setTransferringId(debtorId);
@@ -219,28 +242,108 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
     }
   };
 
+  const handleRemove = async () => {
+    if (!confirmRemove) return;
+    setRemovingId(confirmRemove.id);
+    try {
+      await removeDebtor(confirmRemove.id);
+      toast.success("Account removed", {
+        description: `${confirmRemove.name} — restore it any time from Removed Accounts`,
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remove account");
+    } finally {
+      setRemovingId(null);
+      setConfirmRemove(null);
+    }
+  };
+
+  const toggleRow = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
+  };
+
+  const handleBulkMove = async () => {
+    setBulkMoving(true);
+    try {
+      const ids = Array.from(selected);
+      await transferDebtors(ids, bulkAgent === UNASSIGNED ? null : bulkAgent);
+      toast.success(`${ids.length} account${ids.length === 1 ? "" : "s"} transferred`);
+      setSelected(new Set());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to transfer accounts");
+    } finally {
+      setBulkMoving(false);
+    }
+  };
+
   return (
     <div>
-      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
-        <ArrowLeftRight className="h-3.5 w-3.5" />
-        Accounts · transfer individually
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <ArrowLeftRight className="h-3.5 w-3.5" />
+          Accounts · transfer individually or select several
+        </div>
+        {selected.size > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground">{selected.size} selected</span>
+            <Select value={bulkAgent} onValueChange={setBulkAgent}>
+              <SelectTrigger className="h-7 w-36 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
+                {agents.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              className="h-7 gap-1 text-[11px]"
+              disabled={bulkMoving}
+              onClick={handleBulkMove}
+            >
+              {bulkMoving && <Loader2 className="h-3 w-3 animate-spin" />}
+              Move
+            </Button>
+          </div>
+        )}
       </div>
       <div className="rounded-lg border border-border overflow-hidden">
         <div className="max-h-64 overflow-y-auto">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-card z-10">
               <tr className="border-b border-border">
-                <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Debtor</th>
+                <th className="py-2 pl-3 w-8">
+                  <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
+                </th>
+                <th className="py-2 text-left font-medium text-muted-foreground">Debtor</th>
                 <th className="py-2 text-right font-medium text-muted-foreground">Outstanding</th>
                 <th className="py-2 pr-3 text-left font-medium text-muted-foreground">
                   Assigned to
                 </th>
+                <th className="py-2 pr-3 w-8" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map((r) => (
-                <tr key={r.id}>
+                <tr key={r.id} className={selected.has(r.id) ? "bg-primary/5" : undefined}>
                   <td className="py-2 pl-3">
+                    <Checkbox checked={selected.has(r.id)} onCheckedChange={() => toggleRow(r.id)} />
+                  </td>
+                  <td className="py-2">
                     <div className="font-medium text-foreground">{r.name}</div>
                     <div className="text-[10px] text-muted-foreground">{r.loanReference}</div>
                   </td>
@@ -271,12 +374,134 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                       </SelectContent>
                     </Select>
                   </td>
+                  <td className="py-2 pr-3 text-right">
+                    <button
+                      type="button"
+                      title="Remove account"
+                      disabled={removingId === r.id}
+                      onClick={() => setConfirmRemove(r)}
+                      className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+                    >
+                      {removingId === r.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      <AlertDialog open={!!confirmRemove} onOpenChange={(o) => !o && setConfirmRemove(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {confirmRemove?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This takes them out of the call queue, portfolio counts, and assignment — but
+              keeps their call/payment/message history intact. You can bring them back any time
+              from Removed Accounts below.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRemove}>Yes, remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+/** Lists soft-removed debtors for one portfolio, on demand, with a one-click Restore. */
+function RemovedAccountsPanel({ portfolioId }: { portfolioId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [removed, setRemoved] = useState<RemovedDebtor[] | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setRemoved(await getRemovedDebtors(portfolioId));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load removed accounts");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggle = () => {
+    setExpanded((prev) => {
+      const next = !prev;
+      if (next && removed === null) load();
+      return next;
+    });
+  };
+
+  const handleRestore = async (d: RemovedDebtor) => {
+    setRestoringId(d.id);
+    try {
+      await restoreDebtor(d.id);
+      toast.success("Account restored", { description: d.name });
+      setRemoved((prev) => (prev ? prev.filter((x) => x.id !== d.id) : prev));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to restore account");
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground uppercase tracking-wider transition-colors"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Removed Accounts
+      </button>
+      {expanded && (
+        <div className="mt-2 rounded-lg border border-border overflow-hidden">
+          {loading ? (
+            <div className="flex items-center gap-1.5 p-3 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading…
+            </div>
+          ) : removed && removed.length > 0 ? (
+            <div className="max-h-48 overflow-y-auto divide-y divide-border">
+              {removed.map((d) => (
+                <div key={d.id} className="flex items-center justify-between px-3 py-2 text-xs">
+                  <div>
+                    <div className="font-medium text-foreground">{d.name}</div>
+                    <div className="text-[10px] text-muted-foreground">{d.loanReference}</div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 gap-1 text-[11px]"
+                    disabled={restoringId === d.id}
+                    onClick={() => handleRestore(d)}
+                  >
+                    {restoringId === d.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3 w-3" />
+                    )}
+                    Restore
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="p-3 text-xs text-muted-foreground">No removed accounts.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -459,6 +684,9 @@ function PortfolioDetail({
 
           {/* Per-account transfer */}
           {raw && agents.length > 0 && <AccountsTable rows={raw.rows} agents={agents} />}
+
+          {/* Removed accounts */}
+          <RemovedAccountsPanel portfolioId={p.id} />
         </div>
       </div>
     </div>
@@ -544,8 +772,8 @@ function ReassignDialog({
 
 /* ─── Edit Portfolio dialog ──────────────────────────────────────────────── */
 
-function identityRemap(): Record<StdFieldKey, StdFieldKey> {
-  const m = {} as Record<StdFieldKey, StdFieldKey>;
+function identityRemap(): Record<StdFieldKey, string> {
+  const m = {} as Record<StdFieldKey, string>;
   for (const f of STD_FIELDS) m[f.key] = f.key;
   return m;
 }
@@ -568,9 +796,17 @@ function EditPortfolioDialog({
   const [csvKey, setCsvKey] = useState(0); // bumped to remount CsvImportStep after a successful import
   const [csvResult, setCsvResult] = useState<CsvImportResult | null>(null);
   const [importing, setImporting] = useState(false);
-  const [remap, setRemap] = useState<Record<StdFieldKey, StdFieldKey>>(identityRemap);
+  const [remap, setRemap] = useState<Record<StdFieldKey, string>>(identityRemap);
   const [remapConfirmOpen, setRemapConfirmOpen] = useState(false);
   const [remapping, setRemapping] = useState(false);
+  const [addMode, setAddMode] = useState<"csv" | "manual">("csv");
+  const [manualName, setManualName] = useState("");
+  const [manualPhone, setManualPhone] = useState("");
+  const [manualLoanRef, setManualLoanRef] = useState("");
+  const [manualAmount, setManualAmount] = useState("");
+  const [manualDpd, setManualDpd] = useState("");
+  const [manualEmail, setManualEmail] = useState("");
+  const [addingManual, setAddingManual] = useState(false);
 
   // Re-seed local state whenever a different portfolio is opened for editing
   useEffect(() => {
@@ -584,7 +820,21 @@ function EditPortfolioDialog({
     setCsvResult(null);
     setCsvKey((k) => k + 1);
     setRemap(identityRemap());
+    setAddMode("csv");
+    setManualName("");
+    setManualPhone("");
+    setManualLoanRef("");
+    setManualAmount("");
+    setManualDpd("");
+    setManualEmail("");
   }, [portfolio]);
+
+  // Original file columns that never landed on one of our 12 fields — still sitting untouched
+  // in `extra` under their literal header name (see leftoverExtraKeys). Offered as remap
+  // sources alongside our own fields so a manager can pick the *actual* file column instead of
+  // only swapping between our canonical labels. Hooks must run unconditionally on every render
+  // of this always-mounted dialog, so this has to sit above the `!portfolio` early return.
+  const extraKeys = useMemo(() => leftoverExtraKeys(portfolio?.rows ?? []), [portfolio]);
 
   if (!portfolio) return null;
 
@@ -630,6 +880,45 @@ function EditPortfolioDialog({
       toast.error(e instanceof Error ? e.message : "Failed to import accounts");
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleAddManual = async () => {
+    if (!manualName.trim() || !manualPhone.trim()) {
+      toast.error("Borrower name and phone are required");
+      return;
+    }
+    setAddingManual(true);
+    try {
+      const dpd = parseInt(manualDpd, 10) || 0;
+      const row: UploadedDebtor = {
+        id: crypto.randomUUID(),
+        loanReference: manualLoanRef.trim(),
+        name: manualName.trim(),
+        phone: manualPhone.trim(),
+        loanAmount: parseFloat(manualAmount.replace(/[,₹\s]/g, "")) || 0,
+        dpd,
+        bucket: dpd2bucket(dpd),
+        email: manualEmail.trim(),
+        extra: {},
+        altPhones: [],
+      };
+      const { added } = await mergePortfolioRows(portfolio.id, [row]);
+      if (added > 0) {
+        toast.success("Account added", { description: `${row.name} · ${portfolio.name}` });
+        setManualName("");
+        setManualPhone("");
+        setManualLoanRef("");
+        setManualAmount("");
+        setManualDpd("");
+        setManualEmail("");
+      } else {
+        toast.error("An account with this Loan / Account ID already exists in this portfolio");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to add account");
+    } finally {
+      setAddingManual(false);
     }
   };
 
@@ -710,7 +999,8 @@ function EditPortfolioDialog({
               <p className="-mt-1 text-[11px] text-muted-foreground">
                 Fix a wrong original column mapping on the {portfolio.rows.length} account
                 {portfolio.rows.length === 1 ? "" : "s"} already here — no re-upload needed. For
-                each field, pick which field's current data should actually be treated as it.
+                each field, pick which column's data should actually be treated as it — one of
+                the fields below, or an original file column that wasn't mapped the first time.
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {STD_FIELDS.map(({ key, label }) => (
@@ -718,9 +1008,7 @@ function EditPortfolioDialog({
                     <Label className="text-xs">{label}</Label>
                     <Select
                       value={remap[key]}
-                      onValueChange={(v) =>
-                        setRemap((prev) => ({ ...prev, [key]: v as StdFieldKey }))
-                      }
+                      onValueChange={(v) => setRemap((prev) => ({ ...prev, [key]: v }))}
                     >
                       <SelectTrigger className="h-8 text-xs">
                         <SelectValue />
@@ -731,6 +1019,19 @@ function EditPortfolioDialog({
                             {f.key === key ? `${f.label} (unchanged)` : f.label}
                           </SelectItem>
                         ))}
+                        {extraKeys.length > 0 && (
+                          <>
+                            <SelectSeparator />
+                            {extraKeys.map((h) => (
+                              <SelectItem key={h} value={extraRemapSource(h)}>
+                                <span className="font-mono">{h}</span>
+                                <span className="ml-1.5 text-[10px] text-muted-foreground">
+                                  from file
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -754,7 +1055,9 @@ function EditPortfolioDialog({
                           <p key={f.key} className="text-[11px] text-muted-foreground">
                             {f.label}:{" "}
                             <span className="line-through">{oldSlots[f.key] || "—"}</span> →{" "}
-                            <span className="text-foreground">{oldSlots[remap[f.key]] || "—"}</span>
+                            <span className="text-foreground">
+                              {resolveRemapSource(remap[f.key], oldSlots, r.extra) || "—"}
+                            </span>
                           </p>
                         ))}
                       </div>
@@ -786,25 +1089,137 @@ function EditPortfolioDialog({
 
             {/* Add / re-upload accounts */}
             <div className="space-y-3 border-t border-border pt-4">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                <Upload className="h-3.5 w-3.5" />
-                Add / Re-upload Accounts
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <Upload className="h-3.5 w-3.5" />
+                  Add / Re-upload Accounts
+                </div>
+                <div className="flex gap-1 rounded-md border border-border p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setAddMode("csv")}
+                    className={cn(
+                      "rounded px-2 py-1 text-[11px] font-medium transition-colors",
+                      addMode === "csv"
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    CSV Upload
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddMode("manual")}
+                    className={cn(
+                      "rounded px-2 py-1 text-[11px] font-medium transition-colors",
+                      addMode === "manual"
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    Add One
+                  </button>
+                </div>
               </div>
-              <p className="-mt-1 text-[11px] text-muted-foreground">
-                Upload a CSV to add new accounts or update existing ones — matched by Loan / Account
-                ID. Nothing is deleted or reassigned.
-              </p>
-              <CsvImportStep key={csvKey} lenderName={lender} onChange={setCsvResult} />
-              {csvResult && csvResult.rows.length > 0 && (
-                <Button
-                  size="sm"
-                  className="gap-1.5"
-                  disabled={!csvResult.valid || importing}
-                  onClick={handleImport}
-                >
-                  {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Import {csvResult.rows.length} Account{csvResult.rows.length === 1 ? "" : "s"}
-                </Button>
+
+              {addMode === "csv" ? (
+                <>
+                  <p className="-mt-1 text-[11px] text-muted-foreground">
+                    Upload a CSV to add new accounts or update existing ones — matched by Loan /
+                    Account ID. Nothing is deleted or reassigned.
+                  </p>
+                  <CsvImportStep key={csvKey} lenderName={lender} onChange={setCsvResult} />
+                  {csvResult && csvResult.rows.length > 0 && (
+                    <Button
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={!csvResult.valid || importing}
+                      onClick={handleImport}
+                    >
+                      {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      Import {csvResult.rows.length} Account{csvResult.rows.length === 1 ? "" : "s"}
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="-mt-1 text-[11px] text-muted-foreground">
+                    Add a single new account by hand — it lands unassigned, same as a new row from
+                    a CSV.
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">
+                        Borrower Name <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        value={manualName}
+                        onChange={(e) => setManualName(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">
+                        Phone Number <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        value={manualPhone}
+                        onChange={(e) => setManualPhone(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Loan / Account ID</Label>
+                      <Input
+                        value={manualLoanRef}
+                        onChange={(e) => setManualLoanRef(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Outstanding Amount</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={manualAmount}
+                        onChange={(e) => setManualAmount(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Days Past Due</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={manualDpd}
+                        onChange={(e) => setManualDpd(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Email Address</Label>
+                      <Input
+                        type="email"
+                        value={manualEmail}
+                        onChange={(e) => setManualEmail(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={!manualName.trim() || !manualPhone.trim() || addingManual}
+                    onClick={handleAddManual}
+                  >
+                    {addingManual ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <UserPlus className="h-3.5 w-3.5" />
+                    )}
+                    Add Account
+                  </Button>
+                </>
               )}
             </div>
 

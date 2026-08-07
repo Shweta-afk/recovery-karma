@@ -22,6 +22,9 @@ export interface Debtor {
   name: string;
   phone: string;
   altPhone?: string;
+  // Numbers an agent has added after upload — see addDebtorPhone() in portfolio-store.ts.
+  // Plural/list form; altPhone above is the older single-value field kept for back-compat.
+  altPhones?: string[];
   email?: string;
   loanAmount: number;
   dpd: number;
