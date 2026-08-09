@@ -420,6 +420,9 @@ function AdminReportsPage() {
                               Shift (today)*
                             </th>
                             <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                              Ringing*
+                            </th>
+                            <th className="py-2 px-3 text-right font-medium text-muted-foreground">
                               Calling*
                             </th>
                             <th className="py-2 px-3 text-right font-medium text-muted-foreground">
@@ -462,6 +465,9 @@ function AdminReportsPage() {
                                 <td className="py-2 px-3 text-left text-muted-foreground whitespace-nowrap">
                                   {formatClockTime(ts.loginTime)} –{" "}
                                   {ts.logoutTime ? formatClockTime(ts.logoutTime) : "now"}
+                                </td>
+                                <td className="py-2 px-3 text-right text-blue-500 tabular-nums">
+                                  {formatDuration(ts.ringingSeconds)}
                                 </td>
                                 <td className="py-2 px-3 text-right text-foreground font-medium tabular-nums">
                                   {formatDuration(ts.callingSeconds)}

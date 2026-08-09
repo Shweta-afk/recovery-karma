@@ -18,6 +18,7 @@ import {
   Info,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/mock-debtors";
 import { Link } from "@tanstack/react-router";
@@ -29,7 +30,12 @@ import {
   refreshDispositions,
   type DispositionRecord,
 } from "@/lib/disposition-store";
-import { getAgentTimeStats, formatDuration, formatClockTime } from "@/lib/agent-time-stats";
+import {
+  getAgentTimeStats,
+  formatDuration,
+  formatClockTime,
+  pctOfShift,
+} from "@/lib/agent-time-stats";
 import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
 import { useStorageSync } from "@/lib/storage-sync";
 
@@ -356,56 +362,84 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
           );
         })()}
 
-        {/* ── My Activity Today: idle / calling / disposition / login-logout ── */}
-        <div className="rounded-xl border border-border bg-card p-3">
-          <div className="flex items-center justify-between mb-2.5">
+        {/* ── My Activity Today: ringing / calling / disposition / idle, as progress bars ── */}
+        <div className="rounded-xl border border-border bg-card p-3 lg:w-1/2">
+          <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               My Activity Today
             </span>
             <span
               className="flex items-center gap-1 text-[10px] text-muted-foreground"
-              title="Calling time is real, from your logged calls. Idle, disposition and login/logout times are estimated — real tracking is coming soon."
+              title="Calling time is real, from your logged calls. Ringing, idle, disposition and login/logout times are estimated — real presence tracking is coming soon."
             >
               <Info className="h-3 w-3" />
-              Idle/disposition/login times are estimated
+              Estimated*
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <KPICard
-              label="Login Time"
-              value={formatClockTime(myTimeStats.loginTime)}
-              hint="Start of shift"
-              icon={LogIn}
-              index={0}
-            />
-            <KPICard
-              label="Logout Time"
-              value={myTimeStats.logoutTime ? formatClockTime(myTimeStats.logoutTime) : "Active"}
-              hint={myTimeStats.logoutTime ? "End of shift" : "Still logged in"}
-              icon={LogOut}
-              index={1}
-            />
-            <KPICard
-              label="Calling Time"
-              value={formatDuration(myTimeStats.callingSeconds)}
-              hint="On live calls today"
-              icon={PhoneCall}
-              index={2}
-            />
-            <KPICard
-              label="Disposition Time"
-              value={formatDuration(myTimeStats.dispositionSeconds)}
-              hint="Wrap-up after calls"
-              icon={ClipboardList}
-              index={3}
-            />
-            <KPICard
-              label="Idle Time"
-              value={formatDuration(myTimeStats.idleSeconds)}
-              hint="Available, not on a call"
-              icon={Timer}
-              index={4}
-            />
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-3 pb-2 border-b border-border">
+            <span className="flex items-center gap-1">
+              <LogIn className="h-3 w-3" />
+              {formatClockTime(myTimeStats.loginTime)}
+            </span>
+            <span className="text-foreground font-medium">
+              {formatDuration(myTimeStats.loggedInSeconds)} logged in
+            </span>
+            {myTimeStats.logoutTime ? (
+              <span className="flex items-center gap-1">
+                <LogOut className="h-3 w-3" />
+                {formatClockTime(myTimeStats.logoutTime)}
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-success">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                Active
+              </span>
+            )}
+          </div>
+          <div className="space-y-2.5">
+            {[
+              {
+                label: "Ringing",
+                seconds: myTimeStats.ringingSeconds,
+                icon: PhoneIncoming,
+                cls: "bg-blue-500",
+              },
+              {
+                label: "Calling",
+                seconds: myTimeStats.callingSeconds,
+                icon: PhoneCall,
+                cls: "bg-primary",
+              },
+              {
+                label: "Disposition",
+                seconds: myTimeStats.dispositionSeconds,
+                icon: ClipboardList,
+                cls: "bg-amber-500",
+              },
+              {
+                label: "Idle",
+                seconds: myTimeStats.idleSeconds,
+                icon: Timer,
+                cls: "bg-muted-foreground/40",
+              },
+            ].map(({ label, seconds, icon: Icon, cls }) => {
+              const pct = pctOfShift(seconds, myTimeStats);
+              return (
+                <div key={label}>
+                  <div className="flex items-center justify-between text-[11px] mb-1">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <Icon className="h-3 w-3" />
+                      {label}
+                    </span>
+                    <span className="font-medium text-foreground tabular-nums">
+                      {formatDuration(seconds)}{" "}
+                      <span className="text-muted-foreground">({pct}%)</span>
+                    </span>
+                  </div>
+                  <Progress value={pct} className="h-1.5" indicatorClassName={cls} />
+                </div>
+              );
+            })}
           </div>
         </div>
 

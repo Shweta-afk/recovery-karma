@@ -16,6 +16,10 @@ import type { DispositionRecord } from "./disposition-store";
 
 export interface AgentTimeStats {
   agentId: string;
+  /** PLACEHOLDER — would be Σ (answered_at or abandoned_at − dial_started_at) per call attempt.
+   * Needs the dialer to timestamp when a leg starts ringing and when it's answered/gives up —
+   * neither is persisted anywhere today (use-single-call.ts holds this only in memory). */
+  ringingSeconds: number;
   /** REAL — sum of call_logs.duration_seconds for the period. */
   callingSeconds: number;
   /** PLACEHOLDER — would be disposition_submitted_at − call_ended_at per call, summed. Needs
@@ -76,17 +80,19 @@ export function getAgentTimeStats(
   // A handful of agents are shown "still logged in" for today; every past day gets a logout.
   const stillLoggedIn = isToday && rand() < 0.35;
 
+  const ringingSeconds = Math.round(disps.length * (8 + rand() * 12)); // ~8–20s ring per call
   const dispositionSeconds = Math.round(disps.length * (25 + rand() * 35)); // ~25–60s wrap/call
   const breakSeconds = Math.round((30 + rand() * 40) * 60); // ~30–70 min of break/lunch/training
 
-  // Idle is whatever's left of a plausible logged-in day after calling/wrap/break — never
-  // negative; a quiet day (few calls) shows more idle time, which is the honest story anyway.
+  // Idle is whatever's left of a plausible logged-in day after ringing/calling/wrap/break —
+  // never negative; a quiet day (few calls) shows more idle time, which is the honest story.
   const targetLoggedInSeconds = Math.round((7.5 + rand() * 1.5) * 3600); // ~7.5–9h shift
   const idleSeconds = Math.max(
     0,
-    targetLoggedInSeconds - callingSeconds - dispositionSeconds - breakSeconds,
+    targetLoggedInSeconds - ringingSeconds - callingSeconds - dispositionSeconds - breakSeconds,
   );
-  const loggedInSeconds = callingSeconds + dispositionSeconds + breakSeconds + idleSeconds;
+  const loggedInSeconds =
+    ringingSeconds + callingSeconds + dispositionSeconds + breakSeconds + idleSeconds;
 
   const logoutTime = stillLoggedIn
     ? null
@@ -94,6 +100,7 @@ export function getAgentTimeStats(
 
   return {
     agentId,
+    ringingSeconds,
     callingSeconds,
     dispositionSeconds,
     breakSeconds,
@@ -117,4 +124,9 @@ export function formatDuration(totalSeconds: number): string {
 
 export function formatClockTime(d: Date): string {
   return d.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+}
+
+/** A duration as a % of the agent's logged-in day — the fill for a progress-bar row. */
+export function pctOfShift(seconds: number, stats: AgentTimeStats): number {
+  return stats.loggedInSeconds > 0 ? Math.round((seconds / stats.loggedInSeconds) * 100) : 0;
 }
