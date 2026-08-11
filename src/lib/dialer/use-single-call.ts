@@ -103,9 +103,18 @@ export function useSingleCall(
   // user just ended the call. Checked right after every await in the poll loop, before any
   // state update; reset() raises it, dial() lowers it for the call it's about to start.
   const stoppedRef = useRef(true);
+  // Set when hangup() is clicked (Cancel or End Call) before pidRef exists yet — dial() is
+  // still awaiting serverStartCall/sim.startCall, so there's no provider leg to drop. Without
+  // this, hangup() used to just return and do nothing, which read as "the button doesn't
+  // work" whenever an agent cancelled quickly (the ringing screen's Cancel button is the most
+  // common way to hit this — it appears the instant dial() fires, well before the network
+  // round-trip that assigns pidRef.current resolves). Checked once dial() actually gets a
+  // provider id, so the leg is hung up the moment it exists instead of ringing on unattended.
+  const cancelPendingRef = useRef(false);
 
   const reset = useCallback(() => {
     stoppedRef.current = true;
+    cancelPendingRef.current = false;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
     unsubRef.current?.();
@@ -153,6 +162,21 @@ export function useSingleCall(
               "Starting the call",
             );
             pidRef.current = result.providerCallId;
+            if (cancelPendingRef.current) {
+              // The agent hit Cancel/End Call while this was still in flight — drop the leg
+              // now that it actually exists instead of leaving it ringing unattended, and
+              // never start polling a call we've already told the UI is over.
+              cancelPendingRef.current = false;
+              stoppedRef.current = true;
+              serverHangupCall({ data: { providerCallId: result.providerCallId } }).catch(
+                (err) => {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  console.error("Failed to hang up call cancelled before it connected:", msg);
+                },
+              );
+              reset();
+              return;
+            }
             stoppedRef.current = false;
             // The provider reports progress out-of-band (webhook, or the server's fallback
             // poll of the call-records API). A single agent call belongs to no DialerRun, so
@@ -227,6 +251,11 @@ export function useSingleCall(
           })
           .then(({ providerCallId }) => {
             pidRef.current = providerCallId;
+            if (cancelPendingRef.current) {
+              cancelPendingRef.current = false;
+              simRef.current?.hangup(providerCallId);
+              reset();
+            }
           });
         timerRef.current = setInterval(
           () => simRef.current?.flushDue(Date.now()),
@@ -238,7 +267,16 @@ export function useSingleCall(
   );
 
   const hangup = useCallback(() => {
-    if (!pidRef.current) return;
+    if (!pidRef.current) {
+      // dial() hasn't gotten a provider id back yet (server round-trip or the sim's own
+      // startCall promise still in flight) — there's no leg to drop. Used to silently return
+      // here and do nothing at all, which is what made Cancel/End Call look broken: the click
+      // registered, the button state didn't change, and the call kept ringing. Reflect the
+      // cancel immediately and let it finish through dial()'s cancelPendingRef check above.
+      cancelPendingRef.current = true;
+      setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
+      return;
+    }
 
     if (mode === "server") {
       // Server mode: call hangup via server function
