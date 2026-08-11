@@ -39,8 +39,10 @@ import {
   getDispositions,
   refreshDispositions,
   calcStats,
+  getTeamPtpFollowups,
   type DispositionRecord,
 } from "@/lib/disposition-store";
+import { escalateMissedPtpsToAdmin } from "@/lib/ptp-escalation-store";
 import {
   getAgentTimeStats,
   formatDuration,
@@ -141,6 +143,16 @@ function TeamActivityPage() {
   const allDisps = useAllDispositions();
   const [sortKey, setSortKey] = useState<SortKey>("calling");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  // Missed-PTP escalation, step 2 of the chain (manager -> admin) — see
+  // ptp-escalation-store.ts. Only escalates a PTP that was already sent to this manager on a
+  // previous day and is still unresolved today; runs opportunistically whenever this page
+  // loads, same as the agent-side step 1 on Call Queue.
+  useEffect(() => {
+    const agentIds = agents.map((a) => a.id);
+    if (!agentIds.length) return;
+    escalateMissedPtpsToAdmin(getTeamPtpFollowups(agentIds)).catch(() => {});
+  }, [agents, allDisps]);
 
   const rows = useMemo(() => {
     const now = new Date();

@@ -63,6 +63,8 @@ import {
   type DispositionRecord,
   type CallOutcome as StoredOutcome,
 } from "@/lib/disposition-store";
+import { saveReminder, type Reminder } from "@/lib/reminder-store";
+import { buildDispositionSms } from "@/lib/sms-templates";
 import {
   createAdHocDebtor,
   getPortfolios,
@@ -679,6 +681,7 @@ function ManagerQueuePage() {
     }
     if (activeCall) {
       const debtor = activeCall.debtor;
+      const now = new Date();
       const record: DispositionRecord = {
         id: crypto.randomUUID(),
         debtorId: debtor.id,
@@ -691,13 +694,14 @@ function ManagerQueuePage() {
         notes: disposition.notes,
         ptpAmount: disposition.ptpAmount ? parseFloat(disposition.ptpAmount) : undefined,
         ptpDate: disposition.ptpDate || undefined,
+        ptpTime: disposition.ptpTime || undefined,
         paidAmount: disposition.paidAmount ? parseFloat(disposition.paidAmount) : undefined,
         paidRef: disposition.paidRef || undefined,
         loanAmount: debtor.loanAmount,
         dpd: debtor.dpd,
         recordingUrl: activeCall.recordingUrl,
         providerCallId: activeCall.providerCallId,
-        time: new Date().toISOString(),
+        time: now.toISOString(),
       };
       saveDisposition(record).catch((e) =>
         toast.error(e instanceof Error ? e.message : "Failed to save call outcome"),
@@ -707,7 +711,41 @@ function ManagerQueuePage() {
           toast.error(e instanceof Error ? e.message : "Failed to resolve escalation"),
         );
       }
-      toast.success(`Call logged — ${disposition.outcome}`);
+
+      // PTP / callback: SMS the debtor and set a reminder, same as the agent-side Call Queue —
+      // the shared call modal now previews this SMS before Save & Close, so it has to actually
+      // happen here too or the preview would be a lie.
+      if (disposition.outcome === "promised" || disposition.outcome === "callback") {
+        const isPTP = disposition.outcome === "promised";
+        const dueDate = isPTP ? disposition.ptpDate : disposition.callbackDate;
+        const dueTime = isPTP ? disposition.ptpTime : disposition.callbackTime;
+        const amt = disposition.ptpAmount ? formatINR(parseFloat(disposition.ptpAmount)) : "";
+        const sms = buildDispositionSms(disposition.outcome, debtor.name, disposition);
+        if (sms) toast.success(`SMS sent to ${debtor.name}`, { description: sms });
+
+        if (dueDate) {
+          const reminder: Reminder = {
+            id: crypto.randomUUID(),
+            agentId: managerId,
+            debtorId: debtor.id,
+            debtorName: debtor.name,
+            phone: debtor.phone,
+            kind: isPTP ? "ptp" : "callback",
+            amount: disposition.ptpAmount ? parseFloat(disposition.ptpAmount) : undefined,
+            dueDate,
+            dueTime: dueTime || undefined,
+            message: isPTP
+              ? `PTP due — ${debtor.name} promised ${amt} for ${dueDate}${dueTime ? ` at ${dueTime}` : ""}`
+              : `Callback due — ${debtor.name} on ${dueDate}${dueTime ? ` at ${dueTime}` : ""}`,
+            createdAt: now.toISOString(),
+          };
+          saveReminder(reminder).catch((e) =>
+            toast.error(e instanceof Error ? e.message : "Failed to save reminder"),
+          );
+        }
+      } else {
+        toast.success(`Call logged — ${disposition.outcome}`);
+      }
     }
     setActiveCall(null);
     setActiveEscalationId(null);

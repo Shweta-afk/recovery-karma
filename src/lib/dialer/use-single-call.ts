@@ -168,12 +168,10 @@ export function useSingleCall(
               // never start polling a call we've already told the UI is over.
               cancelPendingRef.current = false;
               stoppedRef.current = true;
-              serverHangupCall({ data: { providerCallId: result.providerCallId } }).catch(
-                (err) => {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  console.error("Failed to hang up call cancelled before it connected:", msg);
-                },
-              );
+              serverHangupCall({ data: { providerCallId: result.providerCallId } }).catch((err) => {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.error("Failed to hang up call cancelled before it connected:", msg);
+              });
               reset();
               return;
             }
@@ -257,10 +255,7 @@ export function useSingleCall(
               reset();
             }
           });
-        timerRef.current = setInterval(
-          () => simRef.current?.flushDue(Date.now()),
-          TICK_MS,
-        );
+        timerRef.current = setInterval(() => simRef.current?.flushDue(Date.now()), TICK_MS);
       }
     },
     [reset, setActiveCall, mode, agentPhone],

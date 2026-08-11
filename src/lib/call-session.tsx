@@ -16,6 +16,7 @@ const EMPTY_DISPOSITION: DispositionForm = {
   outcome: "",
   ptpAmount: "",
   ptpDate: "",
+  ptpTime: "",
   callbackDate: "",
   callbackTime: "",
   paidAmount: "",

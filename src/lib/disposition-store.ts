@@ -32,6 +32,9 @@ export interface DispositionRecord {
   notes: string;
   ptpAmount?: number;
   ptpDate?: string;
+  /** HH:mm the agent committed to call the debtor back at on ptpDate. Requires
+   * migrations/20260811_call_logs_promise_time.sql — absent until then. */
+  ptpTime?: string;
   paidAmount?: number;
   paidRef?: string; // already folded into `notes` by the caller before saving — not read back
   loanAmount?: number;
@@ -132,6 +135,8 @@ export async function refreshDispositions(): Promise<void> {
     outcome: string;
     promise_amount: number | string | null;
     promise_date: string | null;
+    // Optional: present only once 20260811_call_logs_promise_time.sql has been applied.
+    promise_time?: string | null;
     raw_notes: string | null;
     created_at: string;
     recording_url: string | null;
@@ -169,6 +174,7 @@ export async function refreshDispositions(): Promise<void> {
       notes: l.raw_notes ?? "",
       ptpAmount: l.outcome === "promised" ? amount : undefined,
       ptpDate: l.outcome === "promised" ? (l.promise_date ?? undefined) : undefined,
+      ptpTime: l.outcome === "promised" ? (l.promise_time ?? undefined) : undefined,
       paidAmount: l.outcome === "paid" ? amount : undefined,
       loanAmount: debtor ? Number(debtor.loan_amount ?? 0) : undefined,
       dpd: debtor?.dpd ?? undefined,
@@ -214,6 +220,7 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     outcome: d.outcome,
     promise_amount: amount ?? null,
     promise_date: d.outcome === "promised" ? (d.ptpDate ?? null) : null,
+    promise_time: d.outcome === "promised" ? (d.ptpTime ?? null) : null,
     raw_notes: d.notes,
     recording_url: d.recordingUrl ?? null,
     provider_call_id: d.providerCallId ?? null,
@@ -282,6 +289,8 @@ export interface PtpFollowup {
   ptpAmount: number;
   /** ISO date the debtor promised to pay by. */
   ptpDateIso: string;
+  /** HH:mm the agent committed to call back at, if one was captured. */
+  ptpTime?: string;
   /** Negative when overdue. */
   daysLeft: number;
   /** Times this debtor was dispositioned before the promise that's currently active. */
@@ -290,14 +299,12 @@ export interface PtpFollowup {
   dpd?: number;
 }
 
-/**
- * Debtors whose most recent logged call is still an open promise-to-pay — i.e. no later
- * disposition (paid, refused, another promise, ...) has superseded it. Replaces the
- * PTP_FOLLOWUPS mock fixture that used to feed the Call Queue's "PTP Follow-up Tracker".
- */
-export function getPtpFollowups(agentId: string): PtpFollowup[] {
+/** Shared by getPtpFollowups (one agent) and getTeamPtpFollowups (a manager's whole team) —
+ * the "still open" logic (only the latest disposition per debtor counts) doesn't change based
+ * on whose calls are being looked at. */
+function computePtpFollowups(disps: DispositionRecord[]): PtpFollowup[] {
   const byDebtor = new Map<string, DispositionRecord[]>();
-  for (const d of getAgentDispositions(agentId)) {
+  for (const d of disps) {
     const list = byDebtor.get(d.debtorId);
     if (list) list.push(d);
     else byDebtor.set(d.debtorId, [d]);
@@ -324,6 +331,7 @@ export function getPtpFollowups(agentId: string): PtpFollowup[] {
       phone: latest.phone,
       ptpAmount: latest.ptpAmount,
       ptpDateIso: latest.ptpDate,
+      ptpTime: latest.ptpTime,
       daysLeft,
       prevAttempts: sorted.length - 1,
       notes: latest.notes,
@@ -332,6 +340,23 @@ export function getPtpFollowups(agentId: string): PtpFollowup[] {
   }
 
   return rows.sort((a, b) => a.daysLeft - b.daysLeft);
+}
+
+/**
+ * Debtors whose most recent logged call is still an open promise-to-pay — i.e. no later
+ * disposition (paid, refused, another promise, ...) has superseded it. Replaces the
+ * PTP_FOLLOWUPS mock fixture that used to feed the Call Queue's "PTP Follow-up Tracker".
+ */
+export function getPtpFollowups(agentId: string): PtpFollowup[] {
+  return computePtpFollowups(getAgentDispositions(agentId));
+}
+
+/** Same as getPtpFollowups but across every agent on a manager's team — feeds the manager-side
+ * half of the PTP miss-escalation chain (see ptp-escalation-store.ts), which needs to know
+ * about overdue PTPs regardless of which of the manager's agents logged them. */
+export function getTeamPtpFollowups(agentIds: string[]): PtpFollowup[] {
+  const idSet = new Set(agentIds);
+  return computePtpFollowups(getDispositions().filter((d) => idSet.has(d.agentId)));
 }
 
 export function getTeamDispositions(teamId: string): DispositionRecord[] {

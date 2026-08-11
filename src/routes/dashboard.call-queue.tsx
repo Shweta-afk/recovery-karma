@@ -106,6 +106,8 @@ import {
   refreshReminders,
   type Reminder,
 } from "@/lib/reminder-store";
+import { buildDispositionSms } from "@/lib/sms-templates";
+import { escalateMissedPtpsToManager } from "@/lib/ptp-escalation-store";
 
 import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
@@ -131,7 +133,6 @@ export const Route = createFileRoute("/dashboard/call-queue")({
   },
   component: CallQueuePage,
 });
-
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
 
@@ -238,6 +239,7 @@ function CallQueuePage() {
   );
   const [retainedOpen, setRetainedOpen] = useState(false);
   const [predictiveNotif, setPredictiveNotif] = useState<string | null>(null);
+  const [ptpBannerDismissed, setPtpBannerDismissed] = useState(false);
   // A call the AI has connected and is handing to the agent WHILE they're already on another call
   const [incomingTransfer, setIncomingTransfer] = useState<{
     debtor: QueueDebtor;
@@ -308,6 +310,7 @@ function CallQueuePage() {
       outcome: "",
       ptpAmount: "",
       ptpDate: "",
+      ptpTime: "",
       callbackDate: "",
       callbackTime: "",
       paidAmount: "",
@@ -437,6 +440,7 @@ function CallQueuePage() {
         notes: combinedNotes,
         ptpAmount: disposition.ptpAmount ? parseFloat(disposition.ptpAmount) : undefined,
         ptpDate: disposition.ptpDate || undefined,
+        ptpTime: disposition.ptpTime || undefined,
         paidAmount: disposition.paidAmount ? parseFloat(disposition.paidAmount) : undefined,
         paidRef: disposition.paidRef || undefined,
         loanAmount: debtor.loanAmount,
@@ -457,11 +461,10 @@ function CallQueuePage() {
       if (disposition.outcome === "promised" || disposition.outcome === "callback") {
         const isPTP = disposition.outcome === "promised";
         const dueDate = isPTP ? disposition.ptpDate : disposition.callbackDate;
+        const dueTime = isPTP ? disposition.ptpTime : disposition.callbackTime;
         const amt = disposition.ptpAmount ? formatINR(parseFloat(disposition.ptpAmount)) : "";
-        const sms = isPTP
-          ? `Dear ${debtor.name}, we've recorded your promise to pay ${amt} by ${dueDate || "the agreed date"}. Thank you — SamvadX`
-          : `Dear ${debtor.name}, our agent will call you back on ${disposition.callbackDate || "the agreed date"}${disposition.callbackTime ? ` at ${disposition.callbackTime}` : ""}. — SamvadX`;
-        toast.success(`SMS sent to ${debtor.name}`, { description: sms });
+        const sms = buildDispositionSms(disposition.outcome, debtor.name, disposition);
+        if (sms) toast.success(`SMS sent to ${debtor.name}`, { description: sms });
 
         if (dueDate) {
           const reminder: Reminder = {
@@ -473,10 +476,10 @@ function CallQueuePage() {
             kind: isPTP ? "ptp" : "callback",
             amount: disposition.ptpAmount ? parseFloat(disposition.ptpAmount) : undefined,
             dueDate,
-            dueTime: isPTP ? undefined : disposition.callbackTime || undefined,
+            dueTime: dueTime || undefined,
             message: isPTP
-              ? `PTP due — ${debtor.name} promised ${amt} for ${dueDate}`
-              : `Callback due — ${debtor.name} on ${dueDate}${disposition.callbackTime ? ` at ${disposition.callbackTime}` : ""}`,
+              ? `PTP due — ${debtor.name} promised ${amt} for ${dueDate}${dueTime ? ` at ${dueTime}` : ""}`
+              : `Callback due — ${debtor.name} on ${dueDate}${dueTime ? ` at ${dueTime}` : ""}`,
             createdAt: now.toISOString(),
           };
           saveReminder(reminder).catch((e) =>
@@ -514,6 +517,14 @@ function CallQueuePage() {
       });
     });
   }, [agentId]);
+
+  // Missed-PTP escalation, step 1 of the chain (agent -> manager) — see
+  // ptp-escalation-store.ts. Runs opportunistically whenever this page loads or the agent logs
+  // another call (ptpFollowups recomputes on loggedOutcomes); ptp_escalations dedupes so this
+  // never re-notifies the same overdue PTP twice.
+  useEffect(() => {
+    escalateMissedPtpsToManager(agentId, ptpFollowups).catch(() => {});
+  }, [agentId, ptpFollowups]);
 
   const filterCounts = useMemo(
     () => ({
@@ -693,6 +704,39 @@ function CallQueuePage() {
         />
       </div>
 
+      {/* ── Priority PTP reminder — PTPs due today, impossible to miss without dismissing ── */}
+      {!ptpBannerDismissed && ptpFollowups.some((p) => p.daysLeft === 0) && (
+        <div className="animate-in slide-in-from-top-2 duration-300 flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/8 px-4 py-2.5 text-sm text-destructive font-medium">
+          <Bell className="h-4 w-4 flex-shrink-0 animate-pulse" />
+          <span>
+            {ptpFollowups.filter((p) => p.daysLeft === 0).length} PTP
+            {ptpFollowups.filter((p) => p.daysLeft === 0).length === 1 ? "" : "s"} due today —{" "}
+            {formatINR(
+              ptpFollowups.filter((p) => p.daysLeft === 0).reduce((s, p) => s + p.ptpAmount, 0),
+            )}{" "}
+            total. Don't miss these.
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              document
+                .getElementById("ptp-follow-up-tracker")
+                ?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+            className="text-destructive/80 hover:text-destructive underline underline-offset-2 text-xs flex-shrink-0"
+          >
+            View
+          </button>
+          <button
+            type="button"
+            onClick={() => setPtpBannerDismissed(true)}
+            className="text-destructive/60 hover:text-destructive flex-shrink-0"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* ── Predictive notification banner ── */}
       {predictiveNotif && (
         <div className="animate-in slide-in-from-top-2 duration-300 flex items-center gap-3 rounded-lg border border-success/30 bg-success/8 px-4 py-2.5 text-sm text-success font-medium">
@@ -840,6 +884,7 @@ function CallQueuePage() {
       </section>
 
       {/* ── PTP Follow-up Tracker ── */}
+      <div id="ptp-follow-up-tracker" />
       <PTPTracker
         onCall={startCall}
         onView={setProfileDebtor}
@@ -891,9 +936,7 @@ function CallQueuePage() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground">
-                      Caller ID (ExoPhone)
-                    </label>
+                    <label className="text-xs text-muted-foreground">Caller ID (ExoPhone)</label>
                     <Select value={manualDialCallerId} onValueChange={setManualDialCallerId}>
                       <SelectTrigger className="h-8 text-sm">
                         <SelectValue />

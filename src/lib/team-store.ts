@@ -168,6 +168,17 @@ export function getTeamByAgent(agentId: string): Team | undefined {
   return getTeams().find((t) => t.agentIds.includes(agentId));
 }
 
+/** Every admin's email in the caller's own company — RLS scopes the query to their client_id
+ * same as everywhere else. Admins deliberately aren't in the roster (refreshRoster() only
+ * pulls agent/manager, since My Team/Team Activity never need to list them as assignable), so
+ * this is a separate one-off query rather than a filter over useRoster(). Used to fan out the
+ * final step of the PTP miss-escalation chain (manager -> admin) — see ptp-escalation-store.ts. */
+export async function getAdminEmails(): Promise<string[]> {
+  const { data, error } = await supabase.from("agents").select("email").eq("role", "admin");
+  if (error || !data) return [];
+  return data.map((a) => a.email as string);
+}
+
 /** Agents belonging to this manager's own team — [] if they have no team yet, never "everyone". */
 export function getManagerTeamAgents(managerId: string): AgentRef[] {
   const team = getTeamByManager(managerId);

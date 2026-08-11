@@ -65,6 +65,7 @@ export interface DispositionForm {
   outcome: CallOutcome | "";
   ptpAmount: string;
   ptpDate: string;
+  ptpTime: string;
   callbackDate: string;
   callbackTime: string;
   paidAmount: string;
@@ -82,6 +83,7 @@ export const EMPTY_DISPOSITION: DispositionForm = {
   outcome: "",
   ptpAmount: "",
   ptpDate: "",
+  ptpTime: "",
   callbackDate: "",
   callbackTime: "",
   paidAmount: "",

@@ -38,7 +38,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -66,6 +72,7 @@ import { exportCSV } from "@/lib/call-queue/mock-data";
 import { saveEscalation } from "@/lib/escalation-store";
 import type { PtpFollowup } from "@/lib/disposition-store";
 import { leftoverExtraKeys } from "@/lib/csv-fields";
+import { buildDispositionSms } from "@/lib/sms-templates";
 
 import { toast } from "sonner";
 
@@ -123,7 +130,11 @@ function AddPhoneRow({ onAdd }: { onAdd: (phone: string) => Promise<void> }) {
         disabled={!value.trim() || saving}
         onClick={handleAdd}
       >
-        {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+        {saving ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Plus className="h-3.5 w-3.5" />
+        )}
         Add
       </Button>
     </div>
@@ -190,6 +201,10 @@ function ActiveCallContent({
   // early return would then violate the Rules of Hooks ("Rendered more hooks than during the
   // previous render").
   const [infoTab, setInfoTab] = useState<"loan" | "personal" | "payments" | "contacts">("loan");
+  // Gates Save & Close behind a preview of the SMS that outcome will trigger (PTP/callback
+  // only — buildDispositionSms returns null for outcomes that don't send one), so the agent
+  // sees exactly what the debtor is about to receive before it actually goes out.
+  const [smsPreviewOpen, setSmsPreviewOpen] = useState(false);
 
   /* ── Ringing: compact single-row ── */
   if (phase === "ringing") {
@@ -264,7 +279,7 @@ function ActiveCallContent({
   const outcomeFields = () => (
     <>
       {disposition.outcome === "promised" && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground flex items-center gap-1">
               <IndianRupee className="h-3 w-3" />
@@ -286,6 +301,18 @@ function ActiveCallContent({
               type="date"
               value={disposition.ptpDate}
               onChange={(e) => up({ ptpDate: e.target.value })}
+              className="h-9"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              Call Back At
+            </label>
+            <Input
+              type="time"
+              value={disposition.ptpTime}
+              onChange={(e) => up({ ptpTime: e.target.value })}
               className="h-9"
             />
           </div>
@@ -389,699 +416,689 @@ function ActiveCallContent({
   // Previous notes / prior contact history for the side scroll during a live call
   const priorHistory = debtor.contactHistory ?? [];
 
+  // What Save & Close is about to trigger — null for outcomes that don't send an SMS at all.
+  const smsPreview = buildDispositionSms(disposition.outcome, debtor.name, disposition);
+  const handleSaveClose = () => {
+    if (smsPreview) setSmsPreviewOpen(true);
+    else onSubmit();
+  };
+
   return (
-    <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-300">
-      {/* ── TOP BAR ── */}
-      <div className="flex items-center justify-between gap-4 px-6 py-3 border-b border-border bg-card flex-shrink-0 flex-wrap">
-        {/* Identity + status */}
-        <div className="flex items-center gap-4 min-w-0">
-          <div className="relative flex-shrink-0">
-            <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-              {debtor.name
-                .split(" ")
-                .map((n) => n[0])
-                .slice(0, 2)
-                .join("")}
+    <>
+      <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-300">
+        {/* ── TOP BAR ── */}
+        <div className="flex items-center justify-between gap-4 px-6 py-3 border-b border-border bg-card flex-shrink-0 flex-wrap">
+          {/* Identity + status */}
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="relative flex-shrink-0">
+              <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+                {debtor.name
+                  .split(" ")
+                  .map((n) => n[0])
+                  .slice(0, 2)
+                  .join("")}
+              </div>
+              {phase === "connected" && (
+                <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card" />
+              )}
             </div>
-            {phase === "connected" && (
-              <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card" />
-            )}
-          </div>
-          <div className="min-w-0">
-            <div className="font-semibold text-foreground text-base leading-tight truncate">
-              {debtor.name}
+            <div className="min-w-0">
+              <div className="font-semibold text-foreground text-base leading-tight truncate">
+                {debtor.name}
+              </div>
+              <div className="text-xs text-muted-foreground truncate">
+                {debtor.loanReference ?? debtor.id} · {debtor.phone}
+                {debtor.altPhones && debtor.altPhones.length > 0
+                  ? ` · ${debtor.altPhones.length} alt number${debtor.altPhones.length === 1 ? "" : "s"}`
+                  : ""}
+              </div>
             </div>
-            <div className="text-xs text-muted-foreground truncate">
-              {debtor.loanReference ?? debtor.id} · {debtor.phone}
-              {debtor.altPhones && debtor.altPhones.length > 0
-                ? ` · ${debtor.altPhones.length} alt number${debtor.altPhones.length === 1 ? "" : "s"}`
-                : ""}
-            </div>
-          </div>
-          <span
-            className={cn(
-              "rounded-full border px-2.5 py-0.5 text-xs font-medium",
-              bucketMeta.color,
-            )}
-          >
-            {bucketMeta.label}
-          </span>
-          {debtor.legalNotice && (
-            <span className="rounded-full border border-destructive/40 bg-destructive/10 px-2.5 py-0.5 text-xs font-medium text-destructive">
-              ⚠ Legal Notice
-            </span>
-          )}
-          {debtor.disputeFlag && (
-            <span className="rounded-full border border-orange-400/40 bg-orange-500/10 px-2.5 py-0.5 text-xs font-medium text-orange-500">
-              Dispute
-            </span>
-          )}
-          {(debtor as QueueDebtor).retained && (
-            <span className="rounded-full border border-violet-400/40 bg-violet-500/10 px-2.5 py-0.5 text-xs font-medium text-violet-500">
-              ★ Retained
-            </span>
-          )}
-        </div>
-
-        {/* Timer + call state badges */}
-        <div className="flex items-center gap-3">
-          {phase === "connected" ? (
-            <span className="flex items-center gap-2 text-success font-semibold tabular-nums text-lg">
-              <span className="h-2.5 w-2.5 rounded-full bg-success animate-pulse" />
-              {fmtElapsed(elapsed)}
-            </span>
-          ) : (
-            <span className="text-muted-foreground font-medium">Ended · {fmtElapsed(elapsed)}</span>
-          )}
-          {conferenced && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-xs text-blue-500">
-              <GitMerge className="h-3 w-3" />
-              3-way{mergedWith ? ` · ${mergedWith.split(" ")[0]}` : ""}
-            </span>
-          )}
-          {whisper && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-xs text-violet-500">
-              <EarOff className="h-3 w-3" />
-              Whisper{whisperTarget ? ` · ${whisperTarget.split(" ")[0]}` : ""}
-            </span>
-          )}
-          {held && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-400/30 px-2 py-0.5 text-xs text-amber-500">
-              <PauseCircle className="h-3 w-3" />
-              On Hold
-            </span>
-          )}
-        </div>
-
-        {/* Controls */}
-        <div className="flex items-center gap-1.5 flex-wrap justify-end">
-          {phase === "connected" && (
-            <>
-              <Button
-                size="sm"
-                variant={muted ? "default" : "outline"}
-                className={cn("gap-1 h-8", muted && "bg-destructive text-destructive-foreground")}
-                onClick={onMute}
-              >
-                {muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                {muted ? "Unmute" : "Mute"}
-              </Button>
-              <Button
-                size="sm"
-                variant={held ? "default" : "outline"}
-                className={cn("gap-1 h-8", held && "bg-amber-500/80 text-white")}
-                onClick={onHold}
-              >
-                <PauseCircle className="h-3.5 w-3.5" />
-                {held ? "Resume" : "Hold"}
-              </Button>
-              <div className="relative">
-                <Button
-                  size="sm"
-                  variant={whisper ? "default" : "outline"}
-                  className={cn("gap-1 h-8", whisper && "bg-violet-600 text-white")}
-                  onClick={() => {
-                    if (whisper) {
-                      setWhisper(false);
-                      setWhisperTarget(null);
-                      toast("Whisper OFF");
-                    } else {
-                      setWhisperOpen((o) => !o);
-                      setAddCallOpen(false);
-                      setTransferOpen(false);
-                      setManualDialOpen(false);
-                    }
-                  }}
-                >
-                  {whisper ? <EarOff className="h-3.5 w-3.5" /> : <Ear className="h-3.5 w-3.5" />}
-                  {whisper ? `Whisper · ${whisperTarget?.split(" ")[0]}` : "Whisper"}
-                </Button>
-                {whisperOpen && !whisper && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setWhisperOpen(false)} />
-                    <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Whisper with (customer won't hear)
-                      </p>
-                      <div className="space-y-0.5">
-                        {SUPERVISORS.map((name) => (
-                          <button
-                            key={name}
-                            type="button"
-                            onClick={() => {
-                              setWhisperTarget(name);
-                              setWhisper(true);
-                              setWhisperOpen(false);
-                              toast.success(`Whisper ON with ${name}`);
-                            }}
-                            className="w-full text-left px-2 py-2 rounded text-sm text-foreground hover:bg-accent/60 transition-colors flex items-center gap-2"
-                          >
-                            <Ear className="h-3.5 w-3.5 text-violet-500 flex-shrink-0" />
-                            <span>{name}</span>
-                          </button>
-                        ))}
-                      </div>
-                      <p className="text-[10px] text-muted-foreground border-t border-border pt-2">
-                        You and the selected person can speak. The customer cannot hear this
-                        conversation.
-                      </p>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="relative">
-                <Button
-                  size="sm"
-                  variant={conferenced ? "default" : "outline"}
-                  className={cn("gap-1 h-8", conferenced && "bg-blue-600 text-white")}
-                  onClick={() => {
-                    if (conferenced) {
-                      setConferenced(false);
-                      setMergedWith(null);
-                      setMergeOpen(false);
-                      toast("Back to 1:1");
-                    } else {
-                      setMergeOpen((o) => !o);
-                      setAddCallOpen(false);
-                      setTransferOpen(false);
-                      setManualDialOpen(false);
-                      setWhisperOpen(false);
-                    }
-                  }}
-                >
-                  <GitMerge className="h-3.5 w-3.5" />
-                  {conferenced
-                    ? `Merged${mergedWith ? ` · ${mergedWith.split(" ")[0]}` : ""}`
-                    : "Merge"}
-                </Button>
-                {mergeOpen && !conferenced && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setMergeOpen(false)} />
-                    <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Merge with
-                      </p>
-                      {/* Manager — portal auto-connects to the live call */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setConferenced(true);
-                          setMergedWith("Preethi Menon (Manager)");
-                          setMergeOpen(false);
-                          toast.success("Manager portal auto-connected to the call", {
-                            description: "Preethi Menon joined — 3-way live",
-                          });
-                        }}
-                        className="w-full text-left px-2 py-2 rounded text-sm text-violet-600 hover:bg-accent/60 transition-colors flex items-center gap-2"
-                      >
-                        <UserRoundCog className="h-4 w-4 flex-shrink-0" />
-                        <span className="flex-1">Manager</span>
-                        <span className="text-[9px] opacity-60">auto-connect</span>
-                      </button>
-                      <div className="border-t border-border pt-1.5 space-y-0.5 max-h-40 overflow-y-auto">
-                        <p className="text-[10px] text-muted-foreground px-2">Agents</p>
-                        {AGENTS_LIST.map((name) => (
-                          <button
-                            key={name}
-                            type="button"
-                            onClick={() => {
-                              setConferenced(true);
-                              setMergedWith(name);
-                              setMergeOpen(false);
-                              toast.success(`${name} merged into the call`);
-                            }}
-                            className="w-full text-left px-2 py-1.5 rounded text-sm text-foreground hover:bg-accent/60 transition-colors flex items-center gap-2"
-                          >
-                            <GitMerge className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
-                            <span>{name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Add Call */}
-              <div className="relative">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1 h-8"
-                  onClick={() => {
-                    setAddCallOpen((o) => !o);
-                    setTransferOpen(false);
-                    setManualDialOpen(false);
-                  }}
-                >
-                  <PhoneForwarded className="h-3.5 w-3.5" />
-                  Add Call
-                </Button>
-                {addCallOpen && (
-                  <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Add participant
-                    </p>
-                    <div className="flex gap-1.5">
-                      <Input
-                        placeholder="+91 XXXXX XXXXX"
-                        value={addCallNumber}
-                        onChange={(e) => setAddCallNumber(e.target.value)}
-                        className="h-7 text-xs flex-1"
-                      />
-                      <Button
-                        size="sm"
-                        className="h-7 px-2 text-xs gap-1"
-                        onClick={() => {
-                          if (!addCallNumber) return;
-                          toast.success(`Calling ${addCallNumber}…`);
-                          setConferenced(true);
-                          setAddCallOpen(false);
-                          setAddCallNumber("");
-                        }}
-                      >
-                        <Phone className="h-3 w-3" />
-                        Call
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Transfer */}
-              <div className="relative">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1 h-8"
-                  onClick={() => {
-                    setTransferOpen((o) => !o);
-                    setAddCallOpen(false);
-                    setManualDialOpen(false);
-                  }}
-                >
-                  <ArrowRightLeft className="h-3.5 w-3.5" />
-                  Transfer
-                </Button>
-                {transferOpen && (
-                  <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Transfer to
-                    </p>
-                    <div className="space-y-0.5 max-h-48 overflow-y-auto">
-                      {[...SUPERVISORS, ...AGENTS_LIST].map((name) => (
-                        <button
-                          key={name}
-                          type="button"
-                          onClick={() => {
-                            toast.success(`Transferring to ${name}…`);
-                            setTransferOpen(false);
-                            onEnd();
-                          }}
-                          className={cn(
-                            "w-full text-left px-2 py-1.5 rounded text-xs hover:bg-accent/60 transition-colors flex items-center justify-between",
-                            SUPERVISORS.includes(name) ? "text-violet-500" : "text-foreground",
-                          )}
-                        >
-                          <span>{name}</span>
-                          {SUPERVISORS.includes(name) && (
-                            <span className="text-[9px] opacity-50">Supervisor</span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="border-t border-border pt-2 flex gap-1.5">
-                      <Input
-                        placeholder="Custom number…"
-                        value={transferTarget}
-                        onChange={(e) => setTransferTarget(e.target.value)}
-                        className="h-7 text-xs flex-1"
-                      />
-                      <Button
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => {
-                          if (!transferTarget) return;
-                          toast.success(`Transferring to ${transferTarget}…`);
-                          setTransferOpen(false);
-                          onEnd();
-                        }}
-                      >
-                        <ArrowRightLeft className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Dialpad */}
-              <div className="relative">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1 h-8"
-                  onClick={() => {
-                    setManualDialOpen((o) => !o);
-                    setAddCallOpen(false);
-                    setTransferOpen(false);
-                  }}
-                >
-                  <Hash className="h-3.5 w-3.5" />
-                  Dialpad
-                </Button>
-                {manualDialOpen && (
-                  <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                    <div className="h-7 rounded border border-border bg-muted/40 px-2 flex items-center font-mono text-sm">
-                      {dialPadInput || (
-                        <span className="text-muted-foreground text-xs">press keys…</span>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-3 gap-1">
-                      {["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"].map((k) => (
-                        <button
-                          key={k}
-                          type="button"
-                          onClick={() => {
-                            setDialPadInput((d) => d + k);
-                            toast(`Sent: ${k}`, { duration: 700 });
-                          }}
-                          className="h-8 rounded border border-border bg-muted/30 text-sm font-medium hover:bg-accent/60 transition-colors active:scale-95"
-                        >
-                          {k}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDialPadInput("")}
-                      className="w-full text-[10px] text-muted-foreground hover:text-foreground text-center"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-
-          <Button
-            size="sm"
-            className="gap-1.5 h-8 bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            onClick={onEnd}
-          >
-            <PhoneOff className="h-3.5 w-3.5" />
-            End Call
-          </Button>
-          {phase === "connected" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-8 w-8 p-0"
-              onClick={onMinimize}
-              title="Minimize — keep call running in the background"
+            <span
+              className={cn(
+                "rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                bucketMeta.color,
+              )}
             >
-              <Minus className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </div>
+              {bucketMeta.label}
+            </span>
+            {debtor.legalNotice && (
+              <span className="rounded-full border border-destructive/40 bg-destructive/10 px-2.5 py-0.5 text-xs font-medium text-destructive">
+                ⚠ Legal Notice
+              </span>
+            )}
+            {debtor.disputeFlag && (
+              <span className="rounded-full border border-orange-400/40 bg-orange-500/10 px-2.5 py-0.5 text-xs font-medium text-orange-500">
+                Dispute
+              </span>
+            )}
+            {(debtor as QueueDebtor).retained && (
+              <span className="rounded-full border border-violet-400/40 bg-violet-500/10 px-2.5 py-0.5 text-xs font-medium text-violet-500">
+                ★ Retained
+              </span>
+            )}
+          </div>
 
-      {/* ── BODY: two columns ── */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* ── LEFT: notes + history (during call) / disposition (after end) ── */}
-        <div className="w-[440px] flex-shrink-0 border-r border-border flex flex-col overflow-hidden">
-          {phase === "connected" && (
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* AI score insight */}
-              <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
-                <div className="text-[10px] uppercase tracking-wider text-primary/70 mb-1 font-semibold">
-                  AI Insight
-                </div>
-                <p className="text-sm text-foreground italic">"{debtor.scoreReason}"</p>
-                <div className="flex items-center gap-2 mt-2">
-                  <span
-                    className={cn(
-                      "text-xs font-bold",
-                      debtor.aiScore >= 8
-                        ? "text-success"
-                        : debtor.aiScore >= 5
-                          ? "text-amber-500"
-                          : "text-destructive",
-                    )}
+          {/* Timer + call state badges */}
+          <div className="flex items-center gap-3">
+            {phase === "connected" ? (
+              <span className="flex items-center gap-2 text-success font-semibold tabular-nums text-lg">
+                <span className="h-2.5 w-2.5 rounded-full bg-success animate-pulse" />
+                {fmtElapsed(elapsed)}
+              </span>
+            ) : (
+              <span className="text-muted-foreground font-medium">
+                Ended · {fmtElapsed(elapsed)}
+              </span>
+            )}
+            {conferenced && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-xs text-blue-500">
+                <GitMerge className="h-3 w-3" />
+                3-way{mergedWith ? ` · ${mergedWith.split(" ")[0]}` : ""}
+              </span>
+            )}
+            {whisper && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-xs text-violet-500">
+                <EarOff className="h-3 w-3" />
+                Whisper{whisperTarget ? ` · ${whisperTarget.split(" ")[0]}` : ""}
+              </span>
+            )}
+            {held && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-400/30 px-2 py-0.5 text-xs text-amber-500">
+                <PauseCircle className="h-3 w-3" />
+                On Hold
+              </span>
+            )}
+          </div>
+
+          {/* Controls */}
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {phase === "connected" && (
+              <>
+                <Button
+                  size="sm"
+                  variant={muted ? "default" : "outline"}
+                  className={cn("gap-1 h-8", muted && "bg-destructive text-destructive-foreground")}
+                  onClick={onMute}
+                >
+                  {muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                  {muted ? "Unmute" : "Mute"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant={held ? "default" : "outline"}
+                  className={cn("gap-1 h-8", held && "bg-amber-500/80 text-white")}
+                  onClick={onHold}
+                >
+                  <PauseCircle className="h-3.5 w-3.5" />
+                  {held ? "Resume" : "Hold"}
+                </Button>
+                <div className="relative">
+                  <Button
+                    size="sm"
+                    variant={whisper ? "default" : "outline"}
+                    className={cn("gap-1 h-8", whisper && "bg-violet-600 text-white")}
+                    onClick={() => {
+                      if (whisper) {
+                        setWhisper(false);
+                        setWhisperTarget(null);
+                        toast("Whisper OFF");
+                      } else {
+                        setWhisperOpen((o) => !o);
+                        setAddCallOpen(false);
+                        setTransferOpen(false);
+                        setManualDialOpen(false);
+                      }
+                    }}
                   >
-                    Score {debtor.aiScore}/10
-                  </span>
-                  <span className="text-xs text-muted-foreground">·</span>
-                  <span className="text-xs text-muted-foreground">
-                    DPD {debtor.dpd}d · {bucketMeta.description}
-                  </span>
+                    {whisper ? <EarOff className="h-3.5 w-3.5" /> : <Ear className="h-3.5 w-3.5" />}
+                    {whisper ? `Whisper · ${whisperTarget?.split(" ")[0]}` : "Whisper"}
+                  </Button>
+                  {whisperOpen && !whisper && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setWhisperOpen(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          Whisper with (customer won't hear)
+                        </p>
+                        <div className="space-y-0.5">
+                          {SUPERVISORS.map((name) => (
+                            <button
+                              key={name}
+                              type="button"
+                              onClick={() => {
+                                setWhisperTarget(name);
+                                setWhisper(true);
+                                setWhisperOpen(false);
+                                toast.success(`Whisper ON with ${name}`);
+                              }}
+                              className="w-full text-left px-2 py-2 rounded text-sm text-foreground hover:bg-accent/60 transition-colors flex items-center gap-2"
+                            >
+                              <Ear className="h-3.5 w-3.5 text-violet-500 flex-shrink-0" />
+                              <span>{name}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground border-t border-border pt-2">
+                          You and the selected person can speak. The customer cannot hear this
+                          conversation.
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </div>
-              </div>
-              {/* Quick actions */}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => toast.success("Payment link sent")}
-                  className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  Send Pay Link
-                </button>
-                <button
-                  type="button"
-                  onClick={() => toast.success("Statement sent")}
-                  className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
-                >
-                  <FileText className="h-3.5 w-3.5" />
-                  Statement
-                </button>
-                <button
-                  type="button"
-                  onClick={() => toast.success("Flagged")}
-                  className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted-foreground hover:border-orange-400/60 hover:text-orange-500 transition-colors"
-                >
-                  <Flag className="h-3.5 w-3.5" />
-                  Flag
-                </button>
-              </div>
-
-              {/* Live call note */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <FileText className="h-3.5 w-3.5" />
-                  Live call note
-                </label>
-                <Textarea
-                  placeholder="Type notes while on the call…"
-                  value={disposition.notes}
-                  onChange={(e) => up({ notes: e.target.value })}
-                  className="min-h-[90px] resize-none"
-                />
-                <p className="text-[10px] text-muted-foreground">
-                  Saved automatically with the disposition when the call ends.
-                </p>
-              </div>
-
-              {/* Productive disposition — available during the call */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-foreground">Log outcome</p>
-                {outcomeButtons(PRODUCTIVE_OUTCOMES)}
-                {outcomeFields()}
-              </div>
-
-              {/* Previous notes & call history — scrollable */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-foreground">
-                  Previous notes &amp; call history
-                </p>
-                <div className="rounded-lg border border-border divide-y divide-border max-h-56 overflow-y-auto">
-                  {priorHistory.length ? (
-                    priorHistory.map((c, i) => (
-                      <div key={i} className="flex items-start gap-2 px-3 py-2">
-                        <span
-                          className={cn(
-                            "mt-0.5 flex h-6 w-6 items-center justify-center rounded-full flex-shrink-0",
-                            c.channel === "call"
-                              ? "bg-primary/15 text-primary"
-                              : c.channel === "whatsapp"
-                                ? "bg-success/15 text-success"
-                                : c.channel === "sms"
-                                  ? "bg-blue-500/15 text-blue-500"
-                                  : "bg-muted/50 text-muted-foreground",
-                          )}
+                <div className="relative">
+                  <Button
+                    size="sm"
+                    variant={conferenced ? "default" : "outline"}
+                    className={cn("gap-1 h-8", conferenced && "bg-blue-600 text-white")}
+                    onClick={() => {
+                      if (conferenced) {
+                        setConferenced(false);
+                        setMergedWith(null);
+                        setMergeOpen(false);
+                        toast("Back to 1:1");
+                      } else {
+                        setMergeOpen((o) => !o);
+                        setAddCallOpen(false);
+                        setTransferOpen(false);
+                        setManualDialOpen(false);
+                        setWhisperOpen(false);
+                      }
+                    }}
+                  >
+                    <GitMerge className="h-3.5 w-3.5" />
+                    {conferenced
+                      ? `Merged${mergedWith ? ` · ${mergedWith.split(" ")[0]}` : ""}`
+                      : "Merge"}
+                  </Button>
+                  {mergeOpen && !conferenced && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setMergeOpen(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          Merge with
+                        </p>
+                        {/* Manager — portal auto-connects to the live call */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConferenced(true);
+                            setMergedWith("Preethi Menon (Manager)");
+                            setMergeOpen(false);
+                            toast.success("Manager portal auto-connected to the call", {
+                              description: "Preethi Menon joined — 3-way live",
+                            });
+                          }}
+                          className="w-full text-left px-2 py-2 rounded text-sm text-violet-600 hover:bg-accent/60 transition-colors flex items-center gap-2"
                         >
-                          {c.channel === "call" ? (
-                            <Phone className="h-3 w-3" />
-                          ) : c.channel === "whatsapp" ? (
-                            <MessageCircle className="h-3 w-3" />
-                          ) : c.channel === "sms" ? (
-                            <Send className="h-3 w-3" />
-                          ) : (
-                            <FileText className="h-3 w-3" />
-                          )}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs text-foreground leading-snug">{c.outcome}</p>
-                          <p className="text-[10px] text-muted-foreground">
-                            {c.date} · {c.time} · {c.agent}
-                          </p>
+                          <UserRoundCog className="h-4 w-4 flex-shrink-0" />
+                          <span className="flex-1">Manager</span>
+                          <span className="text-[9px] opacity-60">auto-connect</span>
+                        </button>
+                        <div className="border-t border-border pt-1.5 space-y-0.5 max-h-40 overflow-y-auto">
+                          <p className="text-[10px] text-muted-foreground px-2">Agents</p>
+                          {AGENTS_LIST.map((name) => (
+                            <button
+                              key={name}
+                              type="button"
+                              onClick={() => {
+                                setConferenced(true);
+                                setMergedWith(name);
+                                setMergeOpen(false);
+                                toast.success(`${name} merged into the call`);
+                              }}
+                              className="w-full text-left px-2 py-1.5 rounded text-sm text-foreground hover:bg-accent/60 transition-colors flex items-center gap-2"
+                            >
+                              <GitMerge className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+                              <span>{name}</span>
+                            </button>
+                          ))}
                         </div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                      No previous contact history
+                    </>
+                  )}
+                </div>
+
+                {/* Add Call */}
+                <div className="relative">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1 h-8"
+                    onClick={() => {
+                      setAddCallOpen((o) => !o);
+                      setTransferOpen(false);
+                      setManualDialOpen(false);
+                    }}
+                  >
+                    <PhoneForwarded className="h-3.5 w-3.5" />
+                    Add Call
+                  </Button>
+                  {addCallOpen && (
+                    <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Add participant
+                      </p>
+                      <div className="flex gap-1.5">
+                        <Input
+                          placeholder="+91 XXXXX XXXXX"
+                          value={addCallNumber}
+                          onChange={(e) => setAddCallNumber(e.target.value)}
+                          className="h-7 text-xs flex-1"
+                        />
+                        <Button
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => {
+                            if (!addCallNumber) return;
+                            toast.success(`Calling ${addCallNumber}…`);
+                            setConferenced(true);
+                            setAddCallOpen(false);
+                            setAddCallNumber("");
+                          }}
+                        >
+                          <Phone className="h-3 w-3" />
+                          Call
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>
-              </div>
-            </div>
-          )}
 
-          {phase === "ended" && (
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              <p className="text-sm font-semibold text-foreground">Disposition</p>
-              {outcomeButtons([...PRODUCTIVE_OUTCOMES, ...NON_PRODUCTIVE_OUTCOMES])}
-              {outcomeFields()}
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Notes</label>
-                <Textarea
-                  placeholder="Call notes…"
-                  value={disposition.notes}
-                  onChange={(e) => up({ notes: e.target.value })}
-                  className="min-h-[80px] resize-none"
-                />
-              </div>
-              <div className="flex items-center justify-between gap-3 pt-1 border-t border-border">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={disposition.escalate}
-                    onChange={(e) => up({ escalate: e.target.checked })}
-                    className="rounded"
-                  />
-                  <span className="text-sm text-destructive font-medium">Escalate to manager</span>
-                </label>
-                <Button className="gap-1.5 px-6" onClick={onSubmit} disabled={!disposition.outcome}>
-                  Save &amp; Close
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── RIGHT: full debtor info ── */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-muted/10">
-          {/* Tab bar */}
-          <div className="flex border-b border-border bg-card px-6 gap-1 flex-shrink-0">
-            {(
-              [
-                { key: "loan", label: "Loan Details" },
-                { key: "personal", label: "Personal" },
-                { key: "payments", label: "Payment History" },
-                { key: "contacts", label: "Contact History" },
-              ] as const
-            ).map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setInfoTab(t.key)}
-                className={cn(
-                  "py-3 px-4 text-sm font-medium border-b-2 transition-colors -mb-px",
-                  infoTab === t.key
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-6">
-            {/* ── LOAN DETAILS ── */}
-            {infoTab === "loan" && (
-              <div className="space-y-6">
-                {/* Outstanding summary row */}
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                  {[
-                    {
-                      label: "Total Outstanding",
-                      value: formatINR(debtor.loanAmount),
-                      cls: "text-foreground text-xl font-bold",
-                    },
-                    {
-                      label: "Principal Outstanding",
-                      value: formatINR(debtor.principalOutstanding ?? debtor.loanAmount),
-                      cls: "text-foreground font-semibold",
-                    },
-                    {
-                      label: "Interest Outstanding",
-                      value: formatINR(debtor.interestOutstanding ?? 0),
-                      cls: "text-amber-500 font-semibold",
-                    },
-                    {
-                      label: "Penalty Charges",
-                      value: formatINR(debtor.penaltyCharges ?? 0),
-                      cls: "text-destructive font-semibold",
-                    },
-                  ].map(({ label, value, cls }) => (
-                    <div key={label} className="rounded-xl border border-border bg-card p-4">
-                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                        {label}
+                {/* Transfer */}
+                <div className="relative">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1 h-8"
+                    onClick={() => {
+                      setTransferOpen((o) => !o);
+                      setAddCallOpen(false);
+                      setManualDialOpen(false);
+                    }}
+                  >
+                    <ArrowRightLeft className="h-3.5 w-3.5" />
+                    Transfer
+                  </Button>
+                  {transferOpen && (
+                    <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Transfer to
+                      </p>
+                      <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                        {[...SUPERVISORS, ...AGENTS_LIST].map((name) => (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={() => {
+                              toast.success(`Transferring to ${name}…`);
+                              setTransferOpen(false);
+                              onEnd();
+                            }}
+                            className={cn(
+                              "w-full text-left px-2 py-1.5 rounded text-xs hover:bg-accent/60 transition-colors flex items-center justify-between",
+                              SUPERVISORS.includes(name) ? "text-violet-500" : "text-foreground",
+                            )}
+                          >
+                            <span>{name}</span>
+                            {SUPERVISORS.includes(name) && (
+                              <span className="text-[9px] opacity-50">Supervisor</span>
+                            )}
+                          </button>
+                        ))}
                       </div>
-                      <div className={cn("text-lg", cls)}>{value}</div>
+                      <div className="border-t border-border pt-2 flex gap-1.5">
+                        <Input
+                          placeholder="Custom number…"
+                          value={transferTarget}
+                          onChange={(e) => setTransferTarget(e.target.value)}
+                          className="h-7 text-xs flex-1"
+                        />
+                        <Button
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => {
+                            if (!transferTarget) return;
+                            toast.success(`Transferring to ${transferTarget}…`);
+                            setTransferOpen(false);
+                            onEnd();
+                          }}
+                        >
+                          <ArrowRightLeft className="h-3 w-3" />
+                        </Button>
+                      </div>
                     </div>
-                  ))}
+                  )}
                 </div>
 
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  {/* Loan info */}
-                  <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Loan Information
+                {/* Dialpad */}
+                <div className="relative">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1 h-8"
+                    onClick={() => {
+                      setManualDialOpen((o) => !o);
+                      setAddCallOpen(false);
+                      setTransferOpen(false);
+                    }}
+                  >
+                    <Hash className="h-3.5 w-3.5" />
+                    Dialpad
+                  </Button>
+                  {manualDialOpen && (
+                    <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
+                      <div className="h-7 rounded border border-border bg-muted/40 px-2 flex items-center font-mono text-sm">
+                        {dialPadInput || (
+                          <span className="text-muted-foreground text-xs">press keys…</span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"].map((k) => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => {
+                              setDialPadInput((d) => d + k);
+                              toast(`Sent: ${k}`, { duration: 700 });
+                            }}
+                            className="h-8 rounded border border-border bg-muted/30 text-sm font-medium hover:bg-accent/60 transition-colors active:scale-95"
+                          >
+                            {k}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDialPadInput("")}
+                        className="w-full text-[10px] text-muted-foreground hover:text-foreground text-center"
+                      >
+                        Clear
+                      </button>
                     </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            <Button
+              size="sm"
+              className="gap-1.5 h-8 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={onEnd}
+            >
+              <PhoneOff className="h-3.5 w-3.5" />
+              End Call
+            </Button>
+            {phase === "connected" && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 w-8 p-0"
+                onClick={onMinimize}
+                title="Minimize — keep call running in the background"
+              >
+                <Minus className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* ── BODY: two columns ── */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* ── LEFT: notes + history (during call) / disposition (after end) ── */}
+          <div className="w-[440px] flex-shrink-0 border-r border-border flex flex-col overflow-hidden">
+            {phase === "connected" && (
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                {/* AI score insight */}
+                <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+                  <div className="text-[10px] uppercase tracking-wider text-primary/70 mb-1 font-semibold">
+                    AI Insight
+                  </div>
+                  <p className="text-sm text-foreground italic">"{debtor.scoreReason}"</p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span
+                      className={cn(
+                        "text-xs font-bold",
+                        debtor.aiScore >= 8
+                          ? "text-success"
+                          : debtor.aiScore >= 5
+                            ? "text-amber-500"
+                            : "text-destructive",
+                      )}
+                    >
+                      Score {debtor.aiScore}/10
+                    </span>
+                    <span className="text-xs text-muted-foreground">·</span>
+                    <span className="text-xs text-muted-foreground">
+                      DPD {debtor.dpd}d · {bucketMeta.description}
+                    </span>
+                  </div>
+                </div>
+                {/* Quick actions */}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toast.success("Payment link sent")}
+                    className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Send Pay Link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toast.success("Statement sent")}
+                    className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Statement
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toast.success("Flagged")}
+                    className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted-foreground hover:border-orange-400/60 hover:text-orange-500 transition-colors"
+                  >
+                    <Flag className="h-3.5 w-3.5" />
+                    Flag
+                  </button>
+                </div>
+
+                {/* Live call note */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <FileText className="h-3.5 w-3.5" />
+                    Live call note
+                  </label>
+                  <Textarea
+                    placeholder="Type notes while on the call…"
+                    value={disposition.notes}
+                    onChange={(e) => up({ notes: e.target.value })}
+                    className="min-h-[90px] resize-none"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Saved automatically with the disposition when the call ends.
+                  </p>
+                </div>
+
+                {/* Productive disposition — available during the call */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-foreground">Log outcome</p>
+                  {outcomeButtons(PRODUCTIVE_OUTCOMES)}
+                  {outcomeFields()}
+                </div>
+
+                {/* Previous notes & call history — scrollable */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-foreground">
+                    Previous notes &amp; call history
+                  </p>
+                  <div className="rounded-lg border border-border divide-y divide-border max-h-56 overflow-y-auto">
+                    {priorHistory.length ? (
+                      priorHistory.map((c, i) => (
+                        <div key={i} className="flex items-start gap-2 px-3 py-2">
+                          <span
+                            className={cn(
+                              "mt-0.5 flex h-6 w-6 items-center justify-center rounded-full flex-shrink-0",
+                              c.channel === "call"
+                                ? "bg-primary/15 text-primary"
+                                : c.channel === "whatsapp"
+                                  ? "bg-success/15 text-success"
+                                  : c.channel === "sms"
+                                    ? "bg-blue-500/15 text-blue-500"
+                                    : "bg-muted/50 text-muted-foreground",
+                            )}
+                          >
+                            {c.channel === "call" ? (
+                              <Phone className="h-3 w-3" />
+                            ) : c.channel === "whatsapp" ? (
+                              <MessageCircle className="h-3 w-3" />
+                            ) : c.channel === "sms" ? (
+                              <Send className="h-3 w-3" />
+                            ) : (
+                              <FileText className="h-3 w-3" />
+                            )}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-foreground leading-snug">{c.outcome}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {c.date} · {c.time} · {c.agent}
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                        No previous contact history
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {phase === "ended" && (
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                <p className="text-sm font-semibold text-foreground">Disposition</p>
+                {outcomeButtons([...PRODUCTIVE_OUTCOMES, ...NON_PRODUCTIVE_OUTCOMES])}
+                {outcomeFields()}
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Notes</label>
+                  <Textarea
+                    placeholder="Call notes…"
+                    value={disposition.notes}
+                    onChange={(e) => up({ notes: e.target.value })}
+                    className="min-h-[80px] resize-none"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 pt-1 border-t border-border">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={disposition.escalate}
+                      onChange={(e) => up({ escalate: e.target.checked })}
+                      className="rounded"
+                    />
+                    <span className="text-sm text-destructive font-medium">
+                      Escalate to manager
+                    </span>
+                  </label>
+                  <Button
+                    className="gap-1.5 px-6"
+                    onClick={handleSaveClose}
+                    disabled={!disposition.outcome}
+                  >
+                    Save &amp; Close
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── RIGHT: full debtor info ── */}
+          <div className="flex-1 flex flex-col overflow-hidden bg-muted/10">
+            {/* Tab bar */}
+            <div className="flex border-b border-border bg-card px-6 gap-1 flex-shrink-0">
+              {(
+                [
+                  { key: "loan", label: "Loan Details" },
+                  { key: "personal", label: "Personal" },
+                  { key: "payments", label: "Payment History" },
+                  { key: "contacts", label: "Contact History" },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setInfoTab(t.key)}
+                  className={cn(
+                    "py-3 px-4 text-sm font-medium border-b-2 transition-colors -mb-px",
+                    infoTab === t.key
+                      ? "border-primary text-primary"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {/* ── LOAN DETAILS ── */}
+              {infoTab === "loan" && (
+                <div className="space-y-6">
+                  {/* Outstanding summary row */}
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                     {[
-                      ["Loan ID", debtor.loanReference ?? debtor.id],
-                      ["Loan Type", debtor.loanType ?? "—"],
-                      ["Lender", debtor.lender ?? "—"],
-                      ["Portfolio", debtor.portfolio],
-                      ["Disbursed On", debtor.disbursedOn ?? "—"],
-                      ["Tenure", debtor.tenure ? `${debtor.tenure} months` : "—"],
-                      ["Interest Rate", debtor.interestRate ? `${debtor.interestRate}% p.a.` : "—"],
-                      ["EMI Amount", debtor.emiAmount ? formatINR(debtor.emiAmount) : "—"],
-                      [
-                        "EMI Due Date",
-                        debtor.emiDueDate ? `${debtor.emiDueDate}th of every month` : "—",
-                      ],
-                    ].map(([k, v]) => (
-                      <div key={k} className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">{k}</span>
-                        <span className="text-foreground font-medium">{v}</span>
+                      {
+                        label: "Total Outstanding",
+                        value: formatINR(debtor.loanAmount),
+                        cls: "text-foreground text-xl font-bold",
+                      },
+                      {
+                        label: "Principal Outstanding",
+                        value: formatINR(debtor.principalOutstanding ?? debtor.loanAmount),
+                        cls: "text-foreground font-semibold",
+                      },
+                      {
+                        label: "Interest Outstanding",
+                        value: formatINR(debtor.interestOutstanding ?? 0),
+                        cls: "text-amber-500 font-semibold",
+                      },
+                      {
+                        label: "Penalty Charges",
+                        value: formatINR(debtor.penaltyCharges ?? 0),
+                        cls: "text-destructive font-semibold",
+                      },
+                    ].map(({ label, value, cls }) => (
+                      <div key={label} className="rounded-xl border border-border bg-card p-4">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                          {label}
+                        </div>
+                        <div className={cn("text-lg", cls)}>{value}</div>
                       </div>
                     ))}
                   </div>
 
-                  {/* Overdue + bank */}
-                  <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                    {/* Loan info */}
                     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Overdue Summary
+                        Loan Information
                       </div>
                       {[
-                        ["DPD", `${debtor.dpd} days`],
-                        ["Bucket", bucketMeta.label + " — " + bucketMeta.description],
-                        ["Total Overdue", formatINR(debtor.totalOverdue ?? 0)],
-                        ["Total Paid", formatINR(debtor.totalPaid ?? 0)],
+                        ["Loan ID", debtor.loanReference ?? debtor.id],
+                        ["Loan Type", debtor.loanType ?? "—"],
+                        ["Lender", debtor.lender ?? "—"],
+                        ["Portfolio", debtor.portfolio],
+                        ["Disbursed On", debtor.disbursedOn ?? "—"],
+                        ["Tenure", debtor.tenure ? `${debtor.tenure} months` : "—"],
                         [
-                          "PDC Bounced",
-                          debtor.pdcBounced !== undefined ? `${debtor.pdcBounced} times` : "—",
+                          "Interest Rate",
+                          debtor.interestRate ? `${debtor.interestRate}% p.a.` : "—",
                         ],
+                        ["EMI Amount", debtor.emiAmount ? formatINR(debtor.emiAmount) : "—"],
                         [
-                          "Settlement",
-                          debtor.settlementOffer
-                            ? formatINR(debtor.settlementOffer)
-                            : "None offered",
+                          "EMI Due Date",
+                          debtor.emiDueDate ? `${debtor.emiDueDate}th of every month` : "—",
                         ],
                       ].map(([k, v]) => (
                         <div key={k} className="flex items-center justify-between text-sm">
@@ -1090,347 +1107,415 @@ function ActiveCallContent({
                         </div>
                       ))}
                     </div>
+
+                    {/* Overdue + bank */}
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                        <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Overdue Summary
+                        </div>
+                        {[
+                          ["DPD", `${debtor.dpd} days`],
+                          ["Bucket", bucketMeta.label + " — " + bucketMeta.description],
+                          ["Total Overdue", formatINR(debtor.totalOverdue ?? 0)],
+                          ["Total Paid", formatINR(debtor.totalPaid ?? 0)],
+                          [
+                            "PDC Bounced",
+                            debtor.pdcBounced !== undefined ? `${debtor.pdcBounced} times` : "—",
+                          ],
+                          [
+                            "Settlement",
+                            debtor.settlementOffer
+                              ? formatINR(debtor.settlementOffer)
+                              : "None offered",
+                          ],
+                        ].map(([k, v]) => (
+                          <div key={k} className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">{k}</span>
+                            <span className="text-foreground font-medium">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                        <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Bank Account
+                        </div>
+                        {[
+                          ["Bank", debtor.bankName ?? "—"],
+                          ["Account Type", debtor.accountType ?? "—"],
+                          ["IFSC", debtor.ifscCode ?? "—"],
+                        ].map(([k, v]) => (
+                          <div key={k} className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">{k}</span>
+                            <span className="font-mono text-foreground font-medium">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Co-applicant / guarantor */}
+                  {(debtor.coApplicantName || debtor.guarantorName) && (
                     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Bank Account
+                        Co-Applicant / Guarantor
                       </div>
-                      {[
-                        ["Bank", debtor.bankName ?? "—"],
-                        ["Account Type", debtor.accountType ?? "—"],
-                        ["IFSC", debtor.ifscCode ?? "—"],
-                      ].map(([k, v]) => (
-                        <div key={k} className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">{k}</span>
-                          <span className="font-mono text-foreground font-medium">{v}</span>
+                      {debtor.coApplicantName && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Co-Applicant</span>
+                          <span className="text-foreground font-medium">
+                            {debtor.coApplicantName}
+                            {debtor.coApplicantPhone ? ` · ${debtor.coApplicantPhone}` : ""}
+                          </span>
                         </div>
-                      ))}
+                      )}
+                      {debtor.guarantorName && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Guarantor</span>
+                          <span className="text-foreground font-medium">
+                            {debtor.guarantorName}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                </div>
+                  )}
 
-                {/* Co-applicant / guarantor */}
-                {(debtor.coApplicantName || debtor.guarantorName) && (
-                  <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Co-Applicant / Guarantor
-                    </div>
-                    {debtor.coApplicantName && (
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Co-Applicant</span>
-                        <span className="text-foreground font-medium">
-                          {debtor.coApplicantName}
-                          {debtor.coApplicantPhone ? ` · ${debtor.coApplicantPhone}` : ""}
+                  {/* Other Details — every uploaded column that isn't one of our named/mapped
+                    fields above, still under its own literal source-file header. */}
+                  {otherFields.length > 0 && (
+                    <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Other Details{" "}
+                        <span className="normal-case font-normal text-muted-foreground/70">
+                          (from uploaded file, unmapped)
                         </span>
                       </div>
-                    )}
-                    {debtor.guarantorName && (
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Guarantor</span>
-                        <span className="text-foreground font-medium">{debtor.guarantorName}</span>
+                      <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                        {otherFields.map(([key, value]) => (
+                          <div key={key} className="flex items-center justify-between gap-3">
+                            <span className="text-muted-foreground capitalize truncate">
+                              {key.replace(/_/g, " ")}
+                            </span>
+                            <span className="text-foreground font-medium text-right break-all">
+                              {value}
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
+              )}
 
-                {/* Other Details — every uploaded column that isn't one of our named/mapped
-                    fields above, still under its own literal source-file header. */}
-                {otherFields.length > 0 && (
+              {/* ── PERSONAL ── */}
+              {infoTab === "personal" && (
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                   <div className="rounded-xl border border-border bg-card p-4 space-y-3">
                     <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Other Details{" "}
-                      <span className="normal-case font-normal text-muted-foreground/70">
-                        (from uploaded file, unmapped)
-                      </span>
+                      Personal Details
                     </div>
-                    <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-                      {otherFields.map(([key, value]) => (
-                        <div key={key} className="flex items-center justify-between gap-3">
-                          <span className="text-muted-foreground capitalize truncate">
-                            {key.replace(/_/g, " ")}
-                          </span>
-                          <span className="text-foreground font-medium text-right break-all">
-                            {value}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── PERSONAL ── */}
-            {infoTab === "personal" && (
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Personal Details
-                  </div>
-                  {[
-                    ["Full Name", debtor.name],
-                    ["Gender", debtor.gender ?? "—"],
-                    ["DOB", debtor.dob ?? "—"],
-                    ["Age", debtor.age ? `${debtor.age} years` : "—"],
-                    ["Language", debtor.language],
-                  ].map(([k, v]) => (
-                    <div key={k} className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">{k}</span>
-                      <span className="text-foreground font-medium">{v}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Contact Details
-                  </div>
-                  <div className="space-y-1.5">
                     {[
-                      { label: "Primary", number: debtor.phone },
-                      ...(debtor.altPhones ?? []).map((number, i) => ({
-                        label: `Alt ${i + 1}`,
-                        number,
-                      })),
-                    ].map(({ label, number }) => (
-                      <div key={label} className="flex items-center justify-between text-sm">
-                        <div className="min-w-0">
-                          <span className="text-muted-foreground">{label}</span>
-                          <span className="ml-2 font-mono text-foreground font-medium">
-                            {number}
-                          </span>
-                        </div>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="outline"
-                          className="h-7 w-7 flex-shrink-0"
-                          disabled={phase !== "ended"}
-                          title={
-                            phase !== "ended"
-                              ? "End the current call to call this number"
-                              : `Call ${number}`
-                          }
-                          onClick={() => onCallNumber(number)}
-                        >
-                          <Phone className="h-3.5 w-3.5" />
-                        </Button>
+                      ["Full Name", debtor.name],
+                      ["Gender", debtor.gender ?? "—"],
+                      ["DOB", debtor.dob ?? "—"],
+                      ["Age", debtor.age ? `${debtor.age} years` : "—"],
+                      ["Language", debtor.language],
+                    ].map(([k, v]) => (
+                      <div key={k} className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">{k}</span>
+                        <span className="text-foreground font-medium">{v}</span>
                       </div>
                     ))}
                   </div>
-                  <AddPhoneRow onAdd={onAddPhone} />
-                  <div className="flex items-center justify-between text-sm pt-1 border-t border-border">
-                    <span className="text-muted-foreground">Email</span>
-                    <span className="font-mono text-foreground font-medium text-right">
-                      {debtor.email ?? "—"}
-                    </span>
+
+                  <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Contact Details
+                    </div>
+                    <div className="space-y-1.5">
+                      {[
+                        { label: "Primary", number: debtor.phone },
+                        ...(debtor.altPhones ?? []).map((number, i) => ({
+                          label: `Alt ${i + 1}`,
+                          number,
+                        })),
+                      ].map(({ label, number }) => (
+                        <div key={label} className="flex items-center justify-between text-sm">
+                          <div className="min-w-0">
+                            <span className="text-muted-foreground">{label}</span>
+                            <span className="ml-2 font-mono text-foreground font-medium">
+                              {number}
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="h-7 w-7 flex-shrink-0"
+                            disabled={phase !== "ended"}
+                            title={
+                              phase !== "ended"
+                                ? "End the current call to call this number"
+                                : `Call ${number}`
+                            }
+                            onClick={() => onCallNumber(number)}
+                          >
+                            <Phone className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                    <AddPhoneRow onAdd={onAddPhone} />
+                    <div className="flex items-center justify-between text-sm pt-1 border-t border-border">
+                      <span className="text-muted-foreground">Email</span>
+                      <span className="font-mono text-foreground font-medium text-right">
+                        {debtor.email ?? "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Last Contacted</span>
+                      <span className="font-mono text-foreground font-medium text-right">
+                        {debtor.lastContacted ?? "Never"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Last Contacted</span>
-                    <span className="font-mono text-foreground font-medium text-right">
-                      {debtor.lastContacted ?? "Never"}
-                    </span>
+
+                  <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Address
+                    </div>
+                    <p className="text-sm text-foreground">{debtor.address ?? "—"}</p>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">City / State</span>
+                      <span className="text-foreground">
+                        {[debtor.city, debtor.state].filter(Boolean).join(", ") || "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Pincode</span>
+                      <span className="text-foreground font-mono">{debtor.pincode ?? "—"}</span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Employment
+                    </div>
+                    {[
+                      ["Employer", debtor.employer ?? "—"],
+                      ["Type", debtor.employerType ?? "—"],
+                      [
+                        "Monthly Income",
+                        debtor.monthlyIncome ? formatINR(debtor.monthlyIncome) : "—",
+                      ],
+                    ].map(([k, v]) => (
+                      <div key={k} className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">{k}</span>
+                        <span className="text-foreground font-medium">{v}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
+              )}
 
-                <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Address
+              {/* ── PAYMENT HISTORY ── */}
+              {infoTab === "payments" && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="rounded-xl border border-border bg-card p-4">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                        EMI Amount
+                      </div>
+                      <div className="text-lg font-bold text-foreground">
+                        {debtor.emiAmount ? formatINR(debtor.emiAmount) : "—"}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-border bg-card p-4">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                        Total Paid
+                      </div>
+                      <div className="text-lg font-bold text-success">
+                        {formatINR(debtor.totalPaid ?? 0)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-border bg-card p-4">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                        PDC Bounced
+                      </div>
+                      <div
+                        className={cn(
+                          "text-lg font-bold",
+                          (debtor.pdcBounced ?? 0) > 0 ? "text-destructive" : "text-success",
+                        )}
+                      >
+                        {debtor.pdcBounced ?? 0} times
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-sm text-foreground">{debtor.address ?? "—"}</p>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">City / State</span>
-                    <span className="text-foreground">
-                      {[debtor.city, debtor.state].filter(Boolean).join(", ") || "—"}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Pincode</span>
-                    <span className="text-foreground font-mono">{debtor.pincode ?? "—"}</span>
+                  <div className="rounded-xl border border-border bg-card overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/30">
+                          <th className="py-2.5 pl-4 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Date
+                          </th>
+                          <th className="py-2.5 text-right text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Amount
+                          </th>
+                          <th className="py-2.5 text-center text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Method
+                          </th>
+                          <th className="py-2.5 text-center text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Status
+                          </th>
+                          <th className="py-2.5 pr-4 text-right text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Ref
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {(debtor.paymentHistory ?? []).map((p, i) => (
+                          <tr key={i} className="hover:bg-muted/20">
+                            <td className="py-2.5 pl-4 text-foreground">{p.date}</td>
+                            <td className="py-2.5 text-right font-medium text-foreground">
+                              {formatINR(p.amount)}
+                            </td>
+                            <td className="py-2.5 text-center">
+                              <span className="rounded-full bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">
+                                {p.method}
+                              </span>
+                            </td>
+                            <td className="py-2.5 text-center">
+                              <span
+                                className={cn(
+                                  "rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                                  p.status === "paid"
+                                    ? "bg-success/10 text-success border-success/30"
+                                    : p.status === "bounced"
+                                      ? "bg-destructive/10 text-destructive border-destructive/30"
+                                      : "bg-muted/50 text-muted-foreground border-border",
+                                )}
+                              >
+                                {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pr-4 text-right font-mono text-[11px] text-muted-foreground">
+                              {p.ref ?? "—"}
+                            </td>
+                          </tr>
+                        ))}
+                        {!debtor.paymentHistory?.length && (
+                          <tr>
+                            <td
+                              colSpan={5}
+                              className="py-8 text-center text-muted-foreground text-sm"
+                            >
+                              No payment history
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+              )}
 
-                <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Employment
-                  </div>
-                  {[
-                    ["Employer", debtor.employer ?? "—"],
-                    ["Type", debtor.employerType ?? "—"],
-                    [
-                      "Monthly Income",
-                      debtor.monthlyIncome ? formatINR(debtor.monthlyIncome) : "—",
-                    ],
-                  ].map(([k, v]) => (
-                    <div key={k} className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">{k}</span>
-                      <span className="text-foreground font-medium">{v}</span>
+              {/* ── CONTACT HISTORY ── */}
+              {infoTab === "contacts" && (
+                <div className="space-y-3">
+                  {(debtor.contactHistory ?? []).map((c, i) => (
+                    <div
+                      key={i}
+                      className="rounded-xl border border-border bg-card p-4 flex items-start gap-4"
+                    >
+                      <div
+                        className={cn(
+                          "flex h-8 w-8 items-center justify-center rounded-full flex-shrink-0 text-[11px] font-semibold",
+                          c.channel === "call"
+                            ? "bg-primary/15 text-primary"
+                            : c.channel === "whatsapp"
+                              ? "bg-success/15 text-success"
+                              : c.channel === "sms"
+                                ? "bg-blue-500/15 text-blue-500"
+                                : "bg-muted/50 text-muted-foreground",
+                        )}
+                      >
+                        {c.channel === "call" ? (
+                          <Phone className="h-3.5 w-3.5" />
+                        ) : c.channel === "whatsapp" ? (
+                          <MessageCircle className="h-3.5 w-3.5" />
+                        ) : c.channel === "sms" ? (
+                          <Send className="h-3.5 w-3.5" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-foreground capitalize">
+                            {c.channel === "call"
+                              ? "Phone Call"
+                              : c.channel === "whatsapp"
+                                ? "WhatsApp"
+                                : c.channel.toUpperCase()}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground flex-shrink-0">
+                            {c.date} · {c.time}
+                          </span>
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-0.5">{c.outcome}</p>
+                        <span className="text-[10px] text-muted-foreground">by {c.agent}</span>
+                      </div>
                     </div>
                   ))}
+                  {!debtor.contactHistory?.length && (
+                    <div className="py-12 text-center text-muted-foreground text-sm">
+                      No contact history
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
-
-            {/* ── PAYMENT HISTORY ── */}
-            {infoTab === "payments" && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="rounded-xl border border-border bg-card p-4">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                      EMI Amount
-                    </div>
-                    <div className="text-lg font-bold text-foreground">
-                      {debtor.emiAmount ? formatINR(debtor.emiAmount) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-border bg-card p-4">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                      Total Paid
-                    </div>
-                    <div className="text-lg font-bold text-success">
-                      {formatINR(debtor.totalPaid ?? 0)}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-border bg-card p-4">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                      PDC Bounced
-                    </div>
-                    <div
-                      className={cn(
-                        "text-lg font-bold",
-                        (debtor.pdcBounced ?? 0) > 0 ? "text-destructive" : "text-success",
-                      )}
-                    >
-                      {debtor.pdcBounced ?? 0} times
-                    </div>
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border bg-card overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/30">
-                        <th className="py-2.5 pl-4 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Date
-                        </th>
-                        <th className="py-2.5 text-right text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Amount
-                        </th>
-                        <th className="py-2.5 text-center text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Method
-                        </th>
-                        <th className="py-2.5 text-center text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Status
-                        </th>
-                        <th className="py-2.5 pr-4 text-right text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Ref
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {(debtor.paymentHistory ?? []).map((p, i) => (
-                        <tr key={i} className="hover:bg-muted/20">
-                          <td className="py-2.5 pl-4 text-foreground">{p.date}</td>
-                          <td className="py-2.5 text-right font-medium text-foreground">
-                            {formatINR(p.amount)}
-                          </td>
-                          <td className="py-2.5 text-center">
-                            <span className="rounded-full bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">
-                              {p.method}
-                            </span>
-                          </td>
-                          <td className="py-2.5 text-center">
-                            <span
-                              className={cn(
-                                "rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                                p.status === "paid"
-                                  ? "bg-success/10 text-success border-success/30"
-                                  : p.status === "bounced"
-                                    ? "bg-destructive/10 text-destructive border-destructive/30"
-                                    : "bg-muted/50 text-muted-foreground border-border",
-                              )}
-                            >
-                              {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
-                            </span>
-                          </td>
-                          <td className="py-2.5 pr-4 text-right font-mono text-[11px] text-muted-foreground">
-                            {p.ref ?? "—"}
-                          </td>
-                        </tr>
-                      ))}
-                      {!debtor.paymentHistory?.length && (
-                        <tr>
-                          <td
-                            colSpan={5}
-                            className="py-8 text-center text-muted-foreground text-sm"
-                          >
-                            No payment history
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* ── CONTACT HISTORY ── */}
-            {infoTab === "contacts" && (
-              <div className="space-y-3">
-                {(debtor.contactHistory ?? []).map((c, i) => (
-                  <div
-                    key={i}
-                    className="rounded-xl border border-border bg-card p-4 flex items-start gap-4"
-                  >
-                    <div
-                      className={cn(
-                        "flex h-8 w-8 items-center justify-center rounded-full flex-shrink-0 text-[11px] font-semibold",
-                        c.channel === "call"
-                          ? "bg-primary/15 text-primary"
-                          : c.channel === "whatsapp"
-                            ? "bg-success/15 text-success"
-                            : c.channel === "sms"
-                              ? "bg-blue-500/15 text-blue-500"
-                              : "bg-muted/50 text-muted-foreground",
-                      )}
-                    >
-                      {c.channel === "call" ? (
-                        <Phone className="h-3.5 w-3.5" />
-                      ) : c.channel === "whatsapp" ? (
-                        <MessageCircle className="h-3.5 w-3.5" />
-                      ) : c.channel === "sms" ? (
-                        <Send className="h-3.5 w-3.5" />
-                      ) : (
-                        <FileText className="h-3.5 w-3.5" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium text-foreground capitalize">
-                          {c.channel === "call"
-                            ? "Phone Call"
-                            : c.channel === "whatsapp"
-                              ? "WhatsApp"
-                              : c.channel.toUpperCase()}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground flex-shrink-0">
-                          {c.date} · {c.time}
-                        </span>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-0.5">{c.outcome}</p>
-                      <span className="text-[10px] text-muted-foreground">by {c.agent}</span>
-                    </div>
-                  </div>
-                ))}
-                {!debtor.contactHistory?.length && (
-                  <div className="py-12 text-center text-muted-foreground text-sm">
-                    No contact history
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* SMS preview — shown before Save & Close for any outcome that triggers one (PTP /
+        callback today), so the agent sees exactly what the debtor is about to receive.
+        buildDispositionSms is the same function that generates the text actually sent on
+        confirm, so this can never drift from reality. */}
+      <Dialog open={smsPreviewOpen} onOpenChange={setSmsPreviewOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <MessageCircle className="h-4 w-4 text-primary" />
+              SMS to {debtor.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-foreground leading-relaxed">
+            {smsPreview}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Sent automatically once you confirm and save this disposition.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSmsPreviewOpen(false)}>
+              Back
+            </Button>
+            <Button
+              className="gap-1.5"
+              onClick={() => {
+                setSmsPreviewOpen(false);
+                onSubmit();
+              }}
+            >
+              <Send className="h-3.5 w-3.5" />
+              Confirm &amp; Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 export function ActiveCallPanel(props: CallControlProps) {
@@ -1512,18 +1597,20 @@ export function PTPTracker({
   bucketFilter: DPDBucket | "all";
   search: string;
 }) {
-  const [filter, setFilter] = useState<"all" | "today" | "tomorrow" | "later">("all");
+  const [filter, setFilter] = useState<"all" | "overdue" | "today" | "tomorrow" | "later">("all");
 
   // Find the matching QueueDebtor for each PTP follow-up to apply search + display its loan ref
   const rows = followups.filter((p) => {
     const dateOk =
       filter === "all"
         ? true
-        : filter === "today"
-          ? p.daysLeft === 0
-          : filter === "tomorrow"
-            ? p.daysLeft === 1
-            : p.daysLeft >= 2;
+        : filter === "overdue"
+          ? p.daysLeft < 0
+          : filter === "today"
+            ? p.daysLeft === 0
+            : filter === "tomorrow"
+              ? p.daysLeft === 1
+              : p.daysLeft >= 2;
     if (!dateOk) return false;
     const loanRef = queue.find((d) => d.id === p.debtorId)?.loanReference ?? p.debtorId;
     // Apply search
@@ -1540,6 +1627,7 @@ export function PTPTracker({
     return true;
   });
 
+  const overdueCount = followups.filter((p) => p.daysLeft < 0).length;
   const todayCount = followups.filter((p) => p.daysLeft === 0).length;
   const tomorrowCount = followups.filter((p) => p.daysLeft === 1).length;
   const laterCount = followups.filter((p) => p.daysLeft >= 2).length;
@@ -1551,8 +1639,9 @@ export function PTPTracker({
 
       <div className="mt-3 space-y-3">
         {/* Summary */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           {[
+            { label: "Overdue", value: overdueCount, cls: "text-destructive" },
             { label: "Due Today", value: todayCount, cls: "text-destructive" },
             { label: "Due Tomorrow", value: tomorrowCount, cls: "text-warning-foreground" },
             { label: "Later", value: laterCount, cls: "text-muted-foreground" },
@@ -1576,6 +1665,7 @@ export function PTPTracker({
           {(
             [
               { key: "all", label: "All", count: followups.length },
+              { key: "overdue", label: "Overdue", count: overdueCount },
               { key: "today", label: "Due Today", count: todayCount },
               { key: "tomorrow", label: "Tomorrow", count: tomorrowCount },
               { key: "later", label: "Later", count: laterCount },
@@ -1689,6 +1779,11 @@ export function PTPTracker({
                         <TableCell>
                           <span className={cn("text-xs font-semibold", urgency)}>
                             {formatPtpDate(p.daysLeft, p.ptpDateIso)}
+                            {p.ptpTime && (
+                              <span className="ml-1 font-normal text-muted-foreground">
+                                · {p.ptpTime}
+                              </span>
+                            )}
                             {p.daysLeft === 0 && (
                               <span className="ml-1 text-[10px] bg-destructive/15 text-destructive px-1 rounded">
                                 Overdue risk
@@ -1927,8 +2022,8 @@ export function DebtorProfileSheet({
   // getDebtorExtra()'s DEBTOR_EXTRA table only ever matches a couple of hardcoded mock IDs, so
   // without this every real debtor fell into its fallback and showed a fabricated "Axis Bank /
   // Personal Loan" as if it were their actual lender.
-  const csvFields = (debtor as QueueDebtor & { _uploadedExtra?: Record<string, string> })
-    ._uploadedExtra ?? {};
+  const csvFields =
+    (debtor as QueueDebtor & { _uploadedExtra?: Record<string, string> })._uploadedExtra ?? {};
   const initials = debtor.name
     .split(" ")
     .map((n) => n[0])
@@ -2051,9 +2146,7 @@ export function DebtorProfileSheet({
                     <div className="text-xs text-muted-foreground capitalize">
                       {col.replace(/_/g, " ")}
                     </div>
-                    <div className="font-medium text-foreground mt-0.5 break-all">
-                      {val || "—"}
-                    </div>
+                    <div className="font-medium text-foreground mt-0.5 break-all">{val || "—"}</div>
                   </div>
                 ))}
               </div>
