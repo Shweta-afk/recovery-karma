@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Landmark,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -61,10 +62,7 @@ const STATUS_META: Record<PaymentStatus, { label: string; cls: string }> = {
   refunded: { label: "Refunded", cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15" },
 };
 
-const SETTLEMENT_META: Record<
-  SettlementRecord["status"],
-  { label: string; cls: string }
-> = {
+const SETTLEMENT_META: Record<SettlementRecord["status"], { label: string; cls: string }> = {
   approved: { label: "Approved", cls: "bg-success/8 text-success/70 border-success/15" },
   pending_manager: {
     label: "Pending Approval",
@@ -414,7 +412,7 @@ function PaymentsPage() {
                       p.method ? METHOD_LABEL[p.method] : "",
                       STATUS_META[p.status].label,
                       p.notes,
-                      p.agentName,
+                      p.source === "bank_reported" ? "Bank Reported" : p.agentName,
                       p.dpd ?? "",
                     ]);
                     const escape = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
@@ -536,7 +534,18 @@ function PaymentsPage() {
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              <span className="text-xs text-muted-foreground">{p.agentName}</span>
+                              {p.source === "bank_reported" ? (
+                                <Badge
+                                  variant="outline"
+                                  className="text-xs gap-1 bg-blue-500/8 text-blue-600 border-blue-400/20"
+                                  title="Reported paid via the bank's daily file, not collected by an agent"
+                                >
+                                  <Landmark className="h-3 w-3" />
+                                  Bank Reported
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">{p.agentName}</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               {expanded ? (
@@ -559,7 +568,10 @@ function PaymentsPage() {
                                     ["Payment Type", p.paymentType],
                                     ["Notes", p.notes || "—"],
                                     ["Debtor Phone", p.phone || "—"],
-                                    ["Agent", p.agentName],
+                                    [
+                                      "Agent",
+                                      p.source === "bank_reported" ? "Bank Reported" : p.agentName,
+                                    ],
                                   ].map(([label, val]) => (
                                     <div key={String(label)}>
                                       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">

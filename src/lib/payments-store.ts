@@ -3,6 +3,10 @@ import { supabase } from "./supabase";
 export type PaymentMethod = "upi" | "card" | "netbanking" | "cash" | "cheque" | "link";
 export type PaymentStatus = "pending" | "completed" | "failed" | "refunded";
 export type PaymentType = "full" | "partial" | "settlement" | "emi";
+/** 'agent' — an agent logged this via a call disposition. 'bank_reported' — a manager's bulk
+ * paid-file upload marked it (see applyBulkPaidFile in portfolio-store.ts); no agent gets
+ * credit for these. Requires migrations/20260811_payments_source.sql — defaults to 'agent'. */
+export type PaymentSource = "agent" | "bank_reported";
 
 export interface PaymentRecord {
   id: string;
@@ -19,6 +23,8 @@ export interface PaymentRecord {
   method: PaymentMethod | null;
   status: PaymentStatus;
   paymentType: PaymentType;
+  /** 'agent' when absent — see PaymentSource. */
+  source: PaymentSource;
   notes: string;
   dpd?: number;
   receivedAt?: string;
@@ -68,9 +74,7 @@ export function getSettlements(): SettlementRecord[] {
 export async function refreshPayments(): Promise<void> {
   const [payments, debtors, portfolios, agents] = await Promise.all([
     supabase.from("payments").select("*").order("created_at", { ascending: false }),
-    supabase
-      .from("debtors")
-      .select("id, name, phone_primary, portfolio_id, dpd, loan_reference"),
+    supabase.from("debtors").select("id, name, phone_primary, portfolio_id, dpd, loan_reference"),
     supabase.from("portfolios").select("id, name, lender_name, product_type"),
     supabase.from("agents").select("id, name"),
   ]);
@@ -108,6 +112,8 @@ export async function refreshPayments(): Promise<void> {
     payment_method: string | null;
     status: string;
     payment_type: string;
+    // Optional: present only once 20260811_payments_source.sql has been applied.
+    source?: string;
     notes: string | null;
     received_at: string | null;
     created_at: string;
@@ -132,6 +138,7 @@ export async function refreshPayments(): Promise<void> {
       method: (r.payment_method as PaymentMethod) ?? null,
       status: r.status as PaymentStatus,
       paymentType: r.payment_type as PaymentType,
+      source: (r.source as PaymentSource) ?? "agent",
       notes: r.notes ?? "",
       dpd: debtor?.dpd ?? undefined,
       receivedAt: r.received_at ?? undefined,

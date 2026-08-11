@@ -35,6 +35,10 @@ export interface UploadedDebtor {
   bucket: DPDBucket;
   email: string;
   assignedAgentId?: string; // agent's email — undefined = unassigned (debtors.assigned_agent_id)
+  // debtors.status — 'active' unless a bank paid-file upload (applyBulkPaidFile) or manual
+  // change has moved it. Queue-building filters this out the same way it already filters
+  // 'removed', so a debtor the bank reports paid stops being called.
+  status?: string;
   // any extra columns from the CSV land here
   extra: Record<string, string>;
   // Numbers an agent has added after the upload (see addDebtorPhone) — separate from the CSV's
@@ -198,6 +202,7 @@ export async function refreshPortfolios(): Promise<void> {
         bucket: dpd2bucket(d.dpd ?? 0),
         email: d.email ?? "",
         assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
+        status: d.status ?? undefined,
         extra: (d.extra as Record<string, string>) ?? {},
         altPhones: altPhonesById.get(d.id) ?? [],
       })),
@@ -353,6 +358,93 @@ export async function mergePortfolioRows(
 
   await refreshPortfolios();
   return { updated: toUpdate.length, added: toInsert.length, skipped };
+}
+
+export interface BulkPaidRow {
+  loanReference: string;
+  amount: number;
+}
+
+export interface BulkPaidResult {
+  matched: number;
+  alreadyPaid: number;
+  notFound: number;
+}
+
+/** The bank's daily paid-status file — just Loan/Account ID + amount, matched against this
+ * portfolio's debtors by loan_reference (same match key mergePortfolioRows uses). A matched
+ * debtor's status moves to 'paid' (drops them out of the active call queue — see
+ * buildAssignedQueue's status filter) and gets a `payments` row with source: 'bank_reported'
+ * and agent_id: null — deliberately no agent credited, since the debtor didn't pay because of
+ * anything an agent did on this file's upload. Already-'paid' debtors are skipped so
+ * re-uploading the same daily file (or overlapping days) never double-counts a payment.
+ * Requires migrations/20260811_payments_source.sql. */
+export async function applyBulkPaidFile(
+  portfolioId: string,
+  rows: BulkPaidRow[],
+): Promise<BulkPaidResult> {
+  const { data: existing, error: exErr } = await supabase
+    .from("debtors")
+    .select("id, loan_reference, status")
+    .eq("portfolio_id", portfolioId);
+  if (exErr) throw exErr;
+
+  const byLoanRef = new Map(
+    (existing ?? [])
+      .filter((d) => d.loan_reference)
+      .map((d) => [(d.loan_reference as string).trim().toLowerCase(), d]),
+  );
+
+  const toMark: { id: string; amount: number }[] = [];
+  let alreadyPaid = 0;
+  let notFound = 0;
+  for (const r of rows) {
+    const debtor = byLoanRef.get(r.loanReference.trim().toLowerCase());
+    if (!debtor) {
+      notFound++;
+      continue;
+    }
+    if (debtor.status === "paid") {
+      alreadyPaid++;
+      continue;
+    }
+    toMark.push({ id: debtor.id as string, amount: r.amount });
+  }
+  if (!toMark.length) return { matched: 0, alreadyPaid, notFound };
+
+  const now = new Date().toISOString();
+  for (let i = 0; i < toMark.length; i += CHUNK_SIZE) {
+    const chunk = toMark.slice(i, i + CHUNK_SIZE);
+
+    const { error: updateErr } = await supabase
+      .from("debtors")
+      .update({ status: "paid" })
+      .in(
+        "id",
+        chunk.map((c) => c.id),
+      );
+    if (updateErr) throw updateErr;
+
+    const { error: payErr } = await supabase.from("payments").insert(
+      chunk.map((c) => ({
+        debtor_id: c.id,
+        agent_id: null,
+        amount: c.amount,
+        status: "completed" as const,
+        payment_type: "full" as const,
+        source: "bank_reported" as const,
+        notes: "Reported paid via bank file upload",
+        received_at: now,
+      })),
+    );
+    if (payErr) throw payErr;
+  }
+
+  await refreshPortfolios();
+  const { refreshPayments } = await import("./payments-store");
+  await refreshPayments();
+
+  return { matched: toMark.length, alreadyPaid, notFound };
 }
 
 /** Fixes a wrong original column mapping on data that's already been uploaded — no CSV

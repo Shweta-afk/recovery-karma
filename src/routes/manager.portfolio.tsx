@@ -14,6 +14,7 @@ import {
   removeDebtor,
   restoreDebtor,
   getRemovedDebtors,
+  applyBulkPaidFile,
   PRODUCT_LABEL_TO_ENUM,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
@@ -21,6 +22,8 @@ import {
   type PortfolioSettings,
   type AgentTarget,
   type RemovedDebtor,
+  type BulkPaidRow,
+  type BulkPaidResult,
 } from "@/lib/portfolio-store";
 import {
   STD_FIELDS,
@@ -48,6 +51,7 @@ import {
   Upload,
   UserPlus,
   Wand2,
+  Landmark,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCsv } from "@/lib/csv-export";
@@ -59,7 +63,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -78,7 +88,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import { cn, parseCsvLine } from "@/lib/utils";
+import { normHeader } from "@/lib/column-mapper";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { useManagerTeamAgents, getAgentById, type AgentRef } from "@/lib/team-store";
 import { getAgentDispositions, refreshDispositions, calcStats } from "@/lib/disposition-store";
@@ -341,7 +352,10 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
               {rows.map((r) => (
                 <tr key={r.id} className={selected.has(r.id) ? "bg-primary/5" : undefined}>
                   <td className="py-2 pl-3">
-                    <Checkbox checked={selected.has(r.id)} onCheckedChange={() => toggleRow(r.id)} />
+                    <Checkbox
+                      checked={selected.has(r.id)}
+                      onCheckedChange={() => toggleRow(r.id)}
+                    />
                   </td>
                   <td className="py-2">
                     <div className="font-medium text-foreground">{r.name}</div>
@@ -401,9 +415,9 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {confirmRemove?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This takes them out of the call queue, portfolio counts, and assignment — but
-              keeps their call/payment/message history intact. You can bring them back any time
-              from Removed Accounts below.
+              This takes them out of the call queue, portfolio counts, and assignment — but keeps
+              their call/payment/message history intact. You can bring them back any time from
+              Removed Accounts below.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -513,6 +527,7 @@ function PortfolioDetail({
   onClose,
   onReassign,
   onEdit,
+  onUploadPaid,
 }: {
   p: Portfolio;
   raw: UploadedPortfolio | null;
@@ -520,6 +535,7 @@ function PortfolioDetail({
   onClose: () => void;
   onReassign: () => void;
   onEdit: () => void;
+  onUploadPaid: () => void;
 }) {
   const recoveryPct =
     p.totalOutstanding > 0 ? ((p.recovered / p.totalOutstanding) * 100).toFixed(1) : "0.0";
@@ -544,6 +560,16 @@ function PortfolioDetail({
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 text-xs"
+              onClick={onUploadPaid}
+              title="Upload the bank's daily paid-status file for this portfolio"
+            >
+              <Landmark className="h-3 w-3" />
+              Upload Paid File
+            </Button>
             <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={onEdit}>
               <Pencil className="h-3 w-3" />
               Edit
@@ -999,8 +1025,8 @@ function EditPortfolioDialog({
               <p className="-mt-1 text-[11px] text-muted-foreground">
                 Fix a wrong original column mapping on the {portfolio.rows.length} account
                 {portfolio.rows.length === 1 ? "" : "s"} already here — no re-upload needed. For
-                each field, pick which column's data should actually be treated as it — one of
-                the fields below, or an original file column that wasn't mapped the first time.
+                each field, pick which column's data should actually be treated as it — one of the
+                fields below, or an original file column that wasn't mapped the first time.
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {STD_FIELDS.map(({ key, label }) => (
@@ -1144,8 +1170,8 @@ function EditPortfolioDialog({
               ) : (
                 <>
                   <p className="-mt-1 text-[11px] text-muted-foreground">
-                    Add a single new account by hand — it lands unassigned, same as a new row from
-                    a CSV.
+                    Add a single new account by hand — it lands unassigned, same as a new row from a
+                    CSV.
                   </p>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="space-y-1">
@@ -1322,6 +1348,244 @@ function EditPortfolioDialog({
   );
 }
 
+/* ─── Bulk Paid File dialog ───────────────────────────────────────────────── */
+// The bank's daily paid-status file — just Loan/Account ID + amount, nothing else (see
+// applyBulkPaidFile in portfolio-store.ts). Deliberately a much lighter mapper than
+// CsvImportStep's 12-field grid: 2 columns, auto-detected by header name, editable if the
+// guess is wrong.
+
+const LOAN_ID_ALIASES = [
+  "loan_id",
+  "id",
+  "account_id",
+  "loanid",
+  "acc_id",
+  "loan_no",
+  "account_no",
+  "lan",
+];
+const PAID_AMOUNT_ALIASES = ["amount", "paid_amount", "paidamount", "paid", "settled_amount"];
+
+function guessColumn(headers: string[], aliases: string[]): string {
+  const normed = headers.map((h) => [h, normHeader(h)] as const);
+  for (const alias of aliases) {
+    const hit = normed.find(([, n]) => n === alias);
+    if (hit) return hit[0];
+  }
+  for (const alias of aliases) {
+    const hit = normed.find(([, n]) => n.includes(alias) || alias.includes(n));
+    if (hit) return hit[0];
+  }
+  return "";
+}
+
+function BulkPaidUploadDialog({
+  portfolio,
+  onClose,
+}: {
+  portfolio: UploadedPortfolio | null;
+  onClose: () => void;
+}) {
+  const [fileName, setFileName] = useState("");
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [rows, setRows] = useState<string[][]>([]);
+  const [loanIdCol, setLoanIdCol] = useState("");
+  const [amountCol, setAmountCol] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState<BulkPaidResult | null>(null);
+
+  const reset = () => {
+    setFileName("");
+    setHeaders([]);
+    setRows([]);
+    setLoanIdCol("");
+    setAmountCol("");
+    setResult(null);
+  };
+
+  useEffect(() => {
+    reset();
+  }, [portfolio]);
+
+  if (!portfolio) return null;
+
+  const handleFile = (file: File) => {
+    if (!file.name.endsWith(".csv")) {
+      toast.error("Only CSV files are accepted");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      if (lines.length < 2) {
+        toast.error("CSV must have a header row and at least one data row");
+        return;
+      }
+      const h = parseCsvLine(lines[0]);
+      const r = lines.slice(1, 20001).map((l) => parseCsvLine(l));
+      setHeaders(h);
+      setRows(r);
+      setLoanIdCol(guessColumn(h, LOAN_ID_ALIASES));
+      setAmountCol(guessColumn(h, PAID_AMOUNT_ALIASES));
+      setFileName(file.name);
+      setResult(null);
+      toast.success(`Parsed ${r.length} rows from ${file.name}`);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleUpload = async () => {
+    if (!loanIdCol || !amountCol) {
+      toast.error("Pick both the Loan/Account ID and Paid Amount columns");
+      return;
+    }
+    const idIdx = headers.indexOf(loanIdCol);
+    const amtIdx = headers.indexOf(amountCol);
+    const parsed: BulkPaidRow[] = rows
+      .map((r) => ({
+        loanReference: (r[idIdx] ?? "").trim(),
+        amount: parseFloat((r[amtIdx] ?? "").replace(/[,₹\s]/g, "")) || 0,
+      }))
+      .filter((r) => r.loanReference);
+
+    setUploading(true);
+    try {
+      const res = await applyBulkPaidFile(portfolio.id, parsed);
+      setResult(res);
+      toast.success(
+        `${res.matched} debtor${res.matched === 1 ? "" : "s"} marked paid` +
+          (res.alreadyPaid ? ` · ${res.alreadyPaid} already paid` : "") +
+          (res.notFound ? ` · ${res.notFound} not found in this portfolio` : ""),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to apply the paid file");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!portfolio} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-sm flex items-center gap-2">
+            <Landmark className="h-4 w-4 text-primary" />
+            Upload Paid File · {portfolio.name}
+          </DialogTitle>
+        </DialogHeader>
+
+        <p className="text-xs text-muted-foreground">
+          The bank's daily paid-status file — Loan/Account ID and paid amount, matched against this
+          portfolio's debtors. Matched debtors move to <strong>Paid</strong> and drop out of the
+          active call queue. Marked as a bank-reported payment, not credited to any agent —
+          already-paid debtors are skipped, so re-uploading the same file twice is safe.
+        </p>
+
+        {!headers.length ? (
+          <label className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border py-10 text-center cursor-pointer hover:border-primary/40 transition-colors">
+            <Upload className="h-6 w-6 text-muted-foreground" />
+            <span className="text-sm text-foreground font-medium">Click to upload CSV</span>
+            <span className="text-xs text-muted-foreground">
+              Two columns: Loan/Account ID, Paid Amount
+            </span>
+            <input
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+              }}
+            />
+          </label>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-foreground font-medium">{fileName}</span>
+              <button
+                type="button"
+                onClick={reset}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                Choose a different file
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Loan / Account ID column</Label>
+                <Select value={loanIdCol} onValueChange={setLoanIdCol}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Select column…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {headers.map((h) => (
+                      <SelectItem key={h} value={h}>
+                        {h}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Paid Amount column</Label>
+                <Select value={amountCol} onValueChange={setAmountCol}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Select column…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {headers.map((h) => (
+                      <SelectItem key={h} value={h}>
+                        {h}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <p className="text-xs text-muted-foreground">{rows.length} rows ready to match.</p>
+
+            {result && (
+              <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs space-y-1">
+                <div className="text-success font-medium">{result.matched} marked paid</div>
+                {result.alreadyPaid > 0 && (
+                  <div className="text-muted-foreground">
+                    {result.alreadyPaid} were already paid — skipped
+                  </div>
+                )}
+                {result.notFound > 0 && (
+                  <div className="text-amber-600">
+                    {result.notFound} loan IDs not found in this portfolio
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>
+            {result ? "Close" : "Cancel"}
+          </Button>
+          {!result && (
+            <Button
+              size="sm"
+              onClick={handleUpload}
+              disabled={!headers.length || !loanIdCol || !amountCol || uploading}
+              className="gap-1.5"
+            >
+              {uploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Mark Debtors Paid
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ─── page ───────────────────────────────────────────────────────────────── */
 
 function PortfolioOverviewPage() {
@@ -1333,6 +1597,7 @@ function PortfolioOverviewPage() {
   const [selected, setSelected] = useState<Portfolio | null>(null);
   const [reassignTarget, setReassignTarget] = useState<UploadedPortfolio | null>(null);
   const [editTarget, setEditTarget] = useState<UploadedPortfolio | null>(null);
+  const [bulkPaidTarget, setBulkPaidTarget] = useState<UploadedPortfolio | null>(null);
   const [rawPortfolios, setRawPortfolios] = useState<UploadedPortfolio[]>(() =>
     getPortfolios().filter((p) => p.managerId === managerId),
   );
@@ -1375,6 +1640,11 @@ function PortfolioOverviewPage() {
   const openEdit = (p: Portfolio) => {
     const raw = rawPortfolios.find((r) => r.id === p.id);
     if (raw) setEditTarget(raw);
+  };
+
+  const openBulkPaid = (p: Portfolio) => {
+    const raw = rawPortfolios.find((r) => r.id === p.id);
+    if (raw) setBulkPaidTarget(raw);
   };
 
   return (
@@ -1660,6 +1930,10 @@ function PortfolioOverviewPage() {
             openEdit(selected);
             setSelected(null);
           }}
+          onUploadPaid={() => {
+            openBulkPaid(selected);
+            setSelected(null);
+          }}
         />
       )}
       <ReassignDialog portfolio={reassignTarget} onClose={() => setReassignTarget(null)} />
@@ -1668,6 +1942,7 @@ function PortfolioOverviewPage() {
         agents={agents}
         onClose={() => setEditTarget(null)}
       />
+      <BulkPaidUploadDialog portfolio={bulkPaidTarget} onClose={() => setBulkPaidTarget(null)} />
     </div>
   );
 }

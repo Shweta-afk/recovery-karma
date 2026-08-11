@@ -148,6 +148,10 @@ export function buildAssignedQueue(agentId: string): QueueDebtor[] {
     const idSet = new Set(debtorIds);
     for (const row of portfolio.rows) {
       if (!idSet.has(row.id)) continue;
+      // A bank paid-file upload (applyBulkPaidFile) moves status to 'paid' directly, without
+      // an agent ever dispositioning the call — drop them from the active queue the same way
+      // an already-'removed' debtor never made it into portfolio.rows at all.
+      if (row.status === "paid") continue;
       result.push({
         // debtorFromRow() is the same conversion the debtor profile page uses — keeps this
         // queue's debtor info (address, employer, DOB, lender, alt numbers, etc.) from
