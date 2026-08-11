@@ -16,6 +16,7 @@ import {
   Frown,
   Angry,
   ShieldQuestion,
+  PhoneCall,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -33,6 +34,7 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { bucketOf, BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
+import { OUTCOME_META } from "@/lib/call-queue/types";
 import { useAuth } from "@/lib/auth";
 import { useManagerTeamAgents } from "@/lib/team-store";
 import {
@@ -70,17 +72,6 @@ function fmtDateTime(iso: string) {
     time: d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }),
   };
 }
-
-const OUTCOME_LABEL: Record<string, string> = {
-  paid: "Paid",
-  promised: "PTP",
-  refused: "Refused",
-  no_answer: "No Answer",
-  callback: "Callback",
-  voicemail: "Voicemail",
-  dispute: "Dispute",
-  settlement: "Settlement",
-};
 
 // The actual point of "Call Audit": how the call went for the debtor, not just what the
 // outcome was. Manual QA tag a manager sets after listening — see setCallSentiment().
@@ -231,8 +222,8 @@ function CallDetailSheet({
               {call.portfolioName ? ` · ${call.portfolioName}` : ""}
             </p>
           </div>
-          <Badge variant="outline" className="shrink-0">
-            {OUTCOME_LABEL[call.outcome] ?? call.outcome}
+          <Badge variant="outline" className={cn("shrink-0", OUTCOME_META[call.outcome]?.cls)}>
+            {OUTCOME_META[call.outcome]?.label ?? call.outcome}
           </Badge>
         </div>
 
@@ -399,25 +390,50 @@ function CallAuditPage() {
         </div>
 
         {/* Stats strip — audit-focused: how much is reviewed and how much needs attention,
-            not just raw counts. */}
+            not just raw counts. Each card is colored by what it means, not just labeled. */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            { label: "Total Calls", value: calls.length, cls: "text-foreground" },
+            {
+              label: "Total Calls",
+              value: calls.length,
+              icon: PhoneCall,
+              cls: "text-foreground",
+              iconCls: "bg-primary/10 text-primary",
+              borderCls: "border-l-primary/50",
+            },
             {
               label: "Needs Review",
               value: unreviewed,
+              icon: ShieldQuestion,
               cls: unreviewed > 0 ? "text-amber-600" : "text-foreground",
+              iconCls: "bg-amber-500/10 text-amber-600",
+              borderCls: unreviewed > 0 ? "border-l-amber-500" : "border-l-border",
             },
             {
               label: "Rude / Frustrated",
               value: flagged,
+              icon: Angry,
               cls: flagged > 0 ? "text-destructive" : "text-foreground",
+              iconCls: "bg-destructive/10 text-destructive",
+              borderCls: flagged > 0 ? "border-l-destructive" : "border-l-border",
             },
-            { label: "With Recording", value: withRecording, cls: "text-foreground" },
-          ].map(({ label, value, cls }) => (
-            <Card key={label} className="p-3">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                {label}
+            {
+              label: "With Recording",
+              value: withRecording,
+              icon: Mic,
+              cls: "text-foreground",
+              iconCls: "bg-purple-500/10 text-purple-600",
+              borderCls: "border-l-purple-500/50",
+            },
+          ].map(({ label, value, icon: Icon, cls, iconCls, borderCls }) => (
+            <Card key={label} className={cn("p-3 border-l-4", borderCls)}>
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  {label}
+                </div>
+                <div className={cn("rounded-md p-1", iconCls)}>
+                  <Icon className="h-3.5 w-3.5" />
+                </div>
               </div>
               <div className={cn("text-2xl font-bold mt-1", cls)}>{value}</div>
             </Card>
@@ -490,9 +506,9 @@ function CallAuditPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All outcomes</SelectItem>
-              {Object.entries(OUTCOME_LABEL).map(([key, label]) => (
+              {Object.entries(OUTCOME_META).map(([key, meta]) => (
                 <SelectItem key={key} value={key}>
-                  {label}
+                  {meta.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -618,10 +634,23 @@ function CallAuditPage() {
                   const { date, time } = fmtDateTime(call.time);
                   const caller = callerTypeOf(call);
                   const bucket = bucketFor(call);
+                  const rowAccent =
+                    call.sentiment === "rude"
+                      ? "border-l-destructive bg-destructive/[0.03]"
+                      : call.sentiment === "frustrated"
+                        ? "border-l-amber-500 bg-amber-500/[0.03]"
+                        : call.sentiment === "happy"
+                          ? "border-l-success"
+                          : call.sentiment === "neutral"
+                            ? "border-l-muted-foreground/30"
+                            : "border-l-transparent";
                   return (
                     <tr
                       key={call.id}
-                      className="hover:bg-accent/30 transition-colors cursor-pointer"
+                      className={cn(
+                        "border-l-4 hover:bg-accent/30 transition-colors cursor-pointer",
+                        rowAccent,
+                      )}
                       onClick={() => setSelected(call)}
                     >
                       <td className="py-3 pl-4">
@@ -669,8 +698,11 @@ function CallAuditPage() {
                         )}
                       </td>
                       <td className="py-3">
-                        <Badge variant="secondary" className="text-[10px]">
-                          {OUTCOME_LABEL[call.outcome] ?? call.outcome}
+                        <Badge
+                          variant="outline"
+                          className={cn("text-[10px]", OUTCOME_META[call.outcome]?.cls)}
+                        >
+                          {OUTCOME_META[call.outcome]?.label ?? call.outcome}
                         </Badge>
                         <span
                           className={cn(
