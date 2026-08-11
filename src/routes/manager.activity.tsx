@@ -50,6 +50,7 @@ const SEGMENTS: { key: keyof AgentTimeStats; label: string; cls: string }[] = [
   { key: "ringingSeconds", label: "Ringing", cls: "bg-blue-500" },
   { key: "callingSeconds", label: "Calling", cls: "bg-primary" },
   { key: "dispositionSeconds", label: "Disposition", cls: "bg-amber-500" },
+  { key: "breakSeconds", label: "Break", cls: "bg-orange-400" },
   { key: "idleSeconds", label: "Idle", cls: "bg-muted-foreground/30" },
 ];
 

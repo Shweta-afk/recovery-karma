@@ -15,6 +15,7 @@ import {
   LogOut,
   Timer,
   ClipboardList,
+  Coffee,
   Info,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -415,6 +416,12 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
                 seconds: myTimeStats.dispositionSeconds,
                 icon: ClipboardList,
                 cls: "bg-amber-500",
+              },
+              {
+                label: "Break",
+                seconds: myTimeStats.breakSeconds,
+                icon: Coffee,
+                cls: "bg-orange-400",
               },
               {
                 label: "Idle",
