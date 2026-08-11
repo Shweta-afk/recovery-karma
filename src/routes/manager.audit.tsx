@@ -11,7 +11,14 @@ import {
   Bot,
   Mic,
   Play,
+  Smile,
+  Meh,
+  Frown,
+  Angry,
+  ShieldQuestion,
+  type LucideIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -31,7 +38,9 @@ import { useManagerTeamAgents } from "@/lib/team-store";
 import {
   getDispositions,
   refreshDispositions,
+  setCallSentiment,
   type DispositionRecord,
+  type CallSentiment,
 } from "@/lib/disposition-store";
 import { useStorageSync } from "@/lib/storage-sync";
 
@@ -73,6 +82,38 @@ const OUTCOME_LABEL: Record<string, string> = {
   settlement: "Settlement",
 };
 
+// The actual point of "Call Audit": how the call went for the debtor, not just what the
+// outcome was. Manual QA tag a manager sets after listening — see setCallSentiment().
+const SENTIMENT_META: Record<
+  CallSentiment,
+  { label: string; icon: LucideIcon; cls: string; dot: string }
+> = {
+  happy: {
+    label: "Happy",
+    icon: Smile,
+    cls: "bg-success/10 text-success border-success/20",
+    dot: "bg-success",
+  },
+  neutral: {
+    label: "Neutral",
+    icon: Meh,
+    cls: "bg-muted text-muted-foreground border-border",
+    dot: "bg-muted-foreground",
+  },
+  frustrated: {
+    label: "Frustrated",
+    icon: Frown,
+    cls: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+    dot: "bg-amber-500",
+  },
+  rude: {
+    label: "Rude",
+    icon: Angry,
+    cls: "bg-destructive/10 text-destructive border-destructive/20",
+    dot: "bg-destructive",
+  },
+};
+
 /* ─── sub-components ─────────────────────────────────────────────────────── */
 
 function RecordingPlayer({ url }: { url?: string }) {
@@ -80,8 +121,8 @@ function RecordingPlayer({ url }: { url?: string }) {
     return (
       <div className="flex items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
         <Mic className="h-4 w-4 shrink-0" />
-        No recording available for this call — some providers publish recordings asynchronously,
-        so it may still arrive later.
+        No recording available for this call — some providers publish recordings asynchronously, so
+        it may still arrive later.
       </div>
     );
   }
@@ -101,9 +142,83 @@ function RecordingPlayer({ url }: { url?: string }) {
   );
 }
 
-function CallDetailSheet({ call }: { call: DispositionRecord }) {
+/** The 4-way sentiment picker — used both inline in the table and, larger, in the detail
+ * sheet. `size` controls icon-only (table) vs icon+label (sheet). */
+function SentimentPicker({
+  value,
+  onPick,
+  saving,
+  size = "sm",
+}: {
+  value?: CallSentiment;
+  onPick: (s: CallSentiment) => void;
+  saving: boolean;
+  size?: "sm" | "lg";
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      {(
+        Object.entries(SENTIMENT_META) as [CallSentiment, (typeof SENTIMENT_META)[CallSentiment]][]
+      ).map(([key, meta]) => {
+        const active = value === key;
+        const Icon = meta.icon;
+        return (
+          <button
+            key={key}
+            type="button"
+            disabled={saving}
+            title={meta.label}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPick(key);
+            }}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border transition-all disabled:opacity-50",
+              size === "lg" ? "px-2.5 py-1.5 text-xs" : "h-6 w-6 justify-center",
+              active
+                ? meta.cls + " ring-1 ring-current"
+                : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/40",
+            )}
+          >
+            <Icon className={size === "lg" ? "h-3.5 w-3.5" : "h-3.5 w-3.5"} />
+            {size === "lg" && meta.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function CallDetailSheet({
+  call,
+  managerEmail,
+  onSentimentSaved,
+}: {
+  call: DispositionRecord;
+  managerEmail: string;
+  onSentimentSaved: (updated: DispositionRecord) => void;
+}) {
   const { date, time } = fmtDateTime(call.time);
   const caller = callerTypeOf(call);
+  const [saving, setSaving] = useState(false);
+
+  const handlePick = async (sentiment: CallSentiment) => {
+    setSaving(true);
+    try {
+      await setCallSentiment(call.id, sentiment, managerEmail);
+      onSentimentSaved({
+        ...call,
+        sentiment,
+        auditedByName: "You",
+        auditedAt: new Date().toISOString(),
+      });
+      toast.success(`Marked ${SENTIMENT_META[sentiment].label.toLowerCase()}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save sentiment");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -146,6 +261,25 @@ function CallDetailSheet({ call }: { call: DispositionRecord }) {
 
       <div className="px-6 pt-4 pb-2">
         <RecordingPlayer url={call.recordingUrl} />
+      </div>
+
+      {/* Call sentiment — the actual audit judgment, listen to the recording (or read the
+          notes) and tag how the call went. */}
+      <div className="px-6 pb-4">
+        <div className="rounded-lg border border-border bg-card p-4 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+              Call Sentiment
+            </span>
+            {call.sentiment && call.auditedByName && (
+              <span className="text-[10px] text-muted-foreground">
+                Audited by {call.auditedByName}
+                {call.auditedAt ? ` · ${fmtDateTime(call.auditedAt).date}` : ""}
+              </span>
+            )}
+          </div>
+          <SentimentPicker value={call.sentiment} onPick={handlePick} saving={saving} size="lg" />
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto px-6 py-4">
@@ -198,8 +332,13 @@ function CallAuditPage() {
   const [filterCaller, setFilterCaller] = useState<CallerType | "all">("all");
   const [filterOutcome, setFilterOutcome] = useState<string>("all");
   const [filterBucket, setFilterBucket] = useState<DPDBucket | "all">("all");
+  const [filterSentiment, setFilterSentiment] = useState<CallSentiment | "unreviewed" | "all">(
+    "all",
+  );
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
   const [selected, setSelected] = useState<DispositionRecord | null>(null);
+  // Which row's sentiment picker is currently saving — disables that row's buttons only.
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   const BUCKET_ORDER: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
   const bucketFor = (d: DispositionRecord): DPDBucket => bucketOf(d.dpd ?? 0);
@@ -209,6 +348,13 @@ function CallAuditPage() {
       if (filterCaller !== "all" && callerTypeOf(c) !== filterCaller) return false;
       if (filterOutcome !== "all" && c.outcome !== filterOutcome) return false;
       if (filterBucket !== "all" && bucketFor(c) !== filterBucket) return false;
+      if (filterSentiment === "unreviewed" && c.sentiment) return false;
+      if (
+        filterSentiment !== "all" &&
+        filterSentiment !== "unreviewed" &&
+        c.sentiment !== filterSentiment
+      )
+        return false;
       if (search) {
         const q = search.toLowerCase();
         if (
@@ -220,11 +366,25 @@ function CallAuditPage() {
       }
       return true;
     });
-  }, [calls, search, filterCaller, filterOutcome, filterBucket]);
+  }, [calls, search, filterCaller, filterOutcome, filterBucket, filterSentiment]);
 
-  const agentCalls = calls.filter((c) => callerTypeOf(c) === "agent").length;
-  const aiCalls = calls.filter((c) => callerTypeOf(c) === "ai").length;
   const withRecording = calls.filter((c) => !!c.recordingUrl).length;
+  const unreviewed = calls.filter((c) => !c.sentiment).length;
+  const flagged = calls.filter(
+    (c) => c.sentiment === "rude" || c.sentiment === "frustrated",
+  ).length;
+
+  const handleInlinePick = async (call: DispositionRecord, sentiment: CallSentiment) => {
+    setSavingId(call.id);
+    try {
+      await setCallSentiment(call.id, sentiment, managerId);
+      toast.success(`${call.debtorName}: marked ${SENTIMENT_META[sentiment].label.toLowerCase()}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save sentiment");
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   return (
     <>
@@ -233,34 +393,42 @@ function CallAuditPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">Call Audit</h1>
             <p className="text-sm text-muted-foreground">
-              Real call history for your team — outcomes, notes, and recordings as they're logged.
+              Review how your team's calls actually went — tag sentiment, not just the outcome.
             </p>
           </div>
         </div>
 
-        {/* Stats strip — real counts, no sentiment/flagging (not backed by the schema yet) */}
+        {/* Stats strip — audit-focused: how much is reviewed and how much needs attention,
+            not just raw counts. */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            { label: "Total Calls", value: calls.length },
-            { label: "Agent Calls", value: agentCalls },
-            { label: "AI/Bot Calls", value: aiCalls },
-            { label: "With Recording", value: withRecording },
-          ].map(({ label, value }) => (
+            { label: "Total Calls", value: calls.length, cls: "text-foreground" },
+            {
+              label: "Needs Review",
+              value: unreviewed,
+              cls: unreviewed > 0 ? "text-amber-600" : "text-foreground",
+            },
+            {
+              label: "Rude / Frustrated",
+              value: flagged,
+              cls: flagged > 0 ? "text-destructive" : "text-foreground",
+            },
+            { label: "With Recording", value: withRecording, cls: "text-foreground" },
+          ].map(({ label, value, cls }) => (
             <Card key={label} className="p-3">
               <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 {label}
               </div>
-              <div className="text-2xl font-bold mt-1 text-foreground">{value}</div>
+              <div className={cn("text-2xl font-bold mt-1", cls)}>{value}</div>
             </Card>
           ))}
         </div>
 
         {calls.length === 0 && (
           <p className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-            No calls logged yet for your team — this fills in as agents log dispositions. (Call
-            sentiment and transcripts aren't shown here — there's no transcription/sentiment
-            pipeline wired up yet, so this view sticks to what's actually recorded: outcome,
-            duration, notes, and the recording itself.)
+            No calls logged yet for your team — this fills in as agents log dispositions. Once a
+            call has a recording, tag its sentiment here (or from the detail panel) — there's no
+            automatic transcription/sentiment pipeline wired up yet, so this is a manual QA tag.
           </p>
         )}
 
@@ -284,6 +452,25 @@ function CallAuditPage() {
               </button>
             )}
           </div>
+          <Select
+            value={filterSentiment}
+            onValueChange={(v) => setFilterSentiment(v as CallSentiment | "unreviewed" | "all")}
+          >
+            <SelectTrigger className="w-36 h-9 text-xs">
+              <SelectValue placeholder="Sentiment" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any sentiment</SelectItem>
+              <SelectItem value="unreviewed">Needs review</SelectItem>
+              {(Object.entries(SENTIMENT_META) as [CallSentiment, { label: string }][]).map(
+                ([key, meta]) => (
+                  <SelectItem key={key} value={key}>
+                    {meta.label}
+                  </SelectItem>
+                ),
+              )}
+            </SelectContent>
+          </Select>
           <Select
             value={filterCaller}
             onValueChange={(v) => setFilterCaller(v as CallerType | "all")}
@@ -376,6 +563,7 @@ function CallAuditPage() {
           {(filterCaller !== "all" ||
             filterOutcome !== "all" ||
             filterBucket !== "all" ||
+            filterSentiment !== "all" ||
             search) && (
             <Button
               variant="ghost"
@@ -386,6 +574,7 @@ function CallAuditPage() {
                 setFilterCaller("all");
                 setFilterOutcome("all");
                 setFilterBucket("all");
+                setFilterSentiment("all");
               }}
             >
               <X className="h-3.5 w-3.5" />
@@ -409,6 +598,9 @@ function CallAuditPage() {
                   </th>
                   <th className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Debtor
+                  </th>
+                  <th className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Sentiment
                   </th>
                   <th className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Outcome
@@ -453,6 +645,30 @@ function CallAuditPage() {
                         <div className="text-xs font-medium text-foreground">{call.debtorName}</div>
                       </td>
                       <td className="py-3">
+                        {call.sentiment ? (
+                          <SentimentPicker
+                            value={call.sentiment}
+                            onPick={(s) => handleInlinePick(call, s)}
+                            saving={savingId === call.id}
+                          />
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+                              title="Not yet audited"
+                            >
+                              <ShieldQuestion className="h-3.5 w-3.5" />
+                              Unreviewed
+                            </span>
+                            <SentimentPicker
+                              value={call.sentiment}
+                              onPick={(s) => handleInlinePick(call, s)}
+                              saving={savingId === call.id}
+                            />
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3">
                         <Badge variant="secondary" className="text-[10px]">
                           {OUTCOME_LABEL[call.outcome] ?? call.outcome}
                         </Badge>
@@ -490,7 +706,7 @@ function CallAuditPage() {
                 })}
                 {filtered.length === 0 && calls.length > 0 && (
                   <tr>
-                    <td colSpan={6} className="py-16 text-center text-sm text-muted-foreground">
+                    <td colSpan={7} className="py-16 text-center text-sm text-muted-foreground">
                       No calls match your filters.
                     </td>
                   </tr>
@@ -511,7 +727,13 @@ function CallAuditPage() {
           side="right"
           className="w-full max-w-2xl p-0 overflow-hidden flex flex-col sm:max-w-2xl"
         >
-          {selected && <CallDetailSheet call={selected} />}
+          {selected && (
+            <CallDetailSheet
+              call={selected}
+              managerEmail={managerId}
+              onSentimentSaved={setSelected}
+            />
+          )}
         </SheetContent>
       </Sheet>
     </>

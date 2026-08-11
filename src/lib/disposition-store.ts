@@ -12,6 +12,12 @@ export type CallOutcome =
   | "dispute"
   | "settlement";
 
+/** Manager-assigned call tone/QA tag — the actual point of Call Audit. Outcome says what
+ * happened on the call; sentiment says how the debtor was treated and how it went. Manual only
+ * (no transcription/sentiment pipeline wired up) — null until a manager reviews the call.
+ * Requires migrations/20260811_call_logs_sentiment.sql. */
+export type CallSentiment = "happy" | "neutral" | "frustrated" | "rude";
+
 export interface DispositionRecord {
   id: string;
   debtorId: string;
@@ -37,6 +43,12 @@ export interface DispositionRecord {
   callType?: "human" | "ai" | "ivr" | "bot";
   /** Provider's id for the call, used to backfill the recording once it is published. */
   providerCallId?: string;
+  /** Manager's QA tag for this call's tone — see CallSentiment. Absent on any call not yet
+   * audited, and always absent until 20260811_call_logs_sentiment.sql has been applied. */
+  sentiment?: CallSentiment;
+  /** Name of the manager/admin who last set `sentiment`, for display next to the tag. */
+  auditedByName?: string;
+  auditedAt?: string; // ISO
   time: string; // ISO
 }
 
@@ -129,6 +141,10 @@ export async function refreshDispositions(): Promise<void> {
     // Optional: present only once 20260731_call_logs_adhoc_contacts.sql has been applied.
     contact_name?: string | null;
     contact_phone?: string | null;
+    // Optional: present only once 20260811_call_logs_sentiment.sql has been applied.
+    sentiment?: string | null;
+    audited_by?: string | null;
+    audited_at?: string | null;
   };
 
   const disps: DispositionRecord[] = (logs as unknown as CallLogRow[]).map((l) => {
@@ -160,6 +176,9 @@ export async function refreshDispositions(): Promise<void> {
       durationSeconds: l.duration_seconds ?? undefined,
       callType: (l.call_type as DispositionRecord["callType"]) ?? "human",
       providerCallId: l.provider_call_id ?? undefined,
+      sentiment: (l.sentiment as CallSentiment | null) ?? undefined,
+      auditedByName: l.audited_by ? agentById.get(l.audited_by)?.name : undefined,
+      auditedAt: l.audited_at ?? undefined,
       time: l.created_at,
     };
   });
@@ -188,8 +207,8 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   const { error } = await supabase.from("call_logs").insert({
     id: isUuid(d.id) ? d.id : crypto.randomUUID(),
     debtor_id: isAdHoc ? null : d.debtorId,
-    contact_name: isAdHoc ? (d.debtorName || null) : null,
-    contact_phone: isAdHoc ? (d.phone || null) : null,
+    contact_name: isAdHoc ? d.debtorName || null : null,
+    contact_phone: isAdHoc ? d.phone || null : null,
     agent_id: agentUuid,
     call_type: "human",
     outcome: d.outcome,
@@ -378,4 +397,33 @@ export async function backfillRecordings(records: DispositionRecord[]): Promise<
 
   if (filled) await refreshDispositions();
   return filled;
+}
+
+/** Manager sets/edits a call's QA sentiment tag (happy/neutral/frustrated/rude) — the manual
+ * audit judgment Call Audit is actually for. RLS (20260811_call_logs_sentiment.sql) restricts
+ * this to managers of the calling agent's team and admins, same as the read scoping. Stamps
+ * who set it and when so it reads as a real audit trail. `auditedByEmail` is the signed-in
+ * manager/admin's email (same "agentId means email" convention as everywhere else in this
+ * file) — resolved to agents.id here, the same way saveDisposition() resolves the caller. */
+export async function setCallSentiment(
+  callId: string,
+  sentiment: CallSentiment,
+  auditedByEmail: string,
+): Promise<void> {
+  const { data: agentRows } = await supabase.from("agents").select("id, email");
+  const agentUuid = (agentRows ?? []).find((a) => a.email === auditedByEmail)?.id;
+  if (!agentUuid) throw new Error(`No agent account found for ${auditedByEmail}`);
+
+  const { error } = await supabase
+    .from("call_logs")
+    // Cast for the same reason as backfillRecordings above: the generated Supabase types
+    // don't cover this table's columns, so writes widen to `never`.
+    .update({
+      sentiment,
+      audited_by: agentUuid,
+      audited_at: new Date().toISOString(),
+    } as never)
+    .eq("id", callId);
+  if (error) throw error;
+  await refreshDispositions();
 }

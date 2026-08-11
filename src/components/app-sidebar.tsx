@@ -43,7 +43,6 @@ const managerItems = [
   { title: "Dashboard", url: "/manager", icon: BarChart3 },
   { title: "Call Queue", url: "/manager/queue", icon: PhoneCall },
   { title: "Call History", url: "/dashboard/history", icon: History },
-  { title: "My Team", url: "/manager/team", icon: Users },
   { title: "Team Activity", url: "/manager/activity", icon: Timer },
   { title: "Portfolio Overview", url: "/manager/portfolio", icon: FolderOpen },
   { title: "Portfolio Upload", url: "/manager/upload", icon: Upload },
