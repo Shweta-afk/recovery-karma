@@ -47,6 +47,13 @@ import {
 } from "@/components/ui/dialog";
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -81,6 +88,73 @@ import { toast } from "sonner";
 // escalation modal. Prop-driven presentational components — the route wires them to state.
 
 // ─── Active Call Components ───────────────────────────────────────────────────
+
+// Sub-reasons offered once an agent picks an outcome — free text on the backend
+// (call_logs.outcome_reason, requires migrations/20260811_call_logs_outcome_reason.sql), this
+// list is what's actually shown, not a schema-enforced enum. Keep in sync with any new
+// CallOutcome — an outcome with no entry here just shows no reason dropdown at all.
+const OUTCOME_REASONS: Record<CallOutcome, string[]> = {
+  paid: [
+    "Full payment",
+    "Partial payment",
+    "Paid via UPI",
+    "Paid via bank transfer",
+    "Paid in cash",
+    "Paid at branch",
+  ],
+  promised: [
+    "Will pay on salary day",
+    "Will pay after selling asset",
+    "Family will arrange funds",
+    "Waiting on reimbursement",
+    "Short-term hardship, will clear soon",
+  ],
+  callback: [
+    "Busy at work",
+    "Driving / can't talk",
+    "In a meeting",
+    "Asked to call back later",
+    "Bad network, call dropped",
+    "Family member requested callback",
+  ],
+  settlement: [
+    "Wants lump-sum discount",
+    "Cannot pay full amount",
+    "Financial hardship",
+    "Job loss",
+    "Medical emergency",
+  ],
+  refused: [
+    "Disputes the debt",
+    "Claims already paid",
+    "Refuses due to harassment claim",
+    "Financial inability",
+    "Hung up / hostile",
+    "Unwilling to discuss",
+  ],
+  no_answer: [
+    "Ringing, no pickup",
+    "Switched off",
+    "Out of coverage area",
+    "Rang twice, no answer",
+    "Call got cut",
+    "Number busy",
+  ],
+  voicemail: [
+    "Left voicemail",
+    "Mailbox full",
+    "No voicemail option",
+    "Auto-attendant only, no human",
+  ],
+  dispute: [
+    "Wrong amount claimed",
+    "Says not their loan",
+    "Claims already settled",
+    "Fraud / identity theft claim",
+    "KYC mismatch",
+    "Disputes interest/charges",
+  ],
+};
 
 function fmtElapsed(s: number) {
   const m = Math.floor(s / 60)
@@ -255,25 +329,68 @@ function ActiveCallContent({
   const PRODUCTIVE_OUTCOMES: CallOutcome[] = ["paid", "promised", "settlement", "callback"];
   const NON_PRODUCTIVE_OUTCOMES: CallOutcome[] = ["refused", "no_answer", "voicemail", "dispute"];
 
-  const outcomeButtons = (list: CallOutcome[]) => (
-    <div className="grid grid-cols-2 gap-2">
-      {list.map((o) => (
-        <button
-          key={o}
-          type="button"
-          onClick={() => up({ outcome: o })}
-          className={cn(
-            "rounded-lg border px-3 py-2.5 text-sm font-semibold text-left transition-all",
-            disposition.outcome === o
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border bg-muted/40 text-muted-foreground hover:border-foreground/30 hover:text-foreground",
-          )}
-        >
-          {OUTCOME_META[o].label}
-        </button>
+  // Disposition picker — outcomes grouped into pools (Positive / Difficult), radio-style, with
+  // a reason dropdown that appears once an outcome is picked (options depend on which outcome —
+  // see OUTCOME_REASONS). `pools` lets the connected-call panel show only the Positive pool
+  // (mid-call, "no answer" etc. don't make sense yet) while the ended panel shows both.
+  const dispositionPools = (pools: { label: string; cls: string; outcomes: CallOutcome[] }[]) => (
+    <div className="space-y-3">
+      {pools.map((pool) => (
+        <div key={pool.label} className="space-y-2">
+          <div
+            className={cn(
+              "rounded-md py-1 text-center text-[11px] font-bold uppercase tracking-wider",
+              pool.cls,
+            )}
+          >
+            {pool.label}
+          </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+            {pool.outcomes.map((o) => (
+              <label key={o} className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="radio"
+                  name="disposition-outcome"
+                  checked={disposition.outcome === o}
+                  onChange={() => up({ outcome: o, reason: "" })}
+                  className="h-4 w-4 accent-primary cursor-pointer flex-shrink-0"
+                />
+                <span
+                  className={
+                    disposition.outcome === o
+                      ? "font-semibold text-foreground"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {OUTCOME_META[o].label}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
       ))}
+      {disposition.outcome && OUTCOME_REASONS[disposition.outcome].length > 0 && (
+        <div className="space-y-1 pt-1">
+          <label className="text-xs text-muted-foreground">Reason</label>
+          <Select value={disposition.reason} onValueChange={(v) => up({ reason: v })}>
+            <SelectTrigger className="h-9">
+              <SelectValue placeholder="Select a reason…" />
+            </SelectTrigger>
+            <SelectContent>
+              {OUTCOME_REASONS[disposition.outcome].map((r) => (
+                <SelectItem key={r} value={r}>
+                  {r}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
     </div>
   );
+
+  const POSITIVE_POOL = { label: "Positive Pool", cls: "bg-success/15 text-success" };
+  const DIFFICULT_POOL = { label: "Difficult Pool", cls: "bg-destructive/15 text-destructive" };
 
   // Outcome-specific inputs, shared between the in-call and post-call disposition panels
   const outcomeFields = () => (
@@ -922,7 +1039,7 @@ function ActiveCallContent({
                 {/* Productive disposition — available during the call */}
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-foreground">Log outcome</p>
-                  {outcomeButtons(PRODUCTIVE_OUTCOMES)}
+                  {dispositionPools([{ ...POSITIVE_POOL, outcomes: PRODUCTIVE_OUTCOMES }])}
                   {outcomeFields()}
                 </div>
 
@@ -978,7 +1095,10 @@ function ActiveCallContent({
             {phase === "ended" && (
               <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 <p className="text-sm font-semibold text-foreground">Disposition</p>
-                {outcomeButtons([...PRODUCTIVE_OUTCOMES, ...NON_PRODUCTIVE_OUTCOMES])}
+                {dispositionPools([
+                  { ...POSITIVE_POOL, outcomes: PRODUCTIVE_OUTCOMES },
+                  { ...DIFFICULT_POOL, outcomes: NON_PRODUCTIVE_OUTCOMES },
+                ])}
                 {outcomeFields()}
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">Notes</label>

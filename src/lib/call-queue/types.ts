@@ -63,6 +63,9 @@ export interface ActiveCall {
 
 export interface DispositionForm {
   outcome: CallOutcome | "";
+  /** Sub-reason for the chosen outcome, e.g. "Switched off" for no_answer — see
+   * OUTCOME_REASONS in active-call.tsx. Cleared whenever outcome changes. */
+  reason: string;
   ptpAmount: string;
   ptpDate: string;
   ptpTime: string;
@@ -81,6 +84,7 @@ export interface DispositionForm {
 
 export const EMPTY_DISPOSITION: DispositionForm = {
   outcome: "",
+  reason: "",
   ptpAmount: "",
   ptpDate: "",
   ptpTime: "",

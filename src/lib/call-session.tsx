@@ -14,6 +14,7 @@ import type { ActiveCall, DispositionForm } from "@/routes/dashboard.call-queue"
 // a value import from the route file) to avoid a runtime circular import.
 const EMPTY_DISPOSITION: DispositionForm = {
   outcome: "",
+  reason: "",
   ptpAmount: "",
   ptpDate: "",
   ptpTime: "",

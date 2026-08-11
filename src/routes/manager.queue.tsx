@@ -691,6 +691,7 @@ function ManagerQueuePage() {
         agentName: managerName,
         portfolioName: debtor.portfolio,
         outcome: disposition.outcome as StoredOutcome,
+        reason: disposition.reason || undefined,
         notes: disposition.notes,
         ptpAmount: disposition.ptpAmount ? parseFloat(disposition.ptpAmount) : undefined,
         ptpDate: disposition.ptpDate || undefined,

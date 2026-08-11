@@ -29,6 +29,9 @@ export interface DispositionRecord {
   portfolioId?: string;
   portfolioName?: string;
   outcome: CallOutcome;
+  /** Sub-reason for the outcome (e.g. "Switched off" for no_answer) — see OUTCOME_REASONS in
+   * active-call.tsx. Requires migrations/20260811_call_logs_outcome_reason.sql. */
+  reason?: string;
   notes: string;
   ptpAmount?: number;
   ptpDate?: string;
@@ -150,6 +153,8 @@ export async function refreshDispositions(): Promise<void> {
     sentiment?: string | null;
     audited_by?: string | null;
     audited_at?: string | null;
+    // Optional: present only once 20260811_call_logs_outcome_reason.sql has been applied.
+    outcome_reason?: string | null;
   };
 
   const disps: DispositionRecord[] = (logs as unknown as CallLogRow[]).map((l) => {
@@ -171,6 +176,7 @@ export async function refreshDispositions(): Promise<void> {
       portfolioId: debtor?.portfolio_id ?? undefined,
       portfolioName: portfolio?.name,
       outcome: l.outcome as CallOutcome,
+      reason: l.outcome_reason ?? undefined,
       notes: l.raw_notes ?? "",
       ptpAmount: l.outcome === "promised" ? amount : undefined,
       ptpDate: l.outcome === "promised" ? (l.promise_date ?? undefined) : undefined,
@@ -218,6 +224,7 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     agent_id: agentUuid,
     call_type: "human",
     outcome: d.outcome,
+    outcome_reason: d.reason || null,
     promise_amount: amount ?? null,
     promise_date: d.outcome === "promised" ? (d.ptpDate ?? null) : null,
     promise_time: d.outcome === "promised" ? (d.ptpTime ?? null) : null,

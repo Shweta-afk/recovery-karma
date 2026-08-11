@@ -308,6 +308,7 @@ function CallQueuePage() {
     });
     setDisposition({
       outcome: "",
+      reason: "",
       ptpAmount: "",
       ptpDate: "",
       ptpTime: "",
@@ -423,8 +424,10 @@ function CallQueuePage() {
       const debtor = activeCall.debtor;
       const now = new Date();
 
-      // 4a — every disposition is stored as text; auto-note is prepended to any typed note
-      const autoNote = buildAutoNote(disposition);
+      // 4a — every disposition is stored as text; auto-note (+ picked reason) is prepended to
+      // any typed note, so the reason shows up in Activity History even though it's also its
+      // own field on the record.
+      const autoNote = [buildAutoNote(disposition), disposition.reason].filter(Boolean).join(" — ");
       const combinedNotes = [autoNote, disposition.notes.trim()].filter(Boolean).join(" — ");
 
       // Persist to disposition store
@@ -437,6 +440,7 @@ function CallQueuePage() {
         agentName,
         portfolioName: debtor.portfolio,
         outcome: disposition.outcome as StoredOutcome,
+        reason: disposition.reason || undefined,
         notes: combinedNotes,
         ptpAmount: disposition.ptpAmount ? parseFloat(disposition.ptpAmount) : undefined,
         ptpDate: disposition.ptpDate || undefined,
