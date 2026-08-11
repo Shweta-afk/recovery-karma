@@ -21,6 +21,7 @@ export const STD_FIELDS = [
   { key: "dob", label: "Date of Birth", required: false },
   { key: "employer", label: "Employer", required: false },
   { key: "income", label: "Monthly Income", required: false },
+  { key: "language", label: "Preferred Language", required: false },
 ] as const;
 
 export type StdFieldKey = (typeof STD_FIELDS)[number]["key"];
@@ -63,19 +64,28 @@ export function slotsFromDebtor(row: DebtorLike): StdFieldSlots {
     dob: row.extra.dob ?? "",
     employer: row.extra.employer ?? "",
     income: row.extra.income ?? "",
+    language: row.extra.language ?? "",
   };
 }
 
 // Extra sub-fields that always get their own STD_FIELD slot at import time (see
 // CsvImportStep) — every OTHER key that ends up in `extra` is a column from the original file
-// that was never mapped to any of our 12 canonical fields, still sitting there untouched under
+// that was never mapped to any of our 13 canonical fields, still sitting there untouched under
 // its literal header name.
-const KNOWN_EXTRA_SUBFIELDS = new Set(["address", "city", "state", "dob", "employer", "income"]);
+const KNOWN_EXTRA_SUBFIELDS = new Set([
+  "address",
+  "city",
+  "state",
+  "dob",
+  "employer",
+  "income",
+  "language",
+]);
 
 /** The original file columns a manager can still recover for remapping — every `extra` key
- * across a portfolio's rows that isn't one of the 6 STD_FIELDS that always reserve a slot
+ * across a portfolio's rows that isn't one of the 7 STD_FIELDS that always reserve a slot
  * there. Used by the "Remap Fields" tool so it can offer the *actual* source columns, not just
- * our own 12 field labels. */
+ * our own 13 field labels. */
 export function leftoverExtraKeys(rows: { extra: Record<string, string> }[]): string[] {
   const keys = new Set<string>();
   for (const r of rows) {
@@ -126,6 +136,7 @@ export function debtorFieldsFromSlots(slots: StdFieldSlots): DebtorLike {
       dob: slots.dob,
       employer: slots.employer,
       income: slots.income,
+      language: slots.language,
     },
   };
 }

@@ -65,6 +65,7 @@ import { exportCSV } from "@/lib/call-queue/mock-data";
 
 import { saveEscalation } from "@/lib/escalation-store";
 import type { PtpFollowup } from "@/lib/disposition-store";
+import { leftoverExtraKeys } from "@/lib/csv-fields";
 
 import { toast } from "sonner";
 
@@ -172,6 +173,16 @@ function ActiveCallContent({
 
   const bucket = bucketOf(debtor.dpd);
   const bucketMeta = BUCKET_META[bucket];
+
+  // Every uploaded CSV column that isn't one of our named/mapped fields (loan_id, name, phone,
+  // loan_amount, dpd, email, address, city, state, dob, employer, income, language) — shown
+  // generically below the mapped Loan Details so nothing from the source file is ever silently
+  // dropped mid-call. Empty for mock/demo debtors, which have no _uploadedExtra bag.
+  const uploadedExtra =
+    (debtor as QueueDebtor & { _uploadedExtra?: Record<string, string> })._uploadedExtra ?? {};
+  const otherFields = leftoverExtraKeys([{ extra: uploadedExtra }])
+    .map((key) => [key, uploadedExtra[key]] as const)
+    .filter(([, value]) => !!value?.trim());
 
   // Declared before the ringing early-return below so hook count/order stays identical across
   // phase transitions — React can otherwise reuse this component instance (rather than
@@ -1118,6 +1129,31 @@ function ActiveCallContent({
                         <span className="text-foreground font-medium">{debtor.guarantorName}</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Other Details — every uploaded column that isn't one of our named/mapped
+                    fields above, still under its own literal source-file header. */}
+                {otherFields.length > 0 && (
+                  <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Other Details{" "}
+                      <span className="normal-case font-normal text-muted-foreground/70">
+                        (from uploaded file, unmapped)
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                      {otherFields.map(([key, value]) => (
+                        <div key={key} className="flex items-center justify-between gap-3">
+                          <span className="text-muted-foreground capitalize truncate">
+                            {key.replace(/_/g, " ")}
+                          </span>
+                          <span className="text-foreground font-medium text-right break-all">
+                            {value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

@@ -135,6 +135,26 @@ const detectAmount = (values: string[]) => {
 const detectName = (values: string[]) =>
   frac(values, (v) => /^[a-zA-Z][a-zA-Z .'-]{2,}$/.test(v) && /\s/.test(v.trim() + " a"));
 
+// Preferred language: values drawn from a small, closed set of Indian language names
+const KNOWN_LANGUAGES = new Set([
+  "english",
+  "hindi",
+  "marathi",
+  "gujarati",
+  "tamil",
+  "telugu",
+  "kannada",
+  "malayalam",
+  "bengali",
+  "punjabi",
+  "odia",
+  "oriya",
+  "assamese",
+  "urdu",
+]);
+const detectLanguage = (values: string[]) =>
+  frac(values, (v) => KNOWN_LANGUAGES.has(v.trim().toLowerCase()));
+
 // Loan/account id: alphanumeric codes, frequently letter+digit or dashed
 const detectId = (values: string[]) =>
   frac(
@@ -264,6 +284,20 @@ export const FIELD_SPECS: FieldSpec[] = [
       "net_income",
       "annual_income",
     ],
+  },
+  {
+    key: "language",
+    aliases: [
+      "language",
+      "preferred_language",
+      "pref_language",
+      "lang",
+      "mother_tongue",
+      "communication_language",
+      "comm_language",
+      "regional_language",
+    ],
+    detect: detectLanguage,
   },
 ];
 

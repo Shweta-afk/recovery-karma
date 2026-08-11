@@ -114,6 +114,7 @@ export function CsvImportStep({
             dob: get("dob"),
             employer: get("employer"),
             income: get("income"),
+            language: get("language"),
             ...extra,
           },
           altPhones: [],

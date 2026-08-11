@@ -704,7 +704,8 @@ export async function addDebtorPhone(debtorId: string, phone: string): Promise<v
  * populated (they used to: the queue's own copy of this logic dropped everything except a
  * handful of columns, which is why debtor info looked "half" mid-call). Named fields are filled
  * in from the same `extra` sub-keys CsvImportStep always reserves (address/city/state/dob/
- * employer/income); the raw bag is also kept as `_uploadedExtra` for the generic "every CSV
+ * employer/income/language — language falls back to "English" when the file has no mapped
+ * language column); the raw bag is also kept as `_uploadedExtra` for the generic "every CSV
  * column" fallback view the debtor page already renders. */
 export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio): Debtor {
   const extra = row.extra ?? {};
@@ -721,7 +722,7 @@ export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio)
     scoreReason: `Uploaded via ${portfolio.lender}${portfolio.product ? ` · ${portfolio.product}` : ""}`,
     lastContacted: "—",
     portfolio: portfolio.name,
-    language: "English",
+    language: extra.language || "English",
     dob: extra.dob || undefined,
     city: extra.city || undefined,
     state: extra.state || undefined,
