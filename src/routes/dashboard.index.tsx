@@ -363,93 +363,6 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
           );
         })()}
 
-        {/* ── My Activity Today: ringing / calling / disposition / idle, as progress bars ── */}
-        <div className="rounded-xl border border-border bg-card p-3 lg:w-1/2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              My Activity Today
-            </span>
-            <span
-              className="flex items-center gap-1 text-[10px] text-muted-foreground"
-              title="Calling time is real, from your logged calls. Ringing, idle, disposition and login/logout times are estimated — real presence tracking is coming soon."
-            >
-              <Info className="h-3 w-3" />
-              Estimated*
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-3 pb-2 border-b border-border">
-            <span className="flex items-center gap-1">
-              <LogIn className="h-3 w-3" />
-              {formatClockTime(myTimeStats.loginTime)}
-            </span>
-            <span className="text-foreground font-medium">
-              {formatDuration(myTimeStats.loggedInSeconds)} logged in
-            </span>
-            {myTimeStats.logoutTime ? (
-              <span className="flex items-center gap-1">
-                <LogOut className="h-3 w-3" />
-                {formatClockTime(myTimeStats.logoutTime)}
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-success">
-                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-                Active
-              </span>
-            )}
-          </div>
-          <div className="space-y-2.5">
-            {[
-              {
-                label: "Ringing",
-                seconds: myTimeStats.ringingSeconds,
-                icon: PhoneIncoming,
-                cls: "bg-blue-500",
-              },
-              {
-                label: "Calling",
-                seconds: myTimeStats.callingSeconds,
-                icon: PhoneCall,
-                cls: "bg-primary",
-              },
-              {
-                label: "Disposition",
-                seconds: myTimeStats.dispositionSeconds,
-                icon: ClipboardList,
-                cls: "bg-amber-500",
-              },
-              {
-                label: "Break",
-                seconds: myTimeStats.breakSeconds,
-                icon: Coffee,
-                cls: "bg-orange-400",
-              },
-              {
-                label: "Idle",
-                seconds: myTimeStats.idleSeconds,
-                icon: Timer,
-                cls: "bg-muted-foreground/40",
-              },
-            ].map(({ label, seconds, icon: Icon, cls }) => {
-              const pct = pctOfShift(seconds, myTimeStats);
-              return (
-                <div key={label}>
-                  <div className="flex items-center justify-between text-[11px] mb-1">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <Icon className="h-3 w-3" />
-                      {label}
-                    </span>
-                    <span className="font-medium text-foreground tabular-nums">
-                      {formatDuration(seconds)}{" "}
-                      <span className="text-muted-foreground">({pct}%)</span>
-                    </span>
-                  </div>
-                  <Progress value={pct} className="h-1.5" indicatorClassName={cls} />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
         {/* ── Performance + Queue Overview side by side ── */}
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[3fr_2fr]">
           {/* Performance KPIs */}
@@ -708,6 +621,93 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
             })}
           </div>
         </section>
+
+        {/* ── My Activity Today: ringing / calling / disposition / idle, as progress bars ── */}
+        <div className="rounded-xl border border-border bg-card p-3 lg:w-1/2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              My Activity Today
+            </span>
+            <span
+              className="flex items-center gap-1 text-[10px] text-muted-foreground"
+              title="Calling time is real, from your logged calls. Ringing, idle, disposition and login/logout times are estimated — real presence tracking is coming soon."
+            >
+              <Info className="h-3 w-3" />
+              Estimated*
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-3 pb-2 border-b border-border">
+            <span className="flex items-center gap-1">
+              <LogIn className="h-3 w-3" />
+              {formatClockTime(myTimeStats.loginTime)}
+            </span>
+            <span className="text-foreground font-medium">
+              {formatDuration(myTimeStats.loggedInSeconds)} logged in
+            </span>
+            {myTimeStats.logoutTime ? (
+              <span className="flex items-center gap-1">
+                <LogOut className="h-3 w-3" />
+                {formatClockTime(myTimeStats.logoutTime)}
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-success">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                Active
+              </span>
+            )}
+          </div>
+          <div className="space-y-2.5">
+            {[
+              {
+                label: "Ringing",
+                seconds: myTimeStats.ringingSeconds,
+                icon: PhoneIncoming,
+                cls: "bg-blue-500",
+              },
+              {
+                label: "Calling",
+                seconds: myTimeStats.callingSeconds,
+                icon: PhoneCall,
+                cls: "bg-primary",
+              },
+              {
+                label: "Disposition",
+                seconds: myTimeStats.dispositionSeconds,
+                icon: ClipboardList,
+                cls: "bg-amber-500",
+              },
+              {
+                label: "Break",
+                seconds: myTimeStats.breakSeconds,
+                icon: Coffee,
+                cls: "bg-orange-400",
+              },
+              {
+                label: "Idle",
+                seconds: myTimeStats.idleSeconds,
+                icon: Timer,
+                cls: "bg-muted-foreground/40",
+              },
+            ].map(({ label, seconds, icon: Icon, cls }) => {
+              const pct = pctOfShift(seconds, myTimeStats);
+              return (
+                <div key={label}>
+                  <div className="flex items-center justify-between text-[11px] mb-1">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <Icon className="h-3 w-3" />
+                      {label}
+                    </span>
+                    <span className="font-medium text-foreground tabular-nums">
+                      {formatDuration(seconds)}{" "}
+                      <span className="text-muted-foreground">({pct}%)</span>
+                    </span>
+                  </div>
+                  <Progress value={pct} className="h-1.5" indicatorClassName={cls} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </InteractiveContext.Provider>
   );
