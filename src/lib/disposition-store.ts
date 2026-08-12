@@ -216,23 +216,48 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   // contact details on the log instead.
   const isAdHoc = !isUuid(d.debtorId);
 
+  const logId = isUuid(d.id) ? d.id : crypto.randomUUID();
+
+  // Core columns only — every one of these has existed since the original schema.sql, so this
+  // insert can never fail because of a migration nobody's run yet. outcome_reason/promise_time
+  // are newer (20260811_call_logs_outcome_reason.sql / _promise_time.sql) — writing them in the
+  // SAME insert meant a call_logs row with either column still missing rejected the ENTIRE
+  // disposition with a "column does not exist" error, so nothing saved at all, on every call,
+  // until someone ran those migrations. Now they're a separate best-effort update after the
+  // core save succeeds — worst case the reason/call-back-time is silently dropped, not the
+  // whole disposition.
   const { error } = await supabase.from("call_logs").insert({
-    id: isUuid(d.id) ? d.id : crypto.randomUUID(),
+    id: logId,
     debtor_id: isAdHoc ? null : d.debtorId,
     contact_name: isAdHoc ? d.debtorName || null : null,
     contact_phone: isAdHoc ? d.phone || null : null,
     agent_id: agentUuid,
     call_type: "human",
     outcome: d.outcome,
-    outcome_reason: d.reason || null,
     promise_amount: amount ?? null,
     promise_date: d.outcome === "promised" ? (d.ptpDate ?? null) : null,
-    promise_time: d.outcome === "promised" ? (d.ptpTime ?? null) : null,
     raw_notes: d.notes,
     recording_url: d.recordingUrl ?? null,
     provider_call_id: d.providerCallId ?? null,
   });
   if (error) throw error;
+
+  if (d.reason || d.ptpTime) {
+    const { error: extraErr } = await supabase
+      .from("call_logs")
+      .update({
+        outcome_reason: d.reason || null,
+        promise_time: d.outcome === "promised" ? (d.ptpTime ?? null) : null,
+      } as never)
+      .eq("id", logId);
+    if (extraErr) {
+      console.warn(
+        `[dispositions] saved ${logId} but couldn't set reason/call-back time — ` +
+          `run migrations/20260811_call_logs_outcome_reason.sql and _promise_time.sql:`,
+        extraErr.message,
+      );
+    }
+  }
 
   // Financial audit trail — separate from the call log so payments reporting has its own
   // real table, matching the schema's original intent.
