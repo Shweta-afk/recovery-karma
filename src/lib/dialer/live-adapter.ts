@@ -43,6 +43,7 @@ export function toLiveEntry(rec: CallRecord, now = Date.now()): LiveCallEntry {
     agent,
     debtor: rec.debtorName ?? rec.phone,
     loanId: rec.debtorId,
+    phone: rec.phone,
     status: liveStatus(rec.state),
     duration: liveStatus(rec.state) === "ringing" ? "—" : fmtDuration(rec, now),
     type: rec.participant === "ai" ? "ai" : "agent",

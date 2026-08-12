@@ -140,6 +140,7 @@ export interface LiveCallEntry {
   agent: string;
   debtor: string;
   loanId: string;
+  phone: string;
   status: "ringing" | "connected" | "on_hold" | "no_answer" | "done";
   duration: string;
   type: "agent" | "ai";

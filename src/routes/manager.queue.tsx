@@ -45,6 +45,7 @@ import {
   ActiveCallModal,
   DialerModeBar,
   LiveCallsPanel,
+  DialingBoard,
   type QueueDebtor,
   type ActiveCall,
   type DispositionForm,
@@ -273,6 +274,9 @@ function AgentQueueView({
           </Table>
         </div>
       </div>
+
+      {/* Floating dialing board — every number currently ringing, same as the agent sees */}
+      {dialer.running && <DialingBoard liveCalls={dialer.legs} />}
 
       {/* Floating live-calls panel — same component the agent sees, now fed by engine legs */}
       {dialer.running && dialer.legs.length > 0 && (

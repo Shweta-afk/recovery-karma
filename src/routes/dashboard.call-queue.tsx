@@ -1626,6 +1626,9 @@ function CallQueuePage() {
         />
       )}
 
+      {/* ── Floating Dialing Board (bottom-left) — every number currently ringing ── */}
+      {dialer.running && <DialingBoard liveCalls={dialer.legs} />}
+
       {/* ── Floating Live Calls Panel (bottom-right) — fed by engine legs ── */}
       {dialer.running && dialer.legs.length > 0 && (
         <LiveCallsPanel
@@ -2050,6 +2053,55 @@ export function DialerModeBar({
 
       <div className="ml-auto flex items-center gap-2">
         <span className="text-[11px] text-muted-foreground">Today · 30 Jun 2026</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Dialing Board ────────────────────────────────────────────────────────────
+// Predictive dialing opens several lines at once — the point of it is that multiple numbers
+// are being rung in parallel, not one at a time. LiveCallsPanel (bottom-right) is about
+// managing calls once they connect; this is the parallel-dial visual the mode is actually
+// named for — every number currently ringing, live, bottom-left so the two panels never
+// overlap.
+
+function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 4) return phone;
+  return `${"•".repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
+}
+
+export function DialingBoard({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
+  const ringing = liveCalls.filter((c) => c.status === "ringing" && !c.incoming);
+  if (!ringing.length) return null;
+
+  return (
+    <div className="fixed bottom-4 left-4 z-40 w-64 rounded-xl border border-border bg-card shadow-2xl shadow-black/20 animate-in slide-in-from-bottom-4 duration-300 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 border-b border-border">
+        <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
+        <span className="text-xs font-semibold text-foreground flex-1">
+          Dialing {ringing.length} number{ringing.length === 1 ? "" : "s"}
+        </span>
+        <PhoneCall className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+      </div>
+      <div className="divide-y divide-border/60 max-h-48 overflow-y-auto">
+        {ringing.map((lc) => (
+          <div key={lc.id} className="flex items-center gap-2 px-3 py-1.5">
+            <span className="relative flex h-2 w-2 flex-shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-medium text-foreground truncate">{lc.debtor}</div>
+              <div className="font-mono text-[10px] text-muted-foreground">
+                {maskPhone(lc.phone)}
+              </div>
+            </div>
+            {lc.type === "ai" && (
+              <span className="text-[8px] font-bold text-violet-500 flex-shrink-0">AI</span>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
