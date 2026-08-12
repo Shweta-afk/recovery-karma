@@ -284,6 +284,12 @@ function AgentQueueView({
             if (d && !disabled) onCall(d);
           }}
           onTransfer={(lc) => toast.success(`${lc.debtor} redirected to next available agent`)}
+          onEndLeg={(lc) => {
+            dialer
+              .endLeg(lc.id)
+              .catch((e) => toast.error(e instanceof Error ? e.message : "Failed to end call"));
+            toast.success(`Ended call with ${lc.debtor}`);
+          }}
         />
       )}
     </div>

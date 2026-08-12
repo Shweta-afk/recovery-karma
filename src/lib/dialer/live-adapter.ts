@@ -46,6 +46,7 @@ export function toLiveEntry(rec: CallRecord, now = Date.now()): LiveCallEntry {
     status: liveStatus(rec.state),
     duration: liveStatus(rec.state) === "ringing" ? "—" : fmtDuration(rec, now),
     type: rec.participant === "ai" ? "ai" : "agent",
+    providerCallId: rec.providerCallId,
   };
 }
 

@@ -1638,6 +1638,12 @@ function CallQueuePage() {
           onTransfer={(lc) => {
             toast.success(`${lc.debtor} redirected to next available agent`);
           }}
+          onEndLeg={(lc) => {
+            dialer
+              .endLeg(lc.id)
+              .catch((e) => toast.error(e instanceof Error ? e.message : "Failed to end call"));
+            toast.success(`Ended call with ${lc.debtor}`);
+          }}
         />
       )}
 
@@ -2056,11 +2062,13 @@ export function LiveCallsPanel({
   onDismiss,
   onTake,
   onTransfer,
+  onEndLeg,
 }: {
   liveCalls: LiveCallEntry[];
   onDismiss: () => void;
   onTake: (lc: LiveCallEntry) => void;
   onTransfer: (lc: LiveCallEntry) => void;
+  onEndLeg: (lc: LiveCallEntry) => void;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const connected = liveCalls.filter((c) => c.status === "connected").length;
@@ -2192,6 +2200,19 @@ export function LiveCallsPanel({
                       Fwd
                     </button>
                   </div>
+                )}
+
+                {/* End Call — every live (non-incoming) leg the predictive dialer opened.
+                    There was previously no way to hang up one of these individually; Take/Fwd
+                    above only ever apply to a transferred-in call. */}
+                {!lc.incoming && (lc.status === "connected" || lc.status === "ringing") && (
+                  <button
+                    type="button"
+                    onClick={() => onEndLeg(lc)}
+                    className="rounded bg-destructive/15 px-1.5 py-0.5 text-[9px] font-bold text-destructive hover:bg-destructive/25 transition-colors flex-shrink-0"
+                  >
+                    End
+                  </button>
                 )}
               </div>
             );

@@ -38,6 +38,10 @@ export interface UseDialerRun {
   stats: DialerRun["stats"] | null;
   start: (args: StartArgs) => Promise<void>;
   stop: () => Promise<void>;
+  /** Ends one leg (agent's End Call on a connected — or ringing — predictive-dialer call)
+   * without touching the rest of the run. stop() above always ends every leg; this is the
+   * per-leg equivalent the Live Calls panel needs. */
+  endLeg: (legId: string) => Promise<void>;
 }
 
 export function useDialerRun(): UseDialerRun {
@@ -171,6 +175,25 @@ export function useDialerRun(): UseDialerRun {
     render();
   }, [render]);
 
+  const endLeg = useCallback(
+    async (legId: string) => {
+      const run = runRef.current;
+      if (!run) return;
+      if (modeRef.current === "server") {
+        const srv = await import("@/lib/telephony/server");
+        const updated = await srv.hangupDialerLeg({ data: { runId: runIdRef.current, legId } });
+        if (updated) runRef.current = updated;
+        render();
+        return;
+      }
+      // Local mode: schedule the hangup through the sim — it flows through the same
+      // subscribe -> applyLegEvent pipeline as any other event on the next flushDue tick.
+      const leg = run.legs.find((l) => l.id === legId);
+      if (leg?.providerCallId) await simRef.current?.hangup(leg.providerCallId);
+    },
+    [render],
+  );
+
   useEffect(
     () => () => {
       clearTimer();
@@ -186,5 +209,6 @@ export function useDialerRun(): UseDialerRun {
     stats: run?.stats ?? null,
     start,
     stop,
+    endLeg,
   };
 }

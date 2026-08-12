@@ -264,6 +264,40 @@ export const stopDialerRun = createServerFn({ method: "POST" })
     return stopped;
   });
 
+// Ends one connected/ringing leg without touching the rest of the run — stopDialerRun above
+// only ever stops everything. The Live Calls panel had no way to hang up a single predictively-
+// dialed connected call before this: LiveCallsPanel's Take/Forward buttons are gated on
+// `incoming`, which real dialer legs never set (only the synthetic AI-handoff demo does), so a
+// connected leg from an actual predictive dialer run just sat there with no end-call control at
+// all. Synthesizes the same "hangup" TelephonyEvent a real provider webhook would send, so this
+// leg advances through the exact same state machine (and gets logged via persistLoggableLegs)
+// a natural hangup would.
+export const hangupDialerLeg = createServerFn({ method: "POST" })
+  .inputValidator((d: { runId: string; legId: string }) => d)
+  .handler(async ({ data }) => {
+    const run = runs.get(data.runId);
+    if (!run) return null;
+    const leg = run.legs.find((l) => l.id === data.legId);
+    if (!leg || isTerminal(leg.state) || !leg.providerCallId) return run;
+
+    await getTelephonyProvider().hangup(leg.providerCallId);
+
+    const now = Date.now();
+    const durationSeconds = leg.connectedAt ? Math.round((now - leg.connectedAt) / 1000) : 0;
+    const updated = engine.applyLegEvent(run, {
+      type: "hangup",
+      providerCallId: leg.providerCallId,
+      at: now,
+      // call-machine.ts always resolves a connected/wrapup leg to "completed" regardless of
+      // this value — it only matters for a leg ended before it ever connected (still ringing).
+      result: leg.connectedAt ? "completed" : "canceled",
+      durationSeconds,
+    });
+    await persistLoggableLegs(updated);
+    runs.set(updated.id, updated);
+    return updated;
+  });
+
 // ─── Single-call + SMS wrappers ──────────────────────────────────────────────────
 
 export const startCall = createServerFn({ method: "POST" })
@@ -277,7 +311,12 @@ export const startCall = createServerFn({ method: "POST" })
   })
   .handler(async ({ data }) => {
     ensureSubscribed();
-    console.log("[telephony:server] startCall - agentNumber:", data?.agentNumber, "debtorNumber:", data?.debtorNumber);
+    console.log(
+      "[telephony:server] startCall - agentNumber:",
+      data?.agentNumber,
+      "debtorNumber:",
+      data?.debtorNumber,
+    );
     if (!data?.agentNumber) {
       throw new Error(`Missing agentNumber in request`);
     }
@@ -330,9 +369,7 @@ export const sendSms = createServerFn({ method: "POST" })
 // calls the Exotel sender directly rather than going through getTelephonyProvider(). Only
 // works when EXOTEL_* credentials are set, regardless of TELEPHONY_PROVIDER.
 export const sendWhatsAppMessage = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: { to: string; templateName: string; templateParams: string[] }) => d,
-  )
+  .inputValidator((d: { to: string; templateName: string; templateParams: string[] }) => d)
   .handler(async ({ data }) => {
     return sendWhatsAppExotel({
       to: data.to,

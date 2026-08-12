@@ -144,6 +144,9 @@ export interface LiveCallEntry {
   duration: string;
   type: "agent" | "ai";
   incoming?: boolean; // true = another agent/AI is transferring this call to me
+  /** Provider's id for this leg, once startCall has resolved — needed to hang it up
+   * individually (see hangupDialerLeg in telephony/server.ts). Absent while still queued. */
+  providerCallId?: string;
 }
 
 // Agent availability — lives on the call queue since this is where the agent takes calls
