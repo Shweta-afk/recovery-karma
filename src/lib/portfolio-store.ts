@@ -1,5 +1,6 @@
 import type { DPDBucket, Debtor } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
+import { refreshRetentionRequests } from "./retention-store";
 import {
   STD_FIELDS,
   slotsFromDebtor,
@@ -44,6 +45,11 @@ export interface UploadedDebtor {
   // Numbers an agent has added after the upload (see addDebtorPhone) — separate from the CSV's
   // own phone_alternate column, which nothing in the app ever writes to.
   altPhones: string[];
+  // Set once this debtor row has been carried forward from a closed portfolio via a 'carried'
+  // retention request — see reconcileRetainedDebtors() below. retainedFrom is the old
+  // portfolio's name, for the "★ Retained · from {name}" badge.
+  retained?: boolean;
+  retainedFrom?: string;
 }
 
 // Moved here (from dashboard.call-queue.tsx) — call mode is a property of the portfolio,
@@ -100,6 +106,12 @@ export interface UploadedPortfolio {
   teamId?: string;
   settings: PortfolioSettings;
   agentTargets: Record<string, AgentTarget>; // keyed by agent email
+  // Set on a NEW portfolio at upload time when a manager says "this continues that old cycle" —
+  // triggers reconcileRetainedDebtors() in createPortfolio(). See migrations/20260813_retention_requests.sql.
+  replacesPortfolioId?: string;
+  // Stamped on the OLD portfolio once its replacement lands. Closed portfolios' remaining
+  // (non-carried) debtors drop out of buildAssignedQueue — they were recalled, not retained.
+  closedAt?: string;
 }
 
 const KEY = "recoveryai_portfolios_cache";
@@ -177,6 +189,38 @@ export async function refreshPortfolios(): Promise<void> {
     // ignore — alt phones are supplementary until the migration is applied
   }
 
+  // Best-effort, same reasoning: replaces_portfolio_id/closed_at/retained_from_portfolio_id
+  // are new columns (migrations/20260813_retention_requests.sql) that may not exist yet.
+  const closeInfoByPortfolio = new Map<
+    string,
+    { replacesPortfolioId?: string; closedAt?: string }
+  >();
+  const retainedFromById = new Map<string, string>(); // debtor id -> old portfolio id
+  try {
+    const [{ data: cycleRows, error: cErr }, { data: retRows, error: rErr }] = await Promise.all([
+      supabase.from("portfolios").select("id, replaces_portfolio_id, closed_at"),
+      supabase.from("debtors").select("id, retained_from_portfolio_id"),
+    ]);
+    if (!cErr && cycleRows) {
+      for (const p of cycleRows) {
+        closeInfoByPortfolio.set(p.id as string, {
+          replacesPortfolioId: (p.replaces_portfolio_id as string | null) ?? undefined,
+          closedAt: (p.closed_at as string | null) ?? undefined,
+        });
+      }
+    }
+    if (!rErr && retRows) {
+      for (const r of retRows) {
+        if (r.retained_from_portfolio_id) {
+          retainedFromById.set(r.id as string, r.retained_from_portfolio_id as string);
+        }
+      }
+    }
+  } catch {
+    // ignore — retention carry-forward is supplementary until the migration is applied
+  }
+  const portfolioNameById = new Map(portfolioRows.map((p) => [p.id as string, p.name as string]));
+
   const portfolios: UploadedPortfolio[] = portfolioRows.map((p) => ({
     id: p.id,
     name: p.name,
@@ -187,38 +231,145 @@ export async function refreshPortfolios(): Promise<void> {
     teamId: p.team_id ?? undefined,
     settings: (p.settings as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
     agentTargets: targetsByPortfolio.get(p.id) ?? {},
+    replacesPortfolioId: closeInfoByPortfolio.get(p.id)?.replacesPortfolioId,
+    closedAt: closeInfoByPortfolio.get(p.id)?.closedAt,
     rows: debtorRows
       // Soft-removed debtors (see removeDebtor()) are excluded from every normal view — call
       // queue, portfolio counts, assignment/transfer — without touching their call_logs/
       // payments/etc. history. Recoverable via getRemovedDebtors()/restoreDebtor().
       .filter((d) => d.portfolio_id === p.id && d.status !== "removed")
-      .map((d) => ({
-        id: d.id,
-        loanReference: d.loan_reference ?? d.id,
-        name: d.name,
-        phone: d.phone_primary,
-        loanAmount: Number(d.loan_amount ?? 0),
-        dpd: d.dpd ?? 0,
-        bucket: dpd2bucket(d.dpd ?? 0),
-        email: d.email ?? "",
-        assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
-        status: d.status ?? undefined,
-        extra: (d.extra as Record<string, string>) ?? {},
-        altPhones: altPhonesById.get(d.id) ?? [],
-      })),
+      .map((d) => {
+        const retainedFromPortfolioId = retainedFromById.get(d.id);
+        return {
+          id: d.id,
+          loanReference: d.loan_reference ?? d.id,
+          name: d.name,
+          phone: d.phone_primary,
+          loanAmount: Number(d.loan_amount ?? 0),
+          dpd: d.dpd ?? 0,
+          bucket: dpd2bucket(d.dpd ?? 0),
+          email: d.email ?? "",
+          assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
+          status: d.status ?? undefined,
+          extra: (d.extra as Record<string, string>) ?? {},
+          altPhones: altPhonesById.get(d.id) ?? [],
+          retained: !!retainedFromPortfolioId,
+          retainedFrom: retainedFromPortfolioId
+            ? portfolioNameById.get(retainedFromPortfolioId)
+            : undefined,
+        };
+      }),
   }));
 
   localStorage.setItem(KEY, JSON.stringify(portfolios));
   window.dispatchEvent(new CustomEvent("portfolios-updated"));
 }
 
+/** When a new upload replaces an old cycle (p.replacesPortfolioId), matches every 'sent_to_bank'
+ * retention request on the old portfolio against the new CSV by loan_reference. A match updates
+ * the EXISTING debtor row in place (new portfolio_id, refreshed fields, retained_from_portfolio_id
+ * set) instead of inserting a new one — that's what keeps call_logs/messages/payments/disputes
+ * attached, since they're all keyed off debtor_id and this way it never changes. Marks each
+ * matched request 'carried' and every unmatched sent_to_bank request 'not_honored' — the bank
+ * didn't include it, so the account is recalled like any other, not silently left dangling in
+ * 'sent_to_bank' forever. Finally closes the old portfolio. Best-effort: if retention_requests
+ * or the new columns don't exist yet (migration not applied), this is a no-op and every row
+ * inserts fresh, same as before this feature existed. */
+async function reconcileRetainedDebtors(
+  oldPortfolioId: string,
+  newPortfolioId: string,
+  rows: UploadedDebtor[],
+  assignedIdFor: Map<string, string>,
+): Promise<{ handledRowIds: Set<string>; carried: number }> {
+  const handledRowIds = new Set<string>();
+  try {
+    const { data: sentRequests, error: reqErr } = await supabase
+      .from("retention_requests")
+      .select("id, debtor_id")
+      .eq("portfolio_id", oldPortfolioId)
+      .eq("status", "sent_to_bank");
+    if (reqErr || !sentRequests?.length) return { handledRowIds, carried: 0 };
+
+    const debtorIds = sentRequests.map((r) => r.debtor_id as string);
+    const { data: oldDebtors, error: oldErr } = await supabase
+      .from("debtors")
+      .select("id, loan_reference")
+      .in("id", debtorIds);
+    if (oldErr || !oldDebtors) return { handledRowIds, carried: 0 };
+
+    const requestIdByDebtorId = new Map(
+      sentRequests.map((r) => [r.debtor_id as string, r.id as string]),
+    );
+    // loan_reference (normalized) -> {oldDebtorId, requestId}
+    const byLoanRef = new Map<string, { oldDebtorId: string; requestId: string }>();
+    for (const d of oldDebtors) {
+      const ref = (d.loan_reference as string | null)?.trim().toLowerCase();
+      const requestId = requestIdByDebtorId.get(d.id as string);
+      if (ref && requestId) byLoanRef.set(ref, { oldDebtorId: d.id as string, requestId });
+    }
+
+    const matchedRequestIds = new Set<string>();
+    for (const row of rows) {
+      const ref = row.loanReference.trim().toLowerCase();
+      const match = ref ? byLoanRef.get(ref) : undefined;
+      if (!match) continue;
+
+      const { error: updErr } = await supabase
+        .from("debtors")
+        .update({
+          portfolio_id: newPortfolioId,
+          retained_from_portfolio_id: oldPortfolioId,
+          assigned_agent_id: assignedIdFor.get(row.id) ?? null,
+          name: row.name,
+          phone_primary: row.phone,
+          email: row.email || null,
+          loan_amount: row.loanAmount,
+          outstanding_balance: row.loanAmount,
+          dpd: row.dpd,
+          status: "active",
+          extra: row.extra,
+        })
+        .eq("id", match.oldDebtorId);
+      if (updErr) continue; // one bad row shouldn't sink the whole reconciliation
+
+      await supabase
+        .from("retention_requests")
+        .update({ status: "carried", carried_at: new Date().toISOString() })
+        .eq("id", match.requestId);
+      handledRowIds.add(row.id);
+      matchedRequestIds.add(match.requestId);
+    }
+
+    const unmatchedIds = sentRequests
+      .map((r) => r.id as string)
+      .filter((id) => !matchedRequestIds.has(id));
+    if (unmatchedIds.length) {
+      await supabase
+        .from("retention_requests")
+        .update({ status: "not_honored" })
+        .in("id", unmatchedIds);
+    }
+
+    await supabase
+      .from("portfolios")
+      .update({ closed_at: new Date().toISOString() })
+      .eq("id", oldPortfolioId);
+
+    return { handledRowIds, carried: handledRowIds.size };
+  } catch {
+    return { handledRowIds, carried: 0 };
+  }
+}
+
 /** Creates a brand-new portfolio and inserts all of its debtor rows in one go — used once,
  * at upload time. `allocation` (agent email -> debtor IDs) is optional and, when given, sets
- * each debtor's assigned_agent_id at insert time instead of a separate follow-up write. */
+ * each debtor's assigned_agent_id at insert time instead of a separate follow-up write.
+ * When p.replacesPortfolioId is set, rows matching a 'sent_to_bank' retention request on that
+ * old portfolio are carried forward (see reconcileRetainedDebtors) instead of inserted fresh. */
 export async function createPortfolio(
   p: UploadedPortfolio,
   allocation: Record<string, string[]> = {},
-): Promise<{ uploaded: number; skipped: number }> {
+): Promise<{ uploaded: number; skipped: number; carried: number }> {
   const me = await getMyAgentRow();
   const { data: agentRows } = await supabase.from("agents").select("id, email");
   const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
@@ -249,11 +400,27 @@ export async function createPortfolio(
     manager_id: managerAgentId,
     team_id: p.teamId,
     settings: p.settings,
+    replaces_portfolio_id: p.replacesPortfolioId ?? null,
   });
   if (pErr) throw pErr;
 
-  for (let i = 0; i < uploadable.length; i += CHUNK_SIZE) {
-    const chunk = uploadable.slice(i, i + CHUNK_SIZE).map((r) => ({
+  let carried = 0;
+  let toInsert = uploadable;
+  if (p.replacesPortfolioId) {
+    const result = await reconcileRetainedDebtors(
+      p.replacesPortfolioId,
+      p.id,
+      uploadable,
+      assignedIdFor,
+    );
+    carried = result.carried;
+    if (result.handledRowIds.size) {
+      toInsert = uploadable.filter((r) => !result.handledRowIds.has(r.id));
+    }
+  }
+
+  for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+    const chunk = toInsert.slice(i, i + CHUNK_SIZE).map((r) => ({
       id: r.id,
       client_id: me?.client_id,
       portfolio_id: p.id,
@@ -272,7 +439,8 @@ export async function createPortfolio(
   }
 
   await refreshPortfolios();
-  return { uploaded: uploadable.length, skipped };
+  if (carried > 0) await refreshRetentionRequests();
+  return { uploaded: toInsert.length, skipped, carried };
 }
 
 /** Merges a re-uploaded/appended CSV into an existing portfolio: a row whose Loan/Account ID
@@ -807,6 +975,8 @@ export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio)
     name: row.name || "(unknown)",
     phone: row.phone || "—",
     altPhones: row.altPhones ?? [],
+    retained: row.retained ?? false,
+    retainedFrom: row.retainedFrom,
     email: row.email || undefined,
     loanAmount: row.loanAmount,
     dpd: row.dpd,

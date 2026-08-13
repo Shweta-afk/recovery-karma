@@ -25,6 +25,11 @@ export interface Debtor {
   // Numbers an agent has added after upload — see addDebtorPhone() in portfolio-store.ts.
   // Plural/list form; altPhone above is the older single-value field kept for back-compat.
   altPhones?: string[];
+  // Set once this debtor row has been carried forward from a closed portfolio via an approved
+  // retention request — see migrations/20260813_retention_requests.sql and
+  // reconcileRetainedDebtors() in portfolio-store.ts. retainedFrom is the old portfolio's name.
+  retained?: boolean;
+  retainedFrom?: string;
   email?: string;
   loanAmount: number;
   dpd: number;

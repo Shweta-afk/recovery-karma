@@ -37,6 +37,8 @@ import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import {
   createPortfolio,
   dpd2bucket,
+  getPortfolios,
+  refreshPortfolios,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
   type UploadedDebtor,
@@ -159,6 +161,24 @@ function PortfolioUploadPage() {
   const [portfolioName, setPortfolioName] = useState("");
   const [lenderName, setLenderName] = useState("");
   const [product, setProduct] = useState("");
+  // "This continues portfolio X" — set, reconcileRetainedDebtors() in createPortfolio() carries
+  // forward any 'sent_to_bank' retention request against that old portfolio, then closes it.
+  const [replacesPortfolioId, setReplacesPortfolioId] = useState<string>("");
+  const [existingPortfolios, setExistingPortfolios] = useState<UploadedPortfolio[]>(() =>
+    getPortfolios(),
+  );
+  useEffect(() => {
+    refreshPortfolios().then(() => setExistingPortfolios(getPortfolios()));
+  }, []);
+  // Open (not-yet-closed) portfolios, most recent first — defaults the picker toward whichever
+  // one the manager most likely means once they've typed a lender name.
+  const continuablePortfolios = useMemo(
+    () =>
+      existingPortfolios
+        .filter((p) => !p.closedAt)
+        .sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1)),
+    [existingPortfolios],
+  );
 
   // CSV state
   const [fileName, setFileName] = useState("");
@@ -332,8 +352,9 @@ function PortfolioUploadPage() {
         teamId: team?.id,
         settings,
         agentTargets: {},
+        replacesPortfolioId: replacesPortfolioId || undefined,
       };
-      const { uploaded, skipped } = await createPortfolio(
+      const { uploaded, skipped, carried } = await createPortfolio(
         portfolio,
         team && managerAgents.length > 0 ? allocation : {},
       );
@@ -342,16 +363,16 @@ function PortfolioUploadPage() {
 
       clearInterval(tick);
       setUploadProgress(100);
-      setUploadedCount(uploaded);
+      setUploadedCount(uploaded + carried);
       setUploadedSkipped(skipped);
       setUploading(false);
       setStep("done");
-      toast.success(
-        skipped > 0
-          ? `${uploaded} accounts uploaded, ${skipped} skipped (missing name or phone)`
-          : `${uploaded} accounts uploaded and assigned`,
-        { description: `${portfolioName} · ${lenderName} · mapping saved for next time` },
-      );
+      const parts = [`${uploaded} new`];
+      if (carried > 0) parts.push(`${carried} carried forward`);
+      if (skipped > 0) parts.push(`${skipped} skipped`);
+      toast.success(`${parts.join(", ")} accounts`, {
+        description: `${portfolioName} · ${lenderName} · mapping saved for next time`,
+      });
     } catch (e) {
       clearInterval(tick);
       setUploading(false);
@@ -500,6 +521,33 @@ function PortfolioUploadPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Continues portfolio (optional)</Label>
+                  <Select
+                    value={replacesPortfolioId || "none"}
+                    onValueChange={(v) => setReplacesPortfolioId(v === "none" ? "" : v)}
+                    disabled={step !== "meta"}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="This is a fresh portfolio, not a continuation" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Not a continuation — fresh portfolio</SelectItem>
+                      {continuablePortfolios.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name} · {p.lender || "no lender set"} · uploaded{" "}
+                          {new Date(p.uploadedAt).toLocaleDateString("en-IN")}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    If the bank's next cycle for this lender is replacing an old portfolio, pick it
+                    here — any account whose retention was requested and sent to the bank gets
+                    carried forward automatically if it's in this file, and the old portfolio closes
+                    out.
+                  </p>
                 </div>
                 {step === "meta" && (
                   <div className="flex items-end">

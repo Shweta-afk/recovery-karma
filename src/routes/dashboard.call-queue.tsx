@@ -147,6 +147,11 @@ export function buildAssignedQueue(agentId: string): QueueDebtor[] {
   for (const { portfolioId, debtorIds } of slices) {
     const portfolio = allPortfolios.find((p) => p.id === portfolioId);
     if (!portfolio) continue;
+    // A closed portfolio's cycle is over — whoever wasn't carried forward via an approved
+    // retention request (see reconcileRetainedDebtors in portfolio-store.ts) was recalled by
+    // the bank, so it drops out of the active queue. Anyone who WAS carried forward already
+    // has their portfolio_id pointed at the new, non-closed portfolio, so they still show up.
+    if (portfolio.closedAt) continue;
     const idSet = new Set(debtorIds);
     for (const row of portfolio.rows) {
       if (!idSet.has(row.id)) continue;
@@ -164,7 +169,6 @@ export function buildAssignedQueue(agentId: string): QueueDebtor[] {
         queueStatus: "fresh",
         scheduledAt: "—",
         ptpAmount: 0,
-        retained: false,
       });
     }
   }

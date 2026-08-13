@@ -31,6 +31,7 @@ import {
   FileDown,
   Loader2,
   Plus,
+  Anchor,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +44,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -77,6 +79,7 @@ import {
 import { exportCSV } from "@/lib/call-queue/mock-data";
 
 import { saveEscalation } from "@/lib/escalation-store";
+import { requestRetention, getRetentionRequestsFor } from "@/lib/retention-store";
 import type { PtpFollowup } from "@/lib/disposition-store";
 import { leftoverExtraKeys } from "@/lib/csv-fields";
 import { buildDispositionSms } from "@/lib/sms-templates";
@@ -2137,6 +2140,50 @@ export function DebtorProfileSheet({
   onCall: (d: QueueDebtor) => void;
 }) {
   const extra = getDebtorExtra(debtor.id);
+  const [retentionOpen, setRetentionOpen] = useState(false);
+  const [retentionReason, setRetentionReason] = useState("");
+  const [retentionSubmitting, setRetentionSubmitting] = useState(false);
+  // Cached from Supabase (retention-store.ts), newest first — reflects the debtor's own last
+  // known state, refreshed whenever a request is raised/reviewed, so this stays accurate
+  // without a live query. Only the LATEST request matters: an older rejected/not_honored one
+  // shouldn't block a fresh ask, but an in-flight one (still pending, or already approved/sent
+  // and just waiting on the bank's next file) should — no point letting an agent duplicate it.
+  const latestRetentionRequest = getRetentionRequestsFor(debtor.id)[0];
+  const inFlightRetention =
+    latestRetentionRequest &&
+    (["pending_manager", "approved", "sent_to_bank"] as const).includes(
+      latestRetentionRequest.status as "pending_manager" | "approved" | "sent_to_bank",
+    )
+      ? latestRetentionRequest
+      : undefined;
+  const RETENTION_STATUS_LABEL: Record<string, string> = {
+    pending_manager: "Retention requested · awaiting manager",
+    approved: "Retention approved · awaiting export to bank",
+    sent_to_bank: "Retention sent to bank · awaiting next cycle",
+  };
+
+  const submitRetention = async () => {
+    if (!debtor.portfolioId) {
+      toast.error("This debtor isn't tied to a portfolio — nothing to request retention for.");
+      return;
+    }
+    setRetentionSubmitting(true);
+    try {
+      await requestRetention({
+        debtorId: debtor.id,
+        portfolioId: debtor.portfolioId,
+        reason: retentionReason.trim(),
+      });
+      toast.success("Retention requested — awaiting manager review");
+      setRetentionOpen(false);
+      setRetentionReason("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to request retention");
+    } finally {
+      setRetentionSubmitting(false);
+    }
+  };
+
   // debtorFromRow() (portfolio-store.ts) stashes every raw CSV column here for real debtors —
   // rendered generically below the named fields, same approach as the debtor profile page.
   // getDebtorExtra()'s DEBTOR_EXTRA table only ever matches a couple of hardcoded mock IDs, so
@@ -2517,7 +2564,68 @@ export function DebtorProfileSheet({
           <HandCoins className="h-3.5 w-3.5" />
           Settlement
         </Button>
+        {debtor.retained ? (
+          <Badge
+            variant="outline"
+            className="h-8 gap-1.5 border-violet-400/40 bg-violet-500/10 px-3 text-violet-500"
+          >
+            <Anchor className="h-3.5 w-3.5" />
+            Retained · from {debtor.retainedFrom ?? "previous cycle"}
+          </Badge>
+        ) : inFlightRetention ? (
+          <Badge
+            variant="outline"
+            className="h-8 gap-1.5 border-amber-400/40 bg-amber-500/10 px-3 text-amber-600"
+          >
+            <Anchor className="h-3.5 w-3.5" />
+            {RETENTION_STATUS_LABEL[inFlightRetention.status] ?? "Retention requested"}
+          </Badge>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 h-8 active:scale-95"
+            onClick={() => setRetentionOpen(true)}
+          >
+            <Anchor className="h-3.5 w-3.5" />
+            Request Retention
+          </Button>
+        )}
       </div>
+
+      {/* Request Retention dialog — asks the manager to keep this account into the next
+          portfolio cycle instead of it being recalled by the bank. See retention-store.ts. */}
+      <Dialog open={retentionOpen} onOpenChange={setRetentionOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Request Retention</DialogTitle>
+            <DialogDescription>
+              Ask your manager to request the bank keep <strong>{debtor.name}</strong> in the
+              next portfolio cycle instead of it being recalled — useful for an active PTP or an
+              ongoing negotiation you don't want to lose.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="Why should this account be retained? (e.g. PTP due next week, mid-negotiation on settlement)"
+            value={retentionReason}
+            onChange={(e) => setRetentionReason(e.target.value)}
+            rows={3}
+          />
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setRetentionOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={submitRetention} disabled={retentionSubmitting}>
+              {retentionSubmitting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Anchor className="h-3.5 w-3.5" />
+              )}
+              Submit Request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -52,9 +52,20 @@ import {
   UserPlus,
   Wand2,
   Landmark,
+  Anchor,
+  Send,
+  Check,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCsv } from "@/lib/csv-export";
+import {
+  getRetentionRequests,
+  refreshRetentionRequests,
+  reviewRetentionRequest,
+  markRetentionRequestsSent,
+  type RetentionRequest,
+} from "@/lib/retention-store";
 import { saveTemplate } from "@/lib/mapping-template-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -520,6 +531,239 @@ function RemovedAccountsPanel({ portfolioId }: { portfolioId: string }) {
   );
 }
 
+/** Manager review for retention requests raised against this portfolio (see
+ * src/lib/retention-store.ts). Mirrors RemovedAccountsPanel's collapsible shape: pending
+ * requests get Approve/Reject, approved ones get bundled into a CSV export that also marks
+ * them sent_to_bank, and sent/resolved ones are shown read-only — 'carried'/'not_honored'
+ * only ever get set automatically, by reconcileRetainedDebtors() at the next upload. */
+function RetentionRequestsPanel({ portfolioId }: { portfolioId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [requests, setRequests] = useState<RetentionRequest[]>(() =>
+    getRetentionRequests().filter((r) => r.portfolioId === portfolioId),
+  );
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      await refreshRetentionRequests();
+      setRequests(getRetentionRequests().filter((r) => r.portfolioId === portfolioId));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load retention requests");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggle = () => {
+    setExpanded((prev) => {
+      const next = !prev;
+      if (next) load();
+      return next;
+    });
+  };
+
+  const pending = requests.filter((r) => r.status === "pending_manager");
+  const approved = requests.filter((r) => r.status === "approved");
+  const sent = requests.filter((r) => r.status === "sent_to_bank");
+  const resolved = requests.filter((r) => r.status === "carried" || r.status === "not_honored");
+
+  const handleReview = async (r: RetentionRequest, decision: "approved" | "rejected") => {
+    setBusyId(r.id);
+    try {
+      await reviewRetentionRequest(r.id, decision);
+      setRequests(getRetentionRequests().filter((x) => x.portfolioId === portfolioId));
+      toast.success(decision === "approved" ? "Retention approved" : "Retention rejected");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update request");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exportAndSend = async () => {
+    const toSend = approved.filter((r) => selected.has(r.id));
+    if (!toSend.length) return;
+    downloadCsv(
+      `retention-requests-${portfolioId}.csv`,
+      ["Loan Reference", "Debtor Name", "Phone", "Reason", "Requested On"],
+      toSend.map((r) => [
+        r.loanReference ?? r.debtorId,
+        r.debtorName,
+        r.debtorPhone,
+        r.reason,
+        new Date(r.createdAt).toLocaleDateString("en-IN"),
+      ]),
+    );
+    try {
+      await markRetentionRequestsSent(toSend.map((r) => r.id));
+      setRequests(getRetentionRequests().filter((x) => x.portfolioId === portfolioId));
+      setSelected(new Set());
+      toast.success(
+        `Exported ${toSend.length} account${toSend.length === 1 ? "" : "s"} — marked as sent to bank`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Exported, but failed to mark as sent");
+    }
+  };
+
+  const total = requests.length;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground uppercase tracking-wider transition-colors"
+      >
+        <Anchor className="h-3.5 w-3.5" />
+        Retention Requests
+        {total > 0 && <span className="text-[10px] normal-case tracking-normal">({total})</span>}
+      </button>
+      {expanded && (
+        <div className="mt-2 rounded-lg border border-border overflow-hidden">
+          {loading ? (
+            <div className="flex items-center gap-1.5 p-3 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading…
+            </div>
+          ) : total === 0 ? (
+            <p className="p-3 text-xs text-muted-foreground">No retention requests yet.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {pending.length > 0 && (
+                <div className="p-3 space-y-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Awaiting your review · {pending.length}
+                  </p>
+                  {pending.map((r) => (
+                    <div key={r.id} className="flex items-start justify-between gap-3 text-xs">
+                      <div className="min-w-0">
+                        <div className="font-medium text-foreground truncate">{r.debtorName}</div>
+                        <div className="text-[10px] text-muted-foreground truncate">
+                          {r.loanReference} · requested by {r.requestedBy || "—"}
+                        </div>
+                        {r.reason && (
+                          <div className="text-[10px] text-muted-foreground mt-0.5 italic">
+                            "{r.reason}"
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 gap-1 text-[11px] border-success/40 text-success"
+                          disabled={busyId === r.id}
+                          onClick={() => handleReview(r, "approved")}
+                        >
+                          <Check className="h-3 w-3" /> Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 gap-1 text-[11px] border-destructive/40 text-destructive"
+                          disabled={busyId === r.id}
+                          onClick={() => handleReview(r, "rejected")}
+                        >
+                          <X className="h-3 w-3" /> Reject
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {approved.length > 0 && (
+                <div className="p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Approved — ready to send to bank · {approved.length}
+                    </p>
+                    <Button
+                      size="sm"
+                      className="h-6 gap-1 text-[11px] flex-shrink-0"
+                      disabled={!selected.size}
+                      onClick={exportAndSend}
+                    >
+                      <Send className="h-3 w-3" /> Export & Mark Sent ({selected.size})
+                    </Button>
+                  </div>
+                  {approved.map((r) => (
+                    <label key={r.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                      <Checkbox
+                        checked={selected.has(r.id)}
+                        onCheckedChange={() => toggleSelected(r.id)}
+                      />
+                      <span className="font-medium text-foreground">{r.debtorName}</span>
+                      <span className="text-[10px] text-muted-foreground">{r.loanReference}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {sent.length > 0 && (
+                <div className="p-3 space-y-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Sent to bank — awaiting next cycle · {sent.length}
+                  </p>
+                  {sent.map((r) => (
+                    <div key={r.id} className="flex items-center justify-between text-xs">
+                      <span className="text-foreground">{r.debtorName}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        sent{" "}
+                        {r.sentToBankAt
+                          ? new Date(r.sentToBankAt).toLocaleDateString("en-IN")
+                          : "—"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {resolved.length > 0 && (
+                <div className="p-3 space-y-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Resolved · {resolved.filter((r) => r.status === "carried").length} carried
+                    forward, {resolved.filter((r) => r.status === "not_honored").length} not honored
+                  </p>
+                  {resolved.map((r) => (
+                    <div key={r.id} className="flex items-center justify-between text-xs">
+                      <span className="text-foreground">{r.debtorName}</span>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-[10px]",
+                          r.status === "carried"
+                            ? "border-success/40 text-success"
+                            : "border-muted-foreground/40 text-muted-foreground",
+                        )}
+                      >
+                        {r.status === "carried" ? "Carried forward" : "Not honored"}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PortfolioDetail({
   p,
   raw,
@@ -713,6 +957,9 @@ function PortfolioDetail({
 
           {/* Removed accounts */}
           <RemovedAccountsPanel portfolioId={p.id} />
+
+          {/* Retention requests */}
+          <RetentionRequestsPanel portfolioId={p.id} />
         </div>
       </div>
     </div>
