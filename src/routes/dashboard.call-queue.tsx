@@ -23,6 +23,7 @@ import {
   Bell,
   Filter,
   FileDown,
+  ListOrdered,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +60,7 @@ import {
   type CallMode,
 } from "@/lib/portfolio-store";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
+import type { DialTarget } from "@/lib/dialer/engine";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
 import {
@@ -233,6 +235,14 @@ function CallQueuePage() {
   // Legs progress through the actual call state machine; mode: "server" later moves it
   // server-side for true background dialing with no change here.
   const dialer = useDialerRun();
+  // Which floating board to show while the dialer is running: Predictive opens several lines
+  // at once (DialingBoard); Productive works one debtor at a time in list order
+  // (ProductiveDialBoard). Both share the same useDialerRun instance/legs — this only tracks
+  // which button started the current run so the right board renders.
+  const [activeDialMode, setActiveDialMode] = useState<"predictive" | "productive" | null>(null);
+  // Ordered list dialed by the current Productive run, captured at start so the board can show
+  // fixed list-position progress (done / current / upcoming) rather than just the live legs.
+  const [productiveTargets, setProductiveTargets] = useState<DialTarget[]>([]);
   const [prodFilter, setProdFilter] = useState<ProdFilter>("all");
   const [manualDialPageOpen, setManualDialPageOpen] = useState(false);
   const [manualDialNumber, setManualDialNumber] = useState("");
@@ -277,6 +287,24 @@ function CallQueuePage() {
 
   // Debtor profile sheet
   const [profileDebtor, setProfileDebtor] = useState<QueueDebtor | null>(null);
+
+  // Productive dialing screen-pop: open the debtor's full profile the moment their number
+  // starts ringing, same convention as a call-center "screen pop." Only pops once per debtor
+  // (tracked via the ref) so it doesn't fight an agent who closes the sheet mid-ring — it pops
+  // again only when Productive moves on to a genuinely different debtor.
+  const poppedProductiveDebtorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeDialMode !== "productive") {
+      poppedProductiveDebtorRef.current = null;
+      return;
+    }
+    const ringingLeg = dialer.legs.find((lc) => !lc.incoming && lc.status === "ringing");
+    if (!ringingLeg || poppedProductiveDebtorRef.current === ringingLeg.loanId) return;
+    const debtor = allQueue.find((d) => d.id === ringingLeg.loanId);
+    if (!debtor) return;
+    poppedProductiveDebtorRef.current = ringingLeg.loanId;
+    setProfileDebtor(debtor);
+  }, [activeDialMode, dialer.legs, allQueue]);
 
   // Escalation modal
   const [escalationCall, setEscalationCall] = useState<{
@@ -998,9 +1026,11 @@ function CallQueuePage() {
             {/* Predictive dialer — real engine + simulated provider via useDialerRun */}
             <Button
               size="sm"
+              disabled={dialer.running && activeDialMode !== "predictive"}
               onClick={async () => {
                 if (dialer.running) {
                   dialer.stop();
+                  setActiveDialMode(null);
                   return;
                 }
                 // 4b — dial the currently filtered queue, not the whole book
@@ -1015,6 +1045,7 @@ function CallQueuePage() {
                   );
                   return;
                 }
+                setActiveDialMode("predictive");
                 dialer.start({
                   settings: dialerSettings,
                   targets: target.map((d) => ({
@@ -1039,12 +1070,12 @@ function CallQueuePage() {
               }}
               className={cn(
                 "gap-1.5 text-sm",
-                dialer.running
+                dialer.running && activeDialMode === "predictive"
                   ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   : "bg-success text-success-foreground hover:bg-success/90",
               )}
             >
-              {dialer.running ? (
+              {dialer.running && activeDialMode === "predictive" ? (
                 <>
                   <Square className="h-3.5 w-3.5" />
                   Stop Dialer
@@ -1053,6 +1084,65 @@ function CallQueuePage() {
                 <>
                   <Zap className="h-3.5 w-3.5" />
                   Predictive Dial
+                </>
+              )}
+            </Button>
+
+            {/* Productive dialer — same engine, capacity forced to one line: dial the next
+                debtor in list order, wait for it to reach a terminal state (no-answer / busy /
+                completed) or connect, then move to the next. No overdial. */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={dialer.running && activeDialMode !== "productive"}
+              onClick={async () => {
+                if (dialer.running) {
+                  dialer.stop();
+                  setActiveDialMode(null);
+                  return;
+                }
+                const target = filteredQueue.length ? filteredQueue : allQueue;
+                const activeFilter = FILTERS.find((f) => f.key === queueFilter);
+                const agentNumbers = await fetchDialerAgentNumbers();
+                if (!agentNumbers.length) {
+                  toast.error(
+                    "No agents with a phone number configured — set one in Admin → Users before dialing.",
+                  );
+                  return;
+                }
+                const orderedTargets: DialTarget[] = target.map((d) => ({
+                  id: d.id,
+                  name: d.name,
+                  phone: d.phone,
+                  portfolioId: d.portfolioId,
+                  aiScore: d.aiScore,
+                  // CSV alt_phones plus any an agent added by hand (Debtor Profile → Add Phone)
+                  // — planProductiveBatch works through these after the primary number.
+                  altPhones: d.altPhones,
+                }));
+                setActiveDialMode("productive");
+                setProductiveTargets(orderedTargets);
+                dialer.start({
+                  settings: { ...dialerSettings, dialerMode: "productive" },
+                  targets: orderedTargets,
+                  agentNumbers,
+                  callerId: manualDialCallerId,
+                });
+                toast.success(
+                  `Productive calling ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}, one at a time`,
+                );
+              }}
+              className="gap-1.5 text-sm"
+            >
+              {dialer.running && activeDialMode === "productive" ? (
+                <>
+                  <Square className="h-3.5 w-3.5" />
+                  Stop Dialer
+                </>
+              ) : (
+                <>
+                  <ListOrdered className="h-3.5 w-3.5" />
+                  Productive Dial
                 </>
               )}
             </Button>
@@ -1626,14 +1716,30 @@ function CallQueuePage() {
         />
       )}
 
-      {/* ── Floating Dialing Board (bottom-left) — every number currently ringing ── */}
-      {dialer.running && <DialingBoard liveCalls={dialer.legs} />}
+      {/* ── Floating Dialing Board (bottom-left) — every number currently ringing at once.
+          Productive never has more than one, so it gets its own sequential board below instead. ── */}
+      {dialer.running && activeDialMode !== "productive" && <DialingBoard liveCalls={dialer.legs} />}
+
+      {/* ── Floating Productive Dial Board (bottom-left) — one debtor at a time, in list order ── */}
+      {dialer.running && activeDialMode === "productive" && (
+        <ProductiveDialBoard
+          targets={productiveTargets}
+          liveCalls={dialer.legs}
+          onStop={() => {
+            dialer.stop();
+            setActiveDialMode(null);
+          }}
+        />
+      )}
 
       {/* ── Floating Live Calls Panel (bottom-right) — fed by engine legs ── */}
       {dialer.running && dialer.legs.length > 0 && (
         <LiveCallsPanel
           liveCalls={dialer.legs}
-          onDismiss={() => dialer.stop()}
+          onDismiss={() => {
+            dialer.stop();
+            setActiveDialMode(null);
+          }}
           onTake={(lc) => {
             const debtor = allQueue.find((d) => d.id === lc.loanId) ?? allQueue[0];
             startCall(debtor);
@@ -2102,6 +2208,181 @@ export function DialingBoard({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
             )}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Productive Dial Board ─────────────────────────────────────────────────────
+// Productive dialing works the queue one debtor at a time, in list order: dial, wait for the
+// outcome (ringing → no-answer/busy/connected), then move on — the opposite tradeoff from
+// Predictive's several-lines-at-once DialingBoard above. This is the sequential-progress
+// animation: a fixed list-position walk through the run's targets, current entry highlighted,
+// pulsing, and auto-scrolled into view so the agent always sees who's being called right now.
+
+type ProductiveRowStatus = "pending" | "ringing" | "connected" | "no_answer" | "done";
+
+function productiveRowStatus(leg: LiveCallEntry | undefined): ProductiveRowStatus {
+  if (!leg) return "pending";
+  if (leg.status === "ringing") return "ringing";
+  if (leg.status === "connected" || leg.status === "on_hold") return "connected";
+  if (leg.status === "no_answer") return "no_answer";
+  return "done";
+}
+
+const PRODUCTIVE_ROW_META: Record<
+  ProductiveRowStatus,
+  { label: string; dot: string; text: string }
+> = {
+  pending: { label: "Waiting", dot: "bg-muted-foreground/40", text: "text-muted-foreground/60" },
+  ringing: { label: "Ringing…", dot: "bg-blue-500", text: "text-blue-500" },
+  connected: { label: "Connected", dot: "bg-success", text: "text-success" },
+  no_answer: { label: "No answer", dot: "bg-destructive", text: "text-destructive" },
+  done: { label: "Done", dot: "bg-muted-foreground", text: "text-muted-foreground" },
+};
+
+export function ProductiveDialBoard({
+  targets,
+  liveCalls,
+  onStop,
+}: {
+  targets: DialTarget[];
+  liveCalls: LiveCallEntry[];
+  onStop: () => void;
+}) {
+  // Multiple legs can now share a debtorId — one per phone number tried (primary, then each
+  // altPhones entry) — so this keeps the full run per debtor, not just the latest leg.
+  const legsByDebtor = useMemo(() => {
+    const m = new Map<string, LiveCallEntry[]>();
+    for (const lc of liveCalls) {
+      if (lc.incoming) continue;
+      const arr = m.get(lc.loanId);
+      if (arr) arr.push(lc);
+      else m.set(lc.loanId, [lc]);
+    }
+    return m;
+  }, [liveCalls]);
+
+  const rows = targets.map((t) => {
+    const attempts = legsByDebtor.get(t.id) ?? [];
+    const leg = attempts[attempts.length - 1];
+    const totalNumbers = 1 + (t.altPhones?.length ?? 0);
+    return { target: t, leg, status: productiveRowStatus(leg), attemptNumber: attempts.length, totalNumbers };
+  });
+
+  const currentIndex = rows.findIndex((r) => r.status === "ringing" || r.status === "connected");
+  const doneCount = rows.filter((r) => r.status === "no_answer" || r.status === "done").length;
+  const total = rows.length;
+  const current = currentIndex >= 0 ? rows[currentIndex] : undefined;
+
+  const currentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    currentRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [currentIndex]);
+
+  if (!total) return null;
+
+  return (
+    <div className="fixed bottom-4 left-4 z-40 w-72 rounded-xl border border-border bg-card shadow-2xl shadow-black/20 animate-in slide-in-from-bottom-4 duration-300 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 bg-violet-500/10 border-b border-border">
+        <span className="relative flex h-2 w-2 flex-shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+        </span>
+        <span className="text-xs font-semibold text-foreground flex-1">
+          Productive Calling — {Math.min(doneCount + 1, total)} of {total}
+        </span>
+        <button
+          type="button"
+          onClick={onStop}
+          className="text-muted-foreground hover:text-foreground flex-shrink-0"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-1 bg-muted">
+        <div
+          className="h-full bg-violet-500 transition-all duration-500 ease-out"
+          style={{ width: `${total ? (doneCount / total) * 100 : 0}%` }}
+        />
+      </div>
+
+      {/* Currently dialing — the "who is it calling right now" callout */}
+      {current && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-violet-500/5 border-b border-border">
+          <span className="relative flex h-6 w-6 flex-shrink-0 items-center justify-center">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400/40" />
+            <PhoneCall className="relative h-3.5 w-3.5 text-blue-500" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-medium text-foreground truncate">
+              {current.target.name}
+            </div>
+            <div className="font-mono text-[10px] text-muted-foreground">
+              {maskPhone(current.leg?.phone ?? current.target.phone)}
+              {current.totalNumbers > 1 && (
+                <span className="ml-1 text-muted-foreground/70">
+                  · number {Math.max(1, current.attemptNumber)} of {current.totalNumbers}
+                </span>
+              )}
+            </div>
+          </div>
+          <span
+            className={cn(
+              "text-[10px] font-semibold flex-shrink-0",
+              PRODUCTIVE_ROW_META[current.status].text,
+            )}
+          >
+            {PRODUCTIVE_ROW_META[current.status].label}
+          </span>
+        </div>
+      )}
+
+      {/* Ordered list — done, current (pulsing), upcoming (dimmed) */}
+      <div className="divide-y divide-border/60 max-h-48 overflow-y-auto">
+        {rows.map((r, i) => {
+          const meta = PRODUCTIVE_ROW_META[r.status];
+          const isCurrent = i === currentIndex;
+          return (
+            <div
+              key={r.target.id}
+              ref={isCurrent ? currentRef : undefined}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5",
+                isCurrent && "bg-violet-500/10",
+                r.status === "pending" && "opacity-50",
+              )}
+            >
+              <span className="w-4 flex-shrink-0 text-right text-[9px] font-mono text-muted-foreground">
+                {i + 1}
+              </span>
+              <span className="relative flex h-2 w-2 flex-shrink-0">
+                {isCurrent && (
+                  <span
+                    className={cn(
+                      "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
+                      meta.dot,
+                    )}
+                  />
+                )}
+                <span className={cn("relative inline-flex h-2 w-2 rounded-full", meta.dot)} />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">
+                {r.target.name}
+                {r.totalNumbers > 1 && r.attemptNumber > 1 && (
+                  <span className="ml-1 text-[9px] text-muted-foreground/70">
+                    ({Math.min(r.attemptNumber, r.totalNumbers)}/{r.totalNumbers})
+                  </span>
+                )}
+              </span>
+              <span className={cn("flex-shrink-0 text-[9px] font-semibold", meta.text)}>
+                {meta.label}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -52,7 +52,7 @@ export type CallMode = "hybrid" | "ai_only" | "agent_only" | "ivr_agent";
 
 export interface PortfolioSettings {
   callMode: CallMode;
-  dialerMode: "predictive" | "preview" | "power" | "manual";
+  dialerMode: "predictive" | "productive" | "preview" | "power" | "manual";
   callsPerCycle: number;
   autoRechurn: boolean;
   rechurnAfterDays: number;

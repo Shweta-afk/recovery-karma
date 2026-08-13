@@ -24,6 +24,9 @@ export interface DialTarget {
   /** 1-10; biases answer probability in the simulated provider */
   aiScore?: number;
   bestContactTime?: "morning" | "afternoon" | "evening" | "any";
+  /** Numbers to fall back to (in order) if `phone` doesn't connect — CSV alt_phones plus any
+   * an agent added by hand. Only consulted by planProductiveBatch below. */
+  altPhones?: string[];
 }
 
 export type RouteTarget = "agent" | "ai" | "ivr";
@@ -63,6 +66,12 @@ export function dialCapacity(settings: PortfolioSettings, agentsAvailable: numbe
       return Math.round(agentsAvailable * predictivePacing(settings.abandonRateTarget));
     case "power":
       return agentsAvailable; // one line per agent, no overdial
+    case "productive":
+      // Exactly one line, always — regardless of agent pool size. planDialBatch subtracts
+      // inFlight from this, so the next debtor only opens once the current leg goes terminal:
+      // dial, wait for ringing/no-answer/connected, then move to the next. No overdial, no
+      // parallel lines — the opposite tradeoff from predictive.
+      return 1;
     case "preview":
     case "manual":
       return 0; // agent launches each call manually — nothing auto-dialed
@@ -100,6 +109,26 @@ export function planDialBatch(input: DialPlanInput): DialTarget[] {
   const capacity = dialCapacity(settings, agentsAvailable) - inFlight;
   const n = Math.max(0, Math.min(capacity, settings.callsPerCycle, queue.length));
   return queue.slice(0, n);
+}
+
+/** Productive dialing's own scheduler — walks `queue` in order and, for whichever debtor is
+ * "current", tries their primary number, then each altPhones entry in turn, before moving on
+ * to the next debtor. A debtor is skipped entirely once any of its legs connects. Unlike
+ * planDialBatch this needs the full leg history (not just a count), since "next" depends on
+ * which numbers have already been tried — so it always returns 0 or 1 targets (productive
+ * dialing forces capacity to exactly one line; see dialCapacity above). */
+export function planProductiveBatch(queue: DialTarget[], legs: CallRecord[]): DialTarget[] {
+  for (const target of queue) {
+    const legsForDebtor = legs.filter((l) => l.debtorId === target.id);
+    if (legsForDebtor.some((l) => connected(l))) continue; // reached a human — next debtor
+    if (legsForDebtor.some((l) => !isTerminal(l.state))) return []; // still ringing — wait
+    const tried = new Set(legsForDebtor.map((l) => l.phone));
+    const candidates = [target.phone, ...(target.altPhones ?? [])];
+    const nextPhone = candidates.find((p) => p && !tried.has(p));
+    if (nextPhone) return [{ ...target, phone: nextPhone }];
+    // every number tried, none connected — fall through to the next debtor
+  }
+  return [];
 }
 
 // ─── Re-churn / follow-up scheduling ─────────────────────────────────────────────

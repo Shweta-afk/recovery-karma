@@ -192,12 +192,18 @@ export const startDialerRun = createServerFn({ method: "POST" })
     ensureSubscribed();
     const agentNumbers = data.agentNumbers ?? [];
     const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
-    const batch = engine.planDialBatch({
-      settings: data.settings,
-      queue: data.targets,
-      agentsAvailable: Math.min(data.agentsAvailable, agentNumbers.length || data.agentsAvailable),
-      inFlight: 0,
-    });
+    const batch =
+      data.settings.dialerMode === "productive"
+        ? engine.planProductiveBatch(data.targets, [])
+        : engine.planDialBatch({
+            settings: data.settings,
+            queue: data.targets,
+            agentsAvailable: Math.min(
+              data.agentsAvailable,
+              agentNumbers.length || data.agentsAvailable,
+            ),
+            inFlight: 0,
+          });
     const { run, unassigned } = await dial(base, batch, data.runId, agentNumbers, data.callerId);
     if (unassigned > 0) {
       console.warn(`[dialer] ${unassigned} target(s) not dialed — no free agent leg available`);
@@ -225,18 +231,26 @@ export const tickDialerRun = createServerFn({ method: "POST" })
     // Continuous dialing: top up capacity with debtors not yet dialed.
     if (run.running && data.targets?.length) {
       const agentNumbers = data.agentNumbers ?? [];
-      const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
-      const dialed = new Set(run.legs.map((l) => l.debtorId));
-      const remaining = data.targets.filter((t) => !dialed.has(t.id));
-      const batch = engine.planDialBatch({
-        settings: run.settings,
-        queue: remaining,
-        agentsAvailable: Math.min(
-          data.agentsAvailable,
-          agentNumbers.length || data.agentsAvailable,
-        ),
-        inFlight,
-      });
+      // Productive needs the full leg history to decide "primary vs next alt number vs next
+      // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
+      // modes can, so it gets the whole target list every tick instead of `remaining`.
+      let batch: DialTarget[];
+      if (run.settings.dialerMode === "productive") {
+        batch = engine.planProductiveBatch(data.targets, run.legs);
+      } else {
+        const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
+        const dialed = new Set(run.legs.map((l) => l.debtorId));
+        const remaining = data.targets.filter((t) => !dialed.has(t.id));
+        batch = engine.planDialBatch({
+          settings: run.settings,
+          queue: remaining,
+          agentsAvailable: Math.min(
+            data.agentsAvailable,
+            agentNumbers.length || data.agentsAvailable,
+          ),
+          inFlight,
+        });
+      }
       if (batch.length) {
         const res = await dial(run, batch, data.runId, agentNumbers, data.callerId);
         run = res.run;
