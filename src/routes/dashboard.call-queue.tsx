@@ -1050,18 +1050,24 @@ function CallQueuePage() {
                   return;
                 }
                 setActiveDialMode("predictive");
-                dialer.start({
-                  settings: dialerSettings,
-                  targets: target.map((d) => ({
-                    id: d.id,
-                    name: d.name,
-                    phone: d.phone,
-                    portfolioId: d.portfolioId,
-                    aiScore: d.aiScore,
-                  })),
-                  agentNumbers,
-                  callerId: manualDialCallerId,
-                });
+                try {
+                  await dialer.start({
+                    settings: dialerSettings,
+                    targets: target.map((d) => ({
+                      id: d.id,
+                      name: d.name,
+                      phone: d.phone,
+                      portfolioId: d.portfolioId,
+                      aiScore: d.aiScore,
+                    })),
+                    agentNumbers,
+                    callerId: manualDialCallerId,
+                  });
+                } catch (e) {
+                  setActiveDialMode(null);
+                  toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
+                  return;
+                }
                 toast.success(
                   `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
                 );
@@ -1126,12 +1132,19 @@ function CallQueuePage() {
                 }));
                 setActiveDialMode("productive");
                 setProductiveTargets(orderedTargets);
-                dialer.start({
-                  settings: { ...dialerSettings, dialerMode: "productive" },
-                  targets: orderedTargets,
-                  agentNumbers,
-                  callerId: manualDialCallerId,
-                });
+                try {
+                  await dialer.start({
+                    settings: { ...dialerSettings, dialerMode: "productive" },
+                    targets: orderedTargets,
+                    agentNumbers,
+                    callerId: manualDialCallerId,
+                  });
+                } catch (e) {
+                  setActiveDialMode(null);
+                  setProductiveTargets([]);
+                  toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
+                  return;
+                }
                 toast.success(
                   `Productive calling ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}, one at a time`,
                 );
