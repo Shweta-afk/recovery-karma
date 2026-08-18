@@ -283,7 +283,11 @@ function PortfolioUploadPage() {
           toast.error("CSV must have a header row and at least one data row");
           return;
         }
-        const headers = parseCsvLine(lines[0]);
+        // A blank header cell (e.g. a trailing comma in the header row, common from Excel
+        // exports) parses to "" — Radix's <Select.Item> throws on an empty value, so give any
+        // blank column a positional placeholder name instead. Keeps array length/position in
+        // sync with rawRows, which is indexed via rawHeaders.indexOf(h) elsewhere.
+        const headers = parseCsvLine(lines[0]).map((h, i) => (h.trim() ? h : `Column ${i + 1}`));
         const rows = lines.slice(1, 5001).map((l) => parseCsvLine(l));
 
         // Reuse a saved mapping for this bank if one exists, then resolve the rest
