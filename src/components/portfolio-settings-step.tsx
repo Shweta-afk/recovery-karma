@@ -77,8 +77,8 @@ export function PortfolioSettingsStep({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="predictive">Predictive</SelectItem>
-              <SelectItem value="productive">Productive (one at a time)</SelectItem>
+              <SelectItem value="predictive">Productive</SelectItem>
+              <SelectItem value="productive">Progressive (one at a time)</SelectItem>
               <SelectItem value="preview">Preview</SelectItem>
               <SelectItem value="power">Power (1:1)</SelectItem>
               <SelectItem value="manual">Manual</SelectItem>

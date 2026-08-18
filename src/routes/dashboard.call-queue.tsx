@@ -781,7 +781,7 @@ function CallQueuePage() {
       {predictiveNotif && (
         <div className="animate-in slide-in-from-top-2 duration-300 flex items-center gap-3 rounded-lg border border-success/30 bg-success/8 px-4 py-2.5 text-sm text-success font-medium">
           <Bell className="h-4 w-4 flex-shrink-0 animate-pulse" />
-          <span>Predictive Dialer: {predictiveNotif}</span>
+          <span>Productive Dialer: {predictiveNotif}</span>
           <button
             type="button"
             onClick={() => setPredictiveNotif(null)}
@@ -1027,7 +1027,8 @@ function CallQueuePage() {
               )}
             </div>
 
-            {/* Predictive dialer — real engine + simulated provider via useDialerRun */}
+            {/* "Productive Dial" button — dialerMode "predictive" internally (kept as-is; only
+                the display label changed). Real engine + simulated provider via useDialerRun. */}
             <Button
               size="sm"
               disabled={dialer.running && activeDialMode !== "predictive"}
@@ -1093,14 +1094,15 @@ function CallQueuePage() {
               ) : (
                 <>
                   <Zap className="h-3.5 w-3.5" />
-                  Predictive Dial
+                  Productive Dial
                 </>
               )}
             </Button>
 
-            {/* Productive dialer — same engine, capacity forced to one line: dial the next
-                debtor in list order, wait for it to reach a terminal state (no-answer / busy /
-                completed) or connect, then move to the next. No overdial. */}
+            {/* "Progressive Dial" button — dialerMode "productive" internally (kept as-is; only
+                the display label changed). Same engine, capacity forced to one line: dial the
+                next debtor in list order, wait for it to reach a terminal state (no-answer /
+                busy / completed) or connect, then move to the next. No overdial. */}
             <Button
               size="sm"
               variant="outline"
@@ -1146,7 +1148,7 @@ function CallQueuePage() {
                   return;
                 }
                 toast.success(
-                  `Productive calling ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}, one at a time`,
+                  `Progressive calling ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}, one at a time`,
                 );
               }}
               className="gap-1.5 text-sm"
@@ -1159,7 +1161,7 @@ function CallQueuePage() {
               ) : (
                 <>
                   <ListOrdered className="h-3.5 w-3.5" />
-                  Productive Dial
+                  Progressive Dial
                 </>
               )}
             </Button>
@@ -1734,10 +1736,13 @@ function CallQueuePage() {
       )}
 
       {/* ── Floating Dialing Board (bottom-left) — every number currently ringing at once.
-          Productive never has more than one, so it gets its own sequential board below instead. ── */}
-      {dialer.running && activeDialMode !== "productive" && <DialingBoard liveCalls={dialer.legs} />}
+          Progressive Dial (dialerMode "productive") never has more than one, so it gets its
+          own sequential board below instead. ── */}
+      {dialer.running && activeDialMode !== "productive" && (
+        <DialingBoard liveCalls={dialer.legs} />
+      )}
 
-      {/* ── Floating Productive Dial Board (bottom-left) — one debtor at a time, in list order ── */}
+      {/* ── Floating Progressive Dial Board (bottom-left) — one debtor at a time, in list order ── */}
       {dialer.running && activeDialMode === "productive" && (
         <ProductiveDialBoard
           targets={productiveTargets}
@@ -2148,7 +2153,7 @@ export function DialerModeBar({
           )}
         />
         <span className={dialerRunning ? "text-success" : "text-muted-foreground"}>
-          Predictive Dialer {dialerRunning ? "RUNNING" : "OFF"}
+          Productive Dialer {dialerRunning ? "RUNNING" : "OFF"}
         </span>
       </span>
 
@@ -2182,7 +2187,8 @@ export function DialerModeBar({
 }
 
 // ─── Dialing Board ────────────────────────────────────────────────────────────
-// Predictive dialing opens several lines at once — the point of it is that multiple numbers
+// Productive Dial (dialerMode "predictive" internally) opens several lines at once — the
+// point of it is that multiple numbers
 // are being rung in parallel, not one at a time. LiveCallsPanel (bottom-right) is about
 // managing calls once they connect; this is the parallel-dial visual the mode is actually
 // named for — every number currently ringing, live, bottom-left so the two panels never
@@ -2230,12 +2236,14 @@ export function DialingBoard({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
   );
 }
 
-// ─── Productive Dial Board ─────────────────────────────────────────────────────
-// Productive dialing works the queue one debtor at a time, in list order: dial, wait for the
-// outcome (ringing → no-answer/busy/connected), then move on — the opposite tradeoff from
-// Predictive's several-lines-at-once DialingBoard above. This is the sequential-progress
-// animation: a fixed list-position walk through the run's targets, current entry highlighted,
-// pulsing, and auto-scrolled into view so the agent always sees who's being called right now.
+// ─── Progressive Dial Board ────────────────────────────────────────────────────
+// Component/type names below still say "Productive" (dialerMode "productive" internally) —
+// only the display label changed, to "Progressive Dial". Works the queue one debtor at a time,
+// in list order: dial, wait for the outcome (ringing → no-answer/busy/connected), then move
+// on — the opposite tradeoff from Productive Dial's several-lines-at-once DialingBoard above.
+// This is the sequential-progress animation: a fixed list-position walk through the run's
+// targets, current entry highlighted, pulsing, and auto-scrolled into view so the agent always
+// sees who's being called right now.
 
 type ProductiveRowStatus = "pending" | "ringing" | "connected" | "no_answer" | "done";
 
@@ -2284,7 +2292,13 @@ export function ProductiveDialBoard({
     const attempts = legsByDebtor.get(t.id) ?? [];
     const leg = attempts[attempts.length - 1];
     const totalNumbers = 1 + (t.altPhones?.length ?? 0);
-    return { target: t, leg, status: productiveRowStatus(leg), attemptNumber: attempts.length, totalNumbers };
+    return {
+      target: t,
+      leg,
+      status: productiveRowStatus(leg),
+      attemptNumber: attempts.length,
+      totalNumbers,
+    };
   });
 
   const currentIndex = rows.findIndex((r) => r.status === "ringing" || r.status === "connected");
@@ -2307,7 +2321,7 @@ export function ProductiveDialBoard({
           <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
         </span>
         <span className="text-xs font-semibold text-foreground flex-1">
-          Productive Calling — {Math.min(doneCount + 1, total)} of {total}
+          Progressive Calling — {Math.min(doneCount + 1, total)} of {total}
         </span>
         <button
           type="button"

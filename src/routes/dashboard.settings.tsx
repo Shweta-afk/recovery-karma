@@ -150,10 +150,10 @@ function AgentSettingsPage() {
         </Button>
       </div>
 
-      {/* ── Predictive Dialer ───────────────────────────────────────────── */}
+      {/* ── Productive Dialer ───────────────────────────────────────────── */}
       <SectionCard
         icon={Zap}
-        title="Predictive Dialer"
+        title="Productive Dialer"
         description="Personal pacing preferences. Dialer mode, calls-per-cycle, rechurn rules and abandon-rate target are set per portfolio during upload."
       >
         <SettingRow

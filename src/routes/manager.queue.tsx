@@ -162,7 +162,7 @@ function AgentQueueView({
       agentNumbers,
     });
     toast.success(
-      `Predictive dialing this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}`,
+      `Productive dialing this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}`,
     );
   };
 
@@ -175,12 +175,12 @@ function AgentQueueView({
         dialerRunning={dialer.running}
       />
 
-      {/* Predictive dialer toggle */}
+      {/* Productive dialer toggle */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <p className="text-xs text-muted-foreground">
           {dialer.running
             ? "Dialer running — live lines progress through the real call state machine (simulated carrier)."
-            : "Start the predictive dialer to preview the agent's live call activity (simulated)."}
+            : "Start the productive dialer to preview the agent's live call activity (simulated)."}
         </p>
         <Button
           size="sm"
@@ -200,7 +200,7 @@ function AgentQueueView({
           ) : (
             <>
               <Zap className="h-3.5 w-3.5" />
-              Predictive Dial
+              Productive Dial
             </>
           )}
         </Button>
