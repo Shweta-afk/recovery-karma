@@ -320,7 +320,15 @@ function PortfolioUploadPage() {
   );
 
   const totalAllocated = Object.values(allocation).reduce((s, ids) => s + ids.length, 0);
-  const allocationComplete = managerAgents.length === 0 || totalAllocated === mappedRows.length;
+  // Blocks only on over-allocation (shouldn't be reachable through this UI, but is a real data
+  // problem if it happens — would mean the same debtor id got assigned to more than one agent).
+  // An exact-match requirement here used to hard-block the whole upload over one unmatched loan
+  // ID in a mapping CSV, which is expected and common at real-file scale (a typo, an encoding
+  // difference, a row genuinely missing from the mapping) — not something a manager uploading
+  // 1000+ accounts should be stuck unable to work around. Leftover unassigned rows land as
+  // assigned_agent_id: null, the same "unassigned" state the portfolio view already surfaces
+  // and lets a manager fix via Assign Now / per-account reassign after upload.
+  const allocationComplete = managerAgents.length === 0 || totalAllocated <= mappedRows.length;
 
   const handleUpload = async () => {
     // Unmapped required columns / blank required cells are surfaced as warnings elsewhere in
@@ -332,7 +340,9 @@ function PortfolioUploadPage() {
       return;
     }
     if (!allocationComplete) {
-      toast.error("Allocate all accounts to agents before uploading, or adjust the split.");
+      toast.error(
+        "Some accounts are assigned to more than one agent — adjust the split before uploading.",
+      );
       return;
     }
 
