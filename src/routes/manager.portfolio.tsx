@@ -56,6 +56,9 @@ import {
   Send,
   Check,
   X,
+  Bot,
+  PhoneCall,
+  Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCsv } from "@/lib/csv-export";
@@ -103,7 +106,13 @@ import { cn, parseCsvLine } from "@/lib/utils";
 import { normHeader } from "@/lib/column-mapper";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { useManagerTeamAgents, getAgentById, type AgentRef } from "@/lib/team-store";
-import { getAgentDispositions, refreshDispositions, calcStats } from "@/lib/disposition-store";
+import {
+  getAgentDispositions,
+  getDispositionsByPortfolio,
+  refreshDispositions,
+  calcStats,
+  type CallOutcome,
+} from "@/lib/disposition-store";
 import { useAuth } from "@/lib/auth";
 import { useStorageSync } from "@/lib/storage-sync";
 import { AssignAgentsStep } from "@/components/assign-agents-step";
@@ -117,7 +126,7 @@ export const Route = createFileRoute("/manager/portfolio")({
 
 /* ─── types ─────────────────────────────────────────────────────────────── */
 
-interface Portfolio {
+export interface Portfolio {
   id: string;
   name: string;
   lender: string;
@@ -141,6 +150,27 @@ const STATUS_META = {
   stale: { label: "Unassigned", bg: "bg-orange-500/8 text-orange-600/80 border-orange-400/15" },
 };
 
+// Display labels for PortfolioSettings.dialerMode — matches the rename in dashboard.call-queue
+// (internal values "predictive"/"productive" kept as-is; only the on-screen label changed).
+const DIALER_MODE_LABEL: Record<string, string> = {
+  predictive: "Productive Dial",
+  productive: "Progressive Dial",
+  preview: "Preview Dial",
+  power: "Power Dial",
+  manual: "Manual",
+};
+
+const OUTCOME_LABEL: Record<CallOutcome, string> = {
+  paid: "Paid",
+  promised: "PTP",
+  refused: "Refused",
+  no_answer: "No Answer",
+  callback: "Callback",
+  voicemail: "Voicemail",
+  dispute: "Dispute",
+  settlement: "Settlement",
+};
+
 /* ─── helpers ────────────────────────────────────────────────────────────── */
 
 function formatINR(n: number) {
@@ -152,7 +182,7 @@ function formatINR(n: number) {
 
 // Real assignment + recovery stats for a portfolio, computed from each debtor's
 // assigned_agent_id (folded into portfolio-store.ts) + dispositions
-function toPortfolio(u: UploadedPortfolio): Portfolio {
+export function toPortfolio(u: UploadedPortfolio): Portfolio {
   const buckets = u.rows.reduce<Record<DPDBucket, number>>(
     (acc, r) => {
       acc[r.bucket] = (acc[r.bucket] ?? 0) + 1;
@@ -764,7 +794,116 @@ function RetentionRequestsPanel({ portfolioId }: { portfolioId: string }) {
   );
 }
 
-function PortfolioDetail({
+/** AI call agent involvement + dialing mode, computed from this portfolio's own call log
+ * dispositions (getDispositionsByPortfolio) — real per-call data, not a portfolio setting.
+ * Works the same for an old/closed portfolio: dispositions are never deleted, so this always
+ * reflects the portfolio's actual last-known call history, whatever its current status. */
+function CallActivitySection({
+  portfolioId,
+  dialerMode,
+}: {
+  portfolioId: string;
+  dialerMode?: string;
+}) {
+  const disps = getDispositionsByPortfolio(portfolioId);
+  const total = disps.length;
+  const aiHandled = disps.filter(
+    (d) => d.callType === "ai" || d.callType === "ivr" || d.callType === "bot",
+  ).length;
+  const humanHandled = total - aiHandled;
+  const aiPct = total > 0 ? Math.round((aiHandled / total) * 100) : 0;
+
+  const outcomeCounts = disps.reduce<Partial<Record<CallOutcome, number>>>((acc, d) => {
+    acc[d.outcome] = (acc[d.outcome] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  return (
+    <div>
+      <div className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+        Call Activity &amp; AI Performance
+      </div>
+      <div className="rounded-lg border border-border bg-muted/10 p-4 space-y-4">
+        {total === 0 ? (
+          <p className="text-xs text-muted-foreground">No calls logged against this portfolio yet.</p>
+        ) : (
+          <>
+            {/* AI vs human handling */}
+            <div>
+              <div className="flex items-center justify-between text-xs mb-1.5">
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <Bot className="h-3.5 w-3.5" />
+                  AI Call Agent handled
+                </span>
+                <span className="font-medium text-foreground">
+                  {aiHandled} / {total} calls ({aiPct}%)
+                </span>
+              </div>
+              <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full bg-violet-500" style={{ width: `${aiPct}%` }} />
+                <div
+                  className="h-full bg-primary/50"
+                  style={{ width: `${total > 0 ? 100 - aiPct : 0}%` }}
+                />
+              </div>
+              <div className="mt-1 flex items-center gap-4 text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
+                  AI / IVR — {aiHandled}
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary/50" />
+                  Human agent — {humanHandled}
+                </span>
+              </div>
+            </div>
+
+            {/* Outcome breakdown */}
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">
+                Outcomes logged
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {(Object.keys(outcomeCounts) as CallOutcome[]).map((outcome) => (
+                  <span
+                    key={outcome}
+                    className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-foreground"
+                  >
+                    {OUTCOME_LABEL[outcome]} {outcomeCounts[outcome]}
+                    <span className="ml-1 text-muted-foreground">
+                      ({Math.round(((outcomeCounts[outcome] ?? 0) / total) * 100)}%)
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Configured dialing mode — a portfolio-level setting, not a per-call percentage:
+            individual calls don't record which dial mode placed them yet. */}
+        {dialerMode && (
+          <div className="flex items-center gap-2 border-t border-border pt-3 text-xs">
+            <PhoneCall className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-muted-foreground">Dialing mode configured for this portfolio:</span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 font-medium text-foreground">
+              <Activity className="h-3 w-3" />
+              {DIALER_MODE_LABEL[dialerMode] ?? dialerMode}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Full-screen portfolio dashboard — shared by Manager Portfolio Overview and Admin Portfolio
+// Assignment, so opening a portfolio looks and behaves the same in both portals. The
+// edit/reassign/upload-paid actions are manager-only workflows: pass the handlers to enable
+// them (manager) or omit them to render a read-only view (admin). Reads whatever is currently
+// stored for the portfolio, so an old/completed portfolio shows its real last-known state —
+// nothing here depends on the portfolio still being "active".
+export function PortfolioDetail({
   p,
   raw,
   agents,
@@ -777,9 +916,9 @@ function PortfolioDetail({
   raw: UploadedPortfolio | null;
   agents: AgentRef[];
   onClose: () => void;
-  onReassign: () => void;
-  onEdit: () => void;
-  onUploadPaid: () => void;
+  onReassign?: () => void;
+  onEdit?: () => void;
+  onUploadPaid?: () => void;
 }) {
   const recoveryPct =
     p.totalOutstanding > 0 ? ((p.recovered / p.totalOutstanding) * 100).toFixed(1) : "0.0";
@@ -787,37 +926,45 @@ function PortfolioDetail({
     p.totalAccounts > 0 ? Math.round((p.assignedAccounts / p.totalAccounts) * 100) : 0;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-2xl rounded-t-2xl sm:rounded-xl border border-border bg-card shadow-2xl animate-in slide-in-from-bottom-4 duration-200 max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex flex-col bg-background animate-in fade-in duration-150">
+      <div className="flex-1 overflow-y-auto">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-card border-b border-border px-5 py-4 flex items-start justify-between">
+        <div className="sticky top-0 z-10 bg-card/95 backdrop-blur border-b border-border px-5 py-4 flex items-start justify-between">
           <div>
-            <div className="text-sm font-semibold text-foreground">{p.name}</div>
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                  STATUS_META[p.status].bg,
+                )}
+              >
+                {STATUS_META[p.status].label}
+              </span>
+              <div className="text-sm font-semibold text-foreground">{p.name}</div>
+            </div>
             <div className="text-xs text-muted-foreground">
               {p.lender} · {p.id} · Uploaded {p.uploadedOn}
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 gap-1 text-xs"
-              onClick={onUploadPaid}
-              title="Upload the bank's daily paid-status file for this portfolio"
-            >
-              <Landmark className="h-3 w-3" />
-              Upload Paid File
-            </Button>
-            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={onEdit}>
-              <Pencil className="h-3 w-3" />
-              Edit
-            </Button>
+            {onUploadPaid && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 text-xs"
+                onClick={onUploadPaid}
+                title="Upload the bank's daily paid-status file for this portfolio"
+              >
+                <Landmark className="h-3 w-3" />
+                Upload Paid File
+              </Button>
+            )}
+            {onEdit && (
+              <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={onEdit}>
+                <Pencil className="h-3 w-3" />
+                Edit
+              </Button>
+            )}
             <button
               type="button"
               onClick={onClose}
@@ -828,7 +975,7 @@ function PortfolioDetail({
           </div>
         </div>
 
-        <div className="p-5 space-y-5">
+        <div className="mx-auto max-w-5xl p-5 space-y-5">
           {/* KPI row */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
@@ -871,6 +1018,9 @@ function PortfolioDetail({
             />
           </div>
 
+          {/* Call activity & AI performance */}
+          <CallActivitySection portfolioId={p.id} dialerMode={raw?.settings.dialerMode} />
+
           {/* Bucket breakdown */}
           <div>
             <div className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
@@ -912,15 +1062,17 @@ function PortfolioDetail({
                 <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Assigned Agents
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 gap-1 text-xs"
-                  onClick={onReassign}
-                >
-                  <Shuffle className="h-3 w-3" />
-                  Reassign
-                </Button>
+                {onReassign && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1 text-xs"
+                    onClick={onReassign}
+                  >
+                    <Shuffle className="h-3 w-3" />
+                    Reassign
+                  </Button>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 {p.agents.map((name) => (
@@ -945,10 +1097,12 @@ function PortfolioDetail({
                 <AlertTriangle className="h-4 w-4 flex-shrink-0" />
                 No agents assigned yet.
               </span>
-              <Button size="sm" className="h-7 gap-1 text-xs flex-shrink-0" onClick={onReassign}>
-                <Shuffle className="h-3 w-3" />
-                Assign Now
-              </Button>
+              {onReassign && (
+                <Button size="sm" className="h-7 gap-1 text-xs flex-shrink-0" onClick={onReassign}>
+                  <Shuffle className="h-3 w-3" />
+                  Assign Now
+                </Button>
+              )}
             </div>
           )}
 

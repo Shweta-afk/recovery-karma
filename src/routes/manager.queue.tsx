@@ -10,6 +10,7 @@ import {
   Loader2,
   Zap,
   Square,
+  ListOrdered,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +47,7 @@ import {
   DialerModeBar,
   LiveCallsPanel,
   DialingBoard,
+  ProductiveDialBoard,
   type QueueDebtor,
   type ActiveCall,
   type DispositionForm,
@@ -53,6 +55,7 @@ import {
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
+import type { DialTarget } from "@/lib/dialer/engine";
 import {
   getOpenEscalations,
   resolveEscalation,
@@ -105,11 +108,17 @@ function AgentQueueView({
   // progress through the actual call state machine; swapping to server-side background
   // dialing later is `mode: "server"` in the hook — no change here.
   const dialer = useDialerRun();
+  // Which floating board to show while the dialer is running — mirrors the agent's own Call
+  // Queue: Productive Dial (dialerMode "predictive") opens several lines at once, Progressive
+  // Dial (dialerMode "productive") works one debtor at a time in list order.
+  const [activeDialMode, setActiveDialMode] = useState<"predictive" | "productive" | null>(null);
+  const [progressiveTargets, setProgressiveTargets] = useState<DialTarget[]>([]);
   const reload = () => setQueue(buildAssignedQueue(agentId));
   useEffect(() => {
     reload();
     // Switching to a different agent resets the dialer for the new queue.
     dialer.stop();
+    setActiveDialMode(null);
     window.addEventListener("assignments-updated", reload);
     window.addEventListener("portfolios-updated", reload);
     return () => {
@@ -137,9 +146,10 @@ function AgentQueueView({
   const portfolioMode: CallMode = settings.callMode;
   const portfolioName = primaryPortfolio?.name ?? "No portfolio assigned";
 
-  const toggleDialer = async () => {
+  const startProductive = async () => {
     if (dialer.running) {
       dialer.stop();
+      setActiveDialMode(null);
       return;
     }
     // One click-to-call leg per agent — the pool size is the concurrency ceiling.
@@ -150,19 +160,66 @@ function AgentQueueView({
       );
       return;
     }
-    dialer.start({
-      settings,
-      targets: queue.map((d) => ({
-        id: d.id,
-        name: d.name,
-        phone: d.phone,
-        portfolioId: d.portfolioId,
-        aiScore: d.aiScore,
-      })),
-      agentNumbers,
-    });
+    setActiveDialMode("predictive");
+    try {
+      await dialer.start({
+        settings,
+        targets: queue.map((d) => ({
+          id: d.id,
+          name: d.name,
+          phone: d.phone,
+          portfolioId: d.portfolioId,
+          aiScore: d.aiScore,
+        })),
+        agentNumbers,
+      });
+    } catch (e) {
+      setActiveDialMode(null);
+      toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
+      return;
+    }
     toast.success(
       `Productive dialing this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}`,
+    );
+  };
+
+  const startProgressive = async () => {
+    if (dialer.running) {
+      dialer.stop();
+      setActiveDialMode(null);
+      return;
+    }
+    const agentNumbers = await fetchDialerAgentNumbers();
+    if (!agentNumbers.length) {
+      toast.error(
+        "No agents with a phone number configured — set one in Admin → Users before dialing.",
+      );
+      return;
+    }
+    const orderedTargets: DialTarget[] = queue.map((d) => ({
+      id: d.id,
+      name: d.name,
+      phone: d.phone,
+      portfolioId: d.portfolioId,
+      aiScore: d.aiScore,
+      altPhones: d.altPhones,
+    }));
+    setActiveDialMode("productive");
+    setProgressiveTargets(orderedTargets);
+    try {
+      await dialer.start({
+        settings: { ...settings, dialerMode: "productive" },
+        targets: orderedTargets,
+        agentNumbers,
+      });
+    } catch (e) {
+      setActiveDialMode(null);
+      setProgressiveTargets([]);
+      toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
+      return;
+    }
+    toast.success(
+      `Progressive calling this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}, one at a time`,
     );
   };
 
@@ -175,35 +232,57 @@ function AgentQueueView({
         dialerRunning={dialer.running}
       />
 
-      {/* Productive dialer toggle */}
+      {/* Productive / Progressive dialer toggles — same two modes the agent sees */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <p className="text-xs text-muted-foreground">
           {dialer.running
             ? "Dialer running — live lines progress through the real call state machine (simulated carrier)."
-            : "Start the productive dialer to preview the agent's live call activity (simulated)."}
+            : "Preview the agent's live call activity (simulated)."}
         </p>
-        <Button
-          size="sm"
-          onClick={toggleDialer}
-          className={cn(
-            "gap-1.5 text-sm",
-            dialer.running
-              ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              : "bg-success text-success-foreground hover:bg-success/90",
-          )}
-        >
-          {dialer.running ? (
-            <>
-              <Square className="h-3.5 w-3.5" />
-              Stop Dialer
-            </>
-          ) : (
-            <>
-              <Zap className="h-3.5 w-3.5" />
-              Productive Dial
-            </>
-          )}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            disabled={dialer.running && activeDialMode !== "predictive"}
+            onClick={startProductive}
+            className={cn(
+              "gap-1.5 text-sm",
+              dialer.running && activeDialMode === "predictive"
+                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                : "bg-success text-success-foreground hover:bg-success/90",
+            )}
+          >
+            {dialer.running && activeDialMode === "predictive" ? (
+              <>
+                <Square className="h-3.5 w-3.5" />
+                Stop Dialer
+              </>
+            ) : (
+              <>
+                <Zap className="h-3.5 w-3.5" />
+                Productive Dial
+              </>
+            )}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={dialer.running && activeDialMode !== "productive"}
+            onClick={startProgressive}
+            className="gap-1.5 text-sm"
+          >
+            {dialer.running && activeDialMode === "productive" ? (
+              <>
+                <Square className="h-3.5 w-3.5" />
+                Stop Dialer
+              </>
+            ) : (
+              <>
+                <ListOrdered className="h-3.5 w-3.5" />
+                Progressive Dial
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-lg border border-border overflow-hidden">
@@ -275,14 +354,30 @@ function AgentQueueView({
         </div>
       </div>
 
-      {/* Floating dialing board — every number currently ringing, same as the agent sees */}
-      {dialer.running && <DialingBoard liveCalls={dialer.legs} />}
+      {/* Floating dialing board — every number currently ringing. Progressive Dial never has
+          more than one, so it gets its own sequential board below instead. */}
+      {dialer.running && activeDialMode !== "productive" && <DialingBoard liveCalls={dialer.legs} />}
+
+      {/* Floating Progressive Dial board — one debtor at a time, in list order */}
+      {dialer.running && activeDialMode === "productive" && (
+        <ProductiveDialBoard
+          targets={progressiveTargets}
+          liveCalls={dialer.legs}
+          onStop={() => {
+            dialer.stop();
+            setActiveDialMode(null);
+          }}
+        />
+      )}
 
       {/* Floating live-calls panel — same component the agent sees, now fed by engine legs */}
       {dialer.running && dialer.legs.length > 0 && (
         <LiveCallsPanel
           liveCalls={dialer.legs}
-          onDismiss={() => dialer.stop()}
+          onDismiss={() => {
+            dialer.stop();
+            setActiveDialMode(null);
+          }}
           onTake={(lc) => {
             const d = queue.find((x) => x.id === lc.loanId);
             if (d && !disabled) onCall(d);

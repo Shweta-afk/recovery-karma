@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { FolderOpen, Send, Users, CheckCircle2, Loader2 } from "lucide-react";
+import { FolderOpen, Send, Users, CheckCircle2, Loader2, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,10 @@ import { useRoster, getTeamByManager } from "@/lib/team-store";
 import { saveNotification } from "@/lib/notification-store";
 import { useAuth } from "@/lib/auth";
 import { useStorageSync } from "@/lib/storage-sync";
+// Same full-screen portfolio dashboard the manager portal uses — Portfolio Assignment is
+// read-only here (no per-agent edit/reassign in admin's remit), so onEdit/onReassign/
+// onUploadPaid are simply omitted, which PortfolioDetail renders as a view-only dashboard.
+import { PortfolioDetail, toPortfolio } from "@/routes/manager.portfolio";
 
 export const Route = createFileRoute("/admin/portfolio")({
   head: () => ({
@@ -55,6 +59,7 @@ function PortfolioAssignmentPage() {
 
   const [portfolios, setPortfolios] = useState<UploadedPortfolio[]>(() => getPortfolios());
   const [pending, setPending] = useState<Record<string, string>>({}); // portfolioId -> selected managerId (uncommitted)
+  const [viewing, setViewing] = useState<UploadedPortfolio | null>(null);
 
   const reload = () => setPortfolios(getPortfolios());
   useEffect(() => {
@@ -64,6 +69,11 @@ function PortfolioAssignmentPage() {
     return () => window.removeEventListener("portfolios-updated", reload);
   }, []);
   useStorageSync(reload);
+
+  // Keep the open dashboard in sync with the latest data after an assignment
+  useEffect(() => {
+    setViewing((prev) => (prev ? (portfolios.find((p) => p.id === prev.id) ?? prev) : prev));
+  }, [portfolios]);
 
   const [assigning, setAssigning] = useState<string | null>(null);
 
@@ -149,7 +159,16 @@ function PortfolioAssignmentPage() {
                     return (
                       <TableRow key={p.id}>
                         <TableCell>
-                          <div className="font-medium text-sm text-foreground">{p.name}</div>
+                          <button
+                            type="button"
+                            onClick={() => setViewing(p)}
+                            className="group flex items-center gap-1.5 text-left"
+                          >
+                            <div className="font-medium text-sm text-foreground group-hover:underline">
+                              {p.name}
+                            </div>
+                            <Eye className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
                           <div className="text-[11px] text-muted-foreground">{p.product}</div>
                         </TableCell>
                         <TableCell className="text-sm">{p.lender}</TableCell>
@@ -223,6 +242,10 @@ function PortfolioAssignmentPage() {
           )}
         </CardContent>
       </Card>
+
+      {viewing && (
+        <PortfolioDetail p={toPortfolio(viewing)} raw={viewing} agents={[]} onClose={() => setViewing(null)} />
+      )}
     </div>
   );
 }
