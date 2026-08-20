@@ -58,11 +58,11 @@ different Cloudflare D1 backend from an earlier iteration of the project).
 
 ### User roles & routes
 
-| Role    | Entry route  | What they do                                                                |
-| ------- | ------------ | ---------------------------------------------------------------------------- |
-| Agent   | `/dashboard` | Work the call queue, log outcomes, view debtor profiles, daily targets       |
-| Manager | `/manager`   | Upload portfolios, assign accounts, audit calls, view team performance       |
-| Admin   | `/admin`     | Assign portfolios to managers, manage teams/users, org settings, reports     |
+| Role    | Entry route  | What they do                                                             |
+| ------- | ------------ | ------------------------------------------------------------------------ |
+| Agent   | `/dashboard` | Work the call queue, log outcomes, view debtor profiles, daily targets   |
+| Manager | `/manager`   | Upload portfolios, assign accounts, audit calls, view team performance   |
+| Admin   | `/admin`     | Assign portfolios to managers, manage teams/users, org settings, reports |
 
 `login.tsx` routes by `role` after auth: `admin` → `/admin`, `manager` → `/manager`, else
 `/dashboard`. Route files live in `src/routes/`; nested routes use dot-notation
@@ -98,7 +98,7 @@ export async function updatePortfolioMeta(id: string, patch: Partial<PortfolioSe
 
 A route typically does: call `getX()` for an immediate render, call `refreshX()` in a
 `useEffect` on mount, and listen for the `x-updated` event (often via the shared
-`useStorageSync` hook in `src/lib/storage-sync.ts`) so a write from *anywhere else* in the app
+`useStorageSync` hook in `src/lib/storage-sync.ts`) so a write from _anywhere else_ in the app
 shows up live.
 
 **Existing stores** (`src/lib/*-store.ts`): `portfolio-store.ts` (portfolios + debtors, the
@@ -161,8 +161,8 @@ policy subqueries). Two distinct causes, two different fixes:
 
 1. A `SECURITY DEFINER` function written `LANGUAGE sql` and simple enough gets **inlined** by
    Postgres's planner, silently discarding the privilege escalation `SECURITY DEFINER` is
-   supposed to give — so a helper like `auth_agent_id()` called from a policy *on `agents`
-   itself* recurses into that same policy. Fix: `LANGUAGE plpgsql` (never inlined).
+   supposed to give — so a helper like `auth_agent_id()` called from a policy _on `agents`
+   itself_ recurses into that same policy. Fix: `LANGUAGE plpgsql` (never inlined).
 2. Two different tables' policies querying each other (e.g. `debtors_select` reads
    `portfolios`, `portfolios_select` reads `debtors`) trips the same recursion guard even with
    a correct `SECURITY DEFINER` + `plpgsql` function. The only fix that reliably worked: wrap
@@ -193,11 +193,11 @@ Single entry point: `src/lib/telephony/index.ts` → `getTelephonyProvider()`, k
 server-side `TELEPHONY_PROVIDER` env var. **Never import a vendor file directly** from feature
 code — always go through this.
 
-| Provider | Env value | Status |
-| --- | --- | --- |
-| Simulator | `sim` (default) | Local dev — no real calls, drives the same dialer engine/state machine so the UI behaves identically to production |
-| Exotel | `exotel` | **Production default.** Trial account KYC complete, click-to-call live. `exotel-provider.ts` implements start/hangup/SMS/webhook parsing, written from Exotel's public docs — parts of it (especially `hangup`) have not been battle-tested against every real-account edge case yet |
-| KooKoo (Ozonetel) | `kookoo` | Implemented (`kookoo-provider.ts`) but not the active choice — evaluated as an alternative, not currently used in production |
+| Provider          | Env value       | Status                                                                                                                                                                                                                                                                               |
+| ----------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Simulator         | `sim` (default) | Local dev — no real calls, drives the same dialer engine/state machine so the UI behaves identically to production                                                                                                                                                                   |
+| Exotel            | `exotel`        | **Production default.** Trial account KYC complete, click-to-call live. `exotel-provider.ts` implements start/hangup/SMS/webhook parsing, written from Exotel's public docs — parts of it (especially `hangup`) have not been battle-tested against every real-account edge case yet |
+| KooKoo (Ozonetel) | `kookoo`        | Implemented (`kookoo-provider.ts`) but not the active choice — evaluated as an alternative, not currently used in production                                                                                                                                                         |
 
 **Tata SmartFlo was evaluated, went live briefly, then was fully removed on 2026-08-06** ("nothing we did was working and aligning with our goals" — user's call). If you see "Tata" or "SmartFlo" referenced anywhere outside this note, it's stale.
 
@@ -213,8 +213,8 @@ queue, agent-availability pool, and pacing/retry logic themselves on top of plai
 click-to-call — which is exactly what `src/lib/dialer/engine.ts` does. This is the ceiling of
 what click-to-call can ever do, not a bug to fix.
 
-True predictive dialing (debtor dialed *before* an agent is committed) and browser-only
-agents (no personal phone) both require **WebRTC/SIP**, which is a *separate, heavier*
+True predictive dialing (debtor dialed _before_ an agent is committed) and browser-only
+agents (no personal phone) both require **WebRTC/SIP**, which is a _separate, heavier_
 Exotel onboarding ("IP-PSTN Intermix") — a new legal entity (Veeno Communications), new KYC,
 Bangalore-only, feature in Alpha. **This has not been started.** Don't scaffold WebRTC
 provider code assuming credentials that don't exist yet.
@@ -246,7 +246,7 @@ portfolio's `callMode` setting (`hybrid`/`ai_only`/`agent_only`/`ivr_agent` — 
 only (never automatic) from Call Audit: Groq's Whisper API transcribes the recording, Gemini
 classifies agent/debtor/overall tone. Requires
 `migrations/20260814_call_logs_ai_sentiment.sql`. See `call-sentiment-actions.server.ts` and
-the `AiSentimentPanel` in `manager.audit.tsx`. It's a *suggestion* alongside the manager's own
+the `AiSentimentPanel` in `manager.audit.tsx`. It's a _suggestion_ alongside the manager's own
 manual sentiment tag — never overwrites it.
 
 **No Razorpay.** Payment links are provided by the lending bank directly; an agent
@@ -263,19 +263,19 @@ was never wired. `INTERAKT_API_KEY` is unused. The page is honest about this in 
 
 ## Page-by-page status
 
-| Page | Status |
-| --- | --- |
-| `dashboard/` (Call Queue) | ✅ Real debtors via `portfolio-store.ts`, real dialer |
-| `dashboard/debtors` | ✅ Real debtor list + Calls/Payments tabs. Messages/Disputes tabs are intentionally honest empty-states (no write path yet) |
-| `dashboard/history` (Activity History) | ✅ Real `call_logs`, with async recording backfill |
-| `dashboard/payments` | ✅ Real `payments`/`settlement_requests` via `payments-store.ts` |
-| `dashboard/messages` | 🟡 Real `messages` table, but Send has no gateway behind it (see above) |
-| `dashboard/reports` | ❌ Still hardcoded narrative placeholder content, not wired |
-| `manager/portfolio` (Portfolio Overview) | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown |
-| `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity` | ✅ Real |
-| `admin/portfolio` (Portfolio Assignment) | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only |
-| `admin/reports`, `admin/users`, `admin/teams`, `admin/settings` | ✅ Real |
-| `admin/index` | ✅ Real (navigation tiles) |
+| Page                                                                   | Status                                                                                                                      |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `dashboard/` (Call Queue)                                              | ✅ Real debtors via `portfolio-store.ts`, real dialer                                                                       |
+| `dashboard/debtors`                                                    | ✅ Real debtor list + Calls/Payments tabs. Messages/Disputes tabs are intentionally honest empty-states (no write path yet) |
+| `dashboard/history` (Activity History)                                 | ✅ Real `call_logs`, with async recording backfill                                                                          |
+| `dashboard/payments`                                                   | ✅ Real `payments`/`settlement_requests` via `payments-store.ts`                                                            |
+| `dashboard/messages`                                                   | 🟡 Real `messages` table, but Send has no gateway behind it (see above)                                                     |
+| `dashboard/reports`                                                    | ❌ Still hardcoded narrative placeholder content, not wired                                                                 |
+| `manager/portfolio` (Portfolio Overview)                               | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown                                      |
+| `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity` | ✅ Real                                                                                                                     |
+| `admin/portfolio` (Portfolio Assignment)                               | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only                                     |
+| `admin/reports`, `admin/users`, `admin/teams`, `admin/settings`        | ✅ Real                                                                                                                     |
+| `admin/index`                                                          | ✅ Real (navigation tiles)                                                                                                  |
 
 ---
 
@@ -334,16 +334,22 @@ await saveDisposition({ ...data });
 
 - `src/lib/mock-debtors.ts` still carries a ~1,200-line `MOCK_DEBTORS` literal array that
   nothing imports anymore (confirmed zero references outside the file) — dead weight. Its
-  *types and helpers* from the same file (`Debtor`, `DPDBucket`, `bucketOf`, `BUCKET_META`,
+  _types and helpers_ from the same file (`Debtor`, `DPDBucket`, `bucketOf`, `BUCKET_META`,
   `formatINR`) are very much alive and used everywhere — don't touch those, just the array.
-- `dashboard.call-queue.tsx` (~2,600 lines) and `manager.portfolio.tsx` (~2,400 lines) are
-  route files that have become the de facto shared module other routes cross-import
-  components/types from (e.g. `manager.queue.tsx` imports `DialingBoard`,
-  `ProductiveDialBoard`, `PortfolioDetail` from them). Works, but a real extraction into
-  `src/components/call-queue/` and `src/components/portfolio/` would be healthier.
 - `CallOutcome` + its label/color map is defined twice — `src/lib/disposition-store.ts` and
   `src/lib/call-queue/types.ts` — identical unions, two sources of truth to keep in sync by
   hand.
+
+**Done (2026-08-20):** `dashboard.call-queue.tsx` and `manager.portfolio.tsx` used to double as
+the de facto shared module other routes cross-imported components from. Extracted the
+genuinely-shared pieces into proper homes: `buildAssignedQueue` → `src/lib/call-queue/build-queue.ts`;
+`DialerModeBar`/`DialingBoard`/`ProductiveDialBoard`/`LiveCallsPanel` →
+`src/components/call-queue/dialer-boards.tsx`; the whole portfolio dashboard
+(`Portfolio` type, `toPortfolio`, `PortfolioDetail`, `StatCard`, the call-activity/AI-handling
+breakdown, and its supporting `AccountsTable`/`RemovedAccountsPanel`/`RetentionRequestsPanel`) →
+`src/components/portfolio/portfolio-dashboard.tsx`. The two route files still re-export these
+(so nothing else that imported from the old route paths breaks), but `manager.queue.tsx` and
+`admin.portfolio.tsx` now import directly from the real modules.
 
 ---
 

@@ -34,7 +34,7 @@ import { useStorageSync } from "@/lib/storage-sync";
 // Same full-screen portfolio dashboard the manager portal uses — Portfolio Assignment is
 // read-only here (no per-agent edit/reassign in admin's remit), so onEdit/onReassign/
 // onUploadPaid are simply omitted, which PortfolioDetail renders as a view-only dashboard.
-import { PortfolioDetail, toPortfolio } from "@/routes/manager.portfolio";
+import { PortfolioDetail, toPortfolio } from "@/components/portfolio/portfolio-dashboard";
 
 export const Route = createFileRoute("/admin/portfolio")({
   head: () => ({
@@ -244,7 +244,12 @@ function PortfolioAssignmentPage() {
       </Card>
 
       {viewing && (
-        <PortfolioDetail p={toPortfolio(viewing)} raw={viewing} agents={[]} onClose={() => setViewing(null)} />
+        <PortfolioDetail
+          p={toPortfolio(viewing)}
+          raw={viewing}
+          agents={[]}
+          onClose={() => setViewing(null)}
+        />
       )}
     </div>
   );

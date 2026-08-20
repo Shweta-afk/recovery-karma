@@ -38,20 +38,21 @@ import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
 import { formatINR, bucketOf, BUCKET_META } from "@/lib/mock-debtors";
 import { useManagerTeamAgents, type AgentRef } from "@/lib/team-store";
 import {
-  buildAssignedQueue,
   QUEUE_STATUS_META,
   OUTCOME_META,
   EMPTY_DISPOSITION,
-  ActiveCallPanel,
-  ActiveCallModal,
+  type QueueDebtor,
+  type ActiveCall,
+  type DispositionForm,
+} from "@/lib/call-queue/types";
+import { buildAssignedQueue } from "@/lib/call-queue/build-queue";
+import { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active-call";
+import {
   DialerModeBar,
   LiveCallsPanel,
   DialingBoard,
   ProductiveDialBoard,
-  type QueueDebtor,
-  type ActiveCall,
-  type DispositionForm,
-} from "@/routes/dashboard.call-queue";
+} from "@/components/call-queue/dialer-boards";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
@@ -356,7 +357,9 @@ function AgentQueueView({
 
       {/* Floating dialing board — every number currently ringing. Progressive Dial never has
           more than one, so it gets its own sequential board below instead. */}
-      {dialer.running && activeDialMode !== "productive" && <DialingBoard liveCalls={dialer.legs} />}
+      {dialer.running && activeDialMode !== "productive" && (
+        <DialingBoard liveCalls={dialer.legs} />
+      )}
 
       {/* Floating Progressive Dial board — one debtor at a time, in list order */}
       {dialer.running && activeDialMode === "productive" && (
