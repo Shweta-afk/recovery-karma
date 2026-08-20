@@ -117,6 +117,32 @@ export interface UploadedPortfolio {
 const KEY = "recoveryai_portfolios_cache";
 const CHUNK_SIZE = 500; // stays comfortably under Supabase's request-size limits per insert
 
+// PostgREST caps rows returned per request at db.max_rows (this project's default: 1000) —
+// silently, with no error and no truncation flag in the response. A 1064-row portfolio upload
+// inserts fine (writes aren't capped), but the very next refreshPortfolios() read-back — or
+// any other unpaginated debtors select — only sees the first 1000. fetchAllRows() pages past
+// that ceiling for every debtors query that isn't provably bounded under it.
+const MAX_PAGE_ROWS = 1000;
+
+async function fetchAllRows<T>(
+  page: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const all: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await page(from, from + MAX_PAGE_ROWS - 1);
+    if (error) return { data: all, error };
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < MAX_PAGE_ROWS) break;
+    from += MAX_PAGE_ROWS;
+  }
+  return { data: all, error: null };
+}
+
 export function getPortfolios(): UploadedPortfolio[] {
   try {
     const raw = localStorage.getItem(KEY);
@@ -126,10 +152,10 @@ export function getPortfolios(): UploadedPortfolio[] {
   }
 }
 
-/** Pulls portfolios + their debtor rows from Supabase and refreshes the local cache.
- * Note: like the localStorage version this replaces, this fetches every debtor row the
- * client is allowed to see (client-scoped via RLS) in one go — fine at today's scale, but
- * would need pagination/streaming if portfolios grow into the tens of thousands of rows. */
+/** Pulls portfolios + their debtor rows from Supabase and refreshes the local cache. Fetches
+ * every debtor row the client is allowed to see (client-scoped via RLS) — paginated via
+ * fetchAllRows() past PostgREST's 1000-row-per-request cap, since a single client's total
+ * debtor count crosses that well before "tens of thousands". */
 export async function refreshPortfolios(): Promise<void> {
   const [
     { data: portfolioRows, error: pErr },
@@ -139,11 +165,14 @@ export async function refreshPortfolios(): Promise<void> {
     supabase
       .from("portfolios")
       .select("id, name, lender_name, product_type, uploaded_at, settings, team_id, manager_id"),
-    supabase
-      .from("debtors")
-      .select(
-        "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id, status",
-      ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("debtors")
+        .select(
+          "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id, status",
+        )
+        .range(from, to),
+    ),
     supabase.from("agents").select("id, email"),
   ]);
   if (pErr || dErr || !portfolioRows || !debtorRows || !agentRows) return;
@@ -179,7 +208,9 @@ export async function refreshPortfolios(): Promise<void> {
   // queried separately and defaulted to [] on failure so it never blocks portfolio sync.
   const altPhonesById = new Map<string, string[]>();
   try {
-    const { data: altRows, error: aErr } = await supabase.from("debtors").select("id, alt_phones");
+    const { data: altRows, error: aErr } = await fetchAllRows((from, to) =>
+      supabase.from("debtors").select("id, alt_phones").range(from, to),
+    );
     if (!aErr && altRows) {
       for (const r of altRows) {
         altPhonesById.set(r.id as string, (r.alt_phones as string[] | null) ?? []);
@@ -199,7 +230,9 @@ export async function refreshPortfolios(): Promise<void> {
   try {
     const [{ data: cycleRows, error: cErr }, { data: retRows, error: rErr }] = await Promise.all([
       supabase.from("portfolios").select("id, replaces_portfolio_id, closed_at"),
-      supabase.from("debtors").select("id, retained_from_portfolio_id"),
+      fetchAllRows((from, to) =>
+        supabase.from("debtors").select("id, retained_from_portfolio_id").range(from, to),
+      ),
     ]);
     if (!cErr && cycleRows) {
       for (const p of cycleRows) {
@@ -291,10 +324,9 @@ async function reconcileRetainedDebtors(
     if (reqErr || !sentRequests?.length) return { handledRowIds, carried: 0 };
 
     const debtorIds = sentRequests.map((r) => r.debtor_id as string);
-    const { data: oldDebtors, error: oldErr } = await supabase
-      .from("debtors")
-      .select("id, loan_reference")
-      .in("id", debtorIds);
+    const { data: oldDebtors, error: oldErr } = await fetchAllRows((from, to) =>
+      supabase.from("debtors").select("id, loan_reference").in("id", debtorIds).range(from, to),
+    );
     if (oldErr || !oldDebtors) return { handledRowIds, carried: 0 };
 
     const requestIdByDebtorId = new Map(
@@ -453,10 +485,13 @@ export async function mergePortfolioRows(
   rows: UploadedDebtor[],
 ): Promise<{ updated: number; added: number; skipped: number }> {
   const me = await getMyAgentRow();
-  const { data: existing, error: exErr } = await supabase
-    .from("debtors")
-    .select("id, loan_reference")
-    .eq("portfolio_id", portfolioId);
+  const { data: existing, error: exErr } = await fetchAllRows((from, to) =>
+    supabase
+      .from("debtors")
+      .select("id, loan_reference")
+      .eq("portfolio_id", portfolioId)
+      .range(from, to),
+  );
   if (exErr) throw exErr;
 
   const idByLoanRef = new Map(
@@ -551,10 +586,13 @@ export async function applyBulkPaidFile(
   portfolioId: string,
   rows: BulkPaidRow[],
 ): Promise<BulkPaidResult> {
-  const { data: existing, error: exErr } = await supabase
-    .from("debtors")
-    .select("id, loan_reference, status")
-    .eq("portfolio_id", portfolioId);
+  const { data: existing, error: exErr } = await fetchAllRows((from, to) =>
+    supabase
+      .from("debtors")
+      .select("id, loan_reference, status")
+      .eq("portfolio_id", portfolioId)
+      .range(from, to),
+  );
   if (exErr) throw exErr;
 
   const byLoanRef = new Map(
@@ -631,10 +669,13 @@ export async function remapPortfolioFields(
 ): Promise<number> {
   if (STD_FIELDS.every((f) => fieldMap[f.key] === f.key)) return 0;
 
-  const { data: rows, error: fetchErr } = await supabase
-    .from("debtors")
-    .select("id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra")
-    .eq("portfolio_id", portfolioId);
+  const { data: rows, error: fetchErr } = await fetchAllRows((from, to) =>
+    supabase
+      .from("debtors")
+      .select("id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra")
+      .eq("portfolio_id", portfolioId)
+      .range(from, to),
+  );
   if (fetchErr) throw fetchErr;
   if (!rows || !rows.length) return 0;
 
@@ -899,11 +940,14 @@ export interface RemovedDebtor {
 /** Lists soft-removed debtors for one portfolio. Queried directly (not from the cache) since
  * refreshPortfolios() deliberately excludes 'removed' rows from what it caches. */
 export async function getRemovedDebtors(portfolioId: string): Promise<RemovedDebtor[]> {
-  const { data, error } = await supabase
-    .from("debtors")
-    .select("id, name, phone_primary, loan_reference")
-    .eq("portfolio_id", portfolioId)
-    .eq("status", "removed");
+  const { data, error } = await fetchAllRows((from, to) =>
+    supabase
+      .from("debtors")
+      .select("id, name, phone_primary, loan_reference")
+      .eq("portfolio_id", portfolioId)
+      .eq("status", "removed")
+      .range(from, to),
+  );
   if (error) throw error;
   return (data ?? []).map((d) => ({
     id: d.id as string,
