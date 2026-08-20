@@ -1,6 +1,8 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
+import { TeamPickerScreen } from "@/components/team-picker-screen";
 import { useAuth } from "@/lib/auth";
+import { useActiveTeam } from "@/lib/active-team-store";
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -11,6 +13,11 @@ export const Route = createFileRoute("/manager")({
 function ManagerLayout() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const managerId = user?.email ?? user?.id ?? "";
+  // Admins aren't scoped to a single team (they see everything org-wide), so this hook only
+  // matters — and is only called meaningfully — for role "manager"; harmless no-op otherwise
+  // since managerId won't match any team's managerId for a non-manager.
+  const { teams, activeTeam, setActiveTeam } = useActiveTeam(managerId);
 
   useEffect(() => {
     if (!loading && user && user.role === "agent") {
@@ -31,6 +38,14 @@ function ManagerLayout() {
             dashboard…
           </p>
         </div>
+      </AppShell>
+    );
+  }
+
+  if (user.role === "manager" && teams.length > 1 && !activeTeam) {
+    return (
+      <AppShell>
+        <TeamPickerScreen teams={teams} managerName={user.name} onPick={setActiveTeam} />
       </AppShell>
     );
   }

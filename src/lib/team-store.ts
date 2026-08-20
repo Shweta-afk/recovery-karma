@@ -5,7 +5,7 @@ import { useStorageSync } from "./storage-sync";
 // Live roster of agents/managers — sourced from the Supabase `agents` table (RLS-scoped to
 // the caller's client_id), cached in localStorage so components that render agent lists
 // (team cards, assignment dropdowns) can read synchronously without threading async state
-// through every consumer. Refreshed on mount by useRoster()/useManagerTeamAgents(), and
+// through every consumer. Refreshed on mount by useRoster()/useTeamAgents(), and
 // after any agents-table mutation (invite/edit/delete — see admin.users.tsx).
 export interface AgentRef {
   id: string; // account email — matches the operational identity used everywhere else
@@ -185,7 +185,8 @@ export async function deleteTeam(id: string): Promise<void> {
 /** Any one of this manager's teams — a manager can own up to MAX_TEAMS_PER_MANAGER teams, and
  * this just returns whichever one getTeams() happens to return first. Fine for call sites that
  * only need "a" team (e.g. a display fallback); anything that needs the manager's full team
- * list or full agent pool should use getTeamsByManager()/getManagerTeamAgents() instead. */
+ * list should use getTeamsByManager() instead, or active-team-store.ts's useActiveTeam() for
+ * "whichever team the manager is currently working in". */
 export function getTeamByManager(managerId: string): Team | undefined {
   return getTeams().find((t) => t.managerId === managerId);
 }
@@ -210,31 +211,21 @@ export async function getAdminEmails(): Promise<string[]> {
   return data.map((a) => a.email as string);
 }
 
-/** Agents belonging to any of this manager's teams — unions agentIds across all of them
- * (dedup'd) rather than just the first team, since a manager can own more than one. [] if they
- * have no team yet, never "everyone". */
-export function getManagerTeamAgents(managerId: string): AgentRef[] {
-  const teams = getTeamsByManager(managerId);
-  const seen = new Set<string>();
-  const agents: AgentRef[] = [];
-  for (const team of teams) {
-    for (const agentId of team.agentIds) {
-      if (seen.has(agentId)) continue;
-      seen.add(agentId);
-      const agent = getAgentById(agentId);
-      if (agent) agents.push(agent);
-    }
-  }
-  return agents;
+/** Agents on one specific team — the scoping every manager-facing page actually uses now that
+ * a manager works one team at a time (see active-team-store.ts). [] if teamId is undefined
+ * (e.g. no active team chosen yet) or the team has no agents. */
+export function getTeamAgents(teamId: string | undefined): AgentRef[] {
+  if (!teamId) return [];
+  const team = getTeams().find((t) => t.id === teamId);
+  if (!team) return [];
+  return team.agentIds.map(getAgentById).filter((a): a is AgentRef => !!a);
 }
 
-/** Reactive version of getManagerTeamAgents — updates when teams or the roster change,
- * including in another tab of the same browser (see storage-sync.ts). Used by manager-facing
- * pages so a manager only ever sees their own team's agents, correctly, even once multiple
- * teams/managers exist. */
-export function useManagerTeamAgents(managerId: string): AgentRef[] {
-  const [agents, setAgents] = useState<AgentRef[]>(() => getManagerTeamAgents(managerId));
-  const reload = () => setAgents(getManagerTeamAgents(managerId));
+/** Reactive version of getTeamAgents — updates when teams or the roster change, including in
+ * another tab of the same browser (see storage-sync.ts) or when the active team is switched. */
+export function useTeamAgents(teamId: string | undefined): AgentRef[] {
+  const [agents, setAgents] = useState<AgentRef[]>(() => getTeamAgents(teamId));
+  const reload = () => setAgents(getTeamAgents(teamId));
   useEffect(() => {
     reload();
     window.addEventListener("teams-updated", reload);
@@ -246,7 +237,7 @@ export function useManagerTeamAgents(managerId: string): AgentRef[] {
       window.removeEventListener("roster-updated", reload);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [managerId]);
+  }, [teamId]);
   useStorageSync(reload);
   return agents;
 }

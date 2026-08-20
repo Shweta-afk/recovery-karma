@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { LogOut, Sun, Moon, Bell } from "lucide-react";
+import { LogOut, Sun, Moon, Bell, Users, ChevronsUpDown } from "lucide-react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
+import { useActiveTeam } from "@/lib/active-team-store";
 import { cn } from "@/lib/utils";
 import {
   getAgentNotifications,
@@ -107,6 +108,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
+  // Always called (never behind the loading/!user return below) so hook order stays stable.
+  // A no-op for agents/admins — teams only ever resolves for role "manager" (see manager.tsx).
+  const { teams, activeTeam, clearActiveTeam } = useActiveTeam(user?.email ?? user?.id ?? "");
 
   useEffect(() => {
     if (!loading && user === null) {
@@ -146,6 +150,18 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div className="hidden text-sm text-muted-foreground sm:block">
                 Recovery operations console
               </div>
+              {user.role === "manager" && teams.length > 1 && (
+                <button
+                  type="button"
+                  onClick={clearActiveTeam}
+                  title="Switch to a different team"
+                  className="hidden items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-primary/50 sm:flex"
+                >
+                  <Users className="h-3 w-3 text-muted-foreground" />
+                  {activeTeam?.name ?? "Choose team"}
+                  <ChevronsUpDown className="h-3 w-3 text-muted-foreground" />
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-3">

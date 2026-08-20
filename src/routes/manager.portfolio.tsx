@@ -78,7 +78,8 @@ import {
 import { cn, parseCsvLine } from "@/lib/utils";
 import { normHeader } from "@/lib/column-mapper";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
-import { useManagerTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useActiveTeam } from "@/lib/active-team-store";
 import { refreshDispositions } from "@/lib/disposition-store";
 import { useAuth } from "@/lib/auth";
 import { useStorageSync } from "@/lib/storage-sync";
@@ -123,9 +124,10 @@ function ReassignDialog({
   portfolio: UploadedPortfolio | null;
   onClose: () => void;
 }) {
-  const { user } = useAuth();
-  const managerId = user?.email ?? user?.id ?? "";
-  const agents = useManagerTeamAgents(managerId);
+  // Scoped by the portfolio's own team, not whatever the manager currently has "active" —
+  // a manager reassigning an older portfolio should still see that portfolio's actual team's
+  // agents even if they've since switched their working context to a different team.
+  const agents = useTeamAgents(portfolio?.teamId);
   const [allocation, setAllocation] = useState<Record<string, string[]>>({});
   const [saving, setSaving] = useState(false);
 
@@ -986,7 +988,8 @@ function BulkPaidUploadDialog({
 function PortfolioOverviewPage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
-  const agents = useManagerTeamAgents(managerId);
+  const { activeTeam } = useActiveTeam(managerId);
+  const agents = useTeamAgents(activeTeam?.id);
 
   const [statusFilter, setStatusFilter] = useState<Portfolio["status"] | "all">("all");
   const [selected, setSelected] = useState<Portfolio | null>(null);
@@ -994,10 +997,13 @@ function PortfolioOverviewPage() {
   const [editTarget, setEditTarget] = useState<UploadedPortfolio | null>(null);
   const [bulkPaidTarget, setBulkPaidTarget] = useState<UploadedPortfolio | null>(null);
   const [rawPortfolios, setRawPortfolios] = useState<UploadedPortfolio[]>(() =>
-    getPortfolios().filter((p) => p.managerId === managerId),
+    getPortfolios().filter((p) => p.managerId === managerId && p.teamId === activeTeam?.id),
   );
 
-  const reload = () => setRawPortfolios(getPortfolios().filter((p) => p.managerId === managerId));
+  const reload = () =>
+    setRawPortfolios(
+      getPortfolios().filter((p) => p.managerId === managerId && p.teamId === activeTeam?.id),
+    );
   useEffect(() => {
     reload();
     window.addEventListener("portfolios-updated", reload);
@@ -1009,7 +1015,7 @@ function PortfolioOverviewPage() {
       window.removeEventListener("dispositions-updated", reload);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [managerId]);
+  }, [managerId, activeTeam?.id]);
   useStorageSync(reload);
 
   const allPortfolios = useMemo(() => rawPortfolios.map(toPortfolio), [rawPortfolios]);

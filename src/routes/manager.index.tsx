@@ -52,7 +52,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { useManagerTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useActiveTeam } from "@/lib/active-team-store";
 import { useAuth } from "@/lib/auth";
 import {
   getAgentDispositions,
@@ -1140,7 +1141,8 @@ function ManagerDashboardPage() {
 
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
-  const agents = useManagerTeamAgents(managerId);
+  const { activeTeam } = useActiveTeam(managerId);
+  const agents = useTeamAgents(activeTeam?.id);
   const agentStats = useTeamStats(agents);
 
   // Real, team-scoped dispositions — replaces the old hardcoded STATS/TREND_DATA/OUTCOMES/

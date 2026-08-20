@@ -27,9 +27,9 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
+import { useActiveTeam } from "@/lib/active-team-store";
 import {
-  useManagerTeamAgents,
-  useTeams,
+  useTeamAgents,
   useRoster,
   getTeams,
   saveTeam,
@@ -77,7 +77,9 @@ export const Route = createFileRoute("/manager/activity")({
 // Merged with the old "My Team" page (roster + Manage Team) — there was never a reason for two
 // separate pages, and the old Team Activity table read every agent in the org via useRoster()
 // (a manager could see other managers' agents' login/logout times), while My Team correctly
-// scoped to useManagerTeamAgents(). This page is the single source now, scoped throughout.
+// scoped per-team. This page is the single source now, scoped to whichever team is currently
+// active (see active-team-store.ts) — switching teams happens via the header's "Change Team",
+// not from this page.
 
 function isSameDay(iso: string, now: Date): boolean {
   const d = new Date(iso);
@@ -138,34 +140,22 @@ function TeamActivityPage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
   const managerName = user?.name ?? "Manager";
-  const agents = useManagerTeamAgents(managerId);
-  const allTeams = useTeams();
-  const teams = useMemo(
-    () => allTeams.filter((t) => t.managerId === managerId),
-    [allTeams, managerId],
-  );
+  const { teams, activeTeam, setActiveTeam, clearActiveTeam } = useActiveTeam(managerId);
+  const agents = useTeamAgents(activeTeam?.id);
   const [showManage, setShowManage] = useState(false);
-  const [editingTeam, setEditingTeam] = useState<Team | undefined>(undefined);
-  const [deletingTeamId, setDeletingTeamId] = useState<string | null>(null);
+  // Whether the open dialog is creating a new team or editing the active one — activeTeam is
+  // only ever undefined here when the manager has zero teams (ManagerLayout's picker gate
+  // already forces a pick whenever there are 2+), so "creating" is really "no team yet or
+  // adding another".
+  const [creatingTeam, setCreatingTeam] = useState(false);
 
+  const openManageTeam = () => {
+    setCreatingTeam(false);
+    setShowManage(true);
+  };
   const openCreateTeam = () => {
-    setEditingTeam(undefined);
+    setCreatingTeam(true);
     setShowManage(true);
-  };
-  const openEditTeam = (t: Team) => {
-    setEditingTeam(t);
-    setShowManage(true);
-  };
-  const handleDeleteTeam = async (id: string, name: string) => {
-    setDeletingTeamId(id);
-    try {
-      await deleteTeam(id);
-      toast.success(`Team "${name}" removed`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to remove team");
-    } finally {
-      setDeletingTeamId(null);
-    }
   };
 
   const allDisps = useAllDispositions();
@@ -250,64 +240,37 @@ function TeamActivityPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Team Activity</h1>
           <p className="text-sm text-muted-foreground">
-            {teams.length > 0
-              ? `${teams.length} team${teams.length === 1 ? "" : "s"} · ${agents.length} agent${agents.length === 1 ? "" : "s"} total`
-              : "Roster and today's performance for your team."}
+            {activeTeam ? activeTeam.name : "Roster and today's performance for your team."}
           </p>
         </div>
-        <span
-          className="flex items-center gap-1.5 text-xs text-muted-foreground rounded-lg border border-border bg-card px-2.5 py-1.5"
-          title="Calling time is real, from logged calls. Ringing, idle, disposition, break and login/logout times are estimated — real presence tracking is coming soon."
-        >
-          <Info className="h-3.5 w-3.5 flex-shrink-0" />
-          Ringing/idle/disposition/break/login times are estimated
-        </span>
-      </div>
-
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {teams.map((t) => (
-          <div
-            key={t.id}
-            className="flex items-center gap-1 rounded-lg border border-border bg-card pl-2.5 pr-1.5 py-1 text-xs"
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <span
+            className="flex items-center gap-1.5 text-xs text-muted-foreground rounded-lg border border-border bg-card px-2.5 py-1.5"
+            title="Calling time is real, from logged calls. Ringing, idle, disposition, break and login/logout times are estimated — real presence tracking is coming soon."
           >
-            <button
-              type="button"
-              onClick={() => openEditTeam(t)}
-              className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition-colors"
-            >
-              <Users className="h-3 w-3 text-muted-foreground" />
-              {t.name}
-              <span className="font-normal text-muted-foreground">({t.agentIds.length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDeleteTeam(t.id, t.name)}
-              disabled={deletingTeamId === t.id}
-              title={`Remove ${t.name}`}
-              className="p-0.5 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-            >
-              {deletingTeamId === t.id ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Trash2 className="h-3 w-3" />
-              )}
-            </button>
-          </div>
-        ))}
-        {teams.length < MAX_TEAMS_PER_MANAGER ? (
-          <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={openCreateTeam}>
-            {teams.length === 0 ? (
-              <Settings2 className="h-3.5 w-3.5" />
-            ) : (
-              <Plus className="h-3.5 w-3.5" />
-            )}
-            {teams.length === 0 ? "Create Team" : "Add Team"}
-          </Button>
-        ) : (
-          <span className="text-[11px] text-muted-foreground px-1">
-            Max {MAX_TEAMS_PER_MANAGER} teams
+            <Info className="h-3.5 w-3.5 flex-shrink-0" />
+            Ringing/idle/disposition/break/login times are estimated
           </span>
-        )}
+          {activeTeam && (
+            <Button variant="outline" className="gap-1.5 shrink-0" onClick={openManageTeam}>
+              <Settings2 className="h-3.5 w-3.5" />
+              Manage Team
+            </Button>
+          )}
+          {teams.length === 0 ? (
+            <Button className="gap-1.5 shrink-0" onClick={openCreateTeam}>
+              <Settings2 className="h-3.5 w-3.5" />
+              Create Team
+            </Button>
+          ) : (
+            teams.length < MAX_TEAMS_PER_MANAGER && (
+              <Button variant="outline" className="gap-1.5 shrink-0" onClick={openCreateTeam}>
+                <Plus className="h-3.5 w-3.5" />
+                Add Team
+              </Button>
+            )
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
@@ -329,8 +292,8 @@ function TeamActivityPage() {
             <Users className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
             <p className="text-sm font-medium text-foreground">No agents on your team yet</p>
             <p className="text-xs text-muted-foreground mt-1">
-              {teams.length > 0
-                ? "Add agents to a team above."
+              {activeTeam
+                ? "Add agents to this team with Manage Team above."
                 : "Create a team and add agents to see their activity here."}
             </p>
           </CardContent>
@@ -436,10 +399,15 @@ function TeamActivityPage() {
       <ManageTeamDialog
         open={showManage}
         onClose={() => setShowManage(false)}
-        team={editingTeam}
+        team={creatingTeam ? undefined : activeTeam}
         existingTeamCount={teams.length}
         managerId={managerId}
         managerName={managerName}
+        onCreated={(teamId) => setActiveTeam(teamId)}
+        onDeleted={() => {
+          clearActiveTeam();
+          setShowManage(false);
+        }}
       />
     </div>
   );
@@ -459,6 +427,8 @@ function ManageTeamDialog({
   existingTeamCount,
   managerId,
   managerName,
+  onCreated,
+  onDeleted,
 }: {
   open: boolean;
   onClose: () => void;
@@ -466,6 +436,14 @@ function ManageTeamDialog({
   existingTeamCount: number;
   managerId: string;
   managerName: string;
+  /** Fired after a brand-new team is saved (team was undefined going in) so the page can
+   * switch the manager's active team into it — creating a team you can't immediately see
+   * would be a strange dead end. */
+  onCreated: (teamId: string) => void;
+  /** Fired after the team is deleted — the page clears the active-team selection, which
+   * re-triggers ManagerLayout's picker gate (or the empty "Create Team" state if none are
+   * left). Only ever offered when editing an existing team, not while creating one. */
+  onDeleted: () => void;
 }) {
   const roster = useRoster();
   const AGENTS = roster.filter((r) => r.role === "agent");
@@ -480,6 +458,7 @@ function ManageTeamDialog({
   );
   const [agentSearch, setAgentSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Reset to the current team's state each time the dialog opens, not just on mount.
   useEffect(() => {
@@ -520,8 +499,9 @@ function ManageTeamDialog({
     }
     setSaving(true);
     try {
+      const id = team?.id ?? crypto.randomUUID();
       await saveTeam({
-        id: team?.id ?? crypto.randomUUID(),
+        id,
         name: name.trim(),
         managerId,
         managerName,
@@ -529,11 +509,33 @@ function ManageTeamDialog({
         createdAt: team?.createdAt ?? new Date().toISOString(),
       });
       toast.success(`Team "${name.trim()}" saved with ${selectedAgentIds.size} agent(s)`);
+      if (!team) onCreated(id);
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save team");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!team) return;
+    if (
+      !confirm(
+        `Delete "${team.name}"? This can't be undone — its agents lose access to any portfolios assigned to this team.`,
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deleteTeam(team.id);
+      toast.success(`Team "${team.name}" removed`);
+      onDeleted();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remove team");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -618,14 +620,35 @@ function ManageTeamDialog({
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave} disabled={!name.trim() || saving} className="gap-1.5">
-            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Save
-          </Button>
+        <DialogFooter className="sm:justify-between">
+          {team && (
+            <Button
+              variant="ghost"
+              onClick={handleDelete}
+              disabled={saving || deleting}
+              className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive sm:mr-auto"
+            >
+              {deleting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              Delete Team
+            </Button>
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} disabled={saving || deleting}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={!name.trim() || saving || deleting}
+              className="gap-1.5"
+            >
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Save
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

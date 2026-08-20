@@ -36,7 +36,8 @@ import {
 import { cn } from "@/lib/utils";
 import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
 import { formatINR, bucketOf, BUCKET_META } from "@/lib/mock-debtors";
-import { useManagerTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useActiveTeam } from "@/lib/active-team-store";
 import {
   QUEUE_STATUS_META,
   OUTCOME_META,
@@ -723,7 +724,8 @@ function ManagerQueuePage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
   const managerName = user?.name ?? "Manager";
-  const agents = useManagerTeamAgents(managerId);
+  const { activeTeam } = useActiveTeam(managerId);
+  const agents = useTeamAgents(activeTeam?.id);
   const [tab, setTab] = useState("live");
   const [openEscalations, setOpenEscalations] = useState(() => getOpenEscalations().length);
   useEffect(() => {

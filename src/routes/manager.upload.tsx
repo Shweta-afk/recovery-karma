@@ -45,7 +45,8 @@ import {
   type PortfolioSettings,
   PRODUCT_LABEL_TO_ENUM,
 } from "@/lib/portfolio-store";
-import { useManagerTeamAgents, useTeams } from "@/lib/team-store";
+import { useTeamAgents } from "@/lib/team-store";
+import { useActiveTeam } from "@/lib/active-team-store";
 import {
   resolveMapping,
   confidenceLabel,
@@ -146,20 +147,10 @@ function ConfidenceBadge({ suggestion }: { suggestion?: FieldSuggestion }) {
 function PortfolioUploadPage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
-  const managerAgents = useManagerTeamAgents(managerId);
-  const allTeams = useTeams();
-  const managerTeams = useMemo(
-    () => allTeams.filter((t) => t.managerId === managerId),
-    [allTeams, managerId],
-  );
-  // Only needs a value when the manager owns more than one team — the single-team case (the
-  // overwhelming majority) never shows a picker and just uses that one team.
-  const [selectedTeamId, setSelectedTeamId] = useState<string>("");
-  useEffect(() => {
-    if (managerTeams.length === 1) setSelectedTeamId(managerTeams[0].id);
-  }, [managerTeams]);
-  const uploadTeam =
-    managerTeams.length > 1 ? managerTeams.find((t) => t.id === selectedTeamId) : managerTeams[0];
+  // Which team this whole page (and the portfolio being built) belongs to — set once via the
+  // "Change Team" switcher in the header (see active-team-store.ts), not re-picked per upload.
+  const { activeTeam } = useActiveTeam(managerId);
+  const managerAgents = useTeamAgents(activeTeam?.id);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -352,10 +343,6 @@ function PortfolioUploadPage() {
       toast.error("Fill portfolio name and lender");
       return;
     }
-    if (managerTeams.length > 1 && !selectedTeamId) {
-      toast.error("Pick which of your teams this portfolio belongs to");
-      return;
-    }
     if (!allocationComplete) {
       toast.error(
         "Some accounts are assigned to more than one agent — adjust the split before uploading.",
@@ -379,14 +366,11 @@ function PortfolioUploadPage() {
         uploadedAt: new Date().toISOString(),
         rows: mappedRows,
         managerId,
-        teamId: uploadTeam?.id,
+        teamId: activeTeam?.id,
         settings,
         agentTargets: {},
         replacesPortfolioId: replacesPortfolioId || undefined,
       };
-      // managerAgents already pools agents across every team this manager owns (see
-      // getManagerTeamAgents), so whether the allocation is kept only depends on there being
-      // agents to assign to — not on which single team got picked for portfolio.teamId.
       const { uploaded, skipped, carried } = await createPortfolio(
         portfolio,
         managerAgents.length > 0 ? allocation : {},
@@ -428,7 +412,6 @@ function PortfolioUploadPage() {
     setSettings(DEFAULT_PORTFOLIO_SETTINGS);
     setAllocation({});
     setUploadProgress(0);
-    setSelectedTeamId(managerTeams.length === 1 ? managerTeams[0].id : "");
   };
 
   const unmappedRequired = REQUIRED_STD_FIELDS.filter((f) => !mapping[f.key]);
@@ -438,8 +421,16 @@ function PortfolioUploadPage() {
       <div className="animate-in fade-in slide-in-from-top-4 duration-500">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Portfolio Upload</h1>
         <p className="text-sm text-muted-foreground">
-          Upload a CSV, map its columns, set how this portfolio should be worked, and assign it to
-          your team — all in one flow.
+          Upload a CSV, map its columns, set how this portfolio should be worked, and assign it to{" "}
+          {activeTeam ? (
+            <>
+              <span className="font-medium text-foreground">{activeTeam.name}</span> — use "Change
+              Team" in the header if this is for a different team.
+            </>
+          ) : (
+            "your team"
+          )}
+          .
         </p>
       </div>
 
@@ -556,33 +547,6 @@ function PortfolioUploadPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                {managerTeams.length > 1 && (
-                  <div className="space-y-1.5">
-                    <Label>
-                      Team <span className="text-destructive">*</span>
-                    </Label>
-                    <Select
-                      value={selectedTeamId}
-                      onValueChange={setSelectedTeamId}
-                      disabled={step !== "meta"}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Which of your teams owns this?" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {managerTeams.map((t) => (
-                          <SelectItem key={t.id} value={t.id}>
-                            {t.name} ({t.agentIds.length} agent{t.agentIds.length === 1 ? "" : "s"})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-[11px] text-muted-foreground">
-                      You manage more than one team — the Assign Agents step still matches against
-                      all of them, this just decides which team this portfolio is recorded under.
-                    </p>
-                  </div>
-                )}
                 <div className="space-y-1.5 sm:col-span-2">
                   <Label>Continues portfolio (optional)</Label>
                   <Select
@@ -614,11 +578,7 @@ function PortfolioUploadPage() {
                   <div className="flex items-end">
                     <Button
                       className="w-full"
-                      disabled={
-                        !portfolioName ||
-                        !lenderName ||
-                        (managerTeams.length > 1 && !selectedTeamId)
-                      }
+                      disabled={!portfolioName || !lenderName}
                       onClick={() => setStep("file")}
                     >
                       Continue <ArrowRight className="h-3.5 w-3.5 ml-1" />

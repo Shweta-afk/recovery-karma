@@ -38,7 +38,8 @@ import { cn } from "@/lib/utils";
 import { bucketOf, BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { OUTCOME_META } from "@/lib/call-queue/types";
 import { useAuth } from "@/lib/auth";
-import { useManagerTeamAgents } from "@/lib/team-store";
+import { useTeamAgents } from "@/lib/team-store";
+import { useActiveTeam } from "@/lib/active-team-store";
 import { supabase } from "@/lib/supabase";
 import { analyzeCallSentiment } from "@/lib/call-sentiment-actions.server";
 import {
@@ -459,7 +460,8 @@ function CallDetailSheet({
 function CallAuditPage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
-  const agents = useManagerTeamAgents(managerId);
+  const { activeTeam } = useActiveTeam(managerId);
+  const agents = useTeamAgents(activeTeam?.id);
   const teamAgentIds = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
 
   const [allDisps, setAllDisps] = useState<DispositionRecord[]>(() => getDispositions());
