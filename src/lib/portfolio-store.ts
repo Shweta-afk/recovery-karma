@@ -500,18 +500,27 @@ export async function createPortfolio(
 
 /** Merges a re-uploaded/appended CSV into an existing portfolio: a row whose Loan/Account ID
  * matches an existing debtor updates that debtor's data (name/phone/amount/dpd/email/extra);
- * an unmatched row is inserted as a new, unassigned debtor. Never deletes a debtor and never
- * touches assigned_agent_id on a matched one — reassignment stays a separate, deliberate step
- * (Reassign / per-account transfer), not a side effect of fixing a typo in the source file. */
+ * an unmatched row is inserted as a new, unassigned debtor. Never touches assigned_agent_id on
+ * a matched one — reassignment stays a separate, deliberate step (Reassign / per-account
+ * transfer), not a side effect of fixing a typo in the source file.
+ *
+ * By default nothing is ever removed — a re-upload is additive/corrective only. Passing
+ * `removeMissing: true` switches to sync semantics: the new file becomes the authoritative
+ * account list, and any existing *active* debtor whose Loan/Account ID doesn't appear anywhere
+ * in `rows` gets soft-removed (status 'removed', same reversible mechanism as removeDebtor() —
+ * recoverable from the Removed Accounts panel). That includes debtors with no Loan/Account ID
+ * at all (e.g. added by hand via "Add One"), since there's no way for those to ever match a
+ * file row — callers must warn about that explicitly before opting in. */
 export async function mergePortfolioRows(
   portfolioId: string,
   rows: UploadedDebtor[],
-): Promise<{ updated: number; added: number; skipped: number }> {
+  options: { removeMissing?: boolean } = {},
+): Promise<{ updated: number; added: number; skipped: number; removed: number }> {
   const me = await getMyAgentRow();
   const { data: existing, error: exErr } = await fetchAllRows((from, to) =>
     supabase
       .from("debtors")
-      .select("id, loan_reference")
+      .select("id, loan_reference, status")
       .eq("portfolio_id", portfolioId)
       .range(from, to),
   );
@@ -582,8 +591,29 @@ export async function mergePortfolioRows(
     if (error) throw error;
   }
 
+  let removed = 0;
+  if (options.removeMissing) {
+    const newRefs = new Set(rows.map((r) => r.loanReference.trim().toLowerCase()).filter(Boolean));
+    const toRemove = (existing ?? [])
+      .filter((d) => d.status !== "removed")
+      .filter((d) => {
+        const ref = (d.loan_reference as string | null)?.trim().toLowerCase();
+        return !ref || !newRefs.has(ref);
+      })
+      .map((d) => d.id as string);
+    for (let i = 0; i < toRemove.length; i += CHUNK_SIZE) {
+      const chunk = toRemove.slice(i, i + CHUNK_SIZE);
+      const { error } = await supabase
+        .from("debtors")
+        .update({ status: "removed" })
+        .in("id", chunk);
+      if (error) throw error;
+    }
+    removed = toRemove.length;
+  }
+
   await refreshPortfolios();
-  return { updated: toUpdate.length, added: toInsert.length, skipped };
+  return { updated: toUpdate.length, added: toInsert.length, skipped, removed };
 }
 
 export interface BulkPaidRow {
@@ -829,11 +859,22 @@ export async function setPortfolioAgentTargets(
   await refreshPortfolios();
 }
 
-export async function deletePortfolio(id: string): Promise<void> {
-  const { error: dErr } = await supabase.from("debtors").delete().eq("portfolio_id", id);
-  if (dErr) throw dErr;
-  const { error: pErr } = await supabase.from("portfolios").delete().eq("id", id);
-  if (pErr) throw pErr;
+/** "Deleting" a portfolio archives it rather than destroying it — a true hard delete isn't
+ * actually safe here: call_logs/messages/payments/disputes/settlement_requests all reference
+ * debtor_id with no ON DELETE cascade (same reasoning as removeDebtor()'s soft-delete above),
+ * so deleting the debtors under a portfolio with any real activity would just throw a foreign
+ * key violation — and for a collections platform, destroying payment/call history on purpose
+ * is the wrong default regardless. Sets closed_at, the same field the retention/"continues
+ * portfolio" cycle already uses, which already drops a closed portfolio's remaining debtors
+ * out of the active call queue (see buildAssignedQueue) — the caller (manager.portfolio.tsx)
+ * also excludes closed portfolios from the default Portfolio Overview list. Fully reversible
+ * by clearing closed_at directly; nothing about the portfolio's data is touched. */
+export async function closePortfolio(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("portfolios")
+    .update({ closed_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
   await refreshPortfolios();
 }
 

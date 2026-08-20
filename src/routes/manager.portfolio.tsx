@@ -10,6 +10,7 @@ import {
   remapPortfolioFields,
   dpd2bucket,
   applyBulkPaidFile,
+  closePortfolio,
   PRODUCT_LABEL_TO_ENUM,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
@@ -42,6 +43,7 @@ import {
   UserPlus,
   Wand2,
   Landmark,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCsv } from "@/lib/csv-export";
@@ -75,6 +77,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn, parseCsvLine } from "@/lib/utils";
 import { normHeader } from "@/lib/column-mapper";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
@@ -205,10 +208,15 @@ function EditPortfolioDialog({
   portfolio,
   agents,
   onClose,
+  onArchived,
 }: {
   portfolio: UploadedPortfolio | null;
   agents: AgentRef[];
   onClose: () => void;
+  /** Fired after the portfolio is successfully archived (see the Delete Portfolio danger zone
+   * below) — the page closes this dialog and, if the same portfolio's detail drawer happens to
+   * be open, closes that too. */
+  onArchived: () => void;
 }) {
   const [name, setName] = useState("");
   const [lender, setLender] = useState("");
@@ -219,6 +227,7 @@ function EditPortfolioDialog({
   const [csvKey, setCsvKey] = useState(0); // bumped to remount CsvImportStep after a successful import
   const [csvResult, setCsvResult] = useState<CsvImportResult | null>(null);
   const [importing, setImporting] = useState(false);
+  const [removeMissing, setRemoveMissing] = useState(false);
   const [remap, setRemap] = useState<Record<StdFieldKey, string>>(identityRemap);
   const [remapConfirmOpen, setRemapConfirmOpen] = useState(false);
   const [remapping, setRemapping] = useState(false);
@@ -230,6 +239,8 @@ function EditPortfolioDialog({
   const [manualDpd, setManualDpd] = useState("");
   const [manualEmail, setManualEmail] = useState("");
   const [addingManual, setAddingManual] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Re-seed local state whenever a different portfolio is opened for editing
   useEffect(() => {
@@ -244,6 +255,8 @@ function EditPortfolioDialog({
     setCsvKey((k) => k + 1);
     setRemap(identityRemap());
     setAddMode("csv");
+    setRemoveMissing(false);
+    setDeleteConfirmOpen(false);
     setManualName("");
     setManualPhone("");
     setManualLoanRef("");
@@ -289,20 +302,42 @@ function EditPortfolioDialog({
     if (!csvResult || !csvResult.valid || csvResult.rows.length === 0) return;
     setImporting(true);
     try {
-      const { updated, added, skipped } = await mergePortfolioRows(portfolio.id, csvResult.rows);
+      const { updated, added, skipped, removed } = await mergePortfolioRows(
+        portfolio.id,
+        csvResult.rows,
+        { removeMissing },
+      );
       // Learn this bank's mapping so a future upload/re-upload auto-applies it, same as the wizard.
       await saveTemplate(lender, csvResult.rawHeaders, csvResult.mapping);
       toast.success(
         `${updated} account${updated === 1 ? "" : "s"} updated, ${added} added` +
+          (removed > 0 ? `, ${removed} removed (not in this file)` : "") +
           (skipped > 0 ? `, ${skipped} skipped (missing name or phone)` : ""),
         { description: portfolio.name },
       );
       setCsvResult(null);
       setCsvKey((k) => k + 1);
+      setRemoveMissing(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to import accounts");
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleteConfirmOpen(false);
+    setDeleting(true);
+    try {
+      await closePortfolio(portfolio.id);
+      toast.success(`"${portfolio.name}" archived`, {
+        description: "Hidden from Portfolio Overview — all history is kept.",
+      });
+      onArchived();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to archive portfolio");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -549,19 +584,39 @@ function EditPortfolioDialog({
                 <>
                   <p className="-mt-1 text-[11px] text-muted-foreground">
                     Upload a CSV to add new accounts or update existing ones — matched by Loan /
-                    Account ID. Nothing is deleted or reassigned.
+                    Account ID. Nothing is reassigned, and nothing is removed unless you turn that
+                    on below.
                   </p>
                   <CsvImportStep key={csvKey} lenderName={lender} onChange={setCsvResult} />
                   {csvResult && csvResult.rows.length > 0 && (
-                    <Button
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={!csvResult.valid || importing}
-                      onClick={handleImport}
-                    >
-                      {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                      Import {csvResult.rows.length} Account{csvResult.rows.length === 1 ? "" : "s"}
-                    </Button>
+                    <>
+                      <label className="flex items-start gap-2 rounded-md border border-border p-2.5">
+                        <Checkbox
+                          checked={removeMissing}
+                          onCheckedChange={(c) => setRemoveMissing(c === true)}
+                          className="mt-0.5"
+                        />
+                        <span className="text-[11px] text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            Also remove accounts not in this file
+                          </span>{" "}
+                          — treats this upload as the full, authoritative list. Any existing account
+                          here whose Loan / Account ID doesn't appear in it (including one added by
+                          hand via "Add One") gets soft-removed — recoverable from Removed Accounts,
+                          not permanently deleted.
+                        </span>
+                      </label>
+                      <Button
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={!csvResult.valid || importing}
+                        onClick={handleImport}
+                      >
+                        {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        Import {csvResult.rows.length} Account
+                        {csvResult.rows.length === 1 ? "" : "s"}
+                      </Button>
+                    </>
                   )}
                 </>
               ) : (
@@ -711,6 +766,31 @@ function EditPortfolioDialog({
             )}
           </div>
 
+          <div className="space-y-1.5 rounded-md border border-destructive/30 p-3">
+            <div className="text-xs font-semibold text-destructive uppercase tracking-wider">
+              Danger Zone
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Archives {portfolio.name} — hides it from Portfolio Overview and drops its remaining
+              accounts from the active call queue. All debtor, call, and payment history is kept and
+              this is reversible; it does not permanently delete anything.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteConfirmOpen(true)}
+              disabled={deleting}
+              className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              {deleting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              Delete Portfolio
+            </Button>
+          </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" size="sm" onClick={onClose}>
               Cancel
@@ -738,6 +818,22 @@ function EditPortfolioDialog({
             <AlertDialogAction onClick={handleRemap}>
               Yes, remap {portfolio.rows.length} accounts
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete "{portfolio.name}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This archives the portfolio — it disappears from Portfolio Overview and its remaining
+              accounts stop being called, but nothing is permanently deleted. All debtor, call, and
+              payment history stays intact.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete}>Yes, delete portfolio</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -997,12 +1093,16 @@ function PortfolioOverviewPage() {
   const [editTarget, setEditTarget] = useState<UploadedPortfolio | null>(null);
   const [bulkPaidTarget, setBulkPaidTarget] = useState<UploadedPortfolio | null>(null);
   const [rawPortfolios, setRawPortfolios] = useState<UploadedPortfolio[]>(() =>
-    getPortfolios().filter((p) => p.managerId === managerId && p.teamId === activeTeam?.id),
+    getPortfolios().filter(
+      (p) => p.managerId === managerId && p.teamId === activeTeam?.id && !p.closedAt,
+    ),
   );
 
   const reload = () =>
     setRawPortfolios(
-      getPortfolios().filter((p) => p.managerId === managerId && p.teamId === activeTeam?.id),
+      getPortfolios().filter(
+        (p) => p.managerId === managerId && p.teamId === activeTeam?.id && !p.closedAt,
+      ),
     );
   useEffect(() => {
     reload();
@@ -1342,6 +1442,10 @@ function PortfolioOverviewPage() {
         portfolio={editTarget}
         agents={agents}
         onClose={() => setEditTarget(null)}
+        onArchived={() => {
+          if (selected && editTarget && selected.id === editTarget.id) setSelected(null);
+          setEditTarget(null);
+        }}
       />
       <BulkPaidUploadDialog portfolio={bulkPaidTarget} onClose={() => setBulkPaidTarget(null)} />
     </div>
