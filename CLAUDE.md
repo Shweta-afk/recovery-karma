@@ -359,9 +359,10 @@ await saveDisposition({ ...data });
   different, older backend** (Cloudflare Workers + D1 SQLite, React 18, "no global store").
   None of that is true of the current app (Railway/Node + Supabase, React 19, the store-file
   pattern above). Don't use them for architecture questions.
-- `API_REQUIREMENTS.md`, `ENVIRONMENT_SETUP.md`, `STAGING_TEST_SETUP.md`,
-  `TELEPHONY_IMPLEMENTATION_PLAN.md`, `WEEK3_SUMMARY.md`, `PRODUCTION_DEPLOYMENT.md`,
-  `PRODUCTION_RUNBOOK.md`, `QA_CHECKLIST_PRODUCTION.md` — written around the since-removed
-  Tata SmartFlo integration; mostly stale for the same reason.
+- `docs/archive/tata-smartflo-2026-07/` — 8 docs (`API_REQUIREMENTS.md`,
+  `ENVIRONMENT_SETUP.md`, `STAGING_TEST_SETUP.md`, `TELEPHONY_IMPLEMENTATION_PLAN.md`,
+  `WEEK3_SUMMARY.md`, `PRODUCTION_DEPLOYMENT.md`, `PRODUCTION_RUNBOOK.md`,
+  `QA_CHECKLIST_PRODUCTION.md`) written around the since-removed Tata SmartFlo integration —
+  archived 2026-08-20, historical reference only, don't follow their setup/deploy steps.
 - `AGENTS.md` — accurate (a short Lovable.dev git-history warning; this project is still
   connected to Lovable, so avoid force-pushing/rewriting published history on `main`).
