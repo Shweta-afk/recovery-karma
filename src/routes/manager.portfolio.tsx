@@ -105,6 +105,7 @@ import {
 import { cn, parseCsvLine } from "@/lib/utils";
 import { normHeader } from "@/lib/column-mapper";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
+import { OUTCOME_META } from "@/lib/call-queue/types";
 import { useManagerTeamAgents, getAgentById, type AgentRef } from "@/lib/team-store";
 import {
   getAgentDispositions,
@@ -158,17 +159,6 @@ const DIALER_MODE_LABEL: Record<string, string> = {
   preview: "Preview Dial",
   power: "Power Dial",
   manual: "Manual",
-};
-
-const OUTCOME_LABEL: Record<CallOutcome, string> = {
-  paid: "Paid",
-  promised: "PTP",
-  refused: "Refused",
-  no_answer: "No Answer",
-  callback: "Callback",
-  voicemail: "Voicemail",
-  dispute: "Dispute",
-  settlement: "Settlement",
 };
 
 /* ─── helpers ────────────────────────────────────────────────────────────── */
@@ -869,7 +859,7 @@ function CallActivitySection({
                     key={outcome}
                     className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-foreground"
                   >
-                    {OUTCOME_LABEL[outcome]} {outcomeCounts[outcome]}
+                    {OUTCOME_META[outcome].label} {outcomeCounts[outcome]}
                     <span className="ml-1 text-muted-foreground">
                       ({Math.round(((outcomeCounts[outcome] ?? 0) / total) * 100)}%)
                     </span>
