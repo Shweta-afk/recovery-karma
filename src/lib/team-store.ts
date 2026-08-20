@@ -12,6 +12,12 @@ export interface AgentRef {
   name: string;
   email: string;
   role: "agent" | "manager";
+  // Short auto-generated identifier (AGT-0001, MGR-0002, ...) — see
+  // migrations/20260820_agent_code.sql. Preferred match key for mapping-CSV
+  // "agent" cells since it's exact by construction, unlike name (spelling
+  // variants, duplicate names) or email (easy to mistype/paste wrong).
+  // Null only for rows inserted before that migration ran and not yet backfilled.
+  agentCode: string | null;
 }
 
 const ROSTER_KEY = "recoveryai_roster_cache";
@@ -32,7 +38,7 @@ export function getAgentById(id: string): AgentRef | undefined {
 export async function refreshRoster(): Promise<void> {
   const { data, error } = await supabase
     .from("agents")
-    .select("email, name, role")
+    .select("email, name, role, agent_code")
     .in("role", ["agent", "manager"]);
   if (error || !data) return;
   const roster: AgentRef[] = data.map((a) => ({
@@ -40,6 +46,7 @@ export async function refreshRoster(): Promise<void> {
     name: a.name,
     email: a.email,
     role: a.role as "agent" | "manager",
+    agentCode: a.agent_code,
   }));
   localStorage.setItem(ROSTER_KEY, JSON.stringify(roster));
   window.dispatchEvent(new CustomEvent("roster-updated"));

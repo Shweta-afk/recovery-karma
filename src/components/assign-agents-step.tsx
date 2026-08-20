@@ -43,7 +43,8 @@ const AGENT_ID_HEADERS = new Set([
   "agentemail",
   "email",
   "agent",
-  "agent_email_or_name", // normHeader() of the "agent (email or name)" label used in the UI/template
+  "agent_email_or_name", // normHeader() of the old "agent (email or name)" label — pre-Agent ID templates
+  "agent_id_email_or_name", // normHeader() of the current "agent (ID, email, or name)" label
 ]);
 
 export interface AssignAgentsStepProps {
@@ -127,7 +128,7 @@ export function AssignAgentsStep({
       ),
   );
 
-  // CSV mode — loan_id → agent (email or name) mapping file
+  // CSV mode — loan_id → agent (ID, email, or name) mapping file
   const csvFileInputRef = useRef<HTMLInputElement>(null);
   const [csvFileName, setCsvFileName] = useState("");
   const [csvAllocation, setCsvAllocation] = useState<Record<string, string[]>>({});
@@ -202,7 +203,7 @@ export function AssignAgentsStep({
       const agentIdx = headers.findIndex((h) => AGENT_ID_HEADERS.has(h));
       if (loanIdx === -1 || agentIdx === -1) {
         setCsvError(
-          `CSV must include a "loan_id" column and an "agent (email or name)" column (found: ${headers.join(", ") || "none"})`,
+          `CSV must include a "loan_id" column and an "agent (ID, email, or name)" column (found: ${headers.join(", ") || "none"})`,
         );
         return;
       }
@@ -212,6 +213,9 @@ export function AssignAgentsStep({
       );
       const agentIdByKey = new Map<string, string>();
       agents.forEach((a) => {
+        // Agent Code first (exact by construction), email/name still work as a fallback for
+        // CSVs built before Agent ID existed, or built from name only.
+        if (a.agentCode) agentIdByKey.set(a.agentCode.trim().toLowerCase(), a.id);
         agentIdByKey.set(a.id.trim().toLowerCase(), a.id);
         agentIdByKey.set(a.name.trim().toLowerCase(), a.id);
       });
@@ -257,8 +261,11 @@ export function AssignAgentsStep({
   const downloadCsvTemplate = () => {
     downloadCsv(
       "assignment-template.csv",
-      ["loan_id", "agent (email or name)"],
-      rows.slice(0, 10).map((r, i) => [r.loanReference, agents[i % agents.length]?.id ?? ""]),
+      ["loan_id", "agent (ID, email, or name)"],
+      rows.slice(0, 10).map((r, i) => {
+        const a = agents[i % agents.length];
+        return [r.loanReference, a?.agentCode ?? a?.id ?? ""];
+      }),
     );
   };
 
@@ -349,7 +356,7 @@ export function AssignAgentsStep({
               <span className="text-sm font-semibold text-foreground">CSV Upload</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Upload a loan_id → agent (email or name) mapping file.
+              Upload a loan_id → agent (ID, email, or name) mapping file.
             </p>
           </button>
         </div>
@@ -365,7 +372,10 @@ export function AssignAgentsStep({
               <p className="text-xs text-muted-foreground">
                 Two columns: <code className="rounded bg-muted px-1 py-0.5">loan_id</code> (matches
                 each account's Loan / Account ID) and{" "}
-                <code className="rounded bg-muted px-1 py-0.5">agent (email or name)</code>.
+                <code className="rounded bg-muted px-1 py-0.5">agent (ID, email, or name)</code>.
+                Agent ID (e.g. <code className="rounded bg-muted px-1 py-0.5">AGT-0001</code>, shown
+                next to each agent in Team Activity or Admin → Users) is the most reliable — name
+                matching breaks on spelling variants or duplicate names.
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input

@@ -387,6 +387,11 @@ function TeamActivityPage() {
                             </div>
                             <div className="text-[10px] text-muted-foreground truncate">
                               {agent.email}
+                              {agent.agentCode && (
+                                <span className="ml-1.5 font-mono opacity-70">
+                                  · {agent.agentCode}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>

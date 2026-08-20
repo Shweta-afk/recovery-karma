@@ -65,6 +65,9 @@ interface AgentRow {
   role: Role;
   agent_phone: string | null; // Phone/extension registered with the telephony provider
   provider_agent_id: string | null; // Provider's internal agent ID
+  // Short auto-generated identifier (AGT-0001, ...) — see migrations/20260820_agent_code.sql.
+  // The preferred match key in Portfolio Upload's "Assign Agents" mapping CSV.
+  agent_code: string | null;
   created_at: string;
 }
 
@@ -95,7 +98,9 @@ function AdminUsersPage() {
     setError(null);
     const { data, error: err } = await supabase
       .from("agents")
-      .select("id, auth_user_id, name, email, role, agent_phone, provider_agent_id, created_at")
+      .select(
+        "id, auth_user_id, name, email, role, agent_phone, provider_agent_id, agent_code, created_at",
+      )
       .order("created_at", { ascending: false });
 
     if (err) {
@@ -301,9 +306,7 @@ function AdminUsersPage() {
       {editAgent && (
         <EditUserDialog agent={editAgent} onClose={() => setEditAgent(null)} onSaved={load} />
       )}
-      {resetAgent && (
-        <ResetPasswordDialog agent={resetAgent} onClose={() => setResetAgent(null)} />
-      )}
+      {resetAgent && <ResetPasswordDialog agent={resetAgent} onClose={() => setResetAgent(null)} />}
     </div>
   );
 }
@@ -357,6 +360,11 @@ function UserRow({
               )}
             </div>
             <div className="text-xs text-muted-foreground truncate">{agent.email}</div>
+            {agent.agent_code && (
+              <div className="text-[10px] font-mono text-muted-foreground/70 truncate">
+                {agent.agent_code}
+              </div>
+            )}
           </div>
         </div>
       </td>
@@ -426,6 +434,18 @@ function UserRow({
                 <Mail className="h-3.5 w-3.5" />
                 Copy Email
               </DropdownMenuItem>
+              {agent.agent_code && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    navigator.clipboard?.writeText(agent.agent_code!);
+                    toast.success("Agent ID copied");
+                  }}
+                  className="text-xs gap-2"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy Agent ID
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={onResetPassword} className="text-xs gap-2">
                 <KeyRound className="h-3.5 w-3.5" />
                 {agent.auth_user_id ? "Reset Password" : "Create Login"}
@@ -540,7 +560,8 @@ function InviteDialog({
             <div className="space-y-3 py-1">
               <p className="text-xs text-muted-foreground">
                 This password is shown once — share it with {created.name} securely. They can sign
-                in immediately at <span className="font-medium text-foreground">{created.email}</span>.
+                in immediately at{" "}
+                <span className="font-medium text-foreground">{created.email}</span>.
               </p>
               <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
                 <code className="flex-1 text-sm font-mono">{created.password}</code>
@@ -620,7 +641,10 @@ function InviteDialog({
               {role === "agent" && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">Reports to (optional)</Label>
-                  <Select value={managerId || "none"} onValueChange={(v) => setManagerId(v === "none" ? "" : v)}>
+                  <Select
+                    value={managerId || "none"}
+                    onValueChange={(v) => setManagerId(v === "none" ? "" : v)}
+                  >
                     <SelectTrigger className="h-9 text-sm">
                       <SelectValue placeholder="No manager" />
                     </SelectTrigger>
@@ -755,11 +779,10 @@ function EditUserDialog({
               className="font-mono text-xs"
             />
             <p className="text-[11px] text-muted-foreground">
-              Whatever click-to-call rings for this agent — their personal number, or their
-              Exotel extension if they're set up as a user on the account (no personal phone
-              rings; calls come into the extension instead). Must match exactly what's
-              configured for them in the Exotel dashboard → Users, and must be unique — no two
-              agents can share one.
+              Whatever click-to-call rings for this agent — their personal number, or their Exotel
+              extension if they're set up as a user on the account (no personal phone rings; calls
+              come into the extension instead). Must match exactly what's configured for them in the
+              Exotel dashboard → Users, and must be unique — no two agents can share one.
             </p>
             {role === "agent" && !agentPhone.trim() && (
               <p className="text-[11px] text-destructive">
@@ -825,8 +848,8 @@ function ResetPasswordDialog({ agent, onClose }: { agent: AgentRow; onClose: () 
             </DialogHeader>
             <div className="space-y-3 py-1">
               <p className="text-xs text-muted-foreground">
-                Their old password no longer works. This is shown once — share it with{" "}
-                {agent.name} securely.
+                Their old password no longer works. This is shown once — share it with {agent.name}{" "}
+                securely.
               </p>
               <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
                 <code className="flex-1 text-sm font-mono">{password}</code>
