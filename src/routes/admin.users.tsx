@@ -754,6 +754,24 @@ function EditUserDialog({
             <Label className="text-xs">Email</Label>
             <Input value={agent.email} disabled className="opacity-60" />
           </div>
+          {agent.agent_code && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Agent ID</Label>
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+                <code className="flex-1 text-xs font-mono">{agent.agent_code}</code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(agent.agent_code!);
+                    toast.success("Agent ID copied");
+                  }}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label className="text-xs">Role</Label>
             <Select value={role} onValueChange={(v) => setRole(v as Role)}>
@@ -769,7 +787,7 @@ function EditUserDialog({
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">
-              Agent Number (Exotel)
+              Agent Number
               {role === "agent" && <span className="text-destructive"> *</span>}
             </Label>
             <Input
@@ -779,10 +797,11 @@ function EditUserDialog({
               className="font-mono text-xs"
             />
             <p className="text-[11px] text-muted-foreground">
-              Whatever click-to-call rings for this agent — their personal number, or their Exotel
-              extension if they're set up as a user on the account (no personal phone rings; calls
-              come into the extension instead). Must match exactly what's configured for them in the
-              Exotel dashboard → Users, and must be unique — no two agents can share one.
+              Whatever click-to-call rings for this agent — their personal number, or their
+              telephony-provider extension if they're set up as a user on the calling account (no
+              personal phone rings; calls come into the extension instead). Must match exactly
+              what's configured for them on the provider's side, and must be unique — no two agents
+              can share one.
             </p>
             {role === "agent" && !agentPhone.trim() && (
               <p className="text-[11px] text-destructive">
