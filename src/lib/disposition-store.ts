@@ -55,6 +55,17 @@ export interface DispositionRecord {
   /** Name of the manager/admin who last set `sentiment`, for display next to the tag. */
   auditedByName?: string;
   auditedAt?: string; // ISO
+  /** AI-suggested tone (Groq transcription + Gemini classification), triggered on-demand by a
+   * manager from Call Audit — separate from the manual `sentiment` tag above, which it never
+   * overwrites. Absent until analyzed, and always absent until
+   * 20260814_call_logs_ai_sentiment.sql has been applied. See call-sentiment-actions.server.ts. */
+  aiTranscript?: string;
+  aiAgentTone?: CallSentiment;
+  aiDebtorTone?: CallSentiment;
+  aiSentiment?: CallSentiment;
+  aiSentimentConfidence?: number;
+  aiSentimentReasoning?: string;
+  aiSentimentAnalyzedAt?: string; // ISO
   time: string; // ISO
 }
 
@@ -155,6 +166,14 @@ export async function refreshDispositions(): Promise<void> {
     audited_at?: string | null;
     // Optional: present only once 20260811_call_logs_outcome_reason.sql has been applied.
     outcome_reason?: string | null;
+    // Optional: present only once 20260814_call_logs_ai_sentiment.sql has been applied.
+    ai_transcript?: string | null;
+    ai_agent_tone?: string | null;
+    ai_debtor_tone?: string | null;
+    ai_sentiment?: string | null;
+    ai_sentiment_confidence?: number | string | null;
+    ai_sentiment_reasoning?: string | null;
+    ai_sentiment_analyzed_at?: string | null;
   };
 
   const disps: DispositionRecord[] = (logs as unknown as CallLogRow[]).map((l) => {
@@ -191,6 +210,14 @@ export async function refreshDispositions(): Promise<void> {
       sentiment: (l.sentiment as CallSentiment | null) ?? undefined,
       auditedByName: l.audited_by ? agentById.get(l.audited_by)?.name : undefined,
       auditedAt: l.audited_at ?? undefined,
+      aiTranscript: l.ai_transcript ?? undefined,
+      aiAgentTone: (l.ai_agent_tone as CallSentiment | null) ?? undefined,
+      aiDebtorTone: (l.ai_debtor_tone as CallSentiment | null) ?? undefined,
+      aiSentiment: (l.ai_sentiment as CallSentiment | null) ?? undefined,
+      aiSentimentConfidence:
+        l.ai_sentiment_confidence != null ? Number(l.ai_sentiment_confidence) : undefined,
+      aiSentimentReasoning: l.ai_sentiment_reasoning ?? undefined,
+      aiSentimentAnalyzedAt: l.ai_sentiment_analyzed_at ?? undefined,
       time: l.created_at,
     };
   });

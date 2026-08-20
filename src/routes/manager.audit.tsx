@@ -17,6 +17,8 @@ import {
   Angry,
   ShieldQuestion,
   PhoneCall,
+  Sparkles,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -37,6 +39,8 @@ import { bucketOf, BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { OUTCOME_META } from "@/lib/call-queue/types";
 import { useAuth } from "@/lib/auth";
 import { useManagerTeamAgents } from "@/lib/team-store";
+import { supabase } from "@/lib/supabase";
+import { analyzeCallSentiment } from "@/lib/call-sentiment-actions.server";
 import {
   getDispositions,
   refreshDispositions,
@@ -180,6 +184,158 @@ function SentimentPicker({
   );
 }
 
+/** AI-suggested tone — manager-triggered (never automatic), transcribes the recording via
+ * Groq and classifies tone via Gemini. Shown alongside, never in place of, the manual
+ * SentimentPicker above: this is a suggestion the manager can agree or disagree with. */
+function AiSentimentPanel({
+  call,
+  onAnalyzed,
+}: {
+  call: DispositionRecord;
+  onAnalyzed: (updated: DispositionRecord) => void;
+}) {
+  const [analyzing, setAnalyzing] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+
+  const handleAnalyze = async () => {
+    setAnalyzing(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — please sign in again");
+
+      const result = await analyzeCallSentiment({
+        data: { accessToken: session.access_token, callId: call.id },
+      });
+
+      onAnalyzed({
+        ...call,
+        aiTranscript: result.transcript,
+        aiAgentTone: result.agent_tone,
+        aiDebtorTone: result.debtor_tone,
+        aiSentiment: result.overall_call_sentiment,
+        aiSentimentConfidence: result.confidence,
+        aiSentimentReasoning: result.reasoning,
+        aiSentimentAnalyzedAt: new Date().toISOString(),
+      });
+      toast.success("AI sentiment analysis complete");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "AI analysis failed");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  if (!call.aiSentiment) {
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4">
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          disabled={analyzing || !call.recordingUrl}
+          onClick={handleAnalyze}
+        >
+          {analyzing ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="h-3.5 w-3.5" />
+          )}
+          {analyzing ? "Transcribing & analyzing…" : "Analyze with AI"}
+        </Button>
+        {!call.recordingUrl && (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Needs a recording to analyze — none available for this call yet.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-2.5">
+      <div className="flex items-center justify-between">
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground">
+          <Sparkles className="h-3.5 w-3.5 text-primary" />
+          AI Suggested Sentiment
+        </span>
+        {call.aiSentimentAnalyzedAt && (
+          <span className="text-[10px] text-muted-foreground">
+            {fmtDateTime(call.aiSentimentAnalyzedAt).date}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: "Agent", tone: call.aiAgentTone },
+          { label: "Debtor", tone: call.aiDebtorTone },
+          { label: "Overall", tone: call.aiSentiment },
+        ].map(({ label, tone }) => {
+          const toneMeta = tone ? SENTIMENT_META[tone] : undefined;
+          return (
+            <div key={label} className="text-center">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {label}
+              </div>
+              <div
+                className={cn(
+                  "mt-0.5 text-xs font-semibold capitalize",
+                  toneMeta ? toneMeta.cls.split(" ").find((c) => c.startsWith("text-")) : "",
+                )}
+              >
+                {toneMeta?.label ?? "—"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {call.aiSentimentConfidence != null && (
+        <p className="text-[11px] text-muted-foreground">
+          Confidence: {Math.round(call.aiSentimentConfidence * 100)}%
+        </p>
+      )}
+      {call.aiSentimentReasoning && (
+        <p className="text-xs text-foreground leading-relaxed">{call.aiSentimentReasoning}</p>
+      )}
+
+      {call.aiTranscript && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowTranscript((p) => !p)}
+            className="text-[11px] text-primary hover:underline"
+          >
+            {showTranscript ? "Hide transcript" : "Show transcript"}
+          </button>
+          {showTranscript && (
+            <div className="mt-2 max-h-48 overflow-auto rounded-md bg-muted/30 p-2.5 text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
+              {call.aiTranscript}
+            </div>
+          )}
+        </div>
+      )}
+
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 gap-1.5 text-[11px] text-muted-foreground"
+        disabled={analyzing}
+        onClick={handleAnalyze}
+      >
+        {analyzing ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <Sparkles className="h-3 w-3" />
+        )}
+        Re-analyze
+      </Button>
+    </div>
+  );
+}
+
 function CallDetailSheet({
   call,
   managerEmail,
@@ -271,6 +427,10 @@ function CallDetailSheet({
           </div>
           <SentimentPicker value={call.sentiment} onPick={handlePick} saving={saving} size="lg" />
         </div>
+      </div>
+
+      <div className="px-6 pb-4">
+        <AiSentimentPanel call={call} onAnalyzed={onSentimentSaved} />
       </div>
 
       <div className="flex-1 overflow-auto px-6 py-4">
