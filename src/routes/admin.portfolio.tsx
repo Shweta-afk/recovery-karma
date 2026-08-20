@@ -27,7 +27,7 @@ import {
   refreshPortfolios,
   type UploadedPortfolio,
 } from "@/lib/portfolio-store";
-import { useRoster, getTeamByManager } from "@/lib/team-store";
+import { useRoster, useTeams, getTeamsByManager } from "@/lib/team-store";
 import { saveNotification } from "@/lib/notification-store";
 import { useAuth } from "@/lib/auth";
 import { useStorageSync } from "@/lib/storage-sync";
@@ -56,9 +56,13 @@ function PortfolioAssignmentPage() {
   const adminName = user?.name ?? "Admin";
   const roster = useRoster();
   const MANAGERS = roster.filter((a) => a.role === "manager");
+  useTeams(); // keeps getTeamsByManager's cache fresh for the picker below
 
   const [portfolios, setPortfolios] = useState<UploadedPortfolio[]>(() => getPortfolios());
   const [pending, setPending] = useState<Record<string, string>>({}); // portfolioId -> selected managerId (uncommitted)
+  // portfolioId -> selected teamId (uncommitted) — only needed when the chosen manager owns
+  // more than one team, since getTeamsByManager can no longer be collapsed to a single pick.
+  const [pendingTeam, setPendingTeam] = useState<Record<string, string>>({});
   const [viewing, setViewing] = useState<UploadedPortfolio | null>(null);
 
   const reload = () => setPortfolios(getPortfolios());
@@ -86,7 +90,18 @@ function PortfolioAssignmentPage() {
     const manager = MANAGERS.find((m) => m.id === managerId);
     if (!manager) return;
 
-    const team = getTeamByManager(managerId);
+    const candidateTeams = getTeamsByManager(managerId);
+    if (candidateTeams.length > 1 && !pendingTeam[portfolio.id]) {
+      toast.error(
+        `${manager.name} manages multiple teams — pick which one this portfolio belongs to`,
+      );
+      return;
+    }
+    const team =
+      candidateTeams.length > 1
+        ? candidateTeams.find((t) => t.id === pendingTeam[portfolio.id])
+        : candidateTeams[0];
+
     setAssigning(portfolio.id);
     try {
       await updatePortfolioMeta(portfolio.id, { managerId, teamId: team?.id });
@@ -97,6 +112,11 @@ function PortfolioAssignmentPage() {
       });
       toast.success(`Assigned "${portfolio.name}" to ${manager.name} and sent a notification.`);
       setPending((p) => {
+        const next = { ...p };
+        delete next[portfolio.id];
+        return next;
+      });
+      setPendingTeam((p) => {
         const next = { ...p };
         delete next[portfolio.id];
         return next;
@@ -156,6 +176,9 @@ function PortfolioAssignmentPage() {
                       month: "short",
                       year: "numeric",
                     });
+                    const rowManagerId = pending[p.id] ?? p.managerId ?? "";
+                    const rowTeams = rowManagerId ? getTeamsByManager(rowManagerId) : [];
+                    const needsTeamPick = rowTeams.length > 1 && !pendingTeam[p.id];
                     return (
                       <TableRow key={p.id}>
                         <TableCell>
@@ -195,10 +218,17 @@ function PortfolioAssignmentPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <Select
                               value={pending[p.id] ?? p.managerId ?? ""}
-                              onValueChange={(v) => setPending((prev) => ({ ...prev, [p.id]: v }))}
+                              onValueChange={(v) => {
+                                setPending((prev) => ({ ...prev, [p.id]: v }));
+                                setPendingTeam((prev) => {
+                                  const next = { ...prev };
+                                  delete next[p.id];
+                                  return next;
+                                });
+                              }}
                             >
                               <SelectTrigger className="h-8 w-44 text-xs">
                                 <SelectValue placeholder="Select manager…" />
@@ -214,13 +244,38 @@ function PortfolioAssignmentPage() {
                                 ))}
                               </SelectContent>
                             </Select>
+                            {rowTeams.length > 1 && (
+                              <Select
+                                value={pendingTeam[p.id] ?? p.teamId ?? ""}
+                                onValueChange={(v) =>
+                                  setPendingTeam((prev) => ({ ...prev, [p.id]: v }))
+                                }
+                              >
+                                <SelectTrigger className="h-8 w-40 text-xs">
+                                  <SelectValue placeholder="Which team?" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {rowTeams.map((t) => (
+                                    <SelectItem key={t.id} value={t.id}>
+                                      {t.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
                             <Button
                               size="sm"
                               className="h-8 gap-1 text-xs flex-shrink-0"
                               disabled={
                                 !pending[p.id] ||
-                                pending[p.id] === p.managerId ||
+                                needsTeamPick ||
+                                (pending[p.id] === p.managerId && !needsTeamPick) ||
                                 assigning === p.id
+                              }
+                              title={
+                                needsTeamPick
+                                  ? "Pick which team this portfolio belongs to"
+                                  : undefined
                               }
                               onClick={() => assignAndNotify(p)}
                             >

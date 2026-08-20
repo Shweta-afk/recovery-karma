@@ -11,6 +11,8 @@ import {
   Check,
   Loader2,
   X,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,11 +29,12 @@ import {
 import { useAuth } from "@/lib/auth";
 import {
   useManagerTeamAgents,
-  getTeamByManager,
   useTeams,
   useRoster,
   getTeams,
   saveTeam,
+  deleteTeam,
+  MAX_TEAMS_PER_MANAGER,
   type Team,
   type AgentRef,
 } from "@/lib/team-store";
@@ -136,9 +139,34 @@ function TeamActivityPage() {
   const managerId = user?.email ?? user?.id ?? "";
   const managerName = user?.name ?? "Manager";
   const agents = useManagerTeamAgents(managerId);
-  useTeams(); // keeps getTeamByManager's cache fresh for the name lookup below
-  const team = getTeamByManager(managerId);
+  const allTeams = useTeams();
+  const teams = useMemo(
+    () => allTeams.filter((t) => t.managerId === managerId),
+    [allTeams, managerId],
+  );
   const [showManage, setShowManage] = useState(false);
+  const [editingTeam, setEditingTeam] = useState<Team | undefined>(undefined);
+  const [deletingTeamId, setDeletingTeamId] = useState<string | null>(null);
+
+  const openCreateTeam = () => {
+    setEditingTeam(undefined);
+    setShowManage(true);
+  };
+  const openEditTeam = (t: Team) => {
+    setEditingTeam(t);
+    setShowManage(true);
+  };
+  const handleDeleteTeam = async (id: string, name: string) => {
+    setDeletingTeamId(id);
+    try {
+      await deleteTeam(id);
+      toast.success(`Team "${name}" removed`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remove team");
+    } finally {
+      setDeletingTeamId(null);
+    }
+  };
 
   const allDisps = useAllDispositions();
   const [sortKey, setSortKey] = useState<SortKey>("calling");
@@ -222,22 +250,64 @@ function TeamActivityPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Team Activity</h1>
           <p className="text-sm text-muted-foreground">
-            {team ? team.name : "Roster and today's performance for your team."}
+            {teams.length > 0
+              ? `${teams.length} team${teams.length === 1 ? "" : "s"} · ${agents.length} agent${agents.length === 1 ? "" : "s"} total`
+              : "Roster and today's performance for your team."}
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <span
-            className="flex items-center gap-1.5 text-xs text-muted-foreground rounded-lg border border-border bg-card px-2.5 py-1.5"
-            title="Calling time is real, from logged calls. Ringing, idle, disposition, break and login/logout times are estimated — real presence tracking is coming soon."
+        <span
+          className="flex items-center gap-1.5 text-xs text-muted-foreground rounded-lg border border-border bg-card px-2.5 py-1.5"
+          title="Calling time is real, from logged calls. Ringing, idle, disposition, break and login/logout times are estimated — real presence tracking is coming soon."
+        >
+          <Info className="h-3.5 w-3.5 flex-shrink-0" />
+          Ringing/idle/disposition/break/login times are estimated
+        </span>
+      </div>
+
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {teams.map((t) => (
+          <div
+            key={t.id}
+            className="flex items-center gap-1 rounded-lg border border-border bg-card pl-2.5 pr-1.5 py-1 text-xs"
           >
-            <Info className="h-3.5 w-3.5 flex-shrink-0" />
-            Ringing/idle/disposition/break/login times are estimated
-          </span>
-          <Button className="gap-1.5 shrink-0" onClick={() => setShowManage(true)}>
-            <Settings2 className="h-3.5 w-3.5" />
-            {team ? "Manage Team" : "Create Team"}
+            <button
+              type="button"
+              onClick={() => openEditTeam(t)}
+              className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition-colors"
+            >
+              <Users className="h-3 w-3 text-muted-foreground" />
+              {t.name}
+              <span className="font-normal text-muted-foreground">({t.agentIds.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDeleteTeam(t.id, t.name)}
+              disabled={deletingTeamId === t.id}
+              title={`Remove ${t.name}`}
+              className="p-0.5 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+            >
+              {deletingTeamId === t.id ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Trash2 className="h-3 w-3" />
+              )}
+            </button>
+          </div>
+        ))}
+        {teams.length < MAX_TEAMS_PER_MANAGER ? (
+          <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={openCreateTeam}>
+            {teams.length === 0 ? (
+              <Settings2 className="h-3.5 w-3.5" />
+            ) : (
+              <Plus className="h-3.5 w-3.5" />
+            )}
+            {teams.length === 0 ? "Create Team" : "Add Team"}
           </Button>
-        </div>
+        ) : (
+          <span className="text-[11px] text-muted-foreground px-1">
+            Max {MAX_TEAMS_PER_MANAGER} teams
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
@@ -259,9 +329,9 @@ function TeamActivityPage() {
             <Users className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
             <p className="text-sm font-medium text-foreground">No agents on your team yet</p>
             <p className="text-xs text-muted-foreground mt-1">
-              {team
-                ? "Add agents to your team with Manage Team above."
-                : "Create your team and add agents to see their activity here."}
+              {teams.length > 0
+                ? "Add agents to a team above."
+                : "Create a team and add agents to see their activity here."}
             </p>
           </CardContent>
         </Card>
@@ -361,7 +431,8 @@ function TeamActivityPage() {
       <ManageTeamDialog
         open={showManage}
         onClose={() => setShowManage(false)}
-        team={team}
+        team={editingTeam}
+        existingTeamCount={teams.length}
         managerId={managerId}
         managerName={managerName}
       />
@@ -371,26 +442,34 @@ function TeamActivityPage() {
 
 // ─── Manage team dialog ──────────────────────────────────────────────────────
 // Same shape as admin.teams.tsx's CreateTeamDialog, minus the manager picker — a manager can
-// only ever manage their own team. RLS (20260806_managers_write_own_team.sql) enforces that
-// server-side; this dialog just can't offer anything else.
+// only ever manage their own team(s). RLS (20260806_managers_write_own_team.sql) enforces that
+// server-side; this dialog just can't offer anything else. Doubles as both the create-team and
+// edit-team form — `team` undefined means create (saveTeam upserts on a fresh id either way),
+// enforced up to MAX_TEAMS_PER_MANAGER by saveTeam() itself.
 
 function ManageTeamDialog({
   open,
   onClose,
   team,
+  existingTeamCount,
   managerId,
   managerName,
 }: {
   open: boolean;
   onClose: () => void;
   team: Team | undefined;
+  existingTeamCount: number;
   managerId: string;
   managerName: string;
 }) {
   const roster = useRoster();
   const AGENTS = roster.filter((r) => r.role === "agent");
 
-  const [name, setName] = useState(team?.name ?? `${managerName}'s Team`);
+  // First team ever created for this manager defaults to a friendly name; subsequent ones are
+  // left blank so a second/third/fourth team doesn't silently default to the same name.
+  const defaultName = () => (existingTeamCount > 0 ? "" : `${managerName}'s Team`);
+
+  const [name, setName] = useState(team?.name ?? defaultName());
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(
     () => new Set(team?.agentIds ?? []),
   );
@@ -400,9 +479,10 @@ function ManageTeamDialog({
   // Reset to the current team's state each time the dialog opens, not just on mount.
   useEffect(() => {
     if (!open) return;
-    setName(team?.name ?? `${managerName}'s Team`);
+    setName(team?.name ?? defaultName());
     setSelectedAgentIds(new Set(team?.agentIds ?? []));
     setAgentSearch("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, team, managerName]);
 
   // Agents already on someone else's team are hidden from the picker — same exclusivity the

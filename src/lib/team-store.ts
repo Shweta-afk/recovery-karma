@@ -68,6 +68,12 @@ export interface Team {
   createdAt: string;
 }
 
+/** A manager can own more than one team (e.g. split by portfolio/vertical) — capped so the
+ * team switcher on Team Activity and the picker on Portfolio Upload stay usable. Enforced in
+ * saveTeam() so the cap holds regardless of whether the team is created by the manager
+ * themselves or by an admin via admin.teams.tsx. */
+export const MAX_TEAMS_PER_MANAGER = 4;
+
 const TEAMS_KEY = "recoveryai_teams_cache";
 
 /** Synchronous read of the cache — same cache-first pattern as getRoster(). */
@@ -124,6 +130,15 @@ export function useTeams(): Team[] {
 }
 
 export async function saveTeam(t: Team): Promise<void> {
+  const existingForManager = getTeams().filter(
+    (team) => team.managerId === t.managerId && team.id !== t.id,
+  );
+  if (existingForManager.length >= MAX_TEAMS_PER_MANAGER) {
+    throw new Error(
+      `${t.managerName || "This manager"} already manages the maximum of ${MAX_TEAMS_PER_MANAGER} teams`,
+    );
+  }
+
   const { data: agentRows } = await supabase.from("agents").select("id, email");
   const emailToId = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
   const managerAgentId = emailToId.get(t.managerId);
@@ -160,8 +175,17 @@ export async function deleteTeam(id: string): Promise<void> {
   await refreshTeams();
 }
 
+/** Any one of this manager's teams — a manager can own up to MAX_TEAMS_PER_MANAGER teams, and
+ * this just returns whichever one getTeams() happens to return first. Fine for call sites that
+ * only need "a" team (e.g. a display fallback); anything that needs the manager's full team
+ * list or full agent pool should use getTeamsByManager()/getManagerTeamAgents() instead. */
 export function getTeamByManager(managerId: string): Team | undefined {
   return getTeams().find((t) => t.managerId === managerId);
+}
+
+/** Every team this manager owns, in no particular order. */
+export function getTeamsByManager(managerId: string): Team[] {
+  return getTeams().filter((t) => t.managerId === managerId);
 }
 
 export function getTeamByAgent(agentId: string): Team | undefined {
@@ -179,11 +203,22 @@ export async function getAdminEmails(): Promise<string[]> {
   return data.map((a) => a.email as string);
 }
 
-/** Agents belonging to this manager's own team — [] if they have no team yet, never "everyone". */
+/** Agents belonging to any of this manager's teams — unions agentIds across all of them
+ * (dedup'd) rather than just the first team, since a manager can own more than one. [] if they
+ * have no team yet, never "everyone". */
 export function getManagerTeamAgents(managerId: string): AgentRef[] {
-  const team = getTeamByManager(managerId);
-  if (!team) return [];
-  return team.agentIds.map(getAgentById).filter((a): a is AgentRef => !!a);
+  const teams = getTeamsByManager(managerId);
+  const seen = new Set<string>();
+  const agents: AgentRef[] = [];
+  for (const team of teams) {
+    for (const agentId of team.agentIds) {
+      if (seen.has(agentId)) continue;
+      seen.add(agentId);
+      const agent = getAgentById(agentId);
+      if (agent) agents.push(agent);
+    }
+  }
+  return agents;
 }
 
 /** Reactive version of getManagerTeamAgents — updates when teams or the roster change,
