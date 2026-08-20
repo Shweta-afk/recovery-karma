@@ -1,529 +1,285 @@
-# RecoveryAI — Project Context & Workflow
+# RecoveryAI (product name "SamvadX") — Project Context & Workflow
+
+## Naming note
+
+The repo/internal codename is **RecoveryAI**. The user-facing product is branded
+**SamvadX** (by Axiotta Technologies Private Limited) — that's what appears on the login
+screen, page titles (`· SamvadX`), and footer. Don't be thrown by the mismatch; they're the
+same app.
 
 ## Project Overview
 
-**RecoveryAI** is an AI-powered collections platform for debt recovery agents. Agents call/message debtors, log outcomes, and the system prioritizes calls using AI scoring. Built with React + Vite + TanStack Start + Supabase.
+An AI-assisted collections platform for debt recovery agents: agents call/message debtors,
+log outcomes, and the system prioritizes the call queue. Built with React + Vite + TanStack
+Start + Supabase.
 
-**Status:** UI complete, all pages built with mock data. Core task: wire Supabase queries to replace mock data and implement server actions for real integrations.
+**Status:** Live in production (Railway, `axiora.axiotta.com`). Most core pages are wired to
+real Supabase data. A few pages are still mock/placeholder — see "Page-by-page status" below.
+**This file was rewritten from scratch on 2026-08-20** because the previous version described
+a Phase 1/2/3 plan (TanStack Query hooks in `src/lib/queries.ts`, Razorpay, Interakt,
+Anthropic-scored debtors) that was **never actually built that way** — the app evolved a
+different, consistent pattern instead. Trust this file over any older doc that contradicts it
+(see "Other docs in this repo" at the bottom — several are badly stale, describing an entirely
+different Cloudflare D1 backend from an earlier iteration of the project).
 
 ---
 
 ## Architecture
 
-### Tech Stack
+### Tech Stack (verified against `package.json`)
 
-- **Frontend:** React 19 + TanStack Router + TanStack Query (react-query)
-- **Backend:** TanStack Start (uses nitro under the hood) + Node.js runtime
-- **Database:** Supabase Postgres (prod) + Row-Level Security
+- **Frontend:** React 19 + TanStack Router (file-based) + `@tanstack/react-query` is
+  installed and mounted at the router root, but **nothing in the app calls `useQuery`** — see
+  "Data layer" below for the pattern actually used.
+- **Backend:** TanStack Start (nitro, `preset: "node"`) + Node 22 (`.nvmrc`)
+- **Database:** Supabase Postgres + Row-Level Security
 - **Package manager:** bun
-- **APIs:** Anthropic (AI scoring), Interakt (WhatsApp), Razorpay (payments), ElevenLabs (voice bot)
+- **UI:** Tailwind CSS v4 + shadcn/ui (Radix primitives)
+- **Real external APIs wired:** Supabase, Exotel (telephony), Groq (Whisper transcription),
+  Gemini (tone classification). **Present in `.env.example` but NOT wired to anything:**
+  `ANTHROPIC_API_KEY`, `INTERAKT_API_KEY`, `RAZORPAY_KEY_ID`/`SECRET`,
+  `ELEVENLABS_API_KEY`/`VOICE_ID` — zero references in `src/`. Don't assume any of these do
+  something; see "What's real vs. aspirational" below.
 
 ### Build & Deploy
 
 - **Vite config:** Uses `@lovable.dev/vite-tanstack-config` with `nitro: { preset: "node" }`
 - **Build output:** `dist/` (client) + `.output/server/` (nitro server)
 - **Start command:** `node .output/server/index.mjs`
-- **Deployment:** Railway (`railway.json`, nixpacks builder). Project `bubbly-communication`, service `recoveryai-app`. Custom domain `axiora.axiotta.com` is configured on the service (DNS on Cloudflare, `axiotta.com` zone) alongside the default `*.up.railway.app` domain.
+- **Deployment:** Railway (`railway.json`, nixpacks builder). Project `bubbly-communication`,
+  service `recoveryai-app`. Custom domain `axiora.axiotta.com` (DNS on Cloudflare,
+  `axiotta.com` zone) alongside the default `*.up.railway.app` domain. Auto-deploys on push to
+  `main`, GitHub repo `Shweta-afk/recovery-karma`.
+- **⚠️ Railway's env vars can silently drift from `.env.local`/`.env.example`.** This has
+  already broken production once: `TELEPHONY_PROVIDER` stayed `"tata"` on Railway for over a
+  week after Tata was removed from the code, silently no-op'ing every call in production. When
+  touching any env-dependent feature, check Railway's Variables tab actually matches — don't
+  assume local and deployed env are in sync.
 
-### Database Schema (9 tables)
+### User roles & routes
+
+| Role    | Entry route  | What they do                                                                |
+| ------- | ------------ | ---------------------------------------------------------------------------- |
+| Agent   | `/dashboard` | Work the call queue, log outcomes, view debtor profiles, daily targets       |
+| Manager | `/manager`   | Upload portfolios, assign accounts, audit calls, view team performance       |
+| Admin   | `/admin`     | Assign portfolios to managers, manage teams/users, org settings, reports     |
+
+`login.tsx` routes by `role` after auth: `admin` → `/admin`, `manager` → `/manager`, else
+`/dashboard`. Route files live in `src/routes/`; nested routes use dot-notation
+(`dashboard.call-queue.tsx`). `src/routeTree.gen.ts` is auto-generated — never hand-edit it.
+
+---
+
+## Data layer — the actual pattern (read this before wiring any new page)
+
+There is no `src/lib/queries.ts` and no TanStack Query hooks anywhere in the app. Instead,
+every resource has its own **`*-store.ts`** file in `src/lib/` following one consistent shape:
+
+```typescript
+// getX() — sync read from an in-memory/localStorage cache. Safe default ([] or similar).
+export function getPortfolios(): UploadedPortfolio[] { ... }
+
+// refreshX() — async: queries Supabase (joining whatever debtor/agent/portfolio context the
+// UI needs), writes the result into the cache, then dispatches a CustomEvent so every open
+// component picks up the change without a page reload.
+export async function refreshPortfolios(): Promise<void> {
+  const { data } = await supabase.from("portfolios").select(/* ... */);
+  cache = data;
+  window.dispatchEvent(new CustomEvent("portfolios-updated"));
+}
+
+// saveX() / other writes — call Supabase directly, then call refreshX() themselves so the
+// cache and every listener update immediately.
+export async function updatePortfolioMeta(id: string, patch: Partial<PortfolioSettings>) {
+  await supabase.from("portfolios").update(patch).eq("id", id);
+  await refreshPortfolios();
+}
+```
+
+A route typically does: call `getX()` for an immediate render, call `refreshX()` in a
+`useEffect` on mount, and listen for the `x-updated` event (often via the shared
+`useStorageSync` hook in `src/lib/storage-sync.ts`) so a write from *anywhere else* in the app
+shows up live.
+
+**Existing stores** (`src/lib/*-store.ts`): `portfolio-store.ts` (portfolios + debtors, the
+biggest one), `disposition-store.ts` (call_logs — also backs the Calls tab on debtor
+profiles, Call Audit, and the IVR tab on Messages), `payments-store.ts`
+(payments + settlement_requests), `messages-store.ts`, `team-store.ts` (agents/teams),
+`client-store.ts`, `escalation-store.ts`, `notification-store.ts`, `org-settings-store.ts`,
+`ptp-escalation-store.ts`, `reminder-store.ts`, `retention-store.ts`,
+`mapping-template-store.ts` (CSV column-mapping templates).
+
+**If asked to wire another page/table, match this pattern** — it's a deliberate, established
+convention across the whole app, not an oversight. Don't introduce `useQuery` for it.
+
+### Server actions
+
+Live directly as flat files, `src/lib/*.server.ts` (there is **no** `src/lib/server/`
+subdirectory — an older plan called for one, never happened). Use TanStack's
+`createServerFn`. Real ones: `call-sentiment-actions.server.ts` (Groq transcription + Gemini
+tone classification, manager-triggered from Call Audit), `setup-actions.server.ts`,
+`supabase-admin.server.ts`, `user-admin-actions.server.ts`. Telephony's server dispatch lives
+in `src/lib/telephony/server.ts`.
+
+---
+
+## Database
+
+### Schema (9 tables, `src/supabase/schema.sql`)
 
 ```
-clients ← clients table (company_name, plan: starter/growth/scale)
+clients
   ├─ agents (auth_user_id, role: agent/manager/admin, daily_target)
-  ├─ portfolios (lender_name, product_type, priority, total_accounts)
-  └─ debtors (portfolio_id, assigned_agent_id, loan_amount, outstanding_balance, dpd, ai_score, status, etc.)
-      ├─ call_logs (debtor_id, agent_id, outcome, promise_amount, duration_seconds, recording_url)
-      ├─ messages (debtor_id, agent_id, channel: whatsapp/sms/email, content, status, razorpay_link_id)
-      ├─ payments (debtor_id, agent_id, amount, razorpay_payment_id, status, payment_type)
-      ├─ disputes (debtor_id, raised_by, dispute_type, status: open/resolved/escalated_legal)
-      └─ settlement_requests (debtor_id, requested_by, proposed_amount, status: pending_manager/approved/rejected)
+  ├─ portfolios (lender_name, product_type, priority, total_accounts, settings jsonb)
+  └─ debtors (portfolio_id, assigned_agent_id, loan_amount, outstanding_balance, dpd,
+              ai_score, status, extra jsonb, ...)
+      ├─ call_logs (debtor_id, agent_id, outcome, call_type, promise_amount, ...)
+      ├─ messages (debtor_id, agent_id, channel: whatsapp/sms/email, content, status)
+      ├─ payments (debtor_id, agent_id, amount, status, payment_type)
+      ├─ disputes (debtor_id, raised_by, dispute_type, status)
+      └─ settlement_requests (debtor_id, requested_by, proposed_amount, status)
 ```
 
-**RLS:** All tables have `auth_client_id()` function scoping — agents see only their client's data.
+**RLS:** every table is scoped by `client_id` via helper functions (`auth_client_id()` etc.),
+plus per-role visibility rules on top (agents see only their own rows; managers/admins see
+their team's).
 
-**Seed data:** `src/supabase/seed.sql` pre-populates 100+ debtors across multiple portfolios.
+### ⚠️ The live database has drifted from `schema.sql` before — don't trust the repo file alone
+
+Confirmed at least once: RLS was switched **off** on `agents`/`portfolios`/`debtors` in the
+live project while `schema.sql` showed it enabled, and the live schema has columns
+`schema.sql` doesn't (`portfolios.manager_id`/`team_id`/`settings`, `debtors.extra`). When a
+security or schema question matters, verify against the running database (Supabase SQL
+Editor), not just the committed SQL. `SUPABASE_SERVICE_ROLE_KEY` has been known to be stale —
+if it 401s, migrations have to be pasted into the SQL Editor by hand rather than run via CLI.
+
+### ⚠️ RLS "infinite recursion detected in policy" — a recurring failure mode, not a one-off
+
+Hit three times across one debugging window (all downstream of scoping every table by
+client_id + role — a real, necessary security fix that introduced self/mutual-referential
+policy subqueries). Two distinct causes, two different fixes:
+
+1. A `SECURITY DEFINER` function written `LANGUAGE sql` and simple enough gets **inlined** by
+   Postgres's planner, silently discarding the privilege escalation `SECURITY DEFINER` is
+   supposed to give — so a helper like `auth_agent_id()` called from a policy *on `agents`
+   itself* recurses into that same policy. Fix: `LANGUAGE plpgsql` (never inlined).
+2. Two different tables' policies querying each other (e.g. `debtors_select` reads
+   `portfolios`, `portfolios_select` reads `debtors`) trips the same recursion guard even with
+   a correct `SECURITY DEFINER` + `plpgsql` function. The only fix that reliably worked: wrap
+   the **entire cross-table traversal** — not just the final lookup — in one function with
+   `SET row_security = off` for its whole execution, so none of its internal reads (across any
+   table) ever re-enter RLS. See `src/supabase/migrations/20260814_disable_row_security_in_auth_helpers.sql`
+   and `20260817_fix_debtors_portfolios_mutual_recursion.sql` for worked examples.
+
+Diagnose fast by reproducing directly in the SQL Editor (bisect the policy, don't guess from
+reading it):
+
+```sql
+BEGIN;
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims TO '{"sub":"<a real auth_user_id>"}';
+SELECT <same columns the failing request used> FROM <table>;
+ROLLBACK;
+```
+
+Migrations live in `src/supabase/migrations/`, applied roughly chronologically (26 as of this
+writing) — several of the most recent ones are exactly this class of RLS fix.
 
 ---
 
-## Current State: What's Built & What's Mocked
+## Telephony
 
-### ✅ Complete (no changes needed)
+Single entry point: `src/lib/telephony/index.ts` → `getTelephonyProvider()`, keyed off the
+server-side `TELEPHONY_PROVIDER` env var. **Never import a vendor file directly** from feature
+code — always go through this.
 
-- **Schema + seed data** — 9 tables with 100+ debtors in Supabase
-- **Auth** — Login page + role-based access (agent/manager/admin)
-- **App shell** — Sidebar, routes, TanStack Router wired
-- **UI pages** — All visual layouts done:
-  - `dashboard/` (Call Queue) — table with sorting/filtering
-  - `dashboard/debtors` — card grid + profile sheet
-  - `dashboard/messages` — chat UI (WhatsApp/SMS/Email)
-  - `dashboard/payments` — payment links table + dialog
-  - `dashboard/reports` — charts (placeholder)
-  - `admin/` — portfolio upload, agent management tiles
-  - `login` — form with email/password
+| Provider | Env value | Status |
+| --- | --- | --- |
+| Simulator | `sim` (default) | Local dev — no real calls, drives the same dialer engine/state machine so the UI behaves identically to production |
+| Exotel | `exotel` | **Production default.** Trial account KYC complete, click-to-call live. `exotel-provider.ts` implements start/hangup/SMS/webhook parsing, written from Exotel's public docs — parts of it (especially `hangup`) have not been battle-tested against every real-account edge case yet |
+| KooKoo (Ozonetel) | `kookoo` | Implemented (`kookoo-provider.ts`) but not the active choice — evaluated as an alternative, not currently used in production |
 
-### 🟡 Partial (built but reads from mock)
+**Tata SmartFlo was evaluated, went live briefly, then was fully removed on 2026-08-06** ("nothing we did was working and aligning with our goals" — user's call). If you see "Tata" or "SmartFlo" referenced anywhere outside this note, it's stale.
 
-All pages read from `lib/mock-debtors.ts` instead of Supabase. **This is the main blocker.**
+### The dialer's architectural ceiling — read before touching predictive/productive dialing
 
----
+Click-to-call (what Exotel, KooKoo, and Tata all offer) **rings the agent's phone first**,
+then bridges the debtor once the agent answers. It's a plain REST call, not an SDK, and it
+cannot truly overdial — the agent leg has to be committed before the debtor is ever dialed.
+**Confirmed directly against Exotel's own docs: there is no API-level predictive/progressive
+dialing product.** Their "4 dialer types" marketing page is conceptual; only a flat-rate
+automated campaign API is real. Exotel's own guide says customers must build the call
+queue, agent-availability pool, and pacing/retry logic themselves on top of plain
+click-to-call — which is exactly what `src/lib/dialer/engine.ts` does. This is the ceiling of
+what click-to-call can ever do, not a bug to fix.
 
-## Workflow: Wire Supabase Data & Server Actions
+True predictive dialing (debtor dialed *before* an agent is committed) and browser-only
+agents (no personal phone) both require **WebRTC/SIP**, which is a *separate, heavier*
+Exotel onboarding ("IP-PSTN Intermix") — a new legal entity (Veeno Communications), new KYC,
+Bangalore-only, feature in Alpha. **This has not been started.** Don't scaffold WebRTC
+provider code assuming credentials that don't exist yet.
 
-### Phase 1 — Replace Mock with Real Data (Priority 1)
+### Dial-mode UI naming — a deliberate rename, internal values unchanged
 
-#### Step 1.1: Create query hooks (`src/lib/queries.ts`)
-
-This file centralizes all Supabase queries. Use TanStack Query for caching + refetching.
-
-```typescript
-// src/lib/queries.ts
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "./supabase";
-import type { Debtor, CallLog } from "./types"; // types.ts holds exported types
-
-export function useDebtors(filters?: { portfolio_id?: string; status?: string }) {
-  return useQuery({
-    queryKey: ["debtors", filters],
-    queryFn: async () => {
-      let query = supabase
-        .from("debtors")
-        .select(
-          `
-          id, name, phone_primary, phone_alternate, email,
-          loan_amount, outstanding_balance, dpd, ai_score, ai_score_reason,
-          status, last_contacted_at, portfolio_id,
-          portfolios(name), agents(name)
-        `,
-        )
-        .limit(100);
-
-      if (filters?.portfolio_id) query = query.eq("portfolio_id", filters.portfolio_id);
-      if (filters?.status) query = query.eq("status", filters.status);
-
-      const { data, error } = await query.order("ai_score", { ascending: false });
-      if (error) throw error;
-      return data as Debtor[];
-    },
-  });
-}
-
-export function useDebtor(id: string) {
-  return useQuery({
-    queryKey: ["debtor", id],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("debtors").select("*").eq("id", id).single();
-      if (error) throw error;
-      return data as Debtor;
-    },
-  });
-}
-
-export function useCallLogsForDebtor(debtorId: string) {
-  return useQuery({
-    queryKey: ["callLogs", debtorId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("call_logs")
-        .select("*, agents(name)")
-        .eq("debtor_id", debtorId)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data as CallLog[];
-    },
-  });
-}
-
-export function useCallLogsToday(agentId?: string) {
-  return useQuery({
-    queryKey: ["callLogsToday", agentId],
-    queryFn: async () => {
-      const today = new Date().toISOString().split("T")[0];
-      let query = supabase
-        .from("call_logs")
-        .select("outcome")
-        .gte("created_at", `${today}T00:00:00`);
-
-      if (agentId) query = query.eq("agent_id", agentId);
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      // Compute stats
-      const stats = {
-        callsMade: data.length,
-        outcomes: {
-          paid: data.filter((d) => d.outcome === "paid").length,
-          promised: data.filter((d) => d.outcome === "promised").length,
-          refused: data.filter((d) => d.outcome === "refused").length,
-          noAnswer: data.filter((d) => d.outcome === "no_answer").length,
-        },
-      };
-      return stats;
-    },
-  });
-}
-
-export function useMessagesForDebtor(debtorId: string) {
-  return useQuery({
-    queryKey: ["messages", debtorId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("debtor_id", debtorId)
-        .order("sent_at", { ascending: true });
-      if (error) throw error;
-      return data;
-    },
-  });
-}
-
-export function usePaymentsForDebtor(debtorId: string) {
-  return useQuery({
-    queryKey: ["payments", debtorId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payments")
-        .select("*")
-        .eq("debtor_id", debtorId)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
-    },
-  });
-}
-
-export function useDisputesForDebtor(debtorId: string) {
-  return useQuery({
-    queryKey: ["disputes", debtorId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("disputes")
-        .select("*")
-        .eq("debtor_id", debtorId)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
-    },
-  });
-}
-```
-
-#### Step 1.2: Update Call Queue (`dashboard/index.tsx`)
-
-Replace mock data with real queries:
-
-```typescript
-import { useDebtors, useCallLogsToday } from "@/lib/queries";
-
-function DashboardPage() {
-  const { data: debtors = [], isLoading } = useDebtors();
-  const { data: todayStats } = useCallLogsToday();
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let rows = debtors.filter((d) => {
-      if (bucket !== "all" && bucketOf(d.dpd) !== bucket) return false;
-      if (portfolio !== "all" && d.portfolio_id !== portfolio) return false;
-      if (q && !d.name.toLowerCase().includes(q)) return false;
-      return true;
-    });
-    // sort, etc.
-    return rows;
-  }, [debtors, search, bucket, portfolio, sortKey, sortDir]);
-
-  if (isLoading) return <LoadingSkeleton />;
-
-  return (
-    <div className="space-y-6">
-      {/* stats with todayStats instead of TODAY_STATS */}
-      <StatCard value={todayStats?.callsMade ?? 0} />
-      {/* table with filtered debtors */}
-      <Table>{/* rows from filtered */}</Table>
-    </div>
-  );
-}
-```
-
-#### Step 1.3: Update Debtor Profiles (`dashboard/debtors`)
-
-```typescript
-import { useDebtor, useCallLogsForDebtor, useMessagesForDebtor, usePaymentsForDebtor, useDisputesForDebtor } from "@/lib/queries";
-
-function DebtorProfile({ debtorId }: { debtorId: string }) {
-  const { data: debtor } = useDebtor(debtorId);
-  const { data: callLogs = [] } = useCallLogsForDebtor(debtorId);
-  const { data: messages = [] } = useMessagesForDebtor(debtorId);
-  const { data: payments = [] } = usePaymentsForDebtor(debtorId);
-  const { data: disputes = [] } = useDisputesForDebtor(debtorId);
-
-  return (
-    <Sheet>
-      {/* Use debtor, callLogs, messages, payments, disputes instead of EXTRA[id] mock */}
-      <TabsContent value="calls">
-        {callLogs.map((log) => (
-          <CallLogEntry key={log.id} log={log} />
-        ))}
-      </TabsContent>
-      {/* etc. for messages, payments, disputes */}
-    </Sheet>
-  );
-}
-```
+The buttons say **"Productive Dial"** (opens several lines at once — internally
+`dialerMode: "predictive"`) and **"Progressive Dial"** (one debtor at a time, in list order —
+internally `dialerMode: "productive"`). Yes, the display labels and the internal enum values
+are swapped from each other on purpose (a rename commit changed only the on-screen text). Read
+the code comments, not just the variable names, when working in `dashboard.call-queue.tsx`,
+`manager.queue.tsx`, or `portfolio-store.ts`'s `PortfolioSettings.dialerMode`.
 
 ---
 
-### Phase 2 — Server Actions for Creating/Updating Data (Priority 2)
+## What's real vs. aspirational
 
-Server actions use TanStack Server Functions. Create actions in `src/` or colocate near routes.
+**AI call scoring is NOT an LLM call.** `debtors.ai_score` is a deterministic formula —
+`Math.max(1, Math.min(10, Math.round(10 - dpd / 20)))` — computed client-side at CSV upload
+time (`portfolio-store.ts`). `ANTHROPIC_API_KEY` is unused. If asked to "wire up AI scoring,"
+that's still an open task, not something to assume already exists.
 
-#### Step 2.1: Log Call Outcome
+**There is no conversational AI voice bot.** `ELEVENLABS_API_KEY`/`VOICE_ID` are unused.
+When a call log's `call_type` is `"ai"` or `"ivr"`, that's a routing category chosen by the
+portfolio's `callMode` setting (`hybrid`/`ai_only`/`agent_only`/`ivr_agent` — see
+`routeAnsweredCall()` in `dialer/engine.ts`), not an actual AI conversation happening.
 
-```typescript
-// src/lib/server/call-actions.ts (server-only)
-import { createServerFn } from "@tanstack/react-start";
-import { supabase } from "../supabase";
+**Call sentiment analysis IS real** — the one genuine AI feature in the app. Manager-triggered
+only (never automatic) from Call Audit: Groq's Whisper API transcribes the recording, Gemini
+classifies agent/debtor/overall tone. Requires
+`migrations/20260814_call_logs_ai_sentiment.sql`. See `call-sentiment-actions.server.ts` and
+the `AiSentimentPanel` in `manager.audit.tsx`. It's a *suggestion* alongside the manager's own
+manual sentiment tag — never overwrites it.
 
-export const logCallOutcome = createServerFn({ method: "POST" })(async ({
-  debtorId,
-  agentId,
-  outcome,
-  promiseAmount,
-  promiseDate,
-  durationSeconds,
-  notes,
-}: {
-  debtorId: string;
-  agentId: string;
-  outcome: "paid" | "promised" | "refused" | "no_answer" | "callback" | "escalated";
-  promiseAmount?: number;
-  promiseDate?: string;
-  durationSeconds?: number;
-  notes?: string;
-}) => {
-  const { data, error } = await supabase.from("call_logs").insert({
-    debtor_id: debtorId,
-    agent_id: agentId,
-    outcome,
-    promise_amount: promiseAmount,
-    promise_date: promiseDate,
-    duration_seconds: durationSeconds,
-    raw_notes: notes,
-  });
+**No Razorpay.** Payment links are provided by the lending bank directly; an agent
+pastes/enters the bank's link manually, then shares it via WhatsApp/SMS/logs it. The
+`razorpay_payment_id`/`razorpay_link_id` DB columns are just generic text storage for that —
+not FK'd to an actual Razorpay integration. `RAZORPAY_KEY_ID`/`SECRET` in `.env.example` are
+vestigial; don't build against them without confirming this has changed.
 
-  if (error) throw error;
-  return data;
-});
-```
-
-Call from component:
-
-```typescript
-const [isPending, startTransition] = useTransition();
-
-const handleLogCall = () => {
-  startTransition(async () => {
-    await logCallOutcome({
-      debtorId: debtor.id,
-      agentId: currentUser.id,
-      outcome: "promised",
-      promiseAmount: 8000,
-      promiseDate: "2026-06-25",
-      notes: "Will pay by EOD tomorrow",
-    });
-    toast.success("Call logged");
-  });
-};
-```
-
-#### Step 2.2: Send WhatsApp via Interakt
-
-```typescript
-// src/lib/server/interakt-actions.ts
-import { createServerFn } from "@tanstack/react-start";
-import { supabase } from "../supabase";
-
-const INTERAKT_API_KEY = process.env.INTERAKT_API_KEY;
-const INTERAKT_API_URL = "https://api.interakt.ai/v1/messages";
-
-export const sendWhatsApp = createServerFn({ method: "POST" })(async ({
-  debtorId,
-  agentId,
-  phoneNumber,
-  message,
-  paymentLink,
-}: {
-  debtorId: string;
-  agentId: string;
-  phoneNumber: string;
-  message: string;
-  paymentLink?: string;
-}) => {
-  // 1. Send to Interakt API
-  const response = await fetch(INTERAKT_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${INTERAKT_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      phone: phoneNumber,
-      message: message + (paymentLink ? `\n\n${paymentLink}` : ""),
-      type: "template",
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Interakt API error: ${response.statusText}`);
-  }
-
-  const result = await response.json();
-
-  // 2. Log to messages table
-  const { data, error } = await supabase.from("messages").insert({
-    debtor_id: debtorId,
-    agent_id: agentId,
-    channel: "whatsapp",
-    direction: "outbound",
-    content: message,
-    status: "sent",
-    payment_link_url: paymentLink,
-  });
-
-  if (error) throw error;
-  return data;
-});
-```
-
-#### Step 2.3: Create Razorpay Payment Link
-
-```typescript
-// src/lib/server/razorpay-actions.ts
-import { createServerFn } from "@tanstack/react-start";
-import { supabase } from "../supabase";
-
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
-const RAZORPAY_API_URL = "https://api.razorpay.com/v1/payment_links";
-
-export const createPaymentLink = createServerFn({ method: "POST" })(async ({
-  debtorId,
-  agentId,
-  amount,
-  debtor,
-}: {
-  debtorId: string;
-  agentId: string;
-  amount: number;
-  debtor: { name: string; phone_primary: string };
-}) => {
-  // 1. Create link in Razorpay
-  const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
-  const response = await fetch(RAZORPAY_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      amount: amount * 100, // convert to paise
-      currency: "INR",
-      accept_partial: true,
-      customer_notify: 1,
-      notify: { sms: true, email: false },
-      reference_id: debtorId,
-      description: `Payment for ${debtor.name}`,
-      contact: debtor.phone_primary,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Razorpay API error: ${response.statusText}`);
-  }
-
-  const result = await response.json();
-
-  // 2. Record in payments table
-  const { data, error } = await supabase.from("payments").insert({
-    debtor_id: debtorId,
-    agent_id: agentId,
-    amount,
-    razorpay_link_id: result.id,
-    status: "pending",
-    payment_type: "full",
-  });
-
-  if (error) throw error;
-
-  return {
-    paymentLinkId: result.id,
-    paymentUrl: result.short_url,
-  };
-});
-```
+**No WhatsApp/SMS gateway.** `dashboard/messages`'s Send button writes a real row to the
+`messages` table, but nothing actually reaches the debtor's phone — Interakt (or any gateway)
+was never wired. `INTERAKT_API_KEY` is unused. The page is honest about this in its own UI.
 
 ---
 
-### Phase 3 — AI Scoring (Priority 3)
+## Page-by-page status
 
-Score debtors using Anthropic API when portfolio is uploaded or as a batch job.
-
-```typescript
-// src/lib/server/ai-scoring.ts
-import { createServerFn } from "@tanstack/react-start";
-import { supabase } from "../supabase";
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
-export const scoreDebtor = createServerFn({ method: "POST" })(async (debtor: {
-  id: string;
-  name: string;
-  dpd: number;
-  outstanding_balance: number;
-  loan_amount: number;
-  email?: string;
-  phone_primary: string;
-}) => {
-  const prompt = `Score this debtor on a scale of 1-10 for likelihood to pay. Consider:
-- DPD (Days Past Due): ${debtor.dpd} days
-- Outstanding: ₹${debtor.outstanding_balance}
-- Loan amount: ₹${debtor.loan_amount}
-- Contact available: ${debtor.email ? "email + " : ""}phone
-
-Return JSON: { "score": <1-10>, "reason": "<one-liner reason>" }`;
-
-  const message = await client.messages.create({
-    model: "claude-opus-4-8",
-    max_tokens: 200,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const text = message.content[0].type === "text" ? message.content[0].text : "";
-  const parsed = JSON.parse(text);
-
-  // Update debtors table
-  const { error } = await supabase
-    .from("debtors")
-    .update({
-      ai_score: parsed.score,
-      ai_score_reason: parsed.reason,
-      score_updated_at: new Date().toISOString(),
-    })
-    .eq("id", debtor.id);
-
-  if (error) throw error;
-  return parsed;
-});
-```
+| Page | Status |
+| --- | --- |
+| `dashboard/` (Call Queue) | ✅ Real debtors via `portfolio-store.ts`, real dialer |
+| `dashboard/debtors` | ✅ Real debtor list + Calls/Payments tabs. Messages/Disputes tabs are intentionally honest empty-states (no write path yet) |
+| `dashboard/history` (Activity History) | ✅ Real `call_logs`, with async recording backfill |
+| `dashboard/payments` | ✅ Real `payments`/`settlement_requests` via `payments-store.ts` |
+| `dashboard/messages` | 🟡 Real `messages` table, but Send has no gateway behind it (see above) |
+| `dashboard/reports` | ❌ Still hardcoded narrative placeholder content, not wired |
+| `manager/portfolio` (Portfolio Overview) | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown |
+| `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity` | ✅ Real |
+| `admin/portfolio` (Portfolio Assignment) | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only |
+| `admin/reports`, `admin/users`, `admin/teams`, `admin/settings` | ✅ Real |
+| `admin/index` | ✅ Real (navigation tiles) |
 
 ---
 
-## Development Workflow
-
-### Local Setup
+## Local Setup
 
 ```bash
 cd ~/recovery-karma-main
@@ -531,114 +287,81 @@ bun install
 bun run dev
 ```
 
-Opens http://localhost:5173 with hot reload.
+Serves on **port 8080** by default (`.claude/launch.json`), auto-incrementing to the next free
+port if busy — not Vite's default 5173. HMR reloads on save.
 
-### Testing Data Changes
+### Testing data changes
 
-1. Make changes to `lib/queries.ts` or component
-2. HMR reloads automatically
-3. Open DevTools → Network tab to see Supabase API calls
-4. RLS errors appear in console if auth is wrong
+1. Edit a `*-store.ts` file or a route.
+2. HMR reloads automatically.
+3. DevTools → Network tab to see the actual Supabase REST calls.
+4. An RLS error means the query above's "verify against the live DB" note applies — don't
+   assume `schema.sql`'s policies are what's actually enforced.
 
-### Supabase Console
+### Useful scripts
 
-- **URL:** https://supabase.com/dashboard → select your project
-- **SQL Editor:** Run queries to verify seed data
-- **Auth Users:** See login credentials in Auth → Users
-- **Logs:** Real-time query logs under Logs
-
----
-
-## Deployment to Railway
-
-### Pre-deploy checklist
-
-1. ✅ railway.json at root (`builder: nixpacks`, start command, healthcheck)
-2. ✅ package.json has `"start": "node .output/server/index.mjs"`
-3. ✅ .env.example has all env vars (VITE_SUPABASE_URL, ANTHROPIC_API_KEY, etc.)
-4. ✅ .gitignore ignores .env but not .env.example
-
-### Steps
-
-1. `git push origin main` (service auto-deploys on push to `main`, GitHub repo `Shweta-afk/recovery-karma`)
-2. Go to https://railway.com/dashboard → project `bubbly-communication` → service `recoveryai-app`
-3. Set env vars under the service's Variables tab (copy values from local .env)
-4. Test on the generated `*.up.railway.app` URL, or the custom domain once DNS is verified
-
-### Custom domain (e.g. `axiora.axiotta.com`)
-
-1. In Railway: service → Settings → Networking → **Custom Domain** → enter the domain, select the detected port, Add Domain
-2. Railway shows a CNAME + TXT record to add. Add both **exactly as shown** in Cloudflare DNS (zone = the domain's registrar/DNS provider), with the CNAME set to **DNS only** (grey cloud, not proxied) — Railway needs direct traffic to issue the Let's Encrypt cert
-3. Wait for Railway to mark the domain as verified/active (cert issuance can take a few minutes up to ~an hour)
-4. Free Railway plans have a **custom domain limit per service** — if you hit it, either remove an unused domain or upgrade the plan before adding another
+- `bun run lint` / `bun run typecheck` / `bun run format`
+- `bun run test:logic` — `scripts/telephony-check.ts`, logic tests for the dialer engine
+- `scripts/debug/*.js` — one-off ad-hoc Supabase debugging scripts from past incidents (RLS
+  probing, etc.). Not part of any workflow; read before trusting one still applies.
 
 ---
 
-## Key Files to Know
+## Common patterns
 
-| File                         | Purpose                                      |
-| ---------------------------- | -------------------------------------------- |
-| `vite.config.ts`             | Build config with nitro node preset          |
-| `src/lib/supabase.ts`        | Supabase client init                         |
-| `src/lib/queries.ts`         | ← **CREATE THIS** — TanStack Query hooks     |
-| `src/lib/server/*.ts`        | ← **CREATE THESE** — Server actions for APIs |
-| `src/routes/dashboard/*.tsx` | Pages that need query wiring                 |
-| `src/routes/login.tsx`       | Auth entry point                             |
-| `src/supabase/schema.sql`    | DB schema (reference only)                   |
-| `src/supabase/seed.sql`      | Seed data (ran once)                         |
-| `railway.json`               | Railway deployment config                    |
-| `.env.example`               | Template for env vars                        |
-
----
-
-## Common Patterns
-
-### Fetch + Display
+### Fetch + display
 
 ```typescript
-const { data: items = [], isLoading, error } = useQuery(...);
-if (isLoading) return <Skeleton />;
-if (error) return <ErrorAlert />;
-return items.map((item) => <Item key={item.id} {...item} />);
+const [items, setItems] = useState(() => getItems());
+useEffect(() => {
+  refreshItems();
+  window.addEventListener("items-updated", () => setItems(getItems()));
+}, []);
 ```
 
-### Call a Server Action
+(Or use the shared `useStorageSync` hook from `src/lib/storage-sync.ts` to dedupe this.)
+
+### Write + refresh
 
 ```typescript
-const [isPending, startTransition] = useTransition();
-startTransition(async () => {
-  const result = await myServerAction({ ...data });
-  toast.success("Done");
-});
-```
-
-### Refetch After Mutation
-
-```typescript
-const queryClient = useQueryClient();
-await logCallOutcome({ ... });
-queryClient.invalidateQueries({ queryKey: ["callLogs"] }); // auto-refetch
+await saveDisposition({ ...data });
+// saveX already calls refreshX() internally — no manual invalidation needed
 ```
 
 ---
 
-## Next Immediate Steps (Do in order)
+## Known cleanup opportunities (not yet done — flag if picking one up)
 
-1. **Create `src/lib/queries.ts`** with all hooks (copy-paste from Phase 1.1 above)
-2. **Create `src/lib/types.ts`** with TypeScript interfaces for Debtor, CallLog, etc.
-3. **Update `dashboard/index.tsx`** to use `useDebtors()` instead of MOCK_DEBTORS
-4. **Test in browser** — should show real debtors from seed data
-5. **Apply same pattern to all other pages** (debtors, messages, payments, etc.)
-6. **Create server actions** in `src/lib/server/` for call logging, WhatsApp, Razorpay
-7. **Wire server actions to components** (call button, send message button, etc.)
-8. **Test with real Interakt/Razorpay credentials** (or sandbox)
-9. **Push to GitHub** — Railway auto-deploys on push to `main`
+- `src/lib/mock-debtors.ts` still carries a ~1,200-line `MOCK_DEBTORS` literal array that
+  nothing imports anymore (confirmed zero references outside the file) — dead weight. Its
+  *types and helpers* from the same file (`Debtor`, `DPDBucket`, `bucketOf`, `BUCKET_META`,
+  `formatINR`) are very much alive and used everywhere — don't touch those, just the array.
+- `dashboard.call-queue.tsx` (~2,600 lines) and `manager.portfolio.tsx` (~2,400 lines) are
+  route files that have become the de facto shared module other routes cross-import
+  components/types from (e.g. `manager.queue.tsx` imports `DialingBoard`,
+  `ProductiveDialBoard`, `PortfolioDetail` from them). Works, but a real extraction into
+  `src/components/call-queue/` and `src/components/portfolio/` would be healthier.
+- `CallOutcome` + its label/color map is defined twice — `src/lib/disposition-store.ts` and
+  `src/lib/call-queue/types.ts` — identical unions, two sources of truth to keep in sync by
+  hand.
 
 ---
 
-## Notes
+## Other docs in this repo — trust level
 
-- **Supabase RLS:** All queries automatically filter by auth user's client_id via the `auth_client_id()` function in policies. No manual client filtering needed.
-- **VITE\_\* vars:** Baked into client bundle at build time. Must be set before `bun run build`.
-- **TanStack Start:** Feels like Next.js but uses nitro. Server functions are always `/api/[path]`, no route configuration needed.
-- **Mock data:** Delete `lib/mock-debtors.ts` once all pages are wired (not yet).
+- `CLAUDE.md` (this file) — kept current.
+- `RAILWAY.md` — deploy steps are broadly right, but it names the GitHub repo as
+  `recovery-karma-main` (actual: `Shweta-afk/recovery-karma`) and lists Razorpay/Interakt
+  among the webhook sources Railway's always-on hosting matters for — neither is actually
+  wired (see "What's real vs. aspirational" above). Useful for the Railway walkthrough itself,
+  not as a source of truth on what's integrated.
+- `CONTEXT.md`, `ARCHITECTURE.md`, `DATA_MODELS.md`, `FLOWS.md` — **describe an entirely
+  different, older backend** (Cloudflare Workers + D1 SQLite, React 18, "no global store").
+  None of that is true of the current app (Railway/Node + Supabase, React 19, the store-file
+  pattern above). Don't use them for architecture questions.
+- `API_REQUIREMENTS.md`, `ENVIRONMENT_SETUP.md`, `STAGING_TEST_SETUP.md`,
+  `TELEPHONY_IMPLEMENTATION_PLAN.md`, `WEEK3_SUMMARY.md`, `PRODUCTION_DEPLOYMENT.md`,
+  `PRODUCTION_RUNBOOK.md`, `QA_CHECKLIST_PRODUCTION.md` — written around the since-removed
+  Tata SmartFlo integration; mostly stale for the same reason.
+- `AGENTS.md` — accurate (a short Lovable.dev git-history warning; this project is still
+  connected to Lovable, so avoid force-pushing/rewriting published history on `main`).
