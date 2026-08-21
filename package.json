@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "bun run check:sql && vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
-    "test:logic": "bun run scripts/telephony-check.ts"
+    "test:logic": "bun run scripts/telephony-check.ts && bun run check:sql",
+    "check:sql": "bun run scripts/check-rls-safety.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -153,11 +153,55 @@ security or schema question matters, verify against the running database (Supaba
 Editor), not just the committed SQL. `SUPABASE_SERVICE_ROLE_KEY` has been known to be stale —
 if it 401s, migrations have to be pasted into the SQL Editor by hand rather than run via CLI.
 
-### ⚠️ RLS "infinite recursion detected in policy" — a recurring failure mode, not a one-off
+### ⚠️ RLS "infinite recursion detected in policy" — SOLVED 2026-08-21, guarded by a check
 
-Hit three times across one debugging window (all downstream of scoping every table by
-client_id + role — a real, necessary security fix that introduced self/mutual-referential
-policy subqueries). Two distinct causes, two different fixes:
+**Took production down twice (2026-08-14, 2026-08-21). Root cause found and fixed on
+2026-08-21 — read this before touching anything under `src/supabase/`.**
+
+**Why it kept coming back:** migrations apply in **filename order**, and
+`20260814_scope_remaining_tables_to_agent_and_manager.sql` sorts *after* both
+`20260814_disable_row_security_in_auth_helpers.sql` and `20260814_fix_auth_agent_id_recursion.sql`.
+So every replay of the directory re-declared `auth_agent_id()` as `LANGUAGE sql` and restored
+the inline policy bodies — silently re-breaking production **on every deploy**. A fix applied
+by hand in the SQL Editor survives only until the next deploy, which is why this looked
+unfixable and was misattributed for weeks.
+
+**Fixed by making every file converge on the correct end state** — `20260730_harden_rls.sql`,
+`20260814_scope_remaining_tables...`, `schema.sql` and `migration_rls_hardening.sql` were all
+amended so every `auth_*` helper is `plpgsql`. Replay is now idempotent, full or partial. The
+authoritative policy definitions live in
+`src/supabase/migrations/20260821_rls_no_direct_table_reads.sql`.
+
+**A guard now enforces this: `bun run check:sql`** (`scripts/check-rls-safety.ts`), wired into
+`bun run build` and `bun run test:logic`, so a bad migration fails the Railway deploy instead
+of taking the app down. It fails on:
+- any `auth_*` helper declared `LANGUAGE sql STABLE SECURITY DEFINER` (gets inlined — see below)
+- any migration containing its own `BEGIN;`/`COMMIT;`/`ROLLBACK;` — runners supply a
+  transaction, and a nested one can abort the migration or silently roll back its DDL. This
+  bit us directly: the breaking file applied while the fixing file did not.
+- any migration containing debug scaffolding (`SET LOCAL ROLE`, `_rls_probe`,
+  `request.jwt.claims`) — keep verification in `scripts/debug/`, never in a file a runner executes.
+
+**Two rules that follow from all of this:**
+1. **No policy may read an RLS-protected table directly.** Every lookup goes through a
+   `SECURITY DEFINER` helper (`auth_agent_id`, `auth_client_id`, `auth_role`,
+   `auth_visible_agent_ids`, `auth_visible_portfolio_ids`, `auth_client_debtor_ids`). Fixing
+   policies one at a time just relocates the cycle — observed live moving
+   agents → team_agents → debtors → portfolios across four rounds.
+2. **`SET row_security = off` does NOT grant a bypass** (a belief that misled three earlier
+   fixes). Per the Postgres docs it makes a query *error* instead of applying a policy; it only
+   ever looked load-bearing because the roles involved were already exempt. The real mechanism
+   is `SECURITY DEFINER` + an owner that can bypass RLS (here `postgres`, `rolbypassrls=true`).
+
+**Diagnose with a smoke test over ALL tables at once**, never one 500 at a time — see
+`scripts/debug/rls-smoke-test.sql`. Which *relation* each error names tells you where the cycle
+really is (8 tables all naming `agents` meant one bug, not eight). Note the Supabase SQL Editor
+renders **only the last statement's result**, so UNION diagnostics into a single result set or
+they come back blank.
+
+--- Original notes on the two underlying causes ---
+
+Two distinct causes, two different fixes:
 
 1. A `SECURITY DEFINER` function written `LANGUAGE sql` and simple enough gets **inlined** by
    Postgres's planner, silently discarding the privilege escalation `SECURITY DEFINER` is
