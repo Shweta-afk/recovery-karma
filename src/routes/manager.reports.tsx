@@ -109,8 +109,11 @@ function ManagerReportsPage() {
       teamAgents
         .map((agent) => {
           const agentDisps = disps.filter((d) => d.agentId === agent.id);
-          const assigned = portfolios.reduce(
-            (s, p) => s + p.rows.filter((r) => r.assignedAgentId === agent.id).length,
+          // Active-only, matching this page's Active Accounts tile.
+          const assigned = activePortfolios.reduce(
+            (s, p) =>
+              s +
+              p.rows.filter((r) => r.assignedAgentId === agent.id && r.status !== "paid").length,
             0,
           );
           return {
@@ -122,7 +125,7 @@ function ManagerReportsPage() {
           };
         })
         .sort((a, b) => b.stats.total - a.stats.total),
-    [teamAgents, disps, portfolios],
+    [teamAgents, disps, activePortfolios],
   );
 
   const filtered = search.trim()

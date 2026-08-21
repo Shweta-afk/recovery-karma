@@ -183,10 +183,14 @@ function AdminReportsPage() {
     return teams.map((team) => {
       const teamDisps = disps.filter((d) => d.teamId === team.id);
       const teamPortfolios = portfolios.filter((p) => p.teamId === team.id);
-      const assignedCount = teamPortfolios.reduce(
-        (s, p) => s + p.rows.filter((r) => r.assignedAgentId).length,
-        0,
-      );
+      // Same "active" definition as the KPI strip (open portfolio, not already settled) —
+      // otherwise this column contradicts the Active Accounts tile on the same page.
+      const assignedCount = teamPortfolios
+        .filter((p) => !p.closedAt)
+        .reduce(
+          (s, p) => s + p.rows.filter((r) => r.assignedAgentId && r.status !== "paid").length,
+          0,
+        );
       // Today's time breakdown per agent — see agent-time-stats.ts for what's real (calling)
       // vs. estimated (idle/disposition/login-logout) pending a real presence-log table.
       const todayTimeStats = team.agentIds.map((aid) => {
@@ -223,8 +227,12 @@ function AdminReportsPage() {
         const agentDisps = disps.filter((d) => d.agentId === agentId);
         const ref = getAgentById(agentId);
         const team = teams.find((t) => t.agentIds.includes(agentId));
-        const assignedCount = portfolios.reduce(
-          (s, p) => s + p.rows.filter((r) => r.assignedAgentId === agentId).length,
+        // Active-only, matching the KPI strip and the team table. Counting every row
+        // regardless of portfolio state made this column total 1,449 while the Active
+        // Accounts tile read 309 — two different definitions on one page.
+        const assignedCount = activePortfolios.reduce(
+          (s, p) =>
+            s + p.rows.filter((r) => r.assignedAgentId === agentId && r.status !== "paid").length,
           0,
         );
         return {
@@ -237,7 +245,7 @@ function AdminReportsPage() {
         };
       })
       .sort((a, b) => b.stats.total - a.stats.total);
-  }, [teams, disps, portfolios]);
+  }, [teams, disps, activePortfolios]);
 
   const filtered = search.trim()
     ? agentStats.filter(
