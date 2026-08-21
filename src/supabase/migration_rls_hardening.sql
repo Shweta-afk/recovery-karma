@@ -1,3 +1,12 @@
+-- ⚠️ SUPERSEDED / DANGEROUS TO RUN — amended 2026-08-21.
+-- This is an OLDER, looser hardening pass than src/supabase/migrations/. Running it will
+-- overwrite the current policies with weaker ones AND (before this amendment) re-declared the
+-- auth_* helpers as LANGUAGE sql, which Postgres inlines — discarding SECURITY DEFINER, so the
+-- helper's read of `agents` re-enters agents' RLS and raises 42P17 recursion. That is the
+-- outage that recurred through 2026-08-21.
+-- The helpers below are now plpgsql so this file can no longer cause that, but prefer
+-- src/supabase/migrations/20260821_rls_no_direct_table_reads.sql as the source of truth.
+
 -- ============================================================
 -- DRAFT — RLS hardening: intra-tenant role + ownership scoping
 -- ============================================================
@@ -22,16 +31,35 @@
 -- auth_client_id() already exists in schema.sql. Add role + agent-id resolvers.
 
 CREATE OR REPLACE FUNCTION auth_role() RETURNS TEXT
-  LANGUAGE sql STABLE SECURITY DEFINER
-  AS $$ SELECT role FROM agents WHERE auth_user_id = auth.uid() LIMIT 1 $$;
+  LANGUAGE plpgsql STABLE SECURITY DEFINER
+  SET search_path = public, pg_temp
+  SET row_security = off
+  AS $$
+  DECLARE result TEXT;
+  BEGIN
+    SELECT role INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
+    RETURN result;
+  END; $$;
 
 CREATE OR REPLACE FUNCTION auth_agent_id() RETURNS UUID
-  LANGUAGE sql STABLE SECURITY DEFINER
-  AS $$ SELECT id FROM agents WHERE auth_user_id = auth.uid() LIMIT 1 $$;
+  LANGUAGE plpgsql STABLE SECURITY DEFINER
+  SET search_path = public, pg_temp
+  SET row_security = off
+  AS $$
+  DECLARE result UUID;
+  BEGIN
+    SELECT id INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
+    RETURN result;
+  END; $$;
 
 CREATE OR REPLACE FUNCTION auth_is_privileged() RETURNS BOOLEAN
-  LANGUAGE sql STABLE SECURITY DEFINER
-  AS $$ SELECT auth_role() IN ('manager', 'admin') $$;
+  LANGUAGE plpgsql STABLE SECURITY DEFINER
+  SET search_path = public, pg_temp
+  SET row_security = off
+  AS $$
+  BEGIN
+    RETURN auth_role() IN ('manager', 'admin');
+  END; $$;
 
 -- ── agents ─────────────────────────────────────────────────────────────────────
 DROP POLICY IF EXISTS "agents_own_client" ON agents;
