@@ -18,6 +18,15 @@ export interface LeaderboardEntry {
  * actually measured on; the others are available for coaching-oriented views. */
 export type LeaderboardMetric = "collected" | "ptpAmount" | "calls" | "contactRate";
 
+/** Lower-case phrasing for "Ranked by ..." captions, so a page can state honestly which
+ * metric the ordering actually reflects. */
+export const LEADER_METRIC_CAPTION: Record<LeaderboardMetric, string> = {
+  collected: "amount collected",
+  ptpAmount: "PTP value",
+  calls: "calls made",
+  contactRate: "contact rate",
+};
+
 const METRIC_LABEL: Record<LeaderboardMetric, string> = {
   collected: "Collected",
   ptpAmount: "PTP Value",

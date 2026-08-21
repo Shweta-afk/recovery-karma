@@ -41,7 +41,11 @@ import {
 import { Stat } from "@/components/reports/stat-card";
 import { AgentCallLog } from "@/components/reports/agent-call-log";
 import { DataTable, ReportSection } from "@/components/reports/data-table";
-import { Leaderboard, type LeaderboardMetric } from "@/components/reports/leaderboard";
+import {
+  Leaderboard,
+  LEADER_METRIC_CAPTION,
+  type LeaderboardMetric,
+} from "@/components/reports/leaderboard";
 
 export const Route = createFileRoute("/manager/reports")({
   head: () => ({ meta: [{ title: "Reports · SamvadX Manager" }] }),
@@ -59,7 +63,8 @@ function ManagerReportsPage() {
   );
   const [search, setSearch] = useState("");
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
-  const [leaderMetric, setLeaderMetric] = useState<LeaderboardMetric>("collected");
+  // null = "not chosen yet" — see effectiveLeaderMetric below.
+  const [leaderMetric, setLeaderMetric] = useState<LeaderboardMetric | null>(null);
 
   useEffect(() => {
     const load = () => setDisps(activeTeam ? getTeamDispositions(activeTeam.id) : []);
@@ -137,6 +142,16 @@ function ManagerReportsPage() {
       })),
     [agentStats],
   );
+
+  // Rank by collections once anyone has collected; otherwise fall back to a metric that
+  // actually distinguishes agents instead of showing an all-zero ordering.
+  const effectiveLeaderMetric: LeaderboardMetric =
+    leaderMetric ??
+    (leaderboardEntries.some((e) => e.collected > 0)
+      ? "collected"
+      : leaderboardEntries.some((e) => e.ptpAmount > 0)
+        ? "ptpAmount"
+        : "calls");
 
   const followups = useMemo(
     () => (activeTeam ? getTeamPtpFollowups(activeTeam.agentIds) : []),
@@ -248,7 +263,7 @@ function ManagerReportsPage() {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <ReportSection
               title="Team Leaderboard"
-              description={`Ranked across ${activeTeam.name}`}
+              description={`Ranked by ${LEADER_METRIC_CAPTION[effectiveLeaderMetric]} across ${activeTeam.name}`}
               icon={Trophy}
               action={
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-0.5">
@@ -259,7 +274,7 @@ function ManagerReportsPage() {
                       onClick={() => setLeaderMetric(m)}
                       className={cn(
                         "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors",
-                        leaderMetric === m
+                        effectiveLeaderMetric === m
                           ? "bg-primary text-primary-foreground"
                           : "text-muted-foreground hover:text-foreground",
                       )}
@@ -270,7 +285,7 @@ function ManagerReportsPage() {
                 </div>
               }
             >
-              <Leaderboard entries={leaderboardEntries} metric={leaderMetric} limit={10} />
+              <Leaderboard entries={leaderboardEntries} metric={effectiveLeaderMetric} limit={10} />
             </ReportSection>
 
             <ReportSection

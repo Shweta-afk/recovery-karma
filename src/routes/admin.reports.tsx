@@ -58,7 +58,11 @@ import {
 import { Stat } from "@/components/reports/stat-card";
 import { AgentCallLog } from "@/components/reports/agent-call-log";
 import { DataTable, ReportSection } from "@/components/reports/data-table";
-import { Leaderboard, type LeaderboardMetric } from "@/components/reports/leaderboard";
+import {
+  Leaderboard,
+  LEADER_METRIC_CAPTION,
+  type LeaderboardMetric,
+} from "@/components/reports/leaderboard";
 
 export const Route = createFileRoute("/admin/reports")({
   head: () => ({ meta: [{ title: "Reports · SamvadX Admin" }] }),
@@ -106,7 +110,9 @@ function AdminReportsPage() {
   const [search, setSearch] = useState("");
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
-  const [leaderMetric, setLeaderMetric] = useState<LeaderboardMetric>("collected");
+  // null = "not chosen yet", so we can fall back to a metric that actually separates the
+  // agents. Ranking by Collected when every agent is at zero produces a meaningless order.
+  const [leaderMetric, setLeaderMetric] = useState<LeaderboardMetric | null>(null);
   useRoster(); // triggers a background refresh so agent names stay current
 
   useEffect(() => {
@@ -345,6 +351,17 @@ function AdminReportsPage() {
     [agentStats],
   );
 
+  // Collections is the metric the business is judged on, so prefer it — but only once
+  // someone has actually collected something. Until then fall back to calls, which does
+  // separate the agents. Any explicit click wins over this.
+  const effectiveLeaderMetric: LeaderboardMetric =
+    leaderMetric ??
+    (leaderboardEntries.some((e) => e.collected > 0)
+      ? "collected"
+      : leaderboardEntries.some((e) => e.ptpAmount > 0)
+        ? "ptpAmount"
+        : "calls");
+
   const settlementCounts = useMemo(() => {
     const counts: Record<SettlementStatus, number> = {
       pending_manager: 0,
@@ -463,7 +480,7 @@ function AdminReportsPage() {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <ReportSection
               title="Agent Leaderboard"
-              description="Ranked by amount collected, across every team"
+              description={`Ranked by ${LEADER_METRIC_CAPTION[effectiveLeaderMetric]}, across every team`}
               icon={Trophy}
               action={
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-0.5">
@@ -474,7 +491,7 @@ function AdminReportsPage() {
                       onClick={() => setLeaderMetric(m)}
                       className={cn(
                         "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors",
-                        leaderMetric === m
+                        effectiveLeaderMetric === m
                           ? "bg-primary text-primary-foreground"
                           : "text-muted-foreground hover:text-foreground",
                       )}
@@ -485,7 +502,12 @@ function AdminReportsPage() {
                 </div>
               }
             >
-              <Leaderboard entries={leaderboardEntries} metric={leaderMetric} showTeam limit={10} />
+              <Leaderboard
+                entries={leaderboardEntries}
+                metric={effectiveLeaderMetric}
+                showTeam
+                limit={10}
+              />
             </ReportSection>
 
             <div className="space-y-4">
