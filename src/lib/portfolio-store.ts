@@ -328,9 +328,12 @@ export async function refreshPortfolios(): Promise<void> {
  * attached, since they're all keyed off debtor_id and this way it never changes. Marks each
  * matched request 'carried' and every unmatched sent_to_bank request 'not_honored' — the bank
  * didn't include it, so the account is recalled like any other, not silently left dangling in
- * 'sent_to_bank' forever. Finally closes the old portfolio. Best-effort: if retention_requests
- * or the new columns don't exist yet (migration not applied), this is a no-op and every row
- * inserts fresh, same as before this feature existed. */
+ * 'sent_to_bank' forever. Does NOT close the old portfolio itself — createPortfolio() does that
+ * unconditionally right after calling this, since the common case (no retention requests were
+ * ever filed) used to return early here and skip it, silently leaving both portfolios active
+ * with a full duplicate set of accounts each. Best-effort: if retention_requests or the new
+ * columns don't exist yet (migration not applied), this is a no-op and every row inserts
+ * fresh, same as before this feature existed. */
 async function reconcileRetainedDebtors(
   oldPortfolioId: string,
   newPortfolioId: string,
@@ -405,11 +408,6 @@ async function reconcileRetainedDebtors(
         .in("id", unmatchedIds);
     }
 
-    await supabase
-      .from("portfolios")
-      .update({ closed_at: new Date().toISOString() })
-      .eq("id", oldPortfolioId);
-
     return { handledRowIds, carried: handledRowIds.size };
   } catch {
     return { handledRowIds, carried: 0 };
@@ -472,6 +470,16 @@ export async function createPortfolio(
     if (result.handledRowIds.size) {
       toInsert = uploadable.filter((r) => !result.handledRowIds.has(r.id));
     }
+    // Unconditional, regardless of whether there was anything to carry forward — this used to
+    // live inside reconcileRetainedDebtors() and only run when sentRequests was non-empty, so
+    // the common case (a manager just picking "continues portfolio" without ever filing a
+    // retention request) silently left the old portfolio open with a full duplicate set of
+    // accounts alongside the new one.
+    const { error: closeErr } = await supabase
+      .from("portfolios")
+      .update({ closed_at: new Date().toISOString() })
+      .eq("id", p.replacesPortfolioId);
+    if (closeErr) throw closeErr;
   }
 
   for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
