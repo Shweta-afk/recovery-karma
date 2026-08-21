@@ -49,6 +49,12 @@ import {
   type DisputeRecord,
   type DisputeStatus,
 } from "@/lib/dispute-store";
+import {
+  getAgentAccountCounts,
+  getPortfolioTotals,
+  refreshReportMetrics,
+  summariseTotals,
+} from "@/lib/report-metrics-store";
 import { downloadCsv } from "@/lib/csv-export";
 import {
   OUTCOME_LABELS,
@@ -158,23 +164,38 @@ function AdminReportsPage() {
     return () => window.removeEventListener("disputes-updated", load);
   }, []);
 
+  // Account counts come from SQL aggregates, NOT from counting cached debtor rows: the
+  // portfolio cache exceeds localStorage's quota at this dataset's size and silently serves a
+  // partial snapshot, which made every count here wrong. See report-metrics-store.ts.
+  const [agentCounts, setAgentCounts] = useState(() => getAgentAccountCounts());
+  const [portfolioTotals, setPortfolioTotals] = useState(() => getPortfolioTotals());
+  useEffect(() => {
+    const load = () => {
+      setAgentCounts(getAgentAccountCounts());
+      setPortfolioTotals(getPortfolioTotals());
+    };
+    load();
+    window.addEventListener("report-metrics-updated", load);
+    refreshReportMetrics();
+    return () => window.removeEventListener("report-metrics-updated", load);
+  }, []);
+
   // Global stats
   const globalStats = useMemo(() => calcStats(disps), [disps]);
 
-  // "Active" here means the same thing it means to the dialer (see buildAssignedQueue in
-  // call-queue/build-queue.ts): a debtor in a portfolio whose cycle is still open, who hasn't
-  // already been settled. Counting raw p.rows.length instead double-counts recalled cycles and
-  // already-paid accounts, which is why this KPI used to read far higher than the live book.
-  // ('removed' rows never reach p.rows at all — refreshPortfolios filters them out.)
-  const activePortfolios = useMemo(() => portfolios.filter((p) => !p.closedAt), [portfolios]);
-  const activeAccounts = useMemo(
-    () =>
-      activePortfolios.reduce((s, p) => s + p.rows.filter((r) => r.status !== "paid").length, 0),
-    [activePortfolios],
+  // "Active" = the dialer's definition (buildAssignedQueue): open portfolio, not already
+  // settled. Computed in Postgres so it is correct regardless of what the localStorage
+  // portfolio cache managed to hold.
+  const totals = useMemo(() => summariseTotals(portfolioTotals), [portfolioTotals]);
+  const activeAccounts = totals.activeAccounts;
+  const allTimeAccounts = totals.allTimeAccounts;
+  const activeCountByAgent = useMemo(
+    () => new Map(agentCounts.map((a) => [a.agentEmail, a.activeAssigned])),
+    [agentCounts],
   );
-  const allTimeAccounts = useMemo(
-    () => portfolios.reduce((s, p) => s + p.rows.length, 0),
-    [portfolios],
+  const assignedByPortfolio = useMemo(
+    () => new Map(portfolioTotals.map((p) => [p.portfolioId, p.assignedRows])),
+    [portfolioTotals],
   );
 
   // Per-team stats
@@ -183,14 +204,12 @@ function AdminReportsPage() {
     return teams.map((team) => {
       const teamDisps = disps.filter((d) => d.teamId === team.id);
       const teamPortfolios = portfolios.filter((p) => p.teamId === team.id);
-      // Same "active" definition as the KPI strip (open portfolio, not already settled) —
-      // otherwise this column contradicts the Active Accounts tile on the same page.
-      const assignedCount = teamPortfolios
-        .filter((p) => !p.closedAt)
-        .reduce(
-          (s, p) => s + p.rows.filter((r) => r.assignedAgentId && r.status !== "paid").length,
-          0,
-        );
+      // Summed from the per-agent SQL aggregate rather than the cached rows, so it agrees
+      // with the KPI strip and survives the portfolio cache being truncated.
+      const assignedCount = team.agentIds.reduce(
+        (s, aid) => s + (activeCountByAgent.get(aid) ?? 0),
+        0,
+      );
       // Today's time breakdown per agent — see agent-time-stats.ts for what's real (calling)
       // vs. estimated (idle/disposition/login-logout) pending a real presence-log table.
       const todayTimeStats = team.agentIds.map((aid) => {
@@ -217,7 +236,7 @@ function AdminReportsPage() {
         avgIdlePct,
       };
     });
-  }, [teams, disps, portfolios]);
+  }, [teams, disps, portfolios, activeCountByAgent]);
 
   // All agents across all teams with stats
   const agentStats = useMemo(() => {
@@ -227,14 +246,8 @@ function AdminReportsPage() {
         const agentDisps = disps.filter((d) => d.agentId === agentId);
         const ref = getAgentById(agentId);
         const team = teams.find((t) => t.agentIds.includes(agentId));
-        // Active-only, matching the KPI strip and the team table. Counting every row
-        // regardless of portfolio state made this column total 1,449 while the Active
-        // Accounts tile read 309 — two different definitions on one page.
-        const assignedCount = activePortfolios.reduce(
-          (s, p) =>
-            s + p.rows.filter((r) => r.assignedAgentId === agentId && r.status !== "paid").length,
-          0,
-        );
+        // Straight from the SQL aggregate — see report-metrics-store.ts.
+        const assignedCount = activeCountByAgent.get(agentId) ?? 0;
         return {
           agentId,
           name: ref?.name ?? agentId,
@@ -245,7 +258,7 @@ function AdminReportsPage() {
         };
       })
       .sort((a, b) => b.stats.total - a.stats.total);
-  }, [teams, disps, activePortfolios]);
+  }, [teams, disps, activeCountByAgent]);
 
   const filtered = search.trim()
     ? agentStats.filter(
@@ -260,24 +273,25 @@ function AdminReportsPage() {
   // Recovery rate per portfolio — $ collected (completed payments) ÷ $ placed (sum of
   // loanAmount across the portfolio's rows). No cost-to-collect here: there's no cost/expense
   // data anywhere in the schema (no telephony spend, no agent-cost tracking) to divide by.
+  // `placed` comes from the SQL aggregate (sum of loan_amount per portfolio); `collected` is
+  // summed from the payments cache, which is small enough to be reliable.
   const recoveryByPortfolio = useMemo(() => {
-    return portfolios
+    return portfolioTotals
       .map((p) => {
-        const placed = p.rows.reduce((s, r) => s + (r.loanAmount || 0), 0);
         const collected = payments
-          .filter((pay) => pay.portfolioId === p.id && pay.status === "completed")
+          .filter((pay) => pay.portfolioId === p.portfolioId && pay.status === "completed")
           .reduce((s, pay) => s + pay.amount, 0);
         return {
-          id: p.id,
-          name: p.name,
-          placed,
+          id: p.portfolioId,
+          name: p.portfolioName,
+          placed: p.placedAmount,
           collected,
-          rate: placed > 0 ? Math.round((collected / placed) * 100) : 0,
+          rate: p.placedAmount > 0 ? Math.round((collected / p.placedAmount) * 100) : 0,
         };
       })
       .filter((p) => p.placed > 0)
       .sort((a, b) => b.placed - a.placed);
-  }, [portfolios, payments]);
+  }, [portfolioTotals, payments]);
 
   const totalPlaced = useMemo(
     () => recoveryByPortfolio.reduce((s, p) => s + p.placed, 0),
@@ -401,8 +415,8 @@ function AdminReportsPage() {
             {teams.length} team{teams.length !== 1 ? "s" : ""}
           </Badge>
           <Badge variant="outline" className="font-normal">
-            {activePortfolios.length} active portfolio
-            {activePortfolios.length !== 1 ? "s" : ""}
+            {totals.openPortfolios} active portfolio
+            {totals.openPortfolios !== 1 ? "s" : ""}
           </Badge>
         </div>
       </div>
@@ -812,7 +826,7 @@ function AdminReportsPage() {
                                 variant="outline"
                                 className="text-[10px] font-normal"
                               >
-                                {p.name} · {p.rows.filter((r) => r.assignedAgentId).length} accounts
+                                {p.name} · {assignedByPortfolio.get(p.id) ?? 0} accounts
                               </Badge>
                             ))}
                           </div>

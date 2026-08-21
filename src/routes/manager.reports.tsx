@@ -31,6 +31,11 @@ import {
   type DispositionRecord,
 } from "@/lib/disposition-store";
 import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import {
+  getAgentAccountCounts,
+  getPortfolioTotals,
+  refreshReportMetrics,
+} from "@/lib/report-metrics-store";
 import { formatINR } from "@/lib/mock-debtors";
 import { downloadCsv } from "@/lib/csv-export";
 import {
@@ -76,6 +81,27 @@ function ManagerReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam?.id]);
 
+  // Counts come from SQL aggregates, not from counting cached debtor rows — the portfolio
+  // cache exceeds localStorage's quota on this dataset and serves a partial snapshot.
+  // See report-metrics-store.ts.
+  const [agentCounts, setAgentCounts] = useState(() => getAgentAccountCounts());
+  const [portfolioTotals, setPortfolioTotals] = useState(() => getPortfolioTotals());
+  useEffect(() => {
+    const load = () => {
+      setAgentCounts(getAgentAccountCounts());
+      setPortfolioTotals(getPortfolioTotals());
+    };
+    load();
+    window.addEventListener("report-metrics-updated", load);
+    refreshReportMetrics();
+    return () => window.removeEventListener("report-metrics-updated", load);
+  }, []);
+
+  const activeCountByAgent = useMemo(
+    () => new Map(agentCounts.map((a) => [a.agentEmail, a.activeAssigned])),
+    [agentCounts],
+  );
+
   const [portfolioVersion, setPortfolioVersion] = useState(0);
   useEffect(() => {
     const bump = () => setPortfolioVersion((n) => n + 1);
@@ -89,17 +115,16 @@ function ManagerReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeTeam?.id, portfolioVersion],
   );
-  // Matches the dialer's definition of a live account (buildAssignedQueue in
-  // call-queue/build-queue.ts): open portfolio, not already settled. Counting every row would
-  // include recalled cycles and paid-off accounts, overstating the team's real book.
-  const activePortfolios = useMemo(() => portfolios.filter((p) => !p.closedAt), [portfolios]);
+  // Summed from the per-agent SQL aggregate, so it is correct regardless of how much of the
+  // portfolio cache survived localStorage's quota.
   const assignedCount = useMemo(
-    () =>
-      activePortfolios.reduce(
-        (s, p) => s + p.rows.filter((r) => r.assignedAgentId && r.status !== "paid").length,
-        0,
-      ),
-    [activePortfolios],
+    () => teamAgents.reduce((s, a) => s + (activeCountByAgent.get(a.id) ?? 0), 0),
+    [teamAgents, activeCountByAgent],
+  );
+  const activePortfolioCount = useMemo(
+    () => portfolioTotals.filter((p) => p.isOpen && p.teamId === activeTeam?.id).length,
+
+    [portfolioTotals, activeTeam?.id],
   );
 
   const globalStats = useMemo(() => calcStats(disps), [disps]);
@@ -109,13 +134,8 @@ function ManagerReportsPage() {
       teamAgents
         .map((agent) => {
           const agentDisps = disps.filter((d) => d.agentId === agent.id);
-          // Active-only, matching this page's Active Accounts tile.
-          const assigned = activePortfolios.reduce(
-            (s, p) =>
-              s +
-              p.rows.filter((r) => r.assignedAgentId === agent.id && r.status !== "paid").length,
-            0,
-          );
+          // Straight from the SQL aggregate — see report-metrics-store.ts.
+          const assigned = activeCountByAgent.get(agent.id) ?? 0;
           return {
             agentId: agent.id,
             name: agent.name,
@@ -125,7 +145,7 @@ function ManagerReportsPage() {
           };
         })
         .sort((a, b) => b.stats.total - a.stats.total),
-    [teamAgents, disps, activePortfolios],
+    [teamAgents, disps, activeCountByAgent],
   );
 
   const filtered = search.trim()
@@ -188,8 +208,8 @@ function ManagerReportsPage() {
             {teamAgents.length} agent{teamAgents.length !== 1 ? "s" : ""}
           </Badge>
           <Badge variant="outline" className="font-normal text-xs">
-            {activePortfolios.length} active portfolio
-            {activePortfolios.length !== 1 ? "s" : ""}
+            {activePortfolioCount} active portfolio
+            {activePortfolioCount !== 1 ? "s" : ""}
           </Badge>
         </div>
       </div>
