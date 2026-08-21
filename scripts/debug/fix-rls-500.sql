@@ -1,42 +1,49 @@
--- ONE-SHOT: capture current state → apply fix → verify.
--- Confirmed 2026-08-21: "42P17 infinite recursion detected in policy for relation agents".
--- Run this whole file in the Supabase SQL Editor. Sections 1 and 2 are read-only and tell us
--- WHY it broke; section 3 is the idempotent fix; section 4 proves it's fixed.
--- Please paste back the output of sections 1, 2 and 4.
+-- Fixes the 2026-08-21 outage: PostgREST 500s on nearly every table, all reporting
+-- "42P17 infinite recursion detected in policy for relation agents".
+--
+-- Diagnosed against the live database rather than inferred. A smoke test over all 11 tables
+-- showed 9 failing, and 8 of those named relation *agents* rather than themselves — one bug,
+-- not nine: every policy in the schema calls auth_client_id()/auth_role(), both of which read
+-- `agents`, so agents recursing takes the whole schema down. `clients` and `teams` survived
+-- because their policies don't route through it.
+--
+-- OWNERSHIP IS FINE and was ruled out: all four auth_* functions and all three tables are
+-- owned by `postgres`, which has rolbypassrls=true, and relforcerowsecurity is false
+-- everywhere. So the SECURITY DEFINER owner-exemption works — once the function is actually
+-- opaque to the planner (defect 1 below).
+--
+-- Correcting a misconception carried through earlier rounds of this fix: `SET row_security =
+-- off` does NOT grant an RLS bypass. Per the Postgres docs it makes a query ERROR instead of
+-- applying a policy; it only ever *looked* load-bearing because the roles involved were
+-- already exempt. The real mechanism is SECURITY DEFINER + an owner that can bypass RLS.
+--
+-- THREE ACTUAL DEFECTS FOUND IN THE LIVE SCHEMA:
+--
+--   1. auth_agent_id() was `LANGUAGE sql` (the other three helpers were already plpgsql).
+--      Postgres INLINES simple single-statement SQL functions, which silently discards
+--      SECURITY DEFINER. Once inlined its `SELECT id FROM agents` runs as the CALLING role,
+--      hits agents_select, which calls auth_agent_id() — a true cycle.
+--
+--   2. agents_select still carried the pre-hardening body with `team_agents`/`teams`
+--      subqueries inline in its USING clause. Those tables have their own RLS, which
+--      re-enters policy evaluation. (auth_visible_agent_ids() already existed with the
+--      correct definition — the policy simply wasn't using it.)
+--
+--   3. team_agents_write is `FOR ALL`, so it governs SELECT too, and both its USING and
+--      WITH CHECK read `(SELECT id FROM agents WHERE auth_user_id = auth.uid())` directly as
+--      the calling role. That is team_agents' OWN recursion, separate from the agents
+--      cascade, and is why team_agents reported "for relation team_agents".
+--
+-- Wrapped in a single transaction: an earlier attempt left the schema half-patched (helpers
+-- updated, policy not), which made the system look fixed while still being broken. All or
+-- nothing.
 
--- ═══ 1. BEFORE: are the helpers still the hardened versions? ═════════════════
--- All four must be: prolang='plpgsql', security_definer=true, and settings containing
--- BOTH 'search_path=public, pg_temp' AND 'row_security=off'.
--- 'sql' in prolang, or a missing row_security=off, is the smoking gun.
--- A MISSING ROW here (esp. auth_visible_agent_ids) means the 20260814 hardening was lost.
-SELECT
-  p.proname   AS function_name,
-  l.lanname   AS prolang,
-  p.prosecdef AS security_definer,
-  p.proconfig AS settings
-FROM pg_proc p
-JOIN pg_language l ON l.oid = p.prolang
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.proname IN ('auth_client_id','auth_role','auth_agent_id','auth_visible_agent_ids')
-ORDER BY p.proname;
+BEGIN;
 
--- ═══ 2. BEFORE: what does agents_select actually look like? ═════════════════
--- Healthy: references auth_visible_agent_ids().
--- Broken:  contains an inline "FROM team_agents"/"FROM teams" subquery, meaning the older
---          20260814_scope_remaining_tables migration overwrote the hardened version.
-SELECT tablename, policyname, cmd, qual
-FROM pg_policies
-WHERE tablename IN ('agents','team_agents','teams')
-ORDER BY tablename, policyname;
-
--- ═══ 3. FIX (idempotent — no-op if already correct) ═════════════════════════
--- All three properties below are load-bearing:
---   LANGUAGE plpgsql        -> a single-statement LANGUAGE sql fn gets INLINED by the
---                              planner, silently discarding SECURITY DEFINER.
---   SECURITY DEFINER        -> runs as table owner, which is exempt from RLS.
---   SET row_security = off  -> covers EVERY read in the body (agents, teams, team_agents),
---                              not just the final lookup, so nothing re-enters RLS.
+-- ── Defect 1: make auth_agent_id() non-inlinable ────────────────────────────
+-- plpgsql functions are opaque to the planner, so SECURITY DEFINER survives and the body
+-- genuinely runs as `postgres` (rolbypassrls), bypassing agents' RLS. This single change is
+-- the root fix; 2 and 3 remove the remaining direct RLS re-entries.
 CREATE OR REPLACE FUNCTION auth_agent_id() RETURNS UUID
   LANGUAGE plpgsql STABLE SECURITY DEFINER
   SET search_path = public, pg_temp
@@ -46,8 +53,11 @@ CREATE OR REPLACE FUNCTION auth_agent_id() RETURNS UUID
   BEGIN
     SELECT id INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
     RETURN result;
-  END; $$;
+  END;
+  $$;
 
+-- Re-assert the other three so this migration is self-sufficient if replayed onto a database
+-- where they were never hardened. No-ops where they are already correct.
 CREATE OR REPLACE FUNCTION auth_client_id() RETURNS UUID
   LANGUAGE plpgsql STABLE SECURITY DEFINER
   SET search_path = public, pg_temp
@@ -57,7 +67,8 @@ CREATE OR REPLACE FUNCTION auth_client_id() RETURNS UUID
   BEGIN
     SELECT client_id INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
     RETURN result;
-  END; $$;
+  END;
+  $$;
 
 CREATE OR REPLACE FUNCTION auth_role() RETURNS TEXT
   LANGUAGE plpgsql STABLE SECURITY DEFINER
@@ -68,7 +79,8 @@ CREATE OR REPLACE FUNCTION auth_role() RETURNS TEXT
   BEGIN
     SELECT role INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
     RETURN result;
-  END; $$;
+  END;
+  $$;
 
 CREATE OR REPLACE FUNCTION auth_visible_agent_ids() RETURNS SETOF UUID
   LANGUAGE plpgsql STABLE SECURITY DEFINER
@@ -84,8 +96,10 @@ CREATE OR REPLACE FUNCTION auth_visible_agent_ids() RETURNS SETOF UUID
     UNION
     SELECT t.manager_id FROM team_agents ta JOIN teams t ON t.id = ta.team_id
     WHERE ta.agent_id = (SELECT id FROM agents WHERE auth_user_id = auth.uid());
-  END; $$;
+  END;
+  $$;
 
+-- ── Defect 2: agents_select must not read team_agents/teams itself ──────────
 DROP POLICY IF EXISTS agents_select ON agents;
 CREATE POLICY agents_select ON agents FOR SELECT TO authenticated
   USING (
@@ -93,14 +107,59 @@ CREATE POLICY agents_select ON agents FOR SELECT TO authenticated
     AND (auth_role() = 'admin' OR id IN (SELECT auth_visible_agent_ids()))
   );
 
--- ═══ 4. AFTER: verify as a real signed-in user ══════════════════════════════
--- Both SELECTs must return rows. If either still raises 42P17, the helpers were NOT the
--- cause and section 2's policy dump is what we need to look at next.
+-- ── Defect 3: team_agents_write must not read agents inline ─────────────────
+-- Same visibility rule as before (admin, or the team's own manager) — the only change is
+-- routing the "who am I" lookup through auth_agent_id() instead of an inline subquery that
+-- re-enters agents' RLS. Preserves the WITH CHECK from 20260806_managers_write_own_team.sql.
+DROP POLICY IF EXISTS team_agents_write ON team_agents;
+CREATE POLICY team_agents_write ON team_agents FOR ALL TO authenticated
+  USING (
+    team_id IN (
+      SELECT id FROM teams
+      WHERE client_id = auth_client_id()
+        AND (auth_role() = 'admin' OR manager_id = auth_agent_id())
+    )
+  )
+  WITH CHECK (
+    team_id IN (
+      SELECT id FROM teams
+      WHERE client_id = auth_client_id()
+        AND (auth_role() = 'admin' OR manager_id = auth_agent_id())
+    )
+  );
+
+COMMIT;
+
+-- ⚠️ DO NOT re-run 20260814_scope_remaining_tables_to_agent_and_manager.sql after this file.
+-- It re-declares auth_agent_id() as LANGUAGE sql and restores the inline agents_select body —
+-- i.e. it reintroduces defects 1 and 2 verbatim and will reproduce this exact outage.
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- VERIFY: re-run the full smoke test as a real non-admin signed-in user.
+-- Every row must read "OK". Any remaining FAIL names the next table to look at.
+-- ═══════════════════════════════════════════════════════════════════════════
+NOTIFY pgrst, 'reload schema';
+DISCARD PLANS;
+
+CREATE OR REPLACE FUNCTION _rls_probe(t text) RETURNS text
+  LANGUAGE plpgsql SECURITY INVOKER
+  AS $$
+  DECLARE n bigint;
+  BEGIN
+    EXECUTE format('SELECT count(*) FROM public.%I', t) INTO n;
+    RETURN 'OK — ' || n || ' rows';
+  EXCEPTION WHEN OTHERS THEN
+    RETURN 'FAIL — ' || SQLSTATE || ': ' || SQLERRM;
+  END;
+  $$;
+
 BEGIN;
   SET LOCAL ROLE authenticated;
   SET LOCAL request.jwt.claims TO '{"sub":"0015916e-bd23-4816-b3b1-cb81c7ae9cd1"}';
-  SELECT name, email, role FROM agents
-   WHERE auth_user_id = '0015916e-bd23-4816-b3b1-cb81c7ae9cd1';
-  SELECT count(*) AS team_agents_readable FROM team_agents;
-  SELECT count(*) AS agents_readable FROM agents;
+  SELECT t AS table_name, _rls_probe(t) AS result
+  FROM unnest(ARRAY[
+    'clients','agents','teams','team_agents','portfolios','debtors',
+    'call_logs','messages','payments','disputes','settlement_requests'
+  ]) AS t
+  ORDER BY 1;
 ROLLBACK;
