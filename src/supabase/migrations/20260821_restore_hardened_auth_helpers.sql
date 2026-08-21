@@ -133,3 +133,67 @@ COMMIT;
 -- ⚠️ DO NOT re-run 20260814_scope_remaining_tables_to_agent_and_manager.sql after this file.
 -- It re-declares auth_agent_id() as LANGUAGE sql and restores the inline agents_select body —
 -- i.e. it reintroduces defects 1 and 2 verbatim and will reproduce this exact outage.
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ROUND 2 — added after verifying round 1 live.
+--
+-- Round 1 (above) cleared agents/team_agents/teams/clients. The smoke test then showed the
+-- remaining failures had MOVED to a different pair: debtors and portfolios recursing on
+-- themselves, with call_logs/messages/payments/disputes/settlement_requests all cascading off
+-- "relation debtors" (their policies read debtors to scope by client).
+--
+-- This is the debtors <-> portfolios mutual recursion that
+-- 20260817_fix_debtors_portfolios_mutual_recursion.sql already fixed: debtors_select's manager
+-- branch reads portfolios while portfolios_select reads debtors, so resolving either requires
+-- resolving the other. It had been reverted by the same replay of
+-- 20260814_scope_remaining_tables_to_agent_and_manager.sql that undid the agents hardening.
+--
+-- Reproduced here so THIS file alone restores a working schema. One improvement over the
+-- 20260817 original: it used inline `(SELECT id FROM agents WHERE auth_user_id = auth.uid())`
+-- because auth_agent_id() was the broken LANGUAGE sql version at the time. Now that defect 1
+-- is fixed, those go through auth_agent_id(), removing three more direct RLS re-entries.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION auth_visible_portfolio_ids() RETURNS SETOF UUID
+  LANGUAGE plpgsql STABLE SECURITY DEFINER
+  SET search_path = public, pg_temp
+  SET row_security = off
+  AS $$
+  DECLARE me UUID;
+  BEGIN
+    SELECT id INTO me FROM agents WHERE auth_user_id = auth.uid();
+    RETURN QUERY
+    SELECT id FROM portfolios WHERE manager_id = me
+    UNION
+    SELECT id FROM portfolios WHERE team_id IN (SELECT id FROM teams WHERE manager_id = me)
+    UNION
+    SELECT portfolio_id FROM debtors WHERE assigned_agent_id = me AND portfolio_id IS NOT NULL;
+  END;
+  $$;
+
+DROP POLICY IF EXISTS portfolios_select ON portfolios;
+CREATE POLICY portfolios_select ON portfolios FOR SELECT TO authenticated
+  USING (
+    client_id = auth_client_id()
+    AND (auth_role() = 'admin' OR id IN (SELECT auth_visible_portfolio_ids()))
+  );
+
+DROP POLICY IF EXISTS debtors_select ON debtors;
+CREATE POLICY debtors_select ON debtors FOR SELECT TO authenticated
+  USING (
+    client_id = auth_client_id()
+    AND (
+      auth_role() = 'admin'
+      OR assigned_agent_id = auth_agent_id()
+      OR (
+        auth_role() = 'manager'
+        AND (
+          assigned_agent_id IN (
+            SELECT ta.agent_id FROM team_agents ta JOIN teams t ON t.id = ta.team_id
+            WHERE t.manager_id = auth_agent_id()
+          )
+          OR portfolio_id IN (SELECT auth_visible_portfolio_ids())
+        )
+      )
+    )
+  );
