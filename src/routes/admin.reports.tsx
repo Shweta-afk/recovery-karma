@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import {
   BarChart2,
   Users,
@@ -16,6 +16,7 @@ import {
   Search,
   Target,
   ShieldAlert,
+  Trophy,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +57,8 @@ import {
 } from "@/components/reports/outcome-breakdown";
 import { Stat } from "@/components/reports/stat-card";
 import { AgentCallLog } from "@/components/reports/agent-call-log";
+import { DataTable, ReportSection } from "@/components/reports/data-table";
+import { Leaderboard, type LeaderboardMetric } from "@/components/reports/leaderboard";
 
 export const Route = createFileRoute("/admin/reports")({
   head: () => ({ meta: [{ title: "Reports · SamvadX Admin" }] }),
@@ -103,6 +106,7 @@ function AdminReportsPage() {
   const [search, setSearch] = useState("");
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [leaderMetric, setLeaderMetric] = useState<LeaderboardMetric>("collected");
   useRoster(); // triggers a background refresh so agent names stay current
 
   useEffect(() => {
@@ -150,7 +154,19 @@ function AdminReportsPage() {
 
   // Global stats
   const globalStats = useMemo(() => calcStats(disps), [disps]);
-  const totalAccounts = useMemo(
+
+  // "Active" here means the same thing it means to the dialer (see buildAssignedQueue in
+  // call-queue/build-queue.ts): a debtor in a portfolio whose cycle is still open, who hasn't
+  // already been settled. Counting raw p.rows.length instead double-counts recalled cycles and
+  // already-paid accounts, which is why this KPI used to read far higher than the live book.
+  // ('removed' rows never reach p.rows at all — refreshPortfolios filters them out.)
+  const activePortfolios = useMemo(() => portfolios.filter((p) => !p.closedAt), [portfolios]);
+  const activeAccounts = useMemo(
+    () =>
+      activePortfolios.reduce((s, p) => s + p.rows.filter((r) => r.status !== "paid").length, 0),
+    [activePortfolios],
+  );
+  const allTimeAccounts = useMemo(
     () => portfolios.reduce((s, p) => s + p.rows.length, 0),
     [portfolios],
   );
@@ -314,6 +330,21 @@ function AdminReportsPage() {
   const complianceRate =
     disps.length > 0 ? Math.round((complianceViolations.length / disps.length) * 100) : 0;
 
+  const leaderboardEntries = useMemo(
+    () =>
+      agentStats.map((a) => ({
+        agentId: a.agentId,
+        name: a.name,
+        teamName: a.teamName,
+        collected: a.stats.paidAmount,
+        ptps: a.stats.ptps,
+        ptpAmount: a.stats.ptpAmount,
+        calls: a.stats.total,
+        contactRate: a.stats.contactRate,
+      })),
+    [agentStats],
+  );
+
   const settlementCounts = useMemo(() => {
     const counts: Record<SettlementStatus, number> = {
       pending_manager: 0,
@@ -332,41 +363,64 @@ function AdminReportsPage() {
   }, [settlements]);
 
   return (
-    <div className="space-y-6">
-      <div className="animate-in fade-in slide-in-from-top-4 duration-500">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
-        <p className="text-sm text-muted-foreground">
-          Full recovery reporting — all teams, individual agents, call outcomes and PTP performance.
-        </p>
+    <div className="space-y-5">
+      <div className="animate-in fade-in slide-in-from-top-4 duration-500 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
+          <p className="text-sm text-muted-foreground">
+            Org-wide recovery reporting — every team, agent, outcome and rupee.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="outline" className="font-normal">
+            {teams.length} team{teams.length !== 1 ? "s" : ""}
+          </Badge>
+          <Badge variant="outline" className="font-normal">
+            {activePortfolios.length} active portfolio
+            {activePortfolios.length !== 1 ? "s" : ""}
+          </Badge>
+        </div>
       </div>
 
       {/* Global KPIs */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        <Stat
+          icon={CheckCircle2}
+          label="Collected"
+          value={formatINR(globalStats.paidAmount)}
+          sub={`${globalStats.paid} payments`}
+          green
+        />
         <Stat
           icon={IndianRupee}
-          label="Total PTP Amount"
+          label="PTP Value"
           value={formatINR(globalStats.ptpAmount)}
           sub={`${globalStats.ptps} promises`}
           green
         />
         <Stat
-          icon={CheckCircle2}
-          label="Paid / Collected"
-          value={formatINR(globalStats.paidAmount)}
-          sub={`${globalStats.paid} accounts`}
-          green
+          icon={Target}
+          label="Recovery Rate"
+          value={`${overallRecoveryRate}%`}
+          sub="collected ÷ placed"
         />
         <Stat
           icon={PhoneCall}
-          label="Total Calls Logged"
+          label="Calls Logged"
           value={globalStats.total.toLocaleString()}
           sub={`${globalStats.contactRate}% contact rate`}
         />
         <Stat
           icon={Users}
-          label="Total Accounts"
-          value={totalAccounts.toLocaleString()}
-          sub={`${teams.length} team${teams.length !== 1 ? "s" : ""}`}
+          label="Active Accounts"
+          value={activeAccounts.toLocaleString()}
+          sub={`${allTimeAccounts.toLocaleString()} incl. closed/paid`}
+        />
+        <Stat
+          icon={ShieldAlert}
+          label="Compliance Flags"
+          value={complianceViolations.length.toLocaleString()}
+          sub="outside 07:00–19:00 IST"
         />
       </div>
 
@@ -382,9 +436,10 @@ function AdminReportsPage() {
         </Card>
       )}
 
-      <Tabs defaultValue="teams">
+      <Tabs defaultValue="overview">
         <div className="overflow-x-auto">
           <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="teams">By Team</TabsTrigger>
             <TabsTrigger value="agents">By Agent</TabsTrigger>
             <TabsTrigger value="outcomes">Outcome Breakdown</TabsTrigger>
@@ -402,6 +457,115 @@ function AdminReportsPage() {
             <TabsTrigger value="detail">Call Log</TabsTrigger>
           </TabsList>
         </div>
+
+        {/* ── OVERVIEW TAB (leaderboard + at-a-glance boxes) ── */}
+        <TabsContent value="overview" className="mt-4 space-y-4">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <ReportSection
+              title="Agent Leaderboard"
+              description="Ranked by amount collected, across every team"
+              icon={Trophy}
+              action={
+                <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-0.5">
+                  {(["collected", "ptpAmount", "calls"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setLeaderMetric(m)}
+                      className={cn(
+                        "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors",
+                        leaderMetric === m
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {m === "collected" ? "Collected" : m === "ptpAmount" ? "PTP" : "Calls"}
+                    </button>
+                  ))}
+                </div>
+              }
+            >
+              <Leaderboard entries={leaderboardEntries} metric={leaderMetric} showTeam limit={10} />
+            </ReportSection>
+
+            <div className="space-y-4">
+              <ReportSection
+                title="Team Standings"
+                description="Collections and contact rate by team"
+                icon={Users}
+              >
+                <DataTable
+                  rows={[...teamStats].sort((a, b) => b.stats.paidAmount - a.stats.paidAmount)}
+                  keyOf={(t) => t.team.id}
+                  empty="No teams created yet."
+                  columns={[
+                    {
+                      key: "team",
+                      header: "Team",
+                      render: (t) => (
+                        <div>
+                          <div className="font-medium text-foreground">{t.team.name}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {t.team.agentIds.length} agents
+                          </div>
+                        </div>
+                      ),
+                    },
+                    {
+                      key: "calls",
+                      header: "Calls",
+                      numeric: true,
+                      render: (t) => t.stats.total.toLocaleString(),
+                    },
+                    {
+                      key: "ptps",
+                      header: "PTPs",
+                      numeric: true,
+                      render: (t) => <span className="text-blue-500">{t.stats.ptps}</span>,
+                    },
+                    {
+                      key: "collected",
+                      header: "Collected",
+                      numeric: true,
+                      render: (t) => (
+                        <span className="text-success font-medium">
+                          {formatINR(t.stats.paidAmount)}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: "contact",
+                      header: "Contact",
+                      numeric: true,
+                      render: (t) => `${t.stats.contactRate}%`,
+                    },
+                  ]}
+                  footer={[
+                    "Total",
+                    globalStats.total.toLocaleString(),
+                    globalStats.ptps.toLocaleString(),
+                    formatINR(globalStats.paidAmount),
+                    `${globalStats.contactRate}%`,
+                  ]}
+                />
+              </ReportSection>
+
+              <ReportSection
+                title="Outcome Mix"
+                description="How every logged call resolved"
+                icon={BarChart2}
+              >
+                {disps.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">
+                    No calls logged yet.
+                  </p>
+                ) : (
+                  <OutcomeBreakdown disps={disps} />
+                )}
+              </ReportSection>
+            </div>
+          </div>
+        </TabsContent>
 
         {/* ── TEAMS TAB ── */}
         <TabsContent value="teams" className="mt-4 space-y-3">
@@ -678,82 +842,140 @@ function AdminReportsPage() {
             </button>
           </div>
 
-          <div className="rounded-md border border-border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-muted/20 border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
-                  <th className="py-2.5 px-4 text-left font-medium">Agent</th>
-                  <th className="py-2.5 px-3 text-left font-medium">Team</th>
-                  <th className="py-2.5 px-3 text-center font-medium">Assigned</th>
-                  <th className="py-2.5 px-3 text-center font-medium">Calls</th>
-                  <th className="py-2.5 px-3 text-center font-medium">PTPs</th>
-                  <th className="py-2.5 px-3 text-right font-medium">PTP Value</th>
-                  <th className="py-2.5 px-3 text-center font-medium">Contact%</th>
-                  <th className="py-2.5 px-3 w-8" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="py-8 text-center text-xs text-muted-foreground">
-                      No agents match
-                    </td>
+          <div className="rounded-lg border border-border overflow-hidden bg-card">
+            <div className="overflow-auto max-h-[640px]">
+              <table className="w-full border-collapse text-xs">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-muted/60 backdrop-blur text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <th className="border-b border-r border-border px-3 py-2 text-left font-semibold">
+                      Agent
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-left font-semibold">
+                      Team
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      Assigned
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      Calls
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      PTPs
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      PTP Value
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      Collected
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      Contact%
+                    </th>
+                    <th className="border-b border-border px-3 py-2 w-8" />
                   </tr>
-                )}
-                {filtered.map((a) => {
-                  const open = expandedAgent === a.agentId;
-                  return (
-                    <>
-                      <tr
-                        key={a.agentId}
-                        className="hover:bg-muted/20 cursor-pointer"
-                        onClick={() => setExpandedAgent(open ? null : a.agentId)}
-                      >
-                        <td className="py-2.5 px-4">
-                          <div className="flex items-center gap-2">
-                            <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-semibold text-muted-foreground shrink-0">
-                              {a.name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")
-                                .slice(0, 2)}
+                </thead>
+                <tbody>
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-8 text-center text-xs text-muted-foreground">
+                        No agents match
+                      </td>
+                    </tr>
+                  )}
+                  {filtered.map((a, i) => {
+                    const open = expandedAgent === a.agentId;
+                    return (
+                      <Fragment key={a.agentId}>
+                        <tr
+                          className={cn(
+                            "cursor-pointer transition-colors hover:bg-primary/5",
+                            i % 2 === 1 && "bg-muted/20",
+                            open && "bg-primary/10",
+                          )}
+                          onClick={() => setExpandedAgent(open ? null : a.agentId)}
+                        >
+                          <td className="border-b border-r border-border/60 px-3 py-1.5">
+                            <div className="flex items-center gap-2">
+                              <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-semibold text-muted-foreground shrink-0">
+                                {a.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")
+                                  .slice(0, 2)}
+                              </div>
+                              <span className="font-medium text-foreground">{a.name}</span>
                             </div>
-                            <span className="font-medium text-foreground">{a.name}</span>
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 text-muted-foreground text-xs">{a.teamName}</td>
-                        <td className="py-2.5 px-3 text-center">{a.assignedCount}</td>
-                        <td className="py-2.5 px-3 text-center">{a.stats.total}</td>
-                        <td className="py-2.5 px-3 text-center text-blue-500 font-medium">
-                          {a.stats.ptps}
-                        </td>
-                        <td className="py-2.5 px-3 text-right text-success text-xs">
-                          {a.stats.ptpAmount > 0 ? formatINR(a.stats.ptpAmount) : "—"}
-                        </td>
-                        <td className="py-2.5 px-3 text-center text-xs">
-                          {a.stats.total > 0 ? `${a.stats.contactRate}%` : "—"}
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <ChevronRight
-                            className={cn(
-                              "h-3.5 w-3.5 text-muted-foreground transition-transform",
-                              open && "rotate-90",
-                            )}
-                          />
-                        </td>
-                      </tr>
-                      {open && (
-                        <tr key={`${a.agentId}-detail`}>
-                          <td colSpan={8} className="px-4 py-3 bg-muted/10 border-b border-border">
-                            <AgentCallLog disps={a.disps} agentName={a.name} />
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-muted-foreground">
+                            {a.teamName}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums">
+                            {a.assignedCount}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums">
+                            {a.stats.total}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums text-blue-500 font-medium">
+                            {a.stats.ptps}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums text-success">
+                            {a.stats.ptpAmount > 0 ? formatINR(a.stats.ptpAmount) : "—"}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums font-medium">
+                            {a.stats.paidAmount > 0 ? formatINR(a.stats.paidAmount) : "—"}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums">
+                            {a.stats.total > 0 ? `${a.stats.contactRate}%` : "—"}
+                          </td>
+                          <td className="border-b border-border/60 px-3 py-1.5 text-center">
+                            <ChevronRight
+                              className={cn(
+                                "h-3.5 w-3.5 text-muted-foreground transition-transform",
+                                open && "rotate-90",
+                              )}
+                            />
                           </td>
                         </tr>
-                      )}
-                    </>
-                  );
-                })}
-              </tbody>
-            </table>
+                        {open && (
+                          <tr>
+                            <td
+                              colSpan={9}
+                              className="border-b border-border bg-muted/10 px-4 py-3"
+                            >
+                              <AgentCallLog disps={a.disps} agentName={a.name} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="sticky bottom-0">
+                  <tr className="bg-muted/70 backdrop-blur font-semibold">
+                    <td className="border-t-2 border-r border-border px-3 py-2">Total</td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-muted-foreground">
+                      {filtered.length} agents
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums">
+                      {filtered.reduce((s, a) => s + a.assignedCount, 0).toLocaleString()}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums">
+                      {filtered.reduce((s, a) => s + a.stats.total, 0).toLocaleString()}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums text-blue-500">
+                      {filtered.reduce((s, a) => s + a.stats.ptps, 0).toLocaleString()}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums text-success">
+                      {formatINR(filtered.reduce((s, a) => s + a.stats.ptpAmount, 0))}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums">
+                      {formatINR(filtered.reduce((s, a) => s + a.stats.paidAmount, 0))}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2" colSpan={2} />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
         </TabsContent>
 
@@ -829,48 +1051,71 @@ function AdminReportsPage() {
             reconciled against each other anywhere in the data.
           </p>
 
-          <Card>
-            <CardHeader className="border-b border-border pb-3">
-              <CardTitle className="text-sm font-semibold">Recovery Rate by Portfolio</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4">
-              {recoveryByPortfolio.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  No portfolios with accounts yet.
-                </p>
-              ) : (
-                <div className="rounded-md border border-border overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-muted/20 border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
-                        <th className="py-2 px-3 text-left font-medium">Portfolio</th>
-                        <th className="py-2 px-3 text-right font-medium">Placed</th>
-                        <th className="py-2 px-3 text-right font-medium">Collected</th>
-                        <th className="py-2 px-3 text-left font-medium">Recovery Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {recoveryByPortfolio.map((p) => (
-                        <tr key={p.id} className="hover:bg-muted/20">
-                          <td className="py-2 px-3 font-medium text-foreground">{p.name}</td>
-                          <td className="py-2 px-3 text-right">{formatINR(p.placed)}</td>
-                          <td className="py-2 px-3 text-right text-success">
-                            {formatINR(p.collected)}
-                          </td>
-                          <td className="py-2 px-3">
-                            <div className="flex items-center gap-1.5">
-                              <Progress value={p.rate} className="h-1.5 w-24" />
-                              <span className="w-9 text-right">{p.rate}%</span>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <ReportSection
+            title="Recovery Rate by Portfolio"
+            description="Amount collected against amount placed, per portfolio"
+            icon={TrendingUp}
+            action={
+              recoveryByPortfolio.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadCsv(
+                      "recovery-by-portfolio.csv",
+                      ["Portfolio", "Placed (₹)", "Collected (₹)", "Recovery Rate %"],
+                      recoveryByPortfolio.map((p) => [p.name, p.placed, p.collected, p.rate]),
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 h-7 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  Export
+                </button>
+              ) : undefined
+            }
+          >
+            <DataTable
+              rows={recoveryByPortfolio}
+              keyOf={(p) => p.id}
+              empty="No portfolios with accounts yet."
+              columns={[
+                {
+                  key: "name",
+                  header: "Portfolio",
+                  render: (p) => <span className="font-medium text-foreground">{p.name}</span>,
+                },
+                {
+                  key: "placed",
+                  header: "Placed",
+                  numeric: true,
+                  render: (p) => formatINR(p.placed),
+                },
+                {
+                  key: "collected",
+                  header: "Collected",
+                  numeric: true,
+                  render: (p) => <span className="text-success">{formatINR(p.collected)}</span>,
+                },
+                {
+                  key: "rate",
+                  header: "Recovery Rate",
+                  width: "w-44",
+                  render: (p) => (
+                    <div className="flex items-center gap-1.5">
+                      <Progress value={p.rate} className="h-1.5 flex-1" />
+                      <span className="w-9 text-right tabular-nums">{p.rate}%</span>
+                    </div>
+                  ),
+                },
+              ]}
+              footer={[
+                "Total",
+                formatINR(totalPlaced),
+                formatINR(totalCollectedAllTime),
+                `${overallRecoveryRate}%`,
+              ]}
+            />
+          </ReportSection>
         </TabsContent>
 
         {/* ── DISPUTES TAB ── */}
@@ -933,55 +1178,70 @@ function AdminReportsPage() {
             )}
           </div>
 
-          {disputes.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No disputes logged.</p>
-          ) : (
-            <div className="rounded-md border border-border overflow-hidden">
-              <div className="overflow-x-auto max-h-[600px]">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card z-10">
-                    <tr className="border-b border-border bg-muted/20 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      <th className="py-2 px-3 text-left font-medium">Debtor</th>
-                      <th className="py-2 px-3 text-left font-medium">Type</th>
-                      <th className="py-2 px-3 text-left font-medium">Status</th>
-                      <th className="py-2 px-3 text-left font-medium">Raised By</th>
-                      <th className="py-2 px-3 text-left font-medium">Notes</th>
-                      <th className="py-2 px-3 text-left font-medium">Created</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {disputes.map((d) => (
-                      <tr key={d.id} className="hover:bg-muted/20">
-                        <td className="py-2 px-3">
-                          <div className="font-medium text-foreground">{d.debtorName}</div>
-                          <div className="text-muted-foreground">{d.portfolioName ?? "—"}</div>
-                        </td>
-                        <td className="py-2 px-3 text-muted-foreground">{d.disputeType ?? "—"}</td>
-                        <td className="py-2 px-3">
-                          <Badge
-                            variant={d.status === "resolved" ? "secondary" : "outline"}
-                            className="text-[10px] font-normal capitalize"
-                          >
-                            {d.status.replace(/_/g, " ")}
-                          </Badge>
-                        </td>
-                        <td className="py-2 px-3 text-foreground">{d.raisedByName}</td>
-                        <td className="py-2 px-3 max-w-[240px] truncate text-muted-foreground">
-                          {d.agentNotes || d.debtorReason || "—"}
-                        </td>
-                        <td className="py-2 px-3 text-muted-foreground whitespace-nowrap">
-                          {new Date(d.createdAt).toLocaleDateString("en-IN", {
-                            day: "numeric",
-                            month: "short",
-                          })}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          <DataTable
+            rows={disputes}
+            keyOf={(d) => d.id}
+            empty="No disputes logged."
+            maxHeight="max-h-[600px]"
+            columns={[
+              {
+                key: "debtor",
+                header: "Debtor",
+                render: (d) => (
+                  <div>
+                    <div className="font-medium text-foreground">{d.debtorName}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {d.portfolioName ?? "—"}
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "type",
+                header: "Type",
+                render: (d) => (
+                  <span className="capitalize text-muted-foreground">
+                    {d.disputeType?.replace(/_/g, " ") ?? "—"}
+                  </span>
+                ),
+              },
+              {
+                key: "status",
+                header: "Status",
+                render: (d) => (
+                  <Badge
+                    variant={d.status === "resolved" ? "secondary" : "outline"}
+                    className="text-[10px] font-normal capitalize"
+                  >
+                    {d.status.replace(/_/g, " ")}
+                  </Badge>
+                ),
+              },
+              { key: "raisedBy", header: "Raised By", render: (d) => d.raisedByName },
+              {
+                key: "notes",
+                header: "Notes",
+                render: (d) => (
+                  <span className="block max-w-[280px] truncate text-muted-foreground">
+                    {d.agentNotes || d.debtorReason || "—"}
+                  </span>
+                ),
+              },
+              {
+                key: "created",
+                header: "Created",
+                numeric: true,
+                render: (d) => (
+                  <span className="whitespace-nowrap text-muted-foreground">
+                    {new Date(d.createdAt).toLocaleDateString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                    })}
+                  </span>
+                ),
+              },
+            ]}
+          />
         </TabsContent>
 
         {/* ── SETTLEMENTS TAB ── */}
@@ -1053,51 +1313,71 @@ function AdminReportsPage() {
             )}
           </div>
 
-          {settlements.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              No settlement requests yet.
-            </p>
-          ) : (
-            <div className="rounded-md border border-border overflow-hidden">
-              <div className="overflow-x-auto max-h-[600px]">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card z-10">
-                    <tr className="border-b border-border bg-muted/20 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      <th className="py-2 px-3 text-left font-medium">Debtor</th>
-                      <th className="py-2 px-3 text-right font-medium">Original</th>
-                      <th className="py-2 px-3 text-right font-medium">Proposed</th>
-                      <th className="py-2 px-3 text-right font-medium">Waiver</th>
-                      <th className="py-2 px-3 text-left font-medium">Status</th>
-                      <th className="py-2 px-3 text-left font-medium">Requested By</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {settlements.map((s) => (
-                      <tr key={s.id} className="hover:bg-muted/20">
-                        <td className="py-2 px-3 font-medium text-foreground">{s.debtorName}</td>
-                        <td className="py-2 px-3 text-right">{formatINR(s.originalAmount)}</td>
-                        <td className="py-2 px-3 text-right">{formatINR(s.proposedAmount)}</td>
-                        <td className="py-2 px-3 text-right text-amber-500">{s.waiverPct}%</td>
-                        <td className="py-2 px-3">
-                          <Badge
-                            variant={
-                              s.status === "approved" || s.status === "sent_to_bank"
-                                ? "secondary"
-                                : "outline"
-                            }
-                            className="text-[10px] font-normal capitalize"
-                          >
-                            {s.status.replace(/_/g, " ")}
-                          </Badge>
-                        </td>
-                        <td className="py-2 px-3 text-muted-foreground">{s.requestedByName}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          <DataTable
+            rows={settlements}
+            keyOf={(s) => s.id}
+            empty="No settlement requests yet."
+            maxHeight="max-h-[600px]"
+            columns={[
+              {
+                key: "debtor",
+                header: "Debtor",
+                render: (s) => (
+                  <div>
+                    <div className="font-medium text-foreground">{s.debtorName}</div>
+                    <div className="text-[10px] text-muted-foreground">{s.loanId}</div>
+                  </div>
+                ),
+              },
+              {
+                key: "original",
+                header: "Original",
+                numeric: true,
+                render: (s) => formatINR(s.originalAmount),
+              },
+              {
+                key: "proposed",
+                header: "Proposed",
+                numeric: true,
+                render: (s) => formatINR(s.proposedAmount),
+              },
+              {
+                key: "waiver",
+                header: "Waiver",
+                numeric: true,
+                render: (s) => <span className="text-amber-500">{s.waiverPct}%</span>,
+              },
+              {
+                key: "status",
+                header: "Status",
+                render: (s) => (
+                  <Badge
+                    variant={
+                      s.status === "approved" || s.status === "sent_to_bank"
+                        ? "secondary"
+                        : "outline"
+                    }
+                    className="text-[10px] font-normal capitalize"
+                  >
+                    {s.status.replace(/_/g, " ")}
+                  </Badge>
+                ),
+              },
+              {
+                key: "requestedBy",
+                header: "Requested By",
+                render: (s) => <span className="text-muted-foreground">{s.requestedByName}</span>,
+              },
+            ]}
+            footer={[
+              "Total",
+              formatINR(settlements.reduce((s, r) => s + r.originalAmount, 0)),
+              formatINR(settlements.reduce((s, r) => s + r.proposedAmount, 0)),
+              formatINR(settlementCounts.totalWaiver),
+              "",
+              "",
+            ]}
+          />
         </TabsContent>
 
         {/* ── COMPLIANCE TAB ── */}
@@ -1162,44 +1442,47 @@ function AdminReportsPage() {
             )}
           </div>
 
-          {complianceViolations.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              No calls logged outside the 07:00–19:00 IST window.
-            </p>
-          ) : (
-            <div className="rounded-md border border-border overflow-hidden">
-              <div className="overflow-x-auto max-h-[600px]">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card z-10">
-                    <tr className="border-b border-border bg-muted/20 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      <th className="py-2 px-3 text-left font-medium">Time (IST)</th>
-                      <th className="py-2 px-3 text-left font-medium">Debtor</th>
-                      <th className="py-2 px-3 text-left font-medium">Agent</th>
-                      <th className="py-2 px-3 text-left font-medium">Team</th>
-                      <th className="py-2 px-3 text-left font-medium">Outcome</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {complianceViolations.map((d) => (
-                      <tr key={d.id} className="hover:bg-muted/20">
-                        <td className="py-2 px-3 text-destructive font-medium whitespace-nowrap">
-                          {formatIST(d.time)}
-                        </td>
-                        <td className="py-2 px-3 text-foreground">{d.debtorName}</td>
-                        <td className="py-2 px-3 text-muted-foreground">{d.agentName || "—"}</td>
-                        <td className="py-2 px-3 text-muted-foreground">{teamName(d.teamId)}</td>
-                        <td className="py-2 px-3">
-                          <span className={cn("font-medium", OUTCOME_COLOR[d.outcome])}>
-                            {OUTCOME_LABELS[d.outcome] ?? d.outcome}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          <DataTable
+            rows={complianceViolations}
+            keyOf={(d) => d.id}
+            empty="No calls logged outside the 07:00–19:00 IST window."
+            maxHeight="max-h-[600px]"
+            columns={[
+              {
+                key: "time",
+                header: "Time (IST)",
+                render: (d) => (
+                  <span className="whitespace-nowrap font-medium text-destructive tabular-nums">
+                    {formatIST(d.time)}
+                  </span>
+                ),
+              },
+              {
+                key: "debtor",
+                header: "Debtor",
+                render: (d) => <span className="text-foreground">{d.debtorName || "—"}</span>,
+              },
+              {
+                key: "agent",
+                header: "Agent",
+                render: (d) => <span className="text-muted-foreground">{d.agentName || "—"}</span>,
+              },
+              {
+                key: "team",
+                header: "Team",
+                render: (d) => <span className="text-muted-foreground">{teamName(d.teamId)}</span>,
+              },
+              {
+                key: "outcome",
+                header: "Outcome",
+                render: (d) => (
+                  <span className={cn("font-medium", OUTCOME_COLOR[d.outcome])}>
+                    {OUTCOME_LABELS[d.outcome] ?? d.outcome}
+                  </span>
+                ),
+              },
+            ]}
+          />
         </TabsContent>
 
         {/* ── CALL LOG TAB ── */}
@@ -1244,65 +1527,78 @@ function AdminReportsPage() {
             </button>
           </div>
 
-          {disps.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No calls logged yet.</p>
-          ) : (
-            <div className="rounded-md border border-border overflow-hidden">
-              <div className="overflow-x-auto max-h-[600px]">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card z-10">
-                    <tr className="border-b border-border bg-muted/20 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      <th className="py-2 px-3 text-left font-medium">Time</th>
-                      <th className="py-2 px-3 text-left font-medium">Debtor</th>
-                      <th className="py-2 px-3 text-left font-medium">Agent</th>
-                      <th className="py-2 px-3 text-left font-medium">Outcome</th>
-                      <th className="py-2 px-3 text-right font-medium">PTP Amt</th>
-                      <th className="py-2 px-3 text-left font-medium">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {disps.map((d) => (
-                      <tr key={d.id} className="hover:bg-muted/20">
-                        <td className="py-2 px-3 text-muted-foreground whitespace-nowrap">
-                          {new Date(d.time).toLocaleString("en-IN", {
-                            day: "numeric",
-                            month: "short",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </td>
-                        <td className="py-2 px-3">
-                          <div className="font-medium text-foreground">{d.debtorName}</div>
-                          <div className="text-muted-foreground font-mono">{d.phone}</div>
-                        </td>
-                        <td className="py-2 px-3 text-foreground">{d.agentName}</td>
-                        <td className="py-2 px-3">
-                          <span className={cn("font-medium", OUTCOME_COLOR[d.outcome])}>
-                            {OUTCOME_LABELS[d.outcome] ?? d.outcome}
-                          </span>
-                          {d.ptpDate && (
-                            <div className="text-[10px] text-muted-foreground">PTP {d.ptpDate}</div>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-right">
-                          {d.ptpAmount ? (
-                            <span className="text-success font-medium">
-                              {formatINR(d.ptpAmount)}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2 px-3 max-w-[200px] truncate text-muted-foreground">
-                          {d.notes || "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          <DataTable
+            rows={disps}
+            keyOf={(d) => d.id}
+            empty="No calls logged yet."
+            maxHeight="max-h-[640px]"
+            columns={[
+              {
+                key: "time",
+                header: "Time",
+                render: (d) => (
+                  <span className="whitespace-nowrap text-muted-foreground tabular-nums">
+                    {new Date(d.time).toLocaleString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                ),
+              },
+              {
+                key: "debtor",
+                header: "Debtor",
+                render: (d) => (
+                  <div>
+                    <div className="font-medium text-foreground">{d.debtorName || "—"}</div>
+                    <div className="font-mono text-[10px] text-muted-foreground">{d.phone}</div>
+                  </div>
+                ),
+              },
+              { key: "agent", header: "Agent", render: (d) => d.agentName || "—" },
+              {
+                key: "team",
+                header: "Team",
+                render: (d) => <span className="text-muted-foreground">{teamName(d.teamId)}</span>,
+              },
+              {
+                key: "outcome",
+                header: "Outcome",
+                render: (d) => (
+                  <>
+                    <span className={cn("font-medium", OUTCOME_COLOR[d.outcome])}>
+                      {OUTCOME_LABELS[d.outcome] ?? d.outcome}
+                    </span>
+                    {d.ptpDate && (
+                      <div className="text-[10px] text-muted-foreground">PTP {d.ptpDate}</div>
+                    )}
+                  </>
+                ),
+              },
+              {
+                key: "ptpAmt",
+                header: "PTP Amt",
+                numeric: true,
+                render: (d) =>
+                  d.ptpAmount ? (
+                    <span className="font-medium text-success">{formatINR(d.ptpAmount)}</span>
+                  ) : (
+                    "—"
+                  ),
+              },
+              {
+                key: "notes",
+                header: "Notes",
+                render: (d) => (
+                  <span className="block max-w-[240px] truncate text-muted-foreground">
+                    {d.notes || "—"}
+                  </span>
+                ),
+              },
+            ]}
+          />
         </TabsContent>
       </Tabs>
     </div>

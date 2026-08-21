@@ -585,32 +585,46 @@ function EmptyState({ message }: { message: string }) {
   return <p className="py-10 text-center text-sm text-muted-foreground">{message}</p>;
 }
 
+/** Spreadsheet-style table matching the shared DataTable's look (ruled cells, zebra rows,
+ * right-aligned tabular numerics) — kept positional here since every agent-side report feeds
+ * it plain header/row arrays rather than column definitions. */
 function ReportTable({ headers, rows }: { headers: string[]; rows: (string | number)[][] }) {
   return (
-    <div className="rounded-md border border-border overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-muted/20 border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
+    <div className="rounded-lg border border-border overflow-hidden bg-card">
+      <div className="overflow-auto max-h-[420px]">
+        <table className="w-full border-collapse text-xs">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-muted/60 backdrop-blur text-[10px] uppercase tracking-wider text-muted-foreground">
               {headers.map((h, i) => (
                 <th
                   key={h}
-                  className={cn("py-2 px-3 font-medium", i === 0 ? "text-left" : "text-right")}
+                  className={cn(
+                    "border-b border-r border-border last:border-r-0 px-3 py-2 font-semibold whitespace-nowrap",
+                    i === 0 ? "text-left" : "text-right",
+                  )}
                 >
                   {h}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-border">
+          <tbody>
             {rows.map((row, ri) => (
-              <tr key={ri} className="hover:bg-muted/20">
+              <tr
+                key={ri}
+                className={cn(
+                  "transition-colors hover:bg-primary/5",
+                  ri % 2 === 1 && "bg-muted/20",
+                )}
+              >
                 {row.map((cell, ci) => (
                   <td
                     key={ci}
                     className={cn(
-                      "py-1.5 px-3",
-                      ci === 0 ? "text-left font-medium text-foreground" : "text-right",
+                      "border-b border-r border-border/60 last:border-r-0 px-3 py-1.5",
+                      ci === 0
+                        ? "text-left font-medium text-foreground"
+                        : "text-right tabular-nums",
                     )}
                   >
                     {cell}

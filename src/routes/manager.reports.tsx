@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import {
   BarChart2,
   Users,
@@ -11,6 +11,8 @@ import {
   HandCoins,
   AlertTriangle,
   Search,
+  Trophy,
+  Target,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +40,8 @@ import {
 } from "@/components/reports/outcome-breakdown";
 import { Stat } from "@/components/reports/stat-card";
 import { AgentCallLog } from "@/components/reports/agent-call-log";
+import { DataTable, ReportSection } from "@/components/reports/data-table";
+import { Leaderboard, type LeaderboardMetric } from "@/components/reports/leaderboard";
 
 export const Route = createFileRoute("/manager/reports")({
   head: () => ({ meta: [{ title: "Reports · SamvadX Manager" }] }),
@@ -55,6 +59,7 @@ function ManagerReportsPage() {
   );
   const [search, setSearch] = useState("");
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [leaderMetric, setLeaderMetric] = useState<LeaderboardMetric>("collected");
 
   useEffect(() => {
     const load = () => setDisps(activeTeam ? getTeamDispositions(activeTeam.id) : []);
@@ -79,9 +84,17 @@ function ManagerReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeTeam?.id, portfolioVersion],
   );
+  // Matches the dialer's definition of a live account (buildAssignedQueue in
+  // call-queue/build-queue.ts): open portfolio, not already settled. Counting every row would
+  // include recalled cycles and paid-off accounts, overstating the team's real book.
+  const activePortfolios = useMemo(() => portfolios.filter((p) => !p.closedAt), [portfolios]);
   const assignedCount = useMemo(
-    () => portfolios.reduce((s, p) => s + p.rows.filter((r) => r.assignedAgentId).length, 0),
-    [portfolios],
+    () =>
+      activePortfolios.reduce(
+        (s, p) => s + p.rows.filter((r) => r.assignedAgentId && r.status !== "paid").length,
+        0,
+      ),
+    [activePortfolios],
   );
 
   const globalStats = useMemo(() => calcStats(disps), [disps]);
@@ -111,6 +124,20 @@ function ManagerReportsPage() {
     ? agentStats.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()))
     : agentStats;
 
+  const leaderboardEntries = useMemo(
+    () =>
+      agentStats.map((a) => ({
+        agentId: a.agentId,
+        name: a.name,
+        collected: a.stats.paidAmount,
+        ptps: a.stats.ptps,
+        ptpAmount: a.stats.ptpAmount,
+        calls: a.stats.total,
+        contactRate: a.stats.contactRate,
+      })),
+    [agentStats],
+  );
+
   const followups = useMemo(
     () => (activeTeam ? getTeamPtpFollowups(activeTeam.agentIds) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,28 +157,39 @@ function ManagerReportsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="animate-in fade-in slide-in-from-top-4 duration-500">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
-        <p className="text-sm text-muted-foreground">
-          {activeTeam.name} — agent performance, call outcomes, and open promises.
-        </p>
+    <div className="space-y-5">
+      <div className="animate-in fade-in slide-in-from-top-4 duration-500 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
+          <p className="text-sm text-muted-foreground">
+            {activeTeam.name} — agent performance, call outcomes, and open promises.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="font-normal text-xs">
+            {teamAgents.length} agent{teamAgents.length !== 1 ? "s" : ""}
+          </Badge>
+          <Badge variant="outline" className="font-normal text-xs">
+            {activePortfolios.length} active portfolio
+            {activePortfolios.length !== 1 ? "s" : ""}
+          </Badge>
+        </div>
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         <Stat
-          icon={IndianRupee}
-          label="PTP Amount"
-          value={formatINR(globalStats.ptpAmount)}
-          sub={`${globalStats.ptps} promises`}
+          icon={CheckCircle2}
+          label="Collected"
+          value={formatINR(globalStats.paidAmount)}
+          sub={`${globalStats.paid} payments`}
           green
         />
         <Stat
-          icon={CheckCircle2}
-          label="Paid / Collected"
-          value={formatINR(globalStats.paidAmount)}
-          sub={`${globalStats.paid} accounts`}
+          icon={IndianRupee}
+          label="PTP Value"
+          value={formatINR(globalStats.ptpAmount)}
+          sub={`${globalStats.ptps} promises`}
           green
         />
         <Stat
@@ -162,9 +200,17 @@ function ManagerReportsPage() {
         />
         <Stat
           icon={Users}
-          label="Team Accounts"
+          label="Active Accounts"
           value={assignedCount.toLocaleString()}
-          sub={`${teamAgents.length} agent${teamAgents.length !== 1 ? "s" : ""}`}
+          sub="assigned & still open"
+        />
+        <Stat
+          icon={Target}
+          label="Open Promises"
+          value={formatINR(followups.reduce((s, f) => s + f.ptpAmount, 0))}
+          sub={`${followups.length} open${
+            overdueFollowups.length > 0 ? ` · ${overdueFollowups.length} overdue` : ""
+          }`}
         />
       </div>
 
@@ -180,8 +226,9 @@ function ManagerReportsPage() {
         </Card>
       )}
 
-      <Tabs defaultValue="agents">
+      <Tabs defaultValue="overview">
         <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="agents">By Agent</TabsTrigger>
           <TabsTrigger value="outcomes">Outcome Breakdown</TabsTrigger>
           <TabsTrigger value="followups">
@@ -196,6 +243,52 @@ function ManagerReportsPage() {
         </TabsList>
 
         {/* ── AGENTS TAB ── */}
+        {/* ── OVERVIEW TAB ── */}
+        <TabsContent value="overview" className="mt-4 space-y-4">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <ReportSection
+              title="Team Leaderboard"
+              description={`Ranked across ${activeTeam.name}`}
+              icon={Trophy}
+              action={
+                <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-0.5">
+                  {(["collected", "ptpAmount", "calls"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setLeaderMetric(m)}
+                      className={cn(
+                        "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors",
+                        leaderMetric === m
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {m === "collected" ? "Collected" : m === "ptpAmount" ? "PTP" : "Calls"}
+                    </button>
+                  ))}
+                </div>
+              }
+            >
+              <Leaderboard entries={leaderboardEntries} metric={leaderMetric} limit={10} />
+            </ReportSection>
+
+            <ReportSection
+              title="Outcome Mix"
+              description="How your team's calls resolved"
+              icon={BarChart2}
+            >
+              {disps.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  No calls logged yet.
+                </p>
+              ) : (
+                <OutcomeBreakdown disps={disps} />
+              )}
+            </ReportSection>
+          </div>
+        </TabsContent>
+
         <TabsContent value="agents" className="mt-4 space-y-3">
           <div className="flex items-center gap-3 flex-wrap">
             <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -239,111 +332,159 @@ function ManagerReportsPage() {
             </button>
           </div>
 
-          <div className="rounded-md border border-border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-muted/20 border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
-                  <th className="py-2.5 px-4 text-left font-medium">Agent</th>
-                  <th className="py-2.5 px-3 text-center font-medium">Assigned</th>
-                  <th className="py-2.5 px-3 text-center font-medium">Calls</th>
-                  <th className="py-2.5 px-3 text-center font-medium">PTPs</th>
-                  <th className="py-2.5 px-3 text-right font-medium">PTP Value</th>
-                  <th className="py-2.5 px-3 text-center font-medium">Contact%</th>
-                  <th className="py-2.5 px-3 w-8" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-xs text-muted-foreground">
-                      No agents match
-                    </td>
+          <div className="rounded-lg border border-border overflow-hidden bg-card">
+            <div className="overflow-auto max-h-[640px]">
+              <table className="w-full border-collapse text-xs">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-muted/60 backdrop-blur text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <th className="border-b border-r border-border px-3 py-2 text-left font-semibold">
+                      Agent
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      Assigned
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      Calls
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      PTPs
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      PTP Value
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      Collected
+                    </th>
+                    <th className="border-b border-r border-border px-3 py-2 text-right font-semibold">
+                      Contact%
+                    </th>
+                    <th className="border-b border-border px-3 py-2 w-8" />
                   </tr>
-                )}
-                {filtered.map((a) => {
-                  const open = expandedAgent === a.agentId;
-                  return (
-                    <>
-                      <tr
-                        key={a.agentId}
-                        className="hover:bg-muted/20 cursor-pointer"
-                        onClick={() => setExpandedAgent(open ? null : a.agentId)}
-                      >
-                        <td className="py-2.5 px-4">
-                          <div className="flex items-center gap-2">
-                            <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-semibold text-muted-foreground shrink-0">
-                              {a.name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")
-                                .slice(0, 2)}
+                </thead>
+                <tbody>
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-xs text-muted-foreground">
+                        No agents match
+                      </td>
+                    </tr>
+                  )}
+                  {filtered.map((a, i) => {
+                    const open = expandedAgent === a.agentId;
+                    return (
+                      <Fragment key={a.agentId}>
+                        <tr
+                          className={cn(
+                            "cursor-pointer transition-colors hover:bg-primary/5",
+                            i % 2 === 1 && "bg-muted/20",
+                            open && "bg-primary/10",
+                          )}
+                          onClick={() => setExpandedAgent(open ? null : a.agentId)}
+                        >
+                          <td className="border-b border-r border-border/60 px-3 py-1.5">
+                            <div className="flex items-center gap-2">
+                              <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-semibold text-muted-foreground shrink-0">
+                                {a.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")
+                                  .slice(0, 2)}
+                              </div>
+                              <span className="font-medium text-foreground">{a.name}</span>
                             </div>
-                            <span className="font-medium text-foreground">{a.name}</span>
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 text-center">{a.assignedCount}</td>
-                        <td className="py-2.5 px-3 text-center">{a.stats.total}</td>
-                        <td className="py-2.5 px-3 text-center text-blue-500 font-medium">
-                          {a.stats.ptps}
-                        </td>
-                        <td className="py-2.5 px-3 text-right text-success text-xs">
-                          {a.stats.ptpAmount > 0 ? formatINR(a.stats.ptpAmount) : "—"}
-                        </td>
-                        <td className="py-2.5 px-3 text-center text-xs">
-                          {a.stats.total > 0 ? `${a.stats.contactRate}%` : "—"}
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <ChevronRight
-                            className={cn(
-                              "h-3.5 w-3.5 text-muted-foreground transition-transform",
-                              open && "rotate-90",
-                            )}
-                          />
-                        </td>
-                      </tr>
-                      {open && (
-                        <tr key={`${a.agentId}-detail`}>
-                          <td colSpan={7} className="px-4 py-3 bg-muted/10 border-b border-border">
-                            <AgentCallLog disps={a.disps} agentName={a.name} />
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums">
+                            {a.assignedCount}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums">
+                            {a.stats.total}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums text-blue-500 font-medium">
+                            {a.stats.ptps}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums text-success">
+                            {a.stats.ptpAmount > 0 ? formatINR(a.stats.ptpAmount) : "—"}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums font-medium">
+                            {a.stats.paidAmount > 0 ? formatINR(a.stats.paidAmount) : "—"}
+                          </td>
+                          <td className="border-b border-r border-border/60 px-3 py-1.5 text-right tabular-nums">
+                            {a.stats.total > 0 ? `${a.stats.contactRate}%` : "—"}
+                          </td>
+                          <td className="border-b border-border/60 px-3 py-1.5 text-center">
+                            <ChevronRight
+                              className={cn(
+                                "h-3.5 w-3.5 text-muted-foreground transition-transform",
+                                open && "rotate-90",
+                              )}
+                            />
                           </td>
                         </tr>
-                      )}
-                    </>
-                  );
-                })}
-              </tbody>
-            </table>
+                        {open && (
+                          <tr>
+                            <td
+                              colSpan={8}
+                              className="border-b border-border bg-muted/10 px-4 py-3"
+                            >
+                              <AgentCallLog disps={a.disps} agentName={a.name} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="sticky bottom-0">
+                  <tr className="bg-muted/70 backdrop-blur font-semibold">
+                    <td className="border-t-2 border-r border-border px-3 py-2">
+                      Total · {filtered.length} agents
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums">
+                      {filtered.reduce((s, a) => s + a.assignedCount, 0).toLocaleString()}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums">
+                      {filtered.reduce((s, a) => s + a.stats.total, 0).toLocaleString()}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums text-blue-500">
+                      {filtered.reduce((s, a) => s + a.stats.ptps, 0).toLocaleString()}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums text-success">
+                      {formatINR(filtered.reduce((s, a) => s + a.stats.ptpAmount, 0))}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2 text-right tabular-nums">
+                      {formatINR(filtered.reduce((s, a) => s + a.stats.paidAmount, 0))}
+                    </td>
+                    <td className="border-t-2 border-r border-border px-3 py-2" colSpan={2} />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
         </TabsContent>
 
         {/* ── OUTCOMES TAB ── */}
         <TabsContent value="outcomes" className="mt-4">
-          <Card>
-            <CardHeader className="border-b border-border pb-3">
-              <CardTitle className="text-sm font-semibold">
-                Outcome Distribution — {activeTeam.name}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4">
-              {disps.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  No calls logged yet.
-                </p>
-              ) : (
-                <OutcomeBreakdown disps={disps} />
-              )}
-            </CardContent>
-          </Card>
+          <ReportSection
+            title={`Outcome Distribution — ${activeTeam.name}`}
+            description="Share of calls by disposition"
+            icon={BarChart2}
+          >
+            {disps.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">No calls logged yet.</p>
+            ) : (
+              <OutcomeBreakdown disps={disps} />
+            )}
+          </ReportSection>
         </TabsContent>
 
         {/* ── PTP FOLLOW-UPS TAB ── */}
         <TabsContent value="followups" className="mt-4">
-          <Card>
-            <CardHeader className="border-b border-border pb-3 flex flex-row items-center justify-between">
-              <CardTitle className="text-sm font-semibold">
-                Open Promises — {activeTeam.name}
-              </CardTitle>
-              {followups.length > 0 && (
+          <ReportSection
+            title={`Open Promises — ${activeTeam.name}`}
+            description="Every unfulfilled promise-to-pay, most urgent first"
+            icon={HandCoins}
+            action={
+              followups.length > 0 ? (
                 <button
                   type="button"
                   onClick={() =>
@@ -360,59 +501,70 @@ function ManagerReportsPage() {
                       ]),
                     )
                   }
-                  className="inline-flex items-center gap-1.5 h-8 rounded-md border border-border bg-card px-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  className="inline-flex items-center gap-1.5 h-7 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <FileDown className="h-3.5 w-3.5" />
                   Export
                 </button>
-              )}
-            </CardHeader>
-            <CardContent className="pt-4">
-              {followups.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  No open promises-to-pay across this team right now.
-                </p>
-              ) : (
-                <div className="rounded-md border border-border overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-muted/20 border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
-                        <th className="py-2 px-3 text-left font-medium">Debtor</th>
-                        <th className="py-2 px-3 text-left font-medium">Phone</th>
-                        <th className="py-2 px-3 text-right font-medium">Amount</th>
-                        <th className="py-2 px-3 text-left font-medium">Due</th>
-                        <th className="py-2 px-3 text-left font-medium">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {followups.map((f) => (
-                        <tr key={f.id} className="hover:bg-muted/20">
-                          <td className="py-2 px-3 font-medium text-foreground">{f.debtorName}</td>
-                          <td className="py-2 px-3 text-muted-foreground font-mono">{f.phone}</td>
-                          <td className="py-2 px-3 text-right text-success font-medium">
-                            {formatINR(f.ptpAmount)}
-                          </td>
-                          <td className="py-2 px-3 text-muted-foreground">{f.ptpDateIso}</td>
-                          <td className="py-2 px-3">
-                            {f.daysLeft < 0 ? (
-                              <span className="inline-flex items-center gap-1 text-destructive font-medium">
-                                <AlertTriangle className="h-3 w-3" />
-                                {-f.daysLeft}d overdue
-                              </span>
-                            ) : f.daysLeft === 0 ? (
-                              <span className="text-amber-500 font-medium">Due today</span>
-                            ) : (
-                              <span className="text-muted-foreground">in {f.daysLeft}d</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              ) : undefined
+            }
+          >
+            <DataTable
+              rows={followups}
+              keyOf={(f) => f.id}
+              empty="No open promises-to-pay across this team right now."
+              maxHeight="max-h-[600px]"
+              columns={[
+                {
+                  key: "debtor",
+                  header: "Debtor",
+                  render: (f) => (
+                    <span className="font-medium text-foreground">{f.debtorName}</span>
+                  ),
+                },
+                {
+                  key: "phone",
+                  header: "Phone",
+                  render: (f) => <span className="font-mono text-muted-foreground">{f.phone}</span>,
+                },
+                {
+                  key: "amount",
+                  header: "Amount",
+                  numeric: true,
+                  render: (f) => (
+                    <span className="font-medium text-success">{formatINR(f.ptpAmount)}</span>
+                  ),
+                },
+                {
+                  key: "due",
+                  header: "Due",
+                  render: (f) => <span className="text-muted-foreground">{f.ptpDateIso}</span>,
+                },
+                {
+                  key: "status",
+                  header: "Status",
+                  render: (f) =>
+                    f.daysLeft < 0 ? (
+                      <span className="inline-flex items-center gap-1 font-medium text-destructive">
+                        <AlertTriangle className="h-3 w-3" />
+                        {-f.daysLeft}d overdue
+                      </span>
+                    ) : f.daysLeft === 0 ? (
+                      <span className="font-medium text-amber-500">Due today</span>
+                    ) : (
+                      <span className="text-muted-foreground">in {f.daysLeft}d</span>
+                    ),
+                },
+              ]}
+              footer={[
+                `${followups.length} open`,
+                "",
+                formatINR(followups.reduce((s, f) => s + f.ptpAmount, 0)),
+                "",
+                overdueFollowups.length > 0 ? `${overdueFollowups.length} overdue` : "",
+              ]}
+            />
+          </ReportSection>
         </TabsContent>
 
         {/* ── CALL LOG TAB ── */}
@@ -455,65 +607,73 @@ function ManagerReportsPage() {
             </button>
           </div>
 
-          {disps.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No calls logged yet.</p>
-          ) : (
-            <div className="rounded-md border border-border overflow-hidden">
-              <div className="overflow-x-auto max-h-[600px]">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card z-10">
-                    <tr className="border-b border-border bg-muted/20 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      <th className="py-2 px-3 text-left font-medium">Time</th>
-                      <th className="py-2 px-3 text-left font-medium">Debtor</th>
-                      <th className="py-2 px-3 text-left font-medium">Agent</th>
-                      <th className="py-2 px-3 text-left font-medium">Outcome</th>
-                      <th className="py-2 px-3 text-right font-medium">PTP Amt</th>
-                      <th className="py-2 px-3 text-left font-medium">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {disps.map((d) => (
-                      <tr key={d.id} className="hover:bg-muted/20">
-                        <td className="py-2 px-3 text-muted-foreground whitespace-nowrap">
-                          {new Date(d.time).toLocaleString("en-IN", {
-                            day: "numeric",
-                            month: "short",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </td>
-                        <td className="py-2 px-3">
-                          <div className="font-medium text-foreground">{d.debtorName}</div>
-                          <div className="text-muted-foreground font-mono">{d.phone}</div>
-                        </td>
-                        <td className="py-2 px-3 text-foreground">{d.agentName}</td>
-                        <td className="py-2 px-3">
-                          <span className={cn("font-medium", OUTCOME_COLOR[d.outcome])}>
-                            {OUTCOME_LABELS[d.outcome] ?? d.outcome}
-                          </span>
-                          {d.ptpDate && (
-                            <div className="text-[10px] text-muted-foreground">PTP {d.ptpDate}</div>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-right">
-                          {d.ptpAmount ? (
-                            <span className="text-success font-medium">
-                              {formatINR(d.ptpAmount)}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2 px-3 max-w-[200px] truncate text-muted-foreground">
-                          {d.notes || "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          <DataTable
+            rows={disps}
+            keyOf={(d) => d.id}
+            empty="No calls logged yet."
+            maxHeight="max-h-[640px]"
+            columns={[
+              {
+                key: "time",
+                header: "Time",
+                render: (d) => (
+                  <span className="whitespace-nowrap text-muted-foreground tabular-nums">
+                    {new Date(d.time).toLocaleString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                ),
+              },
+              {
+                key: "debtor",
+                header: "Debtor",
+                render: (d) => (
+                  <div>
+                    <div className="font-medium text-foreground">{d.debtorName || "—"}</div>
+                    <div className="font-mono text-[10px] text-muted-foreground">{d.phone}</div>
+                  </div>
+                ),
+              },
+              { key: "agent", header: "Agent", render: (d) => d.agentName || "—" },
+              {
+                key: "outcome",
+                header: "Outcome",
+                render: (d) => (
+                  <>
+                    <span className={cn("font-medium", OUTCOME_COLOR[d.outcome])}>
+                      {OUTCOME_LABELS[d.outcome] ?? d.outcome}
+                    </span>
+                    {d.ptpDate && (
+                      <div className="text-[10px] text-muted-foreground">PTP {d.ptpDate}</div>
+                    )}
+                  </>
+                ),
+              },
+              {
+                key: "ptpAmt",
+                header: "PTP Amt",
+                numeric: true,
+                render: (d) =>
+                  d.ptpAmount ? (
+                    <span className="font-medium text-success">{formatINR(d.ptpAmount)}</span>
+                  ) : (
+                    "—"
+                  ),
+              },
+              {
+                key: "notes",
+                header: "Notes",
+                render: (d) => (
+                  <span className="block max-w-[240px] truncate text-muted-foreground">
+                    {d.notes || "—"}
+                  </span>
+                ),
+              },
+            ]}
+          />
         </TabsContent>
       </Tabs>
     </div>
