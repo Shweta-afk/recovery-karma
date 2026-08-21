@@ -13,7 +13,7 @@ An AI-assisted collections platform for debt recovery agents: agents call/messag
 log outcomes, and the system prioritizes the call queue. Built with React + Vite + TanStack
 Start + Supabase.
 
-**Status:** Live in production (Railway, `axiora.axiotta.com`). Most core pages are wired to
+**Status:** Live in production (Railway, **`axiotta.samvadx.com`**). Most core pages are wired to
 real Supabase data. A few pages are still mock/placeholder — see "Page-by-page status" below.
 **This file was rewritten from scratch on 2026-08-20** because the previous version described
 a Phase 1/2/3 plan (TanStack Query hooks in `src/lib/queries.ts`, Razorpay, Interakt,
@@ -47,8 +47,12 @@ different Cloudflare D1 backend from an earlier iteration of the project).
 - **Build output:** `dist/` (client) + `.output/server/` (nitro server)
 - **Start command:** `node .output/server/index.mjs`
 - **Deployment:** Railway (`railway.json`, nixpacks builder). Project `bubbly-communication`,
-  service `recoveryai-app`. Custom domain `axiora.axiotta.com` (DNS on Cloudflare,
-  `axiotta.com` zone) alongside the default `*.up.railway.app` domain. Auto-deploys on push to
+  service `recoveryai-app`. Custom domain **`axiotta.samvadx.com`** (verified 2026-08-21 in
+  Railway → Settings → Networking, serving on port 8080), alongside the default domains
+  `recoveryai-app-production.up.railway.app` and `karmaapp-production.up.railway.app`.
+  ⚠️ An earlier version of this file said `axiora.axiotta.com` — that domain is DEAD and
+  returns Railway's `x-railway-fallback` "Application not found" 404. Checking it wastes real
+  debugging time (it did on 2026-08-21); use `axiotta.samvadx.com`. Auto-deploys on push to
   `main`, GitHub repo `Shweta-afk/recovery-karma`.
 - **⚠️ Railway's env vars can silently drift from `.env.local`/`.env.example`.** This has
   already broken production once: `TELEPHONY_PROVIDER` stayed `"tata"` on Railway for over a
