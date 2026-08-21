@@ -1,17 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { Download, Mail, BarChart2, Activity, Users, Radio, TrendingUp } from "lucide-react";
-import { toast } from "sonner";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Download,
+  BarChart2,
+  Activity,
+  TrendingUp,
+  HandCoins,
+  PieChart as PieChartIcon,
+  Info,
+  PhoneCall,
+  IndianRupee,
+  Target,
+  AlertTriangle,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  ComposedChart,
   BarChart,
   Bar,
   LineChart,
   Line,
-  PieChart,
-  Pie,
   Cell,
-  AreaChart,
-  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -20,71 +29,69 @@ import {
   Legend,
 } from "recharts";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth";
+import {
+  getAgentDispositions,
+  refreshDispositions,
+  calcStats,
+  getPtpFollowups,
+  type DispositionRecord,
+  type PtpFollowup,
+} from "@/lib/disposition-store";
+import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { formatINR, type DPDBucket } from "@/lib/mock-debtors";
+import { downloadCsv } from "@/lib/csv-export";
+import { OutcomeBreakdown, OUTCOME_LABELS } from "@/components/reports/outcome-breakdown";
+import { Stat } from "@/components/reports/stat-card";
 
 export const Route = createFileRoute("/dashboard/reports")({
   head: () => ({ meta: [{ title: "Reports · SamvadX" }] }),
   component: ReportsPage,
 });
 
-type ReportType = "weekly" | "portfolio" | "agent" | "channel" | "dpd";
+// ─── date-range helpers ────────────────────────────────────────────────────────
 
-interface ReportDef {
-  id: ReportType;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  description: string;
-  narrative: string;
-  badge?: string;
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
-
-const REPORTS: ReportDef[] = [
-  {
-    id: "weekly",
-    label: "Weekly Summary",
-    icon: BarChart2,
-    description: "Collections performance across the past 7 days.",
-    badge: "Popular",
-    narrative:
-      "This week saw a 14% uplift in total collections (₹28.4L vs ₹24.9L last week), driven primarily by the MSME Working Capital portfolio. Contact rate improved to 68% (+3 pts), and PTP-to-payment conversion hit a new high of 41%. Monday and Wednesday remain peak collection days. Recommend increasing agent availability on those days.",
-  },
-  {
-    id: "portfolio",
-    label: "Portfolio Health",
-    icon: Activity,
-    description: "DPD distribution and recovery rates by portfolio.",
-    narrative:
-      "Credit Card NPA portfolio shows the highest risk concentration with 38% of accounts above DPD-60. Personal Loan Q1 is tracking well — 72% of accounts below DPD-30. MSME Working Capital has the highest average outstanding (₹6.2L per account) and should be prioritised for senior agent assignment. Recommend escalating Tarun Desai (L-10366) to legal track.",
-  },
-  {
-    id: "agent",
-    label: "Agent Performance",
-    icon: Users,
-    description: "Calls made, PTPs secured, and collections by agent.",
-    narrative:
-      "Priya Singh leads with 94 calls and ₹4.8L collected this week, achieving 118% of daily target. Ravi Mehta shows a high call volume but low PTP conversion (12%) — recommend call quality coaching. Three agents are below 60% of their daily target; manager review is advised. Average handle time improved to 4m 22s across the team.",
-  },
-  {
-    id: "channel",
-    label: "Channel Effectiveness",
-    icon: Radio,
-    description: "Response rates across Call, WhatsApp, SMS, and Email.",
-    narrative:
-      "WhatsApp is the highest-performing channel with a 54% response rate, followed by direct calls at 38%. SMS response has dropped 6 pts to 11% — possibly due to DLT template delays. Email remains low at 4%. For high-score (8+) debtors, WhatsApp outreach 2 hours before the call improves pick-up rate by 22%. Recommend leading with WhatsApp for all fresh contacts.",
-  },
-  {
-    id: "dpd",
-    label: "DPD Bucket Movement",
-    icon: TrendingUp,
-    description: "How accounts move between DPD bands month on month.",
-    narrative:
-      "Net migration into DPD-60+ reduced by 18% this month, indicating improved early intervention. 43 accounts rolled back from DPD-31-60 to DPD-0-30 following targeted outreach campaigns. However, 12 accounts migrated from DPD-60-90 to 90+ — legal notices are recommended. The early-stage (0-30 DPD) bucket grew 8%, suggesting new disbursement inflows from lender partners.",
-  },
-];
+function defaultFrom(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 6);
+  return isoDay(d);
+}
+function defaultTo(): string {
+  return isoDay(new Date());
+}
+function inRange(iso: string, from: string, to: string): boolean {
+  const day = iso.slice(0, 10);
+  return day >= from && day <= to;
+}
+// Capped so a fat-fingered multi-year range can't render a chart with thousands of bars.
+function enumerateDays(from: string, to: string): string[] {
+  const days: string[] = [];
+  const cur = new Date(`${from}T00:00:00`);
+  const end = new Date(`${to}T00:00:00`);
+  let guard = 0;
+  while (cur <= end && guard < 90) {
+    days.push(isoDay(cur));
+    cur.setDate(cur.getDate() + 1);
+    guard++;
+  }
+  return days;
+}
+function formatDayLabel(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+  });
+}
+function formatRangeLabel(from: string, to: string): string {
+  return `${formatDayLabel(from)} – ${formatDayLabel(to)}`;
+}
 
 const CHART_COLORS = {
   primary: "oklch(0.58 0.18 258)",
@@ -94,227 +101,369 @@ const CHART_COLORS = {
   muted: "oklch(0.25 0.03 258)",
 };
 
-const WEEKLY_DATA = [
-  { day: "Mon", collected: 420000, calls: 92, ptps: 18 },
-  { day: "Tue", collected: 310000, calls: 78, ptps: 12 },
-  { day: "Wed", collected: 540000, calls: 105, ptps: 24 },
-  { day: "Thu", collected: 280000, calls: 70, ptps: 9 },
-  { day: "Fri", collected: 490000, calls: 98, ptps: 21 },
-  { day: "Sat", collected: 190000, calls: 45, ptps: 7 },
-  { day: "Sun", collected: 110000, calls: 22, ptps: 3 },
-];
+const TOOLTIP_STYLE = {
+  contentStyle: {
+    background: "oklch(0.15 0.025 258)",
+    border: "1px solid oklch(0.25 0.03 258)",
+    borderRadius: 6,
+    fontSize: 11,
+  },
+  labelStyle: { color: "oklch(0.96 0.005 250)" },
+  itemStyle: { color: "oklch(0.85 0.01 250)" },
+};
 
-const PORTFOLIO_DATA = [
-  { name: "Personal Loan Q1", dpdBelow30: 72, dpd3160: 18, dpdAbove60: 10 },
-  { name: "Two-Wheeler Auto", dpdBelow30: 65, dpd3160: 22, dpdAbove60: 13 },
-  { name: "Credit Card NPA", dpdBelow30: 28, dpd3160: 34, dpdAbove60: 38 },
-  { name: "MSME Working Cap", dpdBelow30: 48, dpd3160: 28, dpdAbove60: 24 },
-];
+const AXIS_TICK = { fontSize: 10, fill: "oklch(0.55 0.02 257)" };
 
-const AGENT_DATA = [
-  { name: "Priya Singh", calls: 94, ptps: 31, collected: 480000 },
-  { name: "Ravi Mehta", calls: 88, ptps: 11, collected: 220000 },
-  { name: "Sonal Desai", calls: 76, ptps: 22, collected: 310000 },
-  { name: "Mohit Rao", calls: 65, ptps: 19, collected: 275000 },
-  { name: "Leena K.", calls: 58, ptps: 14, collected: 190000 },
-];
+// ─── report definitions ─────────────────────────────────────────────────────────
 
-const CHANNEL_DATA = [
-  { channel: "WhatsApp", rate: 54 },
-  { channel: "Call", rate: 38 },
-  { channel: "SMS", rate: 11 },
-  { channel: "Email", rate: 4 },
-];
+type ReportType = "weekly" | "portfolio" | "performance" | "outcomes" | "followups";
 
-const DPD_DATA = [
-  { month: "Mar", "0-30": 380, "31-60": 120, "61-90": 65, "90+": 40 },
-  { month: "Apr", "0-30": 360, "31-60": 135, "61-90": 70, "90+": 45 },
-  { month: "May", "0-30": 390, "31-60": 110, "61-90": 58, "90+": 42 },
-  { month: "Jun", "0-30": 421, "31-60": 98, "61-90": 51, "90+": 35 },
-];
-
-function renderChart(id: ReportType) {
-  const tProps = {
-    contentStyle: {
-      background: "oklch(0.15 0.025 258)",
-      border: "1px solid oklch(0.25 0.03 258)",
-      borderRadius: 6,
-      fontSize: 11,
-    },
-    labelStyle: { color: "oklch(0.96 0.005 250)" },
-    itemStyle: { color: "oklch(0.85 0.01 250)" },
-  };
-  if (id === "weekly")
-    return (
-      <ResponsiveContainer width="100%" height={260}>
-        <BarChart data={WEEKLY_DATA} barGap={4}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} />
-          <XAxis dataKey="day" tick={{ fontSize: 11, fill: "oklch(0.55 0.02 257)" }} />
-          <YAxis
-            tick={{ fontSize: 10, fill: "oklch(0.55 0.02 257)" }}
-            tickFormatter={(v) => `₹${(v / 100000).toFixed(1)}L`}
-          />
-          <Tooltip
-            {...tProps}
-            formatter={(v: number) => [`₹${(v / 100000).toFixed(2)}L`, "Collected"]}
-          />
-          <Bar dataKey="collected" fill={CHART_COLORS.primary} radius={[3, 3, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
-    );
-  if (id === "portfolio")
-    return (
-      <ResponsiveContainer width="100%" height={260}>
-        <BarChart data={PORTFOLIO_DATA} layout="vertical" barSize={14} barGap={2}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} horizontal={false} />
-          <XAxis
-            type="number"
-            tick={{ fontSize: 10, fill: "oklch(0.55 0.02 257)" }}
-            tickFormatter={(v) => `${v}%`}
-          />
-          <YAxis
-            type="category"
-            dataKey="name"
-            tick={{ fontSize: 10, fill: "oklch(0.55 0.02 257)" }}
-            width={120}
-          />
-          <Tooltip {...tProps} formatter={(v: number) => [`${v}%`]} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Bar dataKey="dpdBelow30" name="0-30 DPD" stackId="a" fill={CHART_COLORS.success} />
-          <Bar dataKey="dpd3160" name="31-60 DPD" stackId="a" fill={CHART_COLORS.warning} />
-          <Bar
-            dataKey="dpdAbove60"
-            name="60+ DPD"
-            stackId="a"
-            fill={CHART_COLORS.destructive}
-            radius={[0, 3, 3, 0]}
-          />
-        </BarChart>
-      </ResponsiveContainer>
-    );
-  if (id === "agent")
-    return (
-      <ResponsiveContainer width="100%" height={260}>
-        <BarChart data={AGENT_DATA} barGap={4}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} />
-          <XAxis dataKey="name" tick={{ fontSize: 10, fill: "oklch(0.55 0.02 257)" }} />
-          <YAxis
-            yAxisId="left"
-            tick={{ fontSize: 10, fill: "oklch(0.55 0.02 257)" }}
-            tickFormatter={(v) => `₹${(v / 100000).toFixed(1)}L`}
-          />
-          <YAxis
-            yAxisId="right"
-            orientation="right"
-            tick={{ fontSize: 10, fill: "oklch(0.55 0.02 257)" }}
-          />
-          <Tooltip {...tProps} />
-          <Bar
-            yAxisId="left"
-            dataKey="collected"
-            name="Collected"
-            fill={CHART_COLORS.primary}
-            radius={[3, 3, 0, 0]}
-          />
-          <Bar
-            yAxisId="right"
-            dataKey="calls"
-            name="Calls"
-            fill={CHART_COLORS.success}
-            radius={[3, 3, 0, 0]}
-          />
-        </BarChart>
-      </ResponsiveContainer>
-    );
-  if (id === "channel")
-    return (
-      <ResponsiveContainer width="100%" height={260}>
-        <PieChart>
-          <Pie
-            data={CHANNEL_DATA}
-            dataKey="rate"
-            nameKey="channel"
-            cx="50%"
-            cy="50%"
-            outerRadius={100}
-            label={({ channel, rate }) => `${channel} ${rate}%`}
-            labelLine={false}
-          >
-            {CHANNEL_DATA.map((_, i) => (
-              <Cell
-                key={i}
-                fill={
-                  [
-                    CHART_COLORS.success,
-                    CHART_COLORS.primary,
-                    CHART_COLORS.warning,
-                    CHART_COLORS.muted,
-                  ][i]
-                }
-              />
-            ))}
-          </Pie>
-          <Tooltip {...tProps} formatter={(v: number) => [`${v}%`, "Response Rate"]} />
-        </PieChart>
-      </ResponsiveContainer>
-    );
-  if (id === "dpd")
-    return (
-      <ResponsiveContainer width="100%" height={260}>
-        <AreaChart data={DPD_DATA}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} />
-          <XAxis dataKey="month" tick={{ fontSize: 11, fill: "oklch(0.55 0.02 257)" }} />
-          <YAxis tick={{ fontSize: 10, fill: "oklch(0.55 0.02 257)" }} />
-          <Tooltip {...tProps} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Area
-            type="monotone"
-            dataKey="0-30"
-            stackId="1"
-            stroke={CHART_COLORS.success}
-            fill={`${CHART_COLORS.success}40`}
-          />
-          <Area
-            type="monotone"
-            dataKey="31-60"
-            stackId="1"
-            stroke={CHART_COLORS.warning}
-            fill={`${CHART_COLORS.warning}40`}
-          />
-          <Area
-            type="monotone"
-            dataKey="61-90"
-            stackId="1"
-            stroke={CHART_COLORS.destructive}
-            fill={`${CHART_COLORS.destructive}30`}
-          />
-          <Area
-            type="monotone"
-            dataKey="90+"
-            stackId="1"
-            stroke="oklch(0.45 0.2 27)"
-            fill="oklch(0.45 0.2 27 / 20%)"
-          />
-        </AreaChart>
-      </ResponsiveContainer>
-    );
-  return null;
+interface ReportDef {
+  id: ReportType;
+  label: string;
+  icon: LucideIcon;
+  description: string;
+  /** Whether the from/to picker applies to this report, or it's always a live snapshot. */
+  dateFiltered: boolean;
 }
 
+const REPORTS: ReportDef[] = [
+  {
+    id: "weekly",
+    label: "Collections Summary",
+    icon: BarChart2,
+    description: "Calls, PTPs, and amount collected by day.",
+    dateFiltered: true,
+  },
+  {
+    id: "portfolio",
+    label: "Portfolio Health",
+    icon: Activity,
+    description: "DPD bucket mix across your assigned accounts.",
+    dateFiltered: false,
+  },
+  {
+    id: "performance",
+    label: "My Performance",
+    icon: TrendingUp,
+    description: "Contact rate and PTP conversion trend.",
+    dateFiltered: true,
+  },
+  {
+    id: "outcomes",
+    label: "Outcome Breakdown",
+    icon: PieChartIcon,
+    description: "How your logged calls resolve.",
+    dateFiltered: true,
+  },
+  {
+    id: "followups",
+    label: "PTP Follow-ups",
+    icon: HandCoins,
+    description: "Open promises, ranked by urgency.",
+    dateFiltered: false,
+  },
+];
+
+const BUCKET_ORDER: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
+const BUCKET_SHORT: Record<DPDBucket, string> = {
+  X: "Current",
+  "1": "1–30 DPD",
+  "2": "31–90 DPD",
+  NPA: "91–179 DPD",
+  WriteOff: "180+ DPD",
+};
+const BUCKET_FILL: Record<DPDBucket, string> = {
+  X: CHART_COLORS.success,
+  "1": CHART_COLORS.primary,
+  "2": CHART_COLORS.warning,
+  NPA: CHART_COLORS.destructive,
+  WriteOff: "oklch(0.45 0.02 257)",
+};
+
+// ─── data aggregation ────────────────────────────────────────────────────────────
+
+interface DailyRow {
+  day: string;
+  label: string;
+  calls: number;
+  ptps: number;
+  collected: number;
+  contactRate: number;
+  ptpRate: number;
+}
+
+function computeDaily(disps: DispositionRecord[], days: string[]): DailyRow[] {
+  return days.map((day) => {
+    const dayDisps = disps.filter((d) => d.time.slice(0, 10) === day);
+    const stats = calcStats(dayDisps);
+    return {
+      day,
+      label: formatDayLabel(day),
+      calls: stats.total,
+      ptps: stats.ptps,
+      collected: stats.paidAmount,
+      contactRate: stats.contactRate,
+      ptpRate: stats.total > 0 ? Math.round((stats.ptps / stats.total) * 100) : 0,
+    };
+  });
+}
+
+interface PortfolioHealthRow {
+  name: string;
+  total: number;
+  outstanding: number;
+  bucketCount: Record<DPDBucket, number>;
+  bucketPct: Record<DPDBucket, number>;
+}
+
+function computePortfolioHealth(agentId: string): PortfolioHealthRow[] {
+  const slices = getAgentDebtorIds(agentId);
+  const portfolios = getPortfolios();
+  const rows: PortfolioHealthRow[] = [];
+  for (const { portfolioId, debtorIds } of slices) {
+    const p = portfolios.find((p) => p.id === portfolioId);
+    if (!p) continue;
+    const idSet = new Set(debtorIds);
+    const myRows = p.rows.filter((r) => idSet.has(r.id));
+    const total = myRows.length;
+    if (total === 0) continue;
+    const bucketCount = { X: 0, "1": 0, "2": 0, NPA: 0, WriteOff: 0 } as Record<DPDBucket, number>;
+    let outstanding = 0;
+    for (const r of myRows) {
+      bucketCount[r.bucket] = (bucketCount[r.bucket] ?? 0) + 1;
+      outstanding += r.loanAmount || 0;
+    }
+    const bucketPct = Object.fromEntries(
+      BUCKET_ORDER.map((b) => [b, Math.round((bucketCount[b] / total) * 100)]),
+    ) as Record<DPDBucket, number>;
+    rows.push({ name: p.name, total, outstanding, bucketCount, bucketPct });
+  }
+  return rows.sort((a, b) => b.total - a.total);
+}
+
+// ─── narrative (computed from the real numbers above — no LLM call behind this) ──
+
+function weeklyNarrative(rows: DailyRow[], from: string, to: string): string {
+  const totalCalls = rows.reduce((s, r) => s + r.calls, 0);
+  if (totalCalls === 0) return `No calls logged between ${formatRangeLabel(from, to)} yet.`;
+  const totalCollected = rows.reduce((s, r) => s + r.collected, 0);
+  const totalPtps = rows.reduce((s, r) => s + r.ptps, 0);
+  const best = rows.reduce((a, b) => (b.collected > a.collected ? b : a));
+  return (
+    `${totalCalls} calls logged and ${formatINR(totalCollected)} collected across ${totalPtps} PTPs, ` +
+    `${formatRangeLabel(from, to)}.` +
+    (best.collected > 0
+      ? ` ${best.label} was your best day at ${formatINR(best.collected)} collected.`
+      : "")
+  );
+}
+
+function portfolioNarrative(rows: PortfolioHealthRow[]): string {
+  if (rows.length === 0) return "No accounts are currently assigned to you.";
+  const totalAccounts = rows.reduce((s, r) => s + r.total, 0);
+  const totalOutstanding = rows.reduce((s, r) => s + r.outstanding, 0);
+  const riskiest = [...rows].sort(
+    (a, b) => b.bucketPct.NPA + b.bucketPct.WriteOff - (a.bucketPct.NPA + a.bucketPct.WriteOff),
+  )[0];
+  const riskPct = riskiest.bucketPct.NPA + riskiest.bucketPct.WriteOff;
+  return (
+    `${totalAccounts} accounts assigned across ${rows.length} portfolio${rows.length === 1 ? "" : "s"}, ` +
+    `totalling ${formatINR(totalOutstanding)} outstanding.` +
+    (riskPct > 0
+      ? ` ${riskiest.name} carries the highest risk concentration — ${riskPct}% of those accounts are 90+ DPD.`
+      : " None of your assigned accounts are past 90 DPD right now.")
+  );
+}
+
+function performanceNarrative(rows: DailyRow[], from: string, to: string): string {
+  const withCalls = rows.filter((r) => r.calls > 0);
+  if (withCalls.length === 0) return `No calls logged between ${formatRangeLabel(from, to)} yet.`;
+  const avg = (arr: DailyRow[], key: "contactRate" | "ptpRate") =>
+    arr.length ? Math.round(arr.reduce((s, r) => s + r[key], 0) / arr.length) : 0;
+  const avgContact = avg(withCalls, "contactRate");
+  const avgPtp = avg(withCalls, "ptpRate");
+  const mid = Math.floor(withCalls.length / 2);
+  const delta =
+    avg(withCalls.slice(mid), "contactRate") - avg(withCalls.slice(0, mid), "contactRate");
+  const trendWord = delta > 3 ? "improving" : delta < -3 ? "slipping" : "holding steady";
+  return (
+    `Average contact rate of ${avgContact}% over this range, with a ${avgPtp}% promise-to-pay rate on ` +
+    `connected calls. Contact rate is ${trendWord} across the period${
+      withCalls.length > 1 && Math.abs(delta) > 3 ? ` (${delta > 0 ? "+" : ""}${delta} pts)` : ""
+    }.`
+  );
+}
+
+function outcomeNarrative(disps: DispositionRecord[]): string {
+  if (disps.length === 0) return "No calls logged in this range yet.";
+  const stats = calcStats(disps);
+  const counts = disps.reduce<Record<string, number>>((acc, d) => {
+    acc[d.outcome] = (acc[d.outcome] ?? 0) + 1;
+    return acc;
+  }, {});
+  const [topOutcome, topCount] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  return (
+    `${disps.length} calls logged, ${stats.contactRate}% contact rate. ` +
+    `"${OUTCOME_LABELS[topOutcome] ?? topOutcome}" is the most common outcome — ${topCount} calls ` +
+    `(${Math.round((topCount / disps.length) * 100)}%).`
+  );
+}
+
+function followupsNarrative(followups: PtpFollowup[]): string {
+  if (followups.length === 0) return "No open promises-to-pay right now.";
+  const overdue = followups.filter((f) => f.daysLeft < 0);
+  const totalOpen = followups.reduce((s, f) => s + f.ptpAmount, 0);
+  return (
+    `${followups.length} open promise${followups.length === 1 ? "" : "s"} worth ${formatINR(totalOpen)}` +
+    (overdue.length > 0
+      ? `, including ${overdue.length} overdue — follow up on those first.`
+      : ", none overdue.")
+  );
+}
+
+// ─── page ─────────────────────────────────────────────────────────────────────
+
 function ReportsPage() {
+  const { user } = useAuth();
+  const agentId = user?.email ?? user?.id ?? "";
+
   const [active, setActive] = useState<ReportType>("weekly");
-  const [fromDate, setFromDate] = useState("2026-06-16");
-  const [toDate, setToDate] = useState("2026-06-22");
+  const [fromDate, setFromDate] = useState(defaultFrom);
+  const [toDate, setToDate] = useState(defaultTo);
+
+  const [disps, setDisps] = useState<DispositionRecord[]>(() =>
+    agentId ? getAgentDispositions(agentId) : [],
+  );
+  useEffect(() => {
+    const load = () => setDisps(agentId ? getAgentDispositions(agentId) : []);
+    load();
+    window.addEventListener("dispositions-updated", load);
+    refreshDispositions();
+    return () => window.removeEventListener("dispositions-updated", load);
+  }, [agentId]);
+
+  const [portfolioVersion, setPortfolioVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setPortfolioVersion((n) => n + 1);
+    window.addEventListener("portfolios-updated", bump);
+    refreshPortfolios();
+    return () => window.removeEventListener("portfolios-updated", bump);
+  }, []);
+
+  const days = useMemo(() => enumerateDays(fromDate, toDate), [fromDate, toDate]);
+  const rangeDisps = useMemo(
+    () => disps.filter((d) => inRange(d.time, fromDate, toDate)),
+    [disps, fromDate, toDate],
+  );
+  const dailyRows = useMemo(() => computeDaily(rangeDisps, days), [rangeDisps, days]);
+  const portfolioRows = useMemo(
+    () => computePortfolioHealth(agentId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agentId, portfolioVersion],
+  );
+  // `disps` isn't read directly below — it's a dependency so this recomputes whenever the
+  // dispositions cache updates (getPtpFollowups reads that same cache internally).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const followups = useMemo(() => (agentId ? getPtpFollowups(agentId) : []), [agentId, disps]);
+
+  const rangeStats = useMemo(() => calcStats(rangeDisps), [rangeDisps]);
+  const overdueCount = useMemo(() => followups.filter((f) => f.daysLeft < 0).length, [followups]);
+  const openPtpAmount = useMemo(() => followups.reduce((s, f) => s + f.ptpAmount, 0), [followups]);
 
   const report = REPORTS.find((r) => r.id === active)!;
+
+  function handleExport() {
+    if (active === "weekly") {
+      downloadCsv(
+        `collections-summary-${fromDate}-to-${toDate}.csv`,
+        ["Date", "Calls", "PTPs", "Collected (₹)"],
+        dailyRows.map((r) => [r.label, r.calls, r.ptps, r.collected]),
+      );
+    } else if (active === "portfolio") {
+      downloadCsv(
+        "portfolio-health.csv",
+        ["Portfolio", "Accounts", "Outstanding (₹)", ...BUCKET_ORDER.map((b) => BUCKET_SHORT[b])],
+        portfolioRows.map((r) => [
+          r.name,
+          r.total,
+          r.outstanding,
+          ...BUCKET_ORDER.map((b) => `${r.bucketCount[b]} (${r.bucketPct[b]}%)`),
+        ]),
+      );
+    } else if (active === "performance") {
+      downloadCsv(
+        `my-performance-${fromDate}-to-${toDate}.csv`,
+        ["Date", "Calls", "Contact Rate %", "PTP Rate %"],
+        dailyRows.map((r) => [r.label, r.calls, r.contactRate, r.ptpRate]),
+      );
+    } else if (active === "outcomes") {
+      const counts = rangeDisps.reduce<Record<string, number>>((acc, d) => {
+        acc[d.outcome] = (acc[d.outcome] ?? 0) + 1;
+        return acc;
+      }, {});
+      downloadCsv(
+        `outcome-breakdown-${fromDate}-to-${toDate}.csv`,
+        ["Outcome", "Count", "% of calls"],
+        Object.entries(counts).map(([o, c]) => [
+          OUTCOME_LABELS[o] ?? o,
+          c,
+          rangeDisps.length ? Math.round((c / rangeDisps.length) * 100) : 0,
+        ]),
+      );
+    } else {
+      downloadCsv(
+        "ptp-followups.csv",
+        ["Debtor", "Phone", "PTP Amount (₹)", "Due Date", "Days Left", "Notes"],
+        followups.map((f) => [
+          f.debtorName,
+          f.phone,
+          f.ptpAmount,
+          f.ptpDateIso,
+          f.daysLeft,
+          f.notes,
+        ]),
+      );
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div className="animate-in fade-in slide-in-from-top-4 duration-500">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
         <p className="text-sm text-muted-foreground">
-          AI-generated summaries and operational insights.
+          Summaries and charts generated from your own call log — nothing here is a mock.
         </p>
+      </div>
+
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Stat
+          icon={IndianRupee}
+          label="Collected"
+          value={formatINR(rangeStats.paidAmount)}
+          sub={`${rangeStats.paid} payments · ${formatRangeLabel(fromDate, toDate)}`}
+          green
+        />
+        <Stat
+          icon={Target}
+          label="PTP Secured"
+          value={formatINR(rangeStats.ptpAmount)}
+          sub={`${rangeStats.ptps} promises this range`}
+          green
+        />
+        <Stat
+          icon={PhoneCall}
+          label="Calls Logged"
+          value={rangeStats.total.toLocaleString()}
+          sub={`${rangeStats.contactRate}% contact rate`}
+        />
+        <Stat
+          icon={AlertTriangle}
+          label="Open Promises"
+          value={formatINR(openPtpAmount)}
+          sub={`${followups.length} open${overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}`}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr]">
@@ -337,9 +486,9 @@ function ReportsPage() {
               <div className="flex items-center gap-2">
                 <r.icon className="h-4 w-4 flex-shrink-0" />
                 <span className="text-sm font-medium">{r.label}</span>
-                {r.badge && (
+                {!r.dateFiltered && (
                   <Badge variant="secondary" className="ml-auto text-[10px] py-0">
-                    {r.badge}
+                    Live
                   </Badge>
                 )}
               </div>
@@ -359,62 +508,315 @@ function ReportsPage() {
                 </CardTitle>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor="from" className="text-xs text-muted-foreground">
-                    From
-                  </Label>
-                  <Input
-                    id="from"
-                    type="date"
-                    value={fromDate}
-                    onChange={(e) => setFromDate(e.target.value)}
-                    className="h-8 w-36 text-xs"
-                  />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor="to" className="text-xs text-muted-foreground">
-                    To
-                  </Label>
-                  <Input
-                    id="to"
-                    type="date"
-                    value={toDate}
-                    onChange={(e) => setToDate(e.target.value)}
-                    className="h-8 w-36 text-xs"
-                  />
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1.5 text-xs transition-all active:scale-95"
-                  onClick={() => toast.success("Report exported as Excel")}
+                {report.dateFiltered ? (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="from" className="text-xs text-muted-foreground">
+                        From
+                      </Label>
+                      <Input
+                        id="from"
+                        type="date"
+                        value={fromDate}
+                        max={toDate}
+                        onChange={(e) => setFromDate(e.target.value)}
+                        className="h-8 w-36 text-xs"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="to" className="text-xs text-muted-foreground">
+                        To
+                      </Label>
+                      <Input
+                        id="to"
+                        type="date"
+                        value={toDate}
+                        min={fromDate}
+                        onChange={(e) => setToDate(e.target.value)}
+                        className="h-8 w-36 text-xs"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
+                    Live snapshot — not affected by the date range
+                  </Badge>
+                )}
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:text-foreground hover:bg-muted/50 active:scale-95"
                 >
                   <Download className="h-3.5 w-3.5" />
-                  Excel
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1.5 text-xs transition-all active:scale-95"
-                  onClick={() => toast.success("Report emailed to your registered address")}
-                >
-                  <Mail className="h-3.5 w-3.5" />
-                  Email
-                </Button>
+                  Export CSV
+                </button>
               </div>
             </div>
           </CardHeader>
           <CardContent className="pt-4 space-y-4">
-            {/* AI narrative */}
-            <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
-              <p className="text-xs font-medium text-primary mb-1">AI Summary</p>
-              <p className="text-sm text-foreground/90 leading-relaxed">{report.narrative}</p>
+            {/* Summary */}
+            <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+              <Info className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
+              <p className="text-sm text-foreground/90 leading-relaxed">
+                {active === "weekly" && weeklyNarrative(dailyRows, fromDate, toDate)}
+                {active === "portfolio" && portfolioNarrative(portfolioRows)}
+                {active === "performance" && performanceNarrative(dailyRows, fromDate, toDate)}
+                {active === "outcomes" && outcomeNarrative(rangeDisps)}
+                {active === "followups" && followupsNarrative(followups)}
+              </p>
             </div>
-            {/* Chart */}
-            <div className="pt-2">{renderChart(active)}</div>
+
+            {/* Chart + table */}
+            {active === "weekly" && <WeeklyReport rows={dailyRows} />}
+            {active === "portfolio" && <PortfolioReport rows={portfolioRows} />}
+            {active === "performance" && <PerformanceReport rows={dailyRows} />}
+            {active === "outcomes" && <OutcomesReport disps={rangeDisps} />}
+            {active === "followups" && <FollowupsReport followups={followups} />}
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+// ─── per-report chart + table ────────────────────────────────────────────────
+
+function EmptyState({ message }: { message: string }) {
+  return <p className="py-10 text-center text-sm text-muted-foreground">{message}</p>;
+}
+
+function ReportTable({ headers, rows }: { headers: string[]; rows: (string | number)[][] }) {
+  return (
+    <div className="rounded-md border border-border overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-muted/20 border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
+              {headers.map((h, i) => (
+                <th
+                  key={h}
+                  className={cn("py-2 px-3 font-medium", i === 0 ? "text-left" : "text-right")}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((row, ri) => (
+              <tr key={ri} className="hover:bg-muted/20">
+                {row.map((cell, ci) => (
+                  <td
+                    key={ci}
+                    className={cn(
+                      "py-1.5 px-3",
+                      ci === 0 ? "text-left font-medium text-foreground" : "text-right",
+                    )}
+                  >
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function WeeklyReport({ rows }: { rows: DailyRow[] }) {
+  if (rows.every((r) => r.calls === 0))
+    return <EmptyState message="No calls logged in this range yet." />;
+  return (
+    <div className="space-y-3">
+      <ResponsiveContainer width="100%" height={260}>
+        <ComposedChart data={rows} barGap={4}>
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} />
+          <XAxis dataKey="label" tick={AXIS_TICK} />
+          <YAxis
+            yAxisId="left"
+            tick={AXIS_TICK}
+            tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
+          />
+          <YAxis yAxisId="right" orientation="right" tick={AXIS_TICK} allowDecimals={false} />
+          <Tooltip {...TOOLTIP_STYLE} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Bar
+            yAxisId="left"
+            dataKey="collected"
+            name="Collected (₹)"
+            fill={CHART_COLORS.primary}
+            radius={[3, 3, 0, 0]}
+          />
+          <Line
+            yAxisId="right"
+            dataKey="calls"
+            name="Calls"
+            stroke={CHART_COLORS.success}
+            strokeWidth={2}
+            dot={{ r: 3 }}
+          />
+          <Line
+            yAxisId="right"
+            dataKey="ptps"
+            name="PTPs"
+            stroke={CHART_COLORS.warning}
+            strokeWidth={2}
+            dot={{ r: 3 }}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+      <ReportTable
+        headers={["Date", "Calls", "PTPs", "Collected"]}
+        rows={rows.map((r) => [r.label, r.calls, r.ptps, formatINR(r.collected)])}
+      />
+    </div>
+  );
+}
+
+function PortfolioReport({ rows }: { rows: PortfolioHealthRow[] }) {
+  if (rows.length === 0) return <EmptyState message="No accounts are currently assigned to you." />;
+  return (
+    <div className="space-y-3">
+      <ResponsiveContainer width="100%" height={Math.max(180, rows.length * 56)}>
+        <BarChart data={rows} layout="vertical" barSize={16} barGap={2}>
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} horizontal={false} />
+          <XAxis type="number" tick={AXIS_TICK} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
+          <YAxis type="category" dataKey="name" tick={AXIS_TICK} width={140} />
+          <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`]} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {BUCKET_ORDER.map((b, i) => (
+            <Bar
+              key={b}
+              dataKey={(r: PortfolioHealthRow) => r.bucketPct[b]}
+              name={BUCKET_SHORT[b]}
+              stackId="a"
+              fill={BUCKET_FILL[b]}
+              radius={i === BUCKET_ORDER.length - 1 ? [0, 3, 3, 0] : undefined}
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+      <ReportTable
+        headers={[
+          "Portfolio",
+          "Accounts",
+          "Outstanding",
+          ...BUCKET_ORDER.map((b) => BUCKET_SHORT[b]),
+        ]}
+        rows={rows.map((r) => [
+          r.name,
+          r.total,
+          formatINR(r.outstanding),
+          ...BUCKET_ORDER.map((b) => `${r.bucketCount[b]} (${r.bucketPct[b]}%)`),
+        ])}
+      />
+    </div>
+  );
+}
+
+function PerformanceReport({ rows }: { rows: DailyRow[] }) {
+  if (rows.every((r) => r.calls === 0))
+    return <EmptyState message="No calls logged in this range yet." />;
+  return (
+    <div className="space-y-3">
+      <ResponsiveContainer width="100%" height={260}>
+        <LineChart data={rows}>
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} />
+          <XAxis dataKey="label" tick={AXIS_TICK} />
+          <YAxis tick={AXIS_TICK} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
+          <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`]} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Line
+            type="monotone"
+            dataKey="contactRate"
+            name="Contact Rate"
+            stroke={CHART_COLORS.primary}
+            strokeWidth={2}
+            dot={{ r: 3 }}
+          />
+          <Line
+            type="monotone"
+            dataKey="ptpRate"
+            name="PTP Rate"
+            stroke={CHART_COLORS.success}
+            strokeWidth={2}
+            dot={{ r: 3 }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+      <ReportTable
+        headers={["Date", "Calls", "Contact Rate", "PTP Rate"]}
+        rows={rows.map((r) => [r.label, r.calls, `${r.contactRate}%`, `${r.ptpRate}%`])}
+      />
+    </div>
+  );
+}
+
+function OutcomesReport({ disps }: { disps: DispositionRecord[] }) {
+  if (disps.length === 0) return <EmptyState message="No calls logged in this range yet." />;
+  const counts = disps.reduce<Record<string, number>>((acc, d) => {
+    acc[d.outcome] = (acc[d.outcome] ?? 0) + 1;
+    return acc;
+  }, {});
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  return (
+    <div className="space-y-4">
+      <OutcomeBreakdown disps={disps} />
+      <ReportTable
+        headers={["Outcome", "Count", "% of calls"]}
+        rows={sorted.map(([o, c]) => [
+          OUTCOME_LABELS[o] ?? o,
+          c,
+          `${Math.round((c / disps.length) * 100)}%`,
+        ])}
+      />
+    </div>
+  );
+}
+
+function FollowupsReport({ followups }: { followups: PtpFollowup[] }) {
+  if (followups.length === 0) return <EmptyState message="No open promises-to-pay right now." />;
+  const top = followups.slice(0, 10);
+  return (
+    <div className="space-y-3">
+      <ResponsiveContainer width="100%" height={Math.max(180, top.length * 32)}>
+        <BarChart data={top} layout="vertical" barSize={14}>
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} horizontal={false} />
+          <XAxis type="number" tick={AXIS_TICK} tickFormatter={(v) => formatINR(v)} />
+          <YAxis type="category" dataKey="debtorName" tick={AXIS_TICK} width={120} />
+          <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [formatINR(v), "PTP Amount"]} />
+          <Bar dataKey="ptpAmount" radius={[0, 3, 3, 0]}>
+            {top.map((f, i) => (
+              <Cell
+                key={i}
+                fill={
+                  f.daysLeft < 0
+                    ? CHART_COLORS.destructive
+                    : f.daysLeft === 0
+                      ? CHART_COLORS.warning
+                      : CHART_COLORS.primary
+                }
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      <ReportTable
+        headers={["Debtor", "Phone", "Amount", "Due", "Status"]}
+        rows={followups.map((f) => [
+          f.debtorName,
+          f.phone,
+          formatINR(f.ptpAmount),
+          f.ptpDateIso,
+          f.daysLeft < 0
+            ? `${-f.daysLeft}d overdue`
+            : f.daysLeft === 0
+              ? "Due today"
+              : `in ${f.daysLeft}d`,
+        ])}
+      />
     </div>
   );
 }

@@ -47,6 +47,7 @@ const managerItems = [
   { title: "Portfolio Overview", url: "/manager/portfolio", icon: FolderOpen },
   { title: "Portfolio Upload", url: "/manager/upload", icon: Upload },
   { title: "Call Audit", url: "/manager/audit", icon: AudioLines },
+  { title: "Reports", url: "/manager/reports", icon: FileBarChart },
   { title: "Settings", url: "/dashboard/settings", icon: Settings },
 ];
 
