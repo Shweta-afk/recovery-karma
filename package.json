@@ -14,7 +14,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
     "test:logic": "bun run scripts/telephony-check.ts && bun run check:sql",
-    "check:sql": "bun run scripts/check-rls-safety.ts"
+    "check:sql": "node scripts/check-rls-safety.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
  * Guard against the RLS recursion that has taken production down twice (2026-08-14, -08-21).
  *
@@ -30,7 +30,7 @@ const NESTED_TX = /^\s*(BEGIN|COMMIT|ROLLBACK)\s*;/im;
 /** Debug scaffolding that must never ship inside a migration. */
 const DEBUG_CODE = /(SET\s+LOCAL\s+ROLE|_rls_probe|request\.jwt\.claims)/i;
 
-function sqlFiles(dir: string): string[] {
+function sqlFiles(dir) {
   return readdirSync(dir).flatMap((entry) => {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) return sqlFiles(p);
@@ -39,7 +39,7 @@ function sqlFiles(dir: string): string[] {
 }
 
 /** Strip comments so a rule documented in prose isn't reported as a violation. */
-function stripComments(sql: string): string {
+function stripComments(sql) {
   return sql
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .split("\n")
@@ -47,7 +47,7 @@ function stripComments(sql: string): string {
     .join("\n");
 }
 
-const failures: string[] = [];
+const failures = [];
 
 for (const file of sqlFiles(ROOT)) {
   const code = stripComments(readFileSync(file, "utf8"));
