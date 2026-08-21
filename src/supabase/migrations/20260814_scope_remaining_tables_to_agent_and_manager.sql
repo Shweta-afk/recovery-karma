@@ -16,11 +16,30 @@
 -- makes this function's internal query bypass RLS, exactly like auth_client_id()/auth_role()
 -- already do for the same reason.
 -- ────────────────────────────────────────────────────────────
+-- ⚠️ AMENDED 2026-08-21 — DO NOT restore the LANGUAGE sql version below.
+--
+-- This file originally declared auth_agent_id() as `LANGUAGE sql`. Postgres INLINES simple
+-- single-statement SQL functions, which silently discards SECURITY DEFINER — so the body's
+-- `SELECT id FROM agents` ran as the CALLING role, hit agents_select, which calls this
+-- function: genuine recursion (42P17).
+--
+-- That was already fixed by 20260814_fix_auth_agent_id_recursion.sql — but migrations apply in
+-- FILENAME ORDER, and "scope_remaining_tables" sorts AFTER both "disable_row_security..." and
+-- "fix_auth_agent_id...", so every replay of this directory silently re-broke production. That
+-- is what caused the 2026-08-21 outage, and it had likely been recurring on every deploy.
+--
+-- Amended in place so replaying this directory is idempotent and safe. Kept as plpgsql
+-- (opaque to the planner, never inlined) so SECURITY DEFINER survives.
 CREATE OR REPLACE FUNCTION auth_agent_id() RETURNS UUID
-  LANGUAGE sql STABLE SECURITY DEFINER
+  LANGUAGE plpgsql STABLE SECURITY DEFINER
   SET search_path = public, pg_temp
+  SET row_security = off
   AS $$
-    SELECT id FROM agents WHERE auth_user_id = auth.uid() LIMIT 1
+  DECLARE result UUID;
+  BEGIN
+    SELECT id INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
+    RETURN result;
+  END;
   $$;
 
 -- ────────────────────────────────────────────────────────────

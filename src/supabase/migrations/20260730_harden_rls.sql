@@ -28,18 +28,34 @@
 -- SECURITY DEFINER without a pinned search_path lets a caller who can create objects in
 -- a schema earlier on the path shadow `agents` and make this function return anything.
 -- Pin it. (The original in schema.sql omits this.)
+-- ⚠️ AMENDED 2026-08-21 — these were `LANGUAGE sql`; do not change them back.
+-- Postgres inlines simple SQL functions, which discards SECURITY DEFINER and makes the body's
+-- read of `agents` run as the caller — re-entering agents' RLS and causing 42P17 recursion.
+-- plpgsql is opaque to the planner and never inlined. 20260814_disable_row_security_in_auth_
+-- helpers.sql already fixed these, but that only rescues them on a FULL in-order replay; kept
+-- correct here so any partial replay is safe too.
 CREATE OR REPLACE FUNCTION auth_client_id() RETURNS UUID
-  LANGUAGE sql STABLE SECURITY DEFINER
+  LANGUAGE plpgsql STABLE SECURITY DEFINER
   SET search_path = public, pg_temp
+  SET row_security = off
   AS $$
-    SELECT client_id FROM agents WHERE auth_user_id = auth.uid() LIMIT 1
+  DECLARE result UUID;
+  BEGIN
+    SELECT client_id INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
+    RETURN result;
+  END;
   $$;
 
 CREATE OR REPLACE FUNCTION auth_role() RETURNS TEXT
-  LANGUAGE sql STABLE SECURITY DEFINER
+  LANGUAGE plpgsql STABLE SECURITY DEFINER
   SET search_path = public, pg_temp
+  SET row_security = off
   AS $$
-    SELECT role FROM agents WHERE auth_user_id = auth.uid() LIMIT 1
+  DECLARE result TEXT;
+  BEGIN
+    SELECT role INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
+    RETURN result;
+  END;
   $$;
 
 -- ────────────────────────────────────────────────────────────

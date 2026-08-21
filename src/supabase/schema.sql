@@ -206,11 +206,19 @@ ALTER TABLE settlement_requests  ENABLE ROW LEVEL SECURITY;
 -- (used inside USING expressions below)
 -- SECURITY DEFINER must pin search_path, else a caller able to create objects in an
 -- earlier schema on the path can shadow `agents` and control what this returns.
+-- ⚠️ AMENDED 2026-08-21 — was `LANGUAGE sql`; do not change it back. Postgres inlines simple
+-- SQL functions, discarding SECURITY DEFINER, so the body's read of `agents` runs as the
+-- caller and re-enters agents' RLS → 42P17 recursion. plpgsql is never inlined.
 CREATE OR REPLACE FUNCTION auth_client_id() RETURNS UUID
-  LANGUAGE sql STABLE SECURITY DEFINER
+  LANGUAGE plpgsql STABLE SECURITY DEFINER
   SET search_path = public, pg_temp
+  SET row_security = off
   AS $$
-    SELECT client_id FROM agents WHERE auth_user_id = auth.uid() LIMIT 1
+  DECLARE result UUID;
+  BEGIN
+    SELECT client_id INTO result FROM agents WHERE auth_user_id = auth.uid() LIMIT 1;
+    RETURN result;
+  END;
   $$;
 
 -- NOTE: the policies below are superseded by migrations/20260730_harden_rls.sql, which

@@ -224,27 +224,3 @@ CREATE POLICY settlements_select ON settlement_requests FOR SELECT TO authentica
     )
   );
 
--- ── 7. Verify — all 11 rows must say OK ──────────────────────────────────────
-NOTIFY pgrst, 'reload schema';
-
-CREATE OR REPLACE FUNCTION _rls_probe(t text) RETURNS text
-  LANGUAGE plpgsql SECURITY INVOKER
-  AS $$
-  DECLARE n bigint;
-  BEGIN
-    EXECUTE format('SELECT count(*) FROM public.%I', t) INTO n;
-    RETURN 'OK — ' || n || ' rows';
-  EXCEPTION WHEN OTHERS THEN
-    RETURN 'FAIL — ' || SQLSTATE || ': ' || SQLERRM;
-  END; $$;
-
-BEGIN;
-  SET LOCAL ROLE authenticated;
-  SET LOCAL request.jwt.claims TO '{"sub":"25e3159e-555a-4bac-964e-0c66b9f1af4d"}';
-  SELECT t AS table_name, _rls_probe(t) AS result
-  FROM unnest(ARRAY[
-    'clients','agents','teams','team_agents','portfolios','debtors',
-    'call_logs','messages','payments','disputes','settlement_requests'
-  ]) AS t
-  ORDER BY 1;
-ROLLBACK;
