@@ -50,13 +50,13 @@ LIMIT 30;
 SELECT
   p.name                                       AS portfolio,
   CASE WHEN p.closed_at IS NULL THEN 'open' ELSE 'closed' END AS state,
-  p.created_at::date                           AS created,
+  p.uploaded_at::date                          AS uploaded,
   count(d.id)                                  AS total_rows,
   count(DISTINCT d.phone_primary)              AS distinct_phones,
   count(d.id) - count(DISTINCT d.phone_primary) AS duplicate_rows
 FROM portfolios p
 LEFT JOIN debtors d ON d.portfolio_id = p.id AND d.status IS DISTINCT FROM 'removed'
-GROUP BY p.id, p.name, p.closed_at, p.created_at
+GROUP BY p.id, p.name, p.closed_at, p.uploaded_at
 ORDER BY duplicate_rows DESC;
 
 
