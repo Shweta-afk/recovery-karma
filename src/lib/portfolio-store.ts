@@ -115,6 +115,21 @@ export interface UploadedPortfolio {
   closedAt?: string;
 }
 
+/** Set once `portfolio_agent_targets` answers "no such table", so refreshPortfolios() stops
+ * re-querying it for the rest of the session. Per-tab and deliberately not persisted — a
+ * reload after the migration is applied picks the table up again. */
+let portfolioAgentTargetsMissing = false;
+
+function isMissingTableError(e: { message?: string; code?: string } | null): boolean {
+  if (!e) return false;
+  // PGRST205 = "Could not find the table in the schema cache"; 42P01 = undefined_table.
+  return (
+    e.code === "PGRST205" ||
+    e.code === "42P01" ||
+    /schema cache|does not exist/i.test(e.message ?? "")
+  );
+}
+
 const KEY = "recoveryai_portfolios_cache";
 const CHUNK_SIZE = 500; // stays comfortably under Supabase's request-size limits per insert
 
@@ -168,9 +183,16 @@ export async function refreshPortfolios(): Promise<void> {
   // targets table never blocks the rest of the portfolio sync.
   const targetsByPortfolio = new Map<string, Record<string, AgentTarget>>();
   try {
-    const { data: targetRows, error: tErr } = await supabase
-      .from("portfolio_agent_targets")
-      .select("portfolio_id, agent_id, target_amount, target_accounts");
+    const { data: targetRows, error: tErr } = portfolioAgentTargetsMissing
+      ? { data: null, error: null }
+      : await supabase
+          .from("portfolio_agent_targets")
+          .select("portfolio_id, agent_id, target_amount, target_accounts");
+    // PostgREST answers 404/PGRST205 for a table that isn't in the schema cache at all —
+    // i.e. the migration has never been applied here. That will not fix itself mid-session,
+    // so stop asking: this fired on every refresh from every open page and was the bulk of
+    // the console noise in production on 2026-08-22.
+    if (tErr && isMissingTableError(tErr)) portfolioAgentTargetsMissing = true;
     if (!tErr && targetRows) {
       for (const t of targetRows) {
         const email = emailById.get(t.agent_id);
