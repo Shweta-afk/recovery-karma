@@ -91,6 +91,8 @@ ORDER BY 1;
 --   affected TEXT := '';
 -- BEGIN
 --   -- Materialised once: the sets must not shift as rows are deleted underneath them.
+--   DROP TABLE IF EXISTS _doomed_pf;
+--   DROP TABLE IF EXISTS _doomed_d;
 --   CREATE TEMP TABLE _doomed_pf ON COMMIT DROP AS
 --     SELECT id FROM portfolios WHERE closed_at IS NOT NULL;
 --   CREATE TEMP TABLE _doomed_d ON COMMIT DROP AS
@@ -107,9 +109,9 @@ ORDER BY 1;
 --       AND NOT (con.conrelid = 'public.debtors'::regclass AND att.attname = 'portfolio_id')
 --   LOOP
 --     IF r.req THEN
---       EXECUTE format('DELETE FROM %I WHERE %I IN (SELECT id FROM _doomed_pf)', r.tbl, r.col);
+--       EXECUTE format('DELETE FROM %s WHERE %I IN (SELECT id FROM _doomed_pf)', r.tbl, r.col);
 --     ELSE
---       EXECUTE format('UPDATE %I SET %I = NULL WHERE %I IN (SELECT id FROM _doomed_pf)',
+--       EXECUTE format('UPDATE %s SET %I = NULL WHERE %I IN (SELECT id FROM _doomed_pf)',
 --                      r.tbl, r.col, r.col);
 --     END IF;
 --     GET DIAGNOSTICS n = ROW_COUNT;
@@ -124,7 +126,7 @@ ORDER BY 1;
 --     JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
 --     WHERE con.contype = 'f' AND con.confrelid = 'public.debtors'::regclass
 --   LOOP
---     EXECUTE format('DELETE FROM %I WHERE %I IN (SELECT id FROM _doomed_d)', r.tbl, r.col);
+--     EXECUTE format('DELETE FROM %s WHERE %I IN (SELECT id FROM _doomed_d)', r.tbl, r.col);
 --     GET DIAGNOSTICS n = ROW_COUNT;
 --     IF n > 0 THEN affected := affected || format('%s.%s: %s; ', r.tbl, r.col, n); END IF;
 --   END LOOP;
