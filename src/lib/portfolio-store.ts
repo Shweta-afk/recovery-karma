@@ -626,6 +626,25 @@ export interface BulkPaidResult {
   withoutAmount: number;
   alreadyPaid: number;
   notFound: number;
+  /** Reconciliation of the file's own amount column, so a portal total that disagrees with
+   * the spreadsheet explains itself instead of being discovered days later.
+   *
+   *     fileTotal = recorded + skippedAlreadyPaid + skippedNotFound
+   *
+   * Reported live 2026-08-22: an RBL file totalling ₹120,984 showed ₹116,484 in the portal.
+   * All three skips were silent — only row COUNTS were returned, never amounts. */
+  fileTotal: number;
+  /** Amount actually written as payments rows. */
+  recorded: number;
+  /** Amount on rows whose debtor was already 'paid'. Skipping the row protects against
+   * double-counting a re-uploaded file, but it also drops a genuinely NEW payment the bank
+   * reports against an account that was already settled. */
+  skippedAlreadyPaid: number;
+  /** Amount on rows whose loan id isn't in this portfolio at all. */
+  skippedNotFound: number;
+  /** Loan ids appearing more than once in the file. Each occurrence is recorded separately,
+   * so these INFLATE the portal total — the opposite failure, and worth seeing. */
+  duplicateRefs: number;
 }
 
 /** The bank's daily paid-status file — just Loan/Account ID + amount, matched against this
@@ -661,19 +680,42 @@ export async function applyBulkPaidFile(
   const toMark: { id: string; amount?: number }[] = [];
   let alreadyPaid = 0;
   let notFound = 0;
+  let skippedAlreadyPaid = 0;
+  let skippedNotFound = 0;
+  let duplicateRefs = 0;
+  const fileTotal = rows.reduce((sum, r) => sum + (r.amount ?? 0), 0);
+  const seenRefs = new Set<string>();
+
   for (const r of rows) {
-    const debtor = byLoanRef.get(r.loanReference.trim().toLowerCase());
+    const ref = r.loanReference.trim().toLowerCase();
+    if (seenRefs.has(ref)) duplicateRefs++;
+    seenRefs.add(ref);
+
+    const debtor = byLoanRef.get(ref);
     if (!debtor) {
       notFound++;
+      skippedNotFound += r.amount ?? 0;
       continue;
     }
     if (debtor.status === "paid") {
       alreadyPaid++;
+      skippedAlreadyPaid += r.amount ?? 0;
       continue;
     }
     toMark.push({ id: debtor.id as string, amount: r.amount });
   }
-  if (!toMark.length) return { matched: 0, withAmount: 0, withoutAmount: 0, alreadyPaid, notFound };
+
+  const reconciliation = { fileTotal, skippedAlreadyPaid, skippedNotFound, duplicateRefs };
+  if (!toMark.length)
+    return {
+      matched: 0,
+      withAmount: 0,
+      withoutAmount: 0,
+      alreadyPaid,
+      notFound,
+      recorded: 0,
+      ...reconciliation,
+    };
 
   const now = new Date().toISOString();
   for (let i = 0; i < toMark.length; i += CHUNK_SIZE) {
@@ -715,13 +757,15 @@ export async function applyBulkPaidFile(
   const { refreshPayments } = await import("./payments-store");
   await refreshPayments();
 
-  const withAmount = toMark.filter((c) => (c.amount ?? 0) > 0).length;
+  const priced = toMark.filter((c) => (c.amount ?? 0) > 0);
   return {
     matched: toMark.length,
-    withAmount,
-    withoutAmount: toMark.length - withAmount,
+    withAmount: priced.length,
+    withoutAmount: toMark.length - priced.length,
     alreadyPaid,
     notFound,
+    recorded: priced.reduce((sum, c) => sum + (c.amount ?? 0), 0),
+    ...reconciliation,
   };
 }
 

@@ -1061,6 +1061,54 @@ function BulkPaidUploadDialog({
             {result && (
               <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs space-y-1">
                 <div className="text-success font-medium">{result.matched} marked paid</div>
+                {result.fileTotal > 0 && (
+                  <div className="mt-1.5 border-t border-border pt-1.5 space-y-0.5">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">File total</span>
+                      <span className="tabular-nums text-foreground">
+                        {formatINR(result.fileTotal)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Recorded as payments</span>
+                      <span className="tabular-nums text-success">
+                        {formatINR(result.recorded)}
+                      </span>
+                    </div>
+                    {result.skippedAlreadyPaid > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Skipped — already marked paid</span>
+                        <span className="tabular-nums text-warning-foreground">
+                          −{formatINR(result.skippedAlreadyPaid)}
+                        </span>
+                      </div>
+                    )}
+                    {result.skippedNotFound > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">
+                          Skipped — loan ID not in this portfolio
+                        </span>
+                        <span className="tabular-nums text-destructive">
+                          −{formatINR(result.skippedNotFound)}
+                        </span>
+                      </div>
+                    )}
+                    {result.duplicateRefs > 0 && (
+                      <div className="text-warning-foreground">
+                        {result.duplicateRefs} duplicate loan ID
+                        {result.duplicateRefs === 1 ? "" : "s"} in the file — each occurrence was
+                        recorded separately, so the total above is inflated by the repeats.
+                      </div>
+                    )}
+                    {result.recorded !== result.fileTotal && (
+                      <p className="text-[11px] text-muted-foreground pt-1">
+                        The portal will show {formatINR(result.recorded)} for this upload, not the
+                        spreadsheet&apos;s {formatINR(result.fileTotal)} — the lines above are the
+                        difference.
+                      </p>
+                    )}
+                  </div>
+                )}
                 {result.withAmount > 0 && (
                   <div className="text-muted-foreground">
                     {result.withAmount} recorded a payment amount
