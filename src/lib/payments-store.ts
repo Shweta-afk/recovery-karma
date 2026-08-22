@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
 import { fetchDebtorsShared } from "./debtors-fetch";
+import { createJsonCache } from "./json-cache";
 
 export type PaymentMethod = "upi" | "card" | "netbanking" | "cash" | "cheque" | "link";
 export type PaymentStatus = "pending" | "completed" | "failed" | "refunded";
@@ -53,29 +54,15 @@ export interface SettlementRecord {
 const PAY_KEY = "recoveryai_payments_cache";
 const STL_KEY = "recoveryai_settlements_cache";
 
-// Same quota fallback as portfolio-store/disposition-store: set only when the cache write
-// fails, so this tab serves its own freshest fetch rather than a stale snapshot.
-let paymentsFallback: PaymentRecord[] | null = null;
-let settlementsFallback: SettlementRecord[] | null = null;
+const payCache = createJsonCache<PaymentRecord>(PAY_KEY);
+const stlCache = createJsonCache<SettlementRecord>(STL_KEY);
 
 export function getPayments(): PaymentRecord[] {
-  if (paymentsFallback) return paymentsFallback;
-  try {
-    const raw = localStorage.getItem(PAY_KEY);
-    return raw ? (JSON.parse(raw) as PaymentRecord[]) : [];
-  } catch {
-    return [];
-  }
+  return payCache.read();
 }
 
 export function getSettlements(): SettlementRecord[] {
-  if (settlementsFallback) return settlementsFallback;
-  try {
-    const raw = localStorage.getItem(STL_KEY);
-    return raw ? (JSON.parse(raw) as SettlementRecord[]) : [];
-  } catch {
-    return [];
-  }
+  return stlCache.read();
 }
 
 /** Every completed payment against a portfolio's debtors, whichever way it arrived: an agent
@@ -188,15 +175,10 @@ export async function refreshPayments(): Promise<void> {
     };
   });
 
-  try {
-    localStorage.setItem(PAY_KEY, JSON.stringify(recs));
-    paymentsFallback = null;
-  } catch (e) {
+  if (!payCache.write(recs)) {
     console.warn(
       "[payments] localStorage quota exceeded — serving payments from memory only for this tab",
-      e,
     );
-    paymentsFallback = recs;
   }
   window.dispatchEvent(new CustomEvent("payments-updated"));
 }
@@ -265,15 +247,10 @@ export async function refreshSettlements(): Promise<void> {
     };
   });
 
-  try {
-    localStorage.setItem(STL_KEY, JSON.stringify(recs));
-    settlementsFallback = null;
-  } catch (e) {
+  if (!stlCache.write(recs)) {
     console.warn(
       "[payments] localStorage quota exceeded — serving settlements from memory only for this tab",
-      e,
     );
-    settlementsFallback = recs;
   }
   window.dispatchEvent(new CustomEvent("settlements-updated"));
 }

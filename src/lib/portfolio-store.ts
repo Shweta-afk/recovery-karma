@@ -2,6 +2,7 @@ import type { DPDBucket, Debtor } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
 import { refreshRetentionRequests } from "./retention-store";
 import { fetchAllRows } from "./fetch-all-rows";
+import { createJsonCache } from "./json-cache";
 import { fetchDebtorsShared } from "./debtors-fetch";
 import {
   STD_FIELDS,
@@ -134,22 +135,10 @@ function isMissingTableError(e: { message?: string; code?: string } | null): boo
 const KEY = "recoveryai_portfolios_cache";
 const CHUNK_SIZE = 500; // stays comfortably under Supabase's request-size limits per insert
 
-// Set only when a write to localStorage fails (quota exceeded — see refreshPortfolios()) so
-// this tab keeps serving its own freshest fetch instead of crashing or falling back to
-// whatever smaller/stale snapshot is still sitting in localStorage from before. Cleared again
-// the next time a write succeeds, so the normal (fits-fine) path — including cross-tab sync
-// via the native `storage` event in storage-sync.ts, which only fires on a successful write —
-// is completely unaffected.
-let inMemoryFallback: UploadedPortfolio[] | null = null;
+const cache = createJsonCache<UploadedPortfolio>(KEY);
 
 export function getPortfolios(): UploadedPortfolio[] {
-  if (inMemoryFallback) return inMemoryFallback;
-  try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as UploadedPortfolio[]) : [];
-  } catch {
-    return [];
-  }
+  return cache.read();
 }
 
 /** Pulls portfolios + their debtor rows from Supabase and refreshes the local cache. Fetches
@@ -307,20 +296,13 @@ export async function refreshPortfolios(): Promise<void> {
           }),
   }));
 
-  try {
-    localStorage.setItem(KEY, JSON.stringify(portfolios));
-    inMemoryFallback = null;
-  } catch (e) {
+  if (!cache.write(portfolios)) {
     // The full debtor dataset across every portfolio a client has can exceed localStorage's
-    // ~5-10MB per-origin quota once there's enough of it — was masked until now by the
-    // 1000-row read truncation this same file just fixed. Not a crash: this tab keeps working
-    // correctly off inMemoryFallback (see getPortfolios()); cross-tab live sync just pauses
-    // for this store until the dataset shrinks or another tab's own refresh succeeds.
+    // ~5-10MB quota. Not a crash: this tab keeps working correctly off the cache's in-memory
+    // fallback; cross-tab live sync just pauses until the dataset shrinks.
     console.warn(
       "[portfolio-store] localStorage quota exceeded — serving portfolios from memory only for this tab",
-      e,
     );
-    inMemoryFallback = portfolios;
   }
   window.dispatchEvent(new CustomEvent("portfolios-updated"));
 }

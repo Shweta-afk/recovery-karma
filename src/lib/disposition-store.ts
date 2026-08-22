@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
 import { fetchDebtorsShared } from "./debtors-fetch";
+import { createJsonCache } from "./json-cache";
 // Type-only (erased) — the valid call_logs.outcome union, shared with fetch-debtors.
 import type { CallLogOutcome } from "./fetch-debtors";
 
@@ -82,20 +83,10 @@ export function isUuid(v: string | undefined | null): boolean {
   return typeof v === "string" && UUID_RE.test(v);
 }
 
-// Set only when the cache write below fails (quota exceeded — see refreshDispositions()) so
-// this tab keeps serving its own freshest fetch instead of silently falling back to whatever
-// smaller/stale snapshot localStorage still holds. Mirrors portfolio-store's fallback, and is
-// cleared again the next time a write succeeds, so the normal path is unaffected.
-let inMemoryFallback: DispositionRecord[] | null = null;
+const cache = createJsonCache<DispositionRecord>(KEY);
 
 export function getDispositions(): DispositionRecord[] {
-  if (inMemoryFallback) return inMemoryFallback;
-  try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as DispositionRecord[]) : [];
-  } catch {
-    return [];
-  }
+  return cache.read();
 }
 
 /** Pulls call_logs (joined against debtors/portfolios/agents/team_agents for display fields
@@ -239,19 +230,10 @@ export async function refreshDispositions(): Promise<void> {
     };
   });
 
-  try {
-    localStorage.setItem(KEY, JSON.stringify(disps));
-    inMemoryFallback = null;
-  } catch (e) {
-    // Unguarded, this threw straight out of refreshDispositions() once the log history got
-    // big enough — before the event below ever fired — so every listening view stayed pinned
-    // to a stale cache with nothing logged. Serve from memory for this tab instead; only
-    // cross-tab live sync pauses.
+  if (!cache.write(disps)) {
     console.warn(
       "[dispositions] localStorage quota exceeded — serving dispositions from memory only for this tab",
-      e,
     );
-    inMemoryFallback = disps;
   }
   window.dispatchEvent(new CustomEvent("dispositions-updated"));
 }
