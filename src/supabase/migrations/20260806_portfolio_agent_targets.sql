@@ -26,9 +26,16 @@ ALTER TABLE portfolio_agent_targets ENABLE ROW LEVEL SECURITY;
 
 -- Mirrors portfolios' post-hardening policy (20260730_harden_rls.sql): all staff on the
 -- client can read, only managers/admins can write.
+DROP POLICY IF EXISTS portfolio_agent_targets_select ON portfolio_agent_targets;
 CREATE POLICY portfolio_agent_targets_select ON portfolio_agent_targets FOR SELECT TO authenticated
   USING (client_id = auth_client_id());
 
+DROP POLICY IF EXISTS portfolio_agent_targets_write ON portfolio_agent_targets;
 CREATE POLICY portfolio_agent_targets_write ON portfolio_agent_targets FOR ALL TO authenticated
   USING (client_id = auth_client_id() AND auth_role() IN ('admin', 'manager'))
   WITH CHECK (client_id = auth_client_id() AND auth_role() IN ('admin', 'manager'));
+
+-- The table is queried by refreshPortfolios() on every mount. PostgREST will keep answering
+-- 404 from a stale schema cache until it is told to reload, so do it here rather than leaving
+-- the app to look broken for the next few minutes.
+NOTIFY pgrst, 'reload schema';
