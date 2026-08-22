@@ -1,0 +1,169 @@
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- STEP A of A-then-delete: move history off the closed portfolios onto the surviving
+-- accounts, so the purge costs no payment records.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- Inventory (2026-08-22) established the shape of this:
+--   * 7 closed portfolios, 8,616 debtors
+--   * also_in_open_pf = 8,616 of 8,616 — EVERY closed account has a surviving twin, matched
+--     on loan_reference. No account identity is lost by deleting them.
+--   * BUT 3,132 payments worth ₹8,21,323 hang off those debtors, and the database only holds
+--     3,213 payments in total. 97% of all payment history is on the doomed side, and unlike
+--     the accounts it is NOT duplicated anywhere.
+--   * Plus 19 call_logs on CC · df9e39f8.
+--
+-- So: re-point the history onto the twins first, then run
+-- closed-portfolio-purge-delete.sql, which then destroys nothing of value.
+--
+-- ── The dedup problem, which is the whole reason this is not a two-line UPDATE ────────────
+--
+-- The same 1,064-row file was uploaded ~6 times. A paid-file run against several of those
+-- copies records what is really ONE bank report as several payment rows — one per copy. The
+-- per-portfolio counts say exactly that: 1,000 + 1,068 + 1,064 payments on three copies of
+-- the same accounts. Re-point all of them onto one survivor and that account ends up with
+-- three payments for one event, inflating the Recovered KPI threefold.
+--
+-- Handled in two passes:
+--   * ₹0 rows are deleted outright, not migrated. They carry no financial information — they
+--     are the artefact of the old paid-file behaviour fixed in b3d6c73, where a blank amount
+--     became 0. The fact they encode ("the bank said this account paid") is preserved by the
+--     status carry-over in STEP 3, which is the honest place for it.
+--   * Surviving rows are collapsed on (debtor, amount, day) among unattributed payments only,
+--     keeping the earliest. agent_id IS NOT NULL rows are never touched: an agent-logged
+--     collection is a distinct real event even if it looks identical.
+--
+-- RUN ORDER: STEP 0, then STEP 1, read both. Only then uncomment STEPS 2-6 and run them as a
+-- SINGLE execution. Back up first. No BEGIN/COMMIT — the SQL Editor wraps one execution in
+-- one transaction and a nested one has silently rolled work back here before.
+
+-- ── STEP 0: ambiguity check. Must return zero rows, or the mapping is not well-defined. ───
+-- Any loan_reference present more than once across OPEN portfolios means "the surviving twin"
+-- is not a single row and STEP 2 would pick arbitrarily. If this returns anything, stop and
+-- decide which copy is canonical before going further.
+SELECT lower(trim(d.loan_reference)) AS loan_ref,
+       count(*)                      AS copies_in_open_portfolios,
+       string_agg(DISTINCT p.name, ', ') AS portfolios
+FROM debtors d
+JOIN portfolios p ON p.id = d.portfolio_id
+WHERE p.closed_at IS NULL AND d.loan_reference IS NOT NULL
+GROUP BY 1 HAVING count(*) > 1
+ORDER BY 2 DESC, 1
+LIMIT 50;
+
+-- ── STEP 1: preview. What STEP 2 would actually do. Read before uncommenting anything. ────
+-- WITH closed_d AS (
+--   SELECT d.id, lower(trim(d.loan_reference)) AS ref, d.status
+--   FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--   WHERE p.closed_at IS NOT NULL AND d.loan_reference IS NOT NULL
+-- ), canonical AS (
+--   SELECT DISTINCT ON (lower(trim(d.loan_reference))) lower(trim(d.loan_reference)) AS ref, d.id
+--   FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--   WHERE p.closed_at IS NULL AND d.loan_reference IS NOT NULL
+--   ORDER BY lower(trim(d.loan_reference)), p.uploaded_at DESC, d.id
+-- )
+-- SELECT
+--   (SELECT count(*) FROM closed_d)                                              AS closed_debtors,
+--   (SELECT count(*) FROM closed_d cd WHERE NOT EXISTS
+--      (SELECT 1 FROM canonical c WHERE c.ref = cd.ref))                         AS orphans_no_twin,
+--   (SELECT count(*) FROM payments WHERE amount = 0
+--      AND debtor_id IN (SELECT id FROM closed_d))                               AS zero_payments_deleted,
+--   (SELECT count(*) FROM payments WHERE amount > 0
+--      AND debtor_id IN (SELECT id FROM closed_d))                               AS payments_migrated,
+--   COALESCE((SELECT sum(amount) FROM payments WHERE amount > 0
+--      AND debtor_id IN (SELECT id FROM closed_d)), 0)                           AS value_migrated,
+--   (SELECT count(*) FROM call_logs WHERE debtor_id IN (SELECT id FROM closed_d)) AS call_logs_migrated,
+--   (SELECT count(*) FROM closed_d WHERE status = 'paid')                        AS paid_status_to_carry;
+--
+-- orphans_no_twin MUST be 0. The inventory says it is (8,616 of 8,616 matched), but confirm
+-- here — a non-zero value means those debtors have nowhere to migrate to and the delete WOULD
+-- destroy their history.
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- STEPS 2-6 — uncomment together, run once, after STEP 0 is empty and STEP 1 looks right.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- -- STEP 2: drop the ₹0 artefacts rather than migrating them.
+-- DELETE FROM payments
+--  WHERE amount = 0
+--    AND agent_id IS NULL
+--    AND debtor_id IN (SELECT d.id FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--                      WHERE p.closed_at IS NOT NULL);
+--
+-- -- STEP 3: carry the paid status onto the surviving twin, BEFORE the debtors disappear.
+-- -- Without this, 3,128 already-collected accounts silently return to agents' call queues as
+-- -- unpaid. Never overwrites 'removed' (a soft delete) or an existing 'paid'.
+-- UPDATE debtors SET status = 'paid'
+--  WHERE status NOT IN ('paid', 'removed')
+--    AND lower(trim(loan_reference)) IN (
+--      SELECT lower(trim(d.loan_reference)) FROM debtors d
+--      JOIN portfolios p ON p.id = d.portfolio_id
+--      WHERE p.closed_at IS NOT NULL AND d.status = 'paid' AND d.loan_reference IS NOT NULL)
+--    AND portfolio_id IN (SELECT id FROM portfolios WHERE closed_at IS NULL);
+--
+-- -- STEP 4: re-point every child row onto the canonical surviving twin.
+-- -- DISTINCT ON picks the copy from the most recently uploaded open portfolio; with STEP 0
+-- -- returning nothing there is only ever one candidate and the ORDER BY is belt-and-braces.
+-- WITH canonical AS (
+--   SELECT DISTINCT ON (lower(trim(d.loan_reference))) lower(trim(d.loan_reference)) AS ref, d.id
+--   FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--   WHERE p.closed_at IS NULL AND d.loan_reference IS NOT NULL
+--   ORDER BY lower(trim(d.loan_reference)), p.uploaded_at DESC, d.id
+-- ), closed_d AS (
+--   SELECT d.id, lower(trim(d.loan_reference)) AS ref
+--   FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--   WHERE p.closed_at IS NOT NULL AND d.loan_reference IS NOT NULL
+-- )
+-- UPDATE payments SET debtor_id = c.id
+--   FROM closed_d cd JOIN canonical c ON c.ref = cd.ref
+--  WHERE payments.debtor_id = cd.id;
+--
+-- -- Repeat for the other children. call_logs matters (19 rows on CC); the rest are 0 today
+-- -- but are included so this stays correct if run again later.
+-- WITH canonical AS (
+--   SELECT DISTINCT ON (lower(trim(d.loan_reference))) lower(trim(d.loan_reference)) AS ref, d.id
+--   FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--   WHERE p.closed_at IS NULL AND d.loan_reference IS NOT NULL
+--   ORDER BY lower(trim(d.loan_reference)), p.uploaded_at DESC, d.id
+-- ), closed_d AS (
+--   SELECT d.id, lower(trim(d.loan_reference)) AS ref
+--   FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--   WHERE p.closed_at IS NOT NULL AND d.loan_reference IS NOT NULL
+-- )
+-- UPDATE call_logs SET debtor_id = c.id
+--   FROM closed_d cd JOIN canonical c ON c.ref = cd.ref
+--  WHERE call_logs.debtor_id = cd.id;
+--
+-- -- messages / disputes / settlement_requests: same shape, all zero today.
+-- -- Copy the pattern above if any exist by the time you run this.
+--
+-- -- STEP 5: collapse the duplicates the re-point just created. One bank report recorded once
+-- -- per portfolio copy becomes N identical rows on the survivor; keep the earliest of each
+-- -- (debtor, amount, day) group. agent_id IS NULL only — an agent-logged collection is a real
+-- -- distinct event even when it looks identical to another.
+-- DELETE FROM payments p USING payments q
+--  WHERE p.agent_id IS NULL AND q.agent_id IS NULL
+--    AND p.debtor_id = q.debtor_id
+--    AND p.amount = q.amount
+--    AND date_trunc('day', coalesce(p.received_at, p.created_at))
+--      = date_trunc('day', coalesce(q.received_at, q.created_at))
+--    AND p.id > q.id;
+--
+-- -- STEP 6: verify nothing still hangs off the doomed portfolios. All three MUST be 0.
+-- SELECT
+--   (SELECT count(*) FROM payments  WHERE debtor_id IN
+--      (SELECT d.id FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--       WHERE p.closed_at IS NOT NULL)) AS payments_left,
+--   (SELECT count(*) FROM call_logs WHERE debtor_id IN
+--      (SELECT d.id FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--       WHERE p.closed_at IS NOT NULL)) AS call_logs_left,
+--   (SELECT count(*) FROM messages  WHERE debtor_id IN
+--      (SELECT d.id FROM debtors d JOIN portfolios p ON p.id = d.portfolio_id
+--       WHERE p.closed_at IS NOT NULL)) AS messages_left;
+
+-- ── THEN, and only then ──────────────────────────────────────────────────────────────────
+-- Run scripts/debug/closed-portfolio-purge-delete.sql. Its STEP 0 should now report
+-- SAFE TO PROCEED, because paid_value on the closed side will be 0 — everything of value
+-- having moved to the surviving accounts.
+--
+-- Afterwards every open tab must hard-reload: debtors are cached in localStorage under
+-- recoveryai_portfolios_cache and will keep showing the old rows until it refreshes.
