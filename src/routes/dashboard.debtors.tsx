@@ -695,7 +695,9 @@ function DebtorCard({ d, index, onView }: { d: Debtor; index: number; onView: ()
 
 // ─── Debtor profile sheet ─────────────────────────────────────────────────────
 
-function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }) {
+/** Exported so the manager's escalation queue can open the same profile an agent sees,
+ * rather than growing a second, thinner version of it. */
+export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }) {
   const anyD = d as Debtor & {
     _uploadedExtra?: Record<string, string>;
     _lender?: string;

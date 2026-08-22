@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Phone,
   Users,
@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
-import { formatINR, bucketOf, BUCKET_META } from "@/lib/mock-debtors";
+import { formatINR, bucketOf, BUCKET_META, type Debtor } from "@/lib/mock-debtors";
 import { useTeamAgents, type AgentRef } from "@/lib/team-store";
 import { useActiveTeam } from "@/lib/active-team-store";
 import {
@@ -48,6 +48,7 @@ import {
 } from "@/lib/call-queue/types";
 import { buildAssignedQueue } from "@/lib/call-queue/build-queue";
 import { CallQueueContent } from "./dashboard.call-queue";
+import { DebtorProfile } from "./dashboard.debtors";
 import { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active-call";
 import {
   DialerModeBar,
@@ -61,6 +62,7 @@ import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import type { DialTarget } from "@/lib/dialer/engine";
 import {
   getOpenEscalations,
+  getOpenEscalationsForAgents,
   resolveEscalation,
   refreshEscalations,
   type Escalation,
@@ -246,18 +248,29 @@ function OverviewTab({
 function MyQueueTab({
   startCall,
   hasActiveCall,
+  teamAgentIds,
 }: {
   startCall: (debtor: QueueDebtor, escalationId: string | null, callerId?: string) => void;
   hasActiveCall: boolean;
+  /** Emails of the agents this manager is responsible for; undefined for an admin, who is
+   * org-wide on purpose. Scopes the queue so a manager only sees escalations raised by their
+   * own agents. */
+  teamAgentIds: string[] | undefined;
 }) {
-  const [escalations, setEscalations] = useState<Escalation[]>(() => getOpenEscalations());
-  const reload = () => setEscalations(getOpenEscalations());
+  const [escalations, setEscalations] = useState<Escalation[]>(() =>
+    getOpenEscalationsForAgents(teamAgentIds),
+  );
+  const [profileDebtor, setProfileDebtor] = useState<Debtor | null>(null);
+  const reload = useCallback(
+    () => setEscalations(getOpenEscalationsForAgents(teamAgentIds)),
+    [teamAgentIds],
+  );
   useEffect(() => {
     reload();
     window.addEventListener("escalations-updated", reload);
     refreshEscalations();
     return () => window.removeEventListener("escalations-updated", reload);
-  }, []);
+  }, [reload]);
   useStorageSync(reload);
 
   const [manualNumber, setManualNumber] = useState("");
@@ -383,9 +396,18 @@ function MyQueueTab({
             <div className="divide-y divide-border">
               {escalations.map((e) => (
                 <div key={e.id} className="flex items-center gap-4 px-4 py-3">
-                  <div className="flex-1 min-w-0">
+                  {/* The whole account block opens the debtor profile — the same one the agent
+                      sees — so a manager can read the history before deciding to call. */}
+                  <button
+                    type="button"
+                    onClick={() => setProfileDebtor(e.debtor as unknown as Debtor)}
+                    className="flex-1 min-w-0 text-left rounded-md -mx-1 px-1 py-0.5 transition-colors hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-primary"
+                    title={`Open ${e.debtor.name}'s profile`}
+                  >
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-foreground">{e.debtor.name}</span>
+                      <span className="text-sm font-medium text-foreground underline-offset-2 hover:underline">
+                        {e.debtor.name}
+                      </span>
                       <Badge
                         variant="outline"
                         className={cn(
@@ -404,7 +426,7 @@ function MyQueueTab({
                       {e.reason} · from {e.agentName} · {formatINR(e.debtor.loanAmount)} outstanding
                     </p>
                     {e.notes && <p className="text-xs text-foreground/80 mt-0.5">{e.notes}</p>}
-                  </div>
+                  </button>
                   <Button
                     size="sm"
                     className="gap-1.5 flex-shrink-0"
@@ -420,6 +442,7 @@ function MyQueueTab({
           )}
         </CardContent>
       </Card>
+      {profileDebtor && <DebtorProfile d={profileDebtor} onClose={() => setProfileDebtor(null)} />}
     </div>
   );
 }
@@ -433,14 +456,22 @@ function ManagerQueuePage() {
   const { activeTeam } = useActiveTeam(managerId);
   const agents = useTeamAgents(activeTeam?.id);
   const [tab, setTab] = useState("live");
-  const [openEscalations, setOpenEscalations] = useState(() => getOpenEscalations().length);
+  // Admins are org-wide by design; a manager is scoped to their own agents so the badge
+  // matches what My Queue actually lists.
+  const teamAgentIds = useMemo(
+    () => (user?.role === "admin" ? undefined : agents.map((a) => a.id)),
+    [user?.role, agents],
+  );
+  const [openEscalations, setOpenEscalations] = useState(
+    () => getOpenEscalationsForAgents(teamAgentIds).length,
+  );
   useEffect(() => {
-    const reload = () => setOpenEscalations(getOpenEscalations().length);
+    const reload = () => setOpenEscalations(getOpenEscalationsForAgents(teamAgentIds).length);
     window.addEventListener("escalations-updated", reload);
     refreshEscalations();
     return () => window.removeEventListener("escalations-updated", reload);
   }, []);
-  useStorageSync(() => setOpenEscalations(getOpenEscalations().length));
+  useStorageSync(() => setOpenEscalations(getOpenEscalationsForAgents(teamAgentIds).length));
 
   // Active-call state lives here (not inside a single tab) so a call started from Agent
   // Live View or My Queue keeps its panel visible even if the manager switches tabs mid-call.
@@ -605,7 +636,11 @@ function ManagerQueuePage() {
           <OverviewTab agents={agents} onViewAgent={(_agentId, t) => setTab(t)} />
         </TabsContent>
         <TabsContent value="my" className="mt-4">
-          <MyQueueTab startCall={startCall} hasActiveCall={!!activeCall} />
+          <MyQueueTab
+            startCall={startCall}
+            hasActiveCall={!!activeCall}
+            teamAgentIds={teamAgentIds}
+          />
         </TabsContent>
       </Tabs>
 

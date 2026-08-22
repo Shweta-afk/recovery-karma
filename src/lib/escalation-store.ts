@@ -57,6 +57,29 @@ export function getOpenEscalations(): Escalation[] {
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
+/**
+ * Open escalations raised by a specific set of agents — a manager's own team.
+ *
+ * getOpenEscalations() returns every escalation the caller can read, which meant every manager
+ * saw every other manager's team's escalations in My Queue and in the tab badge. An escalation
+ * is a request for *that agent's* manager to step in; another team's manager acting on it is
+ * both noise and a privacy leak across teams.
+ *
+ * `agentIds` are emails, matching Escalation.agentId and AgentRef.id. Pass undefined for an
+ * admin, who is deliberately org-wide.
+ *
+ * NOTE: this is a UI scope, not a security boundary. The rows still reach the browser because
+ * the `escalations` table's own RLS policy is client-wide — see
+ * scripts/debug/escalations-rls-check.sql for tightening that at the database, which is what
+ * actually stops one manager reading another team's data.
+ */
+export function getOpenEscalationsForAgents(agentIds: string[] | undefined): Escalation[] {
+  const open = getOpenEscalations();
+  if (!agentIds) return open;
+  const allowed = new Set(agentIds);
+  return open.filter((e) => allowed.has(e.agentId));
+}
+
 export async function refreshEscalations(): Promise<void> {
   const [
     { data: rows, error },
