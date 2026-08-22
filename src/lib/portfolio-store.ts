@@ -630,11 +630,18 @@ export async function mergePortfolioRows(
 
 export interface BulkPaidRow {
   loanReference: string;
-  amount: number;
+  /** Optional. The bank's file is often just a list of the loan IDs that paid, with no
+   * figures at all — in that case the account is still marked paid, but no payments row is
+   * written, because there is no amount to record. */
+  amount?: number;
 }
 
 export interface BulkPaidResult {
   matched: number;
+  /** Of `matched`, how many carried an amount and so produced a payments row. */
+  withAmount: number;
+  /** Of `matched`, how many were marked paid with no financial record attached. */
+  withoutAmount: number;
   alreadyPaid: number;
   notFound: number;
 }
@@ -642,8 +649,11 @@ export interface BulkPaidResult {
 /** The bank's daily paid-status file — just Loan/Account ID + amount, matched against this
  * portfolio's debtors by loan_reference (same match key mergePortfolioRows uses). A matched
  * debtor's status moves to 'paid' (drops them out of the active call queue — see
- * buildAssignedQueue's status filter) and gets a `payments` row with source: 'bank_reported'
- * and agent_id: null — deliberately no agent credited, since the debtor didn't pay because of
+ * buildAssignedQueue's status filter). A row carrying an amount ALSO gets a `payments` row
+ * with source: 'bank_reported' and agent_id: null; a row with no amount (or zero) does not,
+ * because payments.amount is NOT NULL and a ₹0 record is a lie rather than a blank. The
+ * amount column is optional precisely so the bank's file can be nothing but a list of the
+ * loan IDs that paid — deliberately no agent credited, since the debtor didn't pay because of
  * anything an agent did on this file's upload. Already-'paid' debtors are skipped so
  * re-uploading the same daily file (or overlapping days) never double-counts a payment.
  * Requires migrations/20260811_payments_source.sql. */
@@ -666,7 +676,7 @@ export async function applyBulkPaidFile(
       .map((d) => [(d.loan_reference as string).trim().toLowerCase(), d]),
   );
 
-  const toMark: { id: string; amount: number }[] = [];
+  const toMark: { id: string; amount?: number }[] = [];
   let alreadyPaid = 0;
   let notFound = 0;
   for (const r of rows) {
@@ -681,7 +691,7 @@ export async function applyBulkPaidFile(
     }
     toMark.push({ id: debtor.id as string, amount: r.amount });
   }
-  if (!toMark.length) return { matched: 0, alreadyPaid, notFound };
+  if (!toMark.length) return { matched: 0, withAmount: 0, withoutAmount: 0, alreadyPaid, notFound };
 
   const now = new Date().toISOString();
   for (let i = 0; i < toMark.length; i += CHUNK_SIZE) {
@@ -696,26 +706,41 @@ export async function applyBulkPaidFile(
       );
     if (updateErr) throw updateErr;
 
-    const { error: payErr } = await supabase.from("payments").insert(
-      chunk.map((c) => ({
-        debtor_id: c.id,
-        agent_id: null,
-        amount: c.amount,
-        status: "completed" as const,
-        payment_type: "full" as const,
-        source: "bank_reported" as const,
-        notes: "Reported paid via bank file upload",
-        received_at: now,
-      })),
+    // Only rows that actually carry a figure become payments. Previously every matched row
+    // did, so a file listing the whole book — the only way to use this before the amount
+    // column became optional — filled the payments table with ₹0 rows.
+    const priced = chunk.flatMap((c) =>
+      c.amount != null && c.amount > 0 ? [{ id: c.id, amount: c.amount }] : [],
     );
-    if (payErr) throw payErr;
+    if (priced.length) {
+      const { error: payErr } = await supabase.from("payments").insert(
+        priced.map((c) => ({
+          debtor_id: c.id,
+          agent_id: null,
+          amount: c.amount,
+          status: "completed" as const,
+          payment_type: "full" as const,
+          source: "bank_reported" as const,
+          notes: "Reported paid via bank file upload",
+          received_at: now,
+        })),
+      );
+      if (payErr) throw payErr;
+    }
   }
 
   await refreshPortfolios();
   const { refreshPayments } = await import("./payments-store");
   await refreshPayments();
 
-  return { matched: toMark.length, alreadyPaid, notFound };
+  const withAmount = toMark.filter((c) => (c.amount ?? 0) > 0).length;
+  return {
+    matched: toMark.length,
+    withAmount,
+    withoutAmount: toMark.length - withAmount,
+    alreadyPaid,
+    notFound,
+  };
 }
 
 /** Fixes a wrong original column mapping on data that's already been uploaded — no CSV

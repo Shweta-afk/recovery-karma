@@ -859,6 +859,8 @@ const LOAN_ID_ALIASES = [
   "lan",
 ];
 const PAID_AMOUNT_ALIASES = ["amount", "paid_amount", "paidamount", "paid", "settled_amount"];
+/** Sentinel for "this file has no amount column" — Radix Select cannot hold an empty value. */
+const NO_AMOUNT_COL = "__none__";
 
 function guessColumn(headers: string[], aliases: string[]): string {
   const normed = headers.map((h) => [h, normHeader(h)] as const);
@@ -884,7 +886,7 @@ function BulkPaidUploadDialog({
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<string[][]>([]);
   const [loanIdCol, setLoanIdCol] = useState("");
-  const [amountCol, setAmountCol] = useState("");
+  const [amountCol, setAmountCol] = useState(NO_AMOUNT_COL);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<BulkPaidResult | null>(null);
 
@@ -893,7 +895,7 @@ function BulkPaidUploadDialog({
     setHeaders([]);
     setRows([]);
     setLoanIdCol("");
-    setAmountCol("");
+    setAmountCol(NO_AMOUNT_COL);
     setResult(null);
   };
 
@@ -921,7 +923,7 @@ function BulkPaidUploadDialog({
       setHeaders(h);
       setRows(r);
       setLoanIdCol(guessColumn(h, LOAN_ID_ALIASES));
-      setAmountCol(guessColumn(h, PAID_AMOUNT_ALIASES));
+      setAmountCol(guessColumn(h, PAID_AMOUNT_ALIASES) || NO_AMOUNT_COL);
       setFileName(file.name);
       setResult(null);
       toast.success(`Parsed ${r.length} rows from ${file.name}`);
@@ -930,17 +932,24 @@ function BulkPaidUploadDialog({
   };
 
   const handleUpload = async () => {
-    if (!loanIdCol || !amountCol) {
-      toast.error("Pick both the Loan/Account ID and Paid Amount columns");
+    if (!loanIdCol) {
+      toast.error("Pick the Loan/Account ID column");
       return;
     }
     const idIdx = headers.indexOf(loanIdCol);
-    const amtIdx = headers.indexOf(amountCol);
+    // Amount is optional: the bank's file is often just the list of loan IDs that paid.
+    const amtIdx = amountCol === NO_AMOUNT_COL ? -1 : headers.indexOf(amountCol);
     const parsed: BulkPaidRow[] = rows
-      .map((r) => ({
-        loanReference: (r[idIdx] ?? "").trim(),
-        amount: parseFloat((r[amtIdx] ?? "").replace(/[,₹\s]/g, "")) || 0,
-      }))
+      .map((r) => {
+        const raw = amtIdx >= 0 ? (r[amtIdx] ?? "").replace(/[,₹\s]/g, "") : "";
+        const amount = raw ? parseFloat(raw) : NaN;
+        return {
+          loanReference: (r[idIdx] ?? "").trim(),
+          // undefined, not 0 — a blank or unparseable cell means "amount unknown", and
+          // applyBulkPaidFile writes no payments row for it rather than a ₹0 one.
+          amount: Number.isFinite(amount) && amount > 0 ? amount : undefined,
+        };
+      })
       .filter((r) => r.loanReference);
 
     setUploading(true);
@@ -949,6 +958,8 @@ function BulkPaidUploadDialog({
       setResult(res);
       toast.success(
         `${res.matched} debtor${res.matched === 1 ? "" : "s"} marked paid` +
+          (res.withAmount ? ` · ${res.withAmount} with an amount` : "") +
+          (res.withoutAmount ? ` · ${res.withoutAmount} without` : "") +
           (res.alreadyPaid ? ` · ${res.alreadyPaid} already paid` : "") +
           (res.notFound ? ` · ${res.notFound} not found in this portfolio` : ""),
       );
@@ -970,10 +981,15 @@ function BulkPaidUploadDialog({
         </DialogHeader>
 
         <p className="text-xs text-muted-foreground">
-          The bank's daily paid-status file — Loan/Account ID and paid amount, matched against this
-          portfolio's debtors. Matched debtors move to <strong>Paid</strong> and drop out of the
-          active call queue. Marked as a bank-reported payment, not credited to any agent —
-          already-paid debtors are skipped, so re-uploading the same file twice is safe.
+          The bank's daily paid-status file, matched against this portfolio's debtors by
+          Loan/Account ID. <strong>Only list the accounts that actually paid</strong> — matched
+          debtors move to <strong>Paid</strong> and drop out of the active call queue.
+          <br />
+          The amount column is optional: leave it as &ldquo;No amount column&rdquo; and the file can
+          be nothing but loan IDs. A row without an amount is still marked paid, it just records no
+          payment figure — rows with a blank or ₹0 amount no longer create ₹0 payment entries.
+          Bank-reported payments are never credited to an agent, and already-paid debtors are
+          skipped, so re-uploading the same file is safe.
         </p>
 
         {!headers.length ? (
@@ -1023,12 +1039,13 @@ function BulkPaidUploadDialog({
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Paid Amount column</Label>
+                <Label className="text-xs">Paid Amount column (optional)</Label>
                 <Select value={amountCol} onValueChange={setAmountCol}>
                   <SelectTrigger className="h-9 text-xs">
                     <SelectValue placeholder="Select column…" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={NO_AMOUNT_COL}>No amount column</SelectItem>
                     {headers.map((h) => (
                       <SelectItem key={h} value={h}>
                         {h}
@@ -1044,6 +1061,16 @@ function BulkPaidUploadDialog({
             {result && (
               <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs space-y-1">
                 <div className="text-success font-medium">{result.matched} marked paid</div>
+                {result.withAmount > 0 && (
+                  <div className="text-muted-foreground">
+                    {result.withAmount} recorded a payment amount
+                  </div>
+                )}
+                {result.withoutAmount > 0 && (
+                  <div className="text-muted-foreground">
+                    {result.withoutAmount} marked paid with no amount — no payment row written
+                  </div>
+                )}
                 {result.alreadyPaid > 0 && (
                   <div className="text-muted-foreground">
                     {result.alreadyPaid} were already paid — skipped
@@ -1067,7 +1094,7 @@ function BulkPaidUploadDialog({
             <Button
               size="sm"
               onClick={handleUpload}
-              disabled={!headers.length || !loanIdCol || !amountCol || uploading}
+              disabled={!headers.length || !loanIdCol || uploading}
               className="gap-1.5"
             >
               {uploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
