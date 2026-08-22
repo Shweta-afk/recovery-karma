@@ -232,9 +232,20 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
   );
   const myTimeStats = useMemo(() => getAgentTimeStats(agentId, todayDisps), [agentId, todayDisps]);
 
-  // "custom" has no real query behind it yet — same placeholder-on-today fallback the old
-  // mock data used, kept so the UI doesn't break when that toggle is picked.
-  const periodStats = period === "month" ? month : today;
+  // "custom" used to have nothing behind it — it silently showed today's numbers under the
+  // chosen date's label. Harmless while only the Performance block followed the toggle;
+  // actively misleading now that Collections and vs-Target do too. The dispositions are all
+  // in the cache already, so filtering them to the picked day is the whole implementation.
+  const customStats = useMemo(() => {
+    if (period !== "custom" || !customDate || !agentId) return null;
+    const picked = new Date(`${customDate}T00:00:00`);
+    if (Number.isNaN(picked.getTime())) return null;
+    return extendedStats(getAgentDispositions(agentId).filter((d) => isSameDay(d.time, picked)));
+    // `today` is in deps so this recomputes when the dispositions cache refreshes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, customDate, agentId, today]);
+
+  const periodStats = period === "month" ? month : (customStats ?? today);
   const isMonth = period === "month";
   const periodLabel = period === "today" ? "Today" : isMonth ? "This Month" : customDate || "—";
 
