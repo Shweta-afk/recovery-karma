@@ -22,6 +22,14 @@ export interface PaymentRecord {
   lender?: string;
   product?: string;
   agentName: string;
+  /** The collector's account email, or null for a bank-reported payment nobody collected.
+   * Needed to filter by person — agentName alone breaks on duplicate names. */
+  agentId: string | null;
+  /** Role of whoever collected it. Managers do collect (their own escalation queue, and
+   * behalf-dialling from Agent Live View), and their collections were previously
+   * indistinguishable from an agent's in every total on this page. 'bank' for a paid-file
+   * upload, which no person collected. */
+  collectorRole: "agent" | "manager" | "admin" | "bank";
   amount: number;
   method: PaymentMethod | null;
   status: PaymentStatus;
@@ -105,7 +113,7 @@ export async function refreshPayments(): Promise<void> {
     ),
     fetchDebtorsShared(),
     supabase.from("portfolios").select("id, name, lender_name, product_type"),
-    supabase.from("agents").select("id, name"),
+    supabase.from("agents").select("id, name, email, role"),
   ]);
 
   const named = [
@@ -131,7 +139,10 @@ export async function refreshPayments(): Promise<void> {
 
   const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
   const portfolioById = new Map(portfolioRows.map((p) => [p.id, p]));
-  const agentById = new Map(agentRows.map((a) => [a.id, a]));
+  // The generated Supabase types don't cover these columns and widen the row to `never` (as
+  // the casts elsewhere in this file already work around). Narrow to what we actually select.
+  type AgentRow = { id: string; name: string; email: string; role: string };
+  const agentById = new Map((agentRows as unknown as AgentRow[]).map((a) => [a.id as string, a]));
 
   type PaymentRow = {
     id: string;
@@ -163,6 +174,10 @@ export async function refreshPayments(): Promise<void> {
       lender: portfolio?.lender_name ?? undefined,
       product: portfolio?.product_type ?? undefined,
       agentName: agent?.name ?? "—",
+      agentId: (agent?.email as string | undefined) ?? null,
+      collectorRole: r.agent_id
+        ? ((agent?.role as PaymentRecord["collectorRole"]) ?? "agent")
+        : "bank",
       amount: Number(r.amount ?? 0),
       method: (r.payment_method as PaymentMethod) ?? null,
       status: r.status as PaymentStatus,
@@ -190,7 +205,7 @@ export async function refreshSettlements(): Promise<void> {
     fetchAllRows((from, to) =>
       supabase.from("debtors").select("id, name, loan_reference").range(from, to),
     ),
-    supabase.from("agents").select("id, name"),
+    supabase.from("agents").select("id, name, email, role"),
   ]);
 
   const named = [

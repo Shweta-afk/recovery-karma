@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronUp,
   Landmark,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +33,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { formatINR, bucketOf, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
+import { getDispositions, refreshDispositions } from "@/lib/disposition-store";
 import {
   getPayments,
   refreshPayments,
@@ -127,18 +129,26 @@ function isSameMonth(iso: string, ref: Date): boolean {
 function PaymentsPage() {
   const [search, setSearch] = useState("");
   const [portfolioFilter, setPortfolioFilter] = useState<string>("all");
+  const [collectorFilter, setCollectorFilter] = useState<string>("all");
+  const [activity, setActivity] = useState<"payments" | "ptp" | "callback">("payments");
   const [statusFilter, setStatusFilter] = useState<PaymentStatus | "all">("all");
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | "all">("all");
   const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // getDispositions() is a plain cache read, so the PTP/callback memo needs an explicit
+  // signal when that cache refreshes — it has no React state of its own.
+  const [dispositionsTick, setDispositionsTick] = useState(0);
   const [payments, setPayments] = useState<PaymentRecord[]>(() => getPayments());
   const [settlements, setSettlements] = useState<SettlementRecord[]>(() => getSettlements());
 
   useEffect(() => {
     const loadPayments = () => setPayments(getPayments());
     const loadSettlements = () => setSettlements(getSettlements());
+    const bumpDispositions = () => setDispositionsTick((n) => n + 1);
+    window.addEventListener("dispositions-updated", bumpDispositions);
+    refreshDispositions().catch((e) => console.warn("[dispositions] refresh failed:", e));
     window.addEventListener("payments-updated", loadPayments);
     window.addEventListener("settlements-updated", loadSettlements);
     refreshPayments()
@@ -148,6 +158,7 @@ function PaymentsPage() {
       .then(loadSettlements)
       .catch((e) => console.warn("[settlements] refresh failed:", e));
     return () => {
+      window.removeEventListener("dispositions-updated", bumpDispositions);
       window.removeEventListener("payments-updated", loadPayments);
       window.removeEventListener("settlements-updated", loadSettlements);
     };
@@ -175,6 +186,46 @@ function PaymentsPage() {
     [payments, portfolioFilter],
   );
 
+  // Who has actually collected anything in the scoped set, with their role, so a manager's
+  // collections are attributable rather than blended into the agent totals.
+  const collectorOptions = useMemo(() => {
+    const byId = new Map<string, { label: string; role: PaymentRecord["collectorRole"] }>();
+    for (const p of scoped) {
+      if (!p.agentId) continue;
+      byId.set(p.agentId, { label: p.agentName, role: p.collectorRole });
+    }
+    return [...byId.entries()].sort((a, b) => a[1].label.localeCompare(b[1].label));
+  }, [scoped]);
+
+  const byCollector = useMemo(
+    () =>
+      collectorFilter === "all" ? scoped : scoped.filter((p) => p.agentId === collectorFilter),
+    [scoped, collectorFilter],
+  );
+
+  // PTPs and callbacks are NOT payments — they live in call_logs via disposition-store. They
+  // are surfaced here because "what did this person generate" is the same question as "what
+  // did they collect", and answering it meant leaving the page. Scoped by the same portfolio
+  // and collector selection so the three views are comparable.
+  const activityRows = useMemo(() => {
+    if (activity === "payments") return [];
+    const wanted = activity === "ptp" ? "promised" : "callback";
+    return getDispositions()
+      .filter((d) => d.outcome === wanted)
+      .filter((d) => portfolioFilter === "all" || d.portfolioId === portfolioFilter)
+      .filter((d) => collectorFilter === "all" || d.agentId === collectorFilter)
+      .sort((a, b) => (a.time < b.time ? 1 : -1));
+  }, [activity, portfolioFilter, collectorFilter, dispositionsTick]);
+
+  // Managers collect too — from their own escalation queue and by dialling on an agent's
+  // behalf. Splitting the total is the whole point of the request; a blended figure hides it.
+  const collectedByRole = useMemo(() => {
+    const done = scoped.filter((p) => p.status === "completed");
+    const sum = (role: PaymentRecord["collectorRole"]) =>
+      done.filter((p) => p.collectorRole === role).reduce((s, p) => s + p.amount, 0);
+    return { agent: sum("agent"), manager: sum("manager") + sum("admin"), bank: sum("bank") };
+  }, [scoped]);
+
   // A portfolio that disappears (reassigned, closed) must not strand the page on an empty
   // selection with no way back.
   useEffect(() => {
@@ -183,9 +234,16 @@ function PaymentsPage() {
     }
   }, [portfolioOptions, portfolioFilter]);
 
+  // Same reasoning for the collector: switching portfolio can remove the selected person.
+  useEffect(() => {
+    if (collectorFilter !== "all" && !collectorOptions.some(([id]) => id === collectorFilter)) {
+      setCollectorFilter("all");
+    }
+  }, [collectorOptions, collectorFilter]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return scoped.filter((p) => {
+    return byCollector.filter((p) => {
       const matchSearch =
         !q ||
         p.debtorName.toLowerCase().includes(q) ||
@@ -196,7 +254,7 @@ function PaymentsPage() {
       const matchBucket = bucketFilter === "all" || bucketOf(p.dpd ?? 0) === bucketFilter;
       return matchSearch && matchStatus && matchMethod && matchBucket;
     });
-  }, [scoped, search, statusFilter, methodFilter, bucketFilter]);
+  }, [byCollector, search, statusFilter, methodFilter, bucketFilter]);
 
   const now = new Date();
   const confirmedToday = scoped.filter(
@@ -235,6 +293,19 @@ function PaymentsPage() {
             value: formatINR(totalMonth),
             sub: "Confirmed only",
             icon: TrendingUp,
+            cls: "text-primary",
+          },
+          {
+            // Managers collect from their own escalation queue and by dialling on an agent's
+            // behalf. This used to be folded into the same totals as agent collections, so
+            // there was no way to see it at all.
+            label: "Collected by Managers",
+            value: formatINR(collectedByRole.manager),
+            sub:
+              collectedByRole.bank > 0
+                ? `${formatINR(collectedByRole.agent)} by agents · ${formatINR(collectedByRole.bank)} bank-reported`
+                : `${formatINR(collectedByRole.agent)} by agents`,
+            icon: Users,
             cls: "text-primary",
           },
           {
@@ -417,6 +488,63 @@ function PaymentsPage() {
                 )}
               </div>
             )}
+
+            {/* Collected by — answers "which agent or manager brought this in". Role is on the
+                pill because duplicate names are common and a manager's collections need to be
+                distinguishable at a glance. */}
+            {collectorOptions.length > 1 && (
+              <div className="flex gap-1.5 flex-wrap items-center">
+                <span className="text-xs text-muted-foreground mr-0.5">Collected by</span>
+                {[
+                  ["all", { label: "Anyone", role: "agent" as const }] as const,
+                  ...collectorOptions,
+                ].map(([id, meta]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setCollectorFilter(id)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all",
+                      collectorFilter === id
+                        ? "bg-foreground text-background border-foreground"
+                        : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/30",
+                    )}
+                  >
+                    {meta.label}
+                    {id !== "all" && meta.role !== "agent" && (
+                      <span className="ml-1 opacity-60">· {meta.role}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Payments / PTPs / Callbacks. PTPs and callbacks come from dispositions, not the
+                payments table — see activityRows. */}
+            <div className="flex gap-1.5 flex-wrap items-center">
+              <span className="text-xs text-muted-foreground mr-0.5">Showing</span>
+              {(
+                [
+                  ["payments", "Payments"],
+                  ["ptp", "PTPs generated"],
+                  ["callback", "Callbacks generated"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setActivity(key)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all",
+                    activity === key
+                      ? "bg-foreground text-background border-foreground"
+                      : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/30",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
             {/* Method pills */}
             <div className="flex gap-1.5 flex-wrap">
