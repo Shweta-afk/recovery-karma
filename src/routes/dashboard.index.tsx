@@ -78,6 +78,25 @@ function isSameMonth(iso: string, now: Date): boolean {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }
 
+/** Mon-Fri days in `now`'s month, and how many of them have happened (today counts). Used to
+ * scale the daily targets when the period toggle is on This Month — there is no monthly target
+ * field anywhere, so a month figure has to be derived from the daily one. Sundays/Saturdays
+ * are excluded because the daily target is a working-day target. */
+function workingDaysInMonth(now: Date): { total: number; elapsed: number } {
+  const year = now.getFullYear(),
+    month = now.getMonth();
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  let total = 0,
+    elapsed = 0;
+  for (let day = 1; day <= lastDay; day++) {
+    const dow = new Date(year, month, day).getDay();
+    if (dow === 0 || dow === 6) continue;
+    total++;
+    if (day <= now.getDate()) elapsed++;
+  }
+  return { total, elapsed: Math.max(elapsed, 1) };
+}
+
 /** calcStats() (disposition-store.ts) covers total/ptps/paid/ptpAmount/paidAmount/contactRate;
  * callback count and talk time aren't part of that shared shape, so they're added here. */
 function extendedStats(disps: DispositionRecord[]) {
@@ -207,7 +226,8 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
   // straight from these (real); everything else getAgentTimeStats derives is a placeholder
   // pending a real presence/status-log table (see agent-time-stats.ts).
   const todayDisps = useMemo(
-    () => (agentId ? getAgentDispositions(agentId).filter((d) => isSameDay(d.time, new Date())) : []),
+    () =>
+      agentId ? getAgentDispositions(agentId).filter((d) => isSameDay(d.time, new Date())) : [],
     [agentId, today],
   );
   const myTimeStats = useMemo(() => getAgentTimeStats(agentId, todayDisps), [agentId, todayDisps]);
@@ -215,6 +235,15 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
   // "custom" has no real query behind it yet — same placeholder-on-today fallback the old
   // mock data used, kept so the UI doesn't break when that toggle is picked.
   const periodStats = period === "month" ? month : today;
+  const isMonth = period === "month";
+  const periodLabel = period === "today" ? "Today" : isMonth ? "This Month" : customDate || "—";
+
+  // Every target in TARGETS (and agents.daily_target) is a DAILY figure, so comparing a whole
+  // month's actuals against them read as 1000%+ complete. Scale them by the month's working
+  // days when the toggle is on This Month; `contactRate` is deliberately excluded everywhere
+  // below because it is a rate, not a total, and must not be multiplied.
+  const wd = workingDaysInMonth(new Date());
+  const scaleTarget = (dailyTarget: number) => (isMonth ? dailyTarget * wd.total : dailyTarget);
 
   const kpi = {
     totalCalling: periodStats.total,
@@ -289,22 +318,27 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
 
         {/* ── Collections: Target / Shortfall / Run Rate / EOD Projection ── */}
         {(() => {
-          const target = TARGETS.collections; // placeholder — no real per-agent ₹ target field yet
-          const actual = today.paidAmount; // real, from call_logs
+          // Follows the period toggle. Previously pinned to today.paidAmount against the daily
+          // target no matter what was selected, so picking This Month changed the Performance
+          // block below while this one silently kept showing today — half the page on each.
+          const target = scaleTarget(TARGETS.collections); // no real per-agent ₹ target field yet
+          const actual = periodStats.paidAmount; // real, from call_logs
           const shortfall = Math.max(0, target - actual);
-          // 6.5hrs-into-a-9hr-shift is a simplifying assumption — there's no real shift-start
-          // tracking to compute "hours elapsed so far" from.
-          const dailyRunRate = Math.round((actual / 6.5) * 9);
-          const projection = dailyRunRate;
+          // Today: 6.5hrs-into-a-9hr-shift, a simplifying assumption — there's no real
+          // shift-start tracking to compute "hours elapsed so far" from. Month: pace across the
+          // working days elapsed so far, projected over the whole month.
+          const projection = isMonth
+            ? Math.round((actual / wd.elapsed) * wd.total)
+            : Math.round((actual / 6.5) * 9);
           return (
             <div className="space-y-2">
-              <SectionLabel>Collections · Today</SectionLabel>
+              <SectionLabel>Collections · {periodLabel}</SectionLabel>
               <div className="grid grid-cols-4 gap-2">
                 {[
                   {
                     label: "Target",
                     value: formatINR(target),
-                    sub: "daily target",
+                    sub: isMonth ? `${wd.total} working days` : "daily target",
                     cls: "text-foreground",
                     bar: null,
                     filter: "paid" as const,
@@ -319,16 +353,16 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
                   },
                   {
                     label: "Run Rate",
-                    value: formatINR(dailyRunRate),
-                    sub: "pace × shift",
+                    value: formatINR(projection),
+                    sub: isMonth ? "pace × month" : "pace × shift",
                     cls: "text-amber-500",
                     bar: null,
                     filter: "all" as const,
                   },
                   {
-                    label: "EOD Projection",
+                    label: isMonth ? "Month Projection" : "EOD Projection",
                     value: formatINR(projection),
-                    sub: "est. end of day",
+                    sub: isMonth ? "est. month end" : "est. end of day",
                     cls: projection >= target ? "text-success" : "text-destructive",
                     bar: projection / target,
                     filter: "ptp" as const,
@@ -369,12 +403,7 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
           <div className="rounded-xl border border-border bg-card p-3">
             <div className="flex items-center justify-between mb-2.5">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Performance ·{" "}
-                {period === "today"
-                  ? "Today"
-                  : period === "month"
-                    ? "This Month"
-                    : customDate || "—"}
+                Performance · {periodLabel}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
@@ -523,7 +552,7 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
         {/* ── Performance vs Target ── */}
         <section>
           <div className="flex items-center justify-between">
-            <SectionLabel>My Performance vs Target · Today</SectionLabel>
+            <SectionLabel>My Performance vs Target · {periodLabel}</SectionLabel>
             <span className="text-[11px] text-muted-foreground">Targets set by your manager</span>
           </div>
 
@@ -533,48 +562,50 @@ export function AgentDashboardContent({ interactive = true }: { interactive?: bo
                 {
                   key: "calls",
                   label: "Calls",
-                  target: dailyCallTarget, // real — agents.daily_target
-                  actual: today.total,
+                  target: scaleTarget(dailyCallTarget), // real — agents.daily_target
+                  actual: periodStats.total,
                   fmt: (v: number) => String(v),
                   filter: "all" as const,
                 },
                 {
                   key: "ptpCount",
                   label: "PTPs",
-                  target: TARGETS.ptpCount, // placeholder — no real per-metric target field yet
-                  actual: today.ptps,
+                  target: scaleTarget(TARGETS.ptpCount), // no real per-metric target field yet
+                  actual: periodStats.ptps,
                   fmt: (v: number) => String(v),
                   filter: "ptp" as const,
                 },
                 {
                   key: "ptpAmount",
                   label: "PTP ₹",
-                  target: TARGETS.ptpAmount,
-                  actual: today.ptpAmount,
+                  target: scaleTarget(TARGETS.ptpAmount),
+                  actual: periodStats.ptpAmount,
                   fmt: (v: number) => formatINR(v),
                   filter: "ptp" as const,
                 },
                 {
                   key: "collections",
                   label: "Collected",
-                  target: TARGETS.collections,
-                  actual: today.paidAmount,
+                  target: scaleTarget(TARGETS.collections),
+                  actual: periodStats.paidAmount,
                   fmt: (v: number) => formatINR(v),
                   filter: "paid" as const,
                 },
                 {
                   key: "talkTime",
                   label: "Talk Time",
-                  target: TARGETS.talkTime,
-                  actual: today.talkTimeMins,
+                  target: scaleTarget(TARGETS.talkTime),
+                  actual: periodStats.talkTimeMins,
                   fmt: (v: number) => fmtMins(v),
                   filter: "all" as const,
                 },
                 {
                   key: "contactRate",
                   label: "Contact %",
+                  // NOT scaled — a rate, not a total. Multiplying it by working days would
+                  // make the month target 75% x 22 = 1650%.
                   target: TARGETS.contactRate,
-                  actual: today.contactRate,
+                  actual: periodStats.contactRate,
                   fmt: (v: number) => `${v}%`,
                   filter: "all" as const,
                 },

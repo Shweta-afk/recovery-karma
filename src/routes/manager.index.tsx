@@ -333,9 +333,11 @@ function RecoveryTrendChart({ data }: { data: TrendPoint[] }) {
         <YAxis
           tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }}
           tickFormatter={(v) => `${v}%`}
-          domain={[20, 50]}
+          // Was hardcoded to [20, 50], which clipped both ends of the real data: days with no
+          // calls sit at 0% and active days ran 71-78%, so neither was on the chart at all.
+          domain={[0, 100]}
           label={{
-            value: "Recovery rate",
+            value: "Contact rate",
             angle: -90,
             position: "insideLeft",
             offset: 12,
@@ -1200,6 +1202,10 @@ function ManagerDashboardPage() {
       const lastD = new Date(now.getFullYear(), now.getMonth() - 1, day);
       rows.push({
         day,
+        // contactRate, not a recovery rate — the card used to be titled "Recovery Rate" while
+        // plotting exactly this. Renamed the card rather than the metric: a true recovery rate
+        // needs outstanding as a denominator, which is 0 across the book until the loan-amount
+        // column mapping is corrected.
         thisMonth: calcStats(teamDisps.filter((d) => sameCalendarDay(d.time, thisD))).contactRate,
         lastMonth: calcStats(teamDisps.filter((d) => sameCalendarDay(d.time, lastD))).contactRate,
       });
@@ -1315,11 +1321,12 @@ function ManagerDashboardPage() {
               <CardHeader className="border-b border-border pb-3">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-primary flex-shrink-0" />
-                  Recovery Rate — This Month vs Last Month
+                  Contact Rate — This Month vs Last Month
                 </CardTitle>
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Daily recovery rate through this month (solid), overlaid on the same days last
-                  month (dashed) for a like-for-like comparison.
+                  Share of each day&apos;s calls that reached the debtor, through this month
+                  (solid), overlaid on the same days last month (dashed). Days with no calls read
+                  0%.
                 </p>
               </CardHeader>
               <CardContent className="pt-4">

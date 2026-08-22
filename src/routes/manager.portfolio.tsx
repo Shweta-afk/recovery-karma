@@ -1082,6 +1082,20 @@ function BulkPaidUploadDialog({
 
 /* ─── page ───────────────────────────────────────────────────────────────── */
 
+/** Which portfolios Portfolio Overview shows: the active team's open ones.
+ *
+ * Deliberately does NOT also require portfolios.manager_id to equal the signed-in manager.
+ * That extra condition disagreed with the team picker, which counts a team's portfolios with
+ * `p.teamId === t.id && !p.closedAt` alone — so the picker would advertise "3 portfolios" and
+ * this page would then show fewer, or none. Worse, a portfolio assigned to a team but with
+ * manager_id left unset was invisible to every manager; 7 such rows existed live on
+ * 2026-08-22, including one uploaded that morning. Team membership is the real scope here —
+ * RLS already limits getPortfolios() to what this user may see at all.
+ */
+function visibleToTeam(teamId: string | undefined) {
+  return (p: UploadedPortfolio) => p.teamId === teamId && !p.closedAt;
+}
+
 function PortfolioOverviewPage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
@@ -1094,17 +1108,10 @@ function PortfolioOverviewPage() {
   const [editTarget, setEditTarget] = useState<UploadedPortfolio | null>(null);
   const [bulkPaidTarget, setBulkPaidTarget] = useState<UploadedPortfolio | null>(null);
   const [rawPortfolios, setRawPortfolios] = useState<UploadedPortfolio[]>(() =>
-    getPortfolios().filter(
-      (p) => p.managerId === managerId && p.teamId === activeTeam?.id && !p.closedAt,
-    ),
+    getPortfolios().filter(visibleToTeam(activeTeam?.id)),
   );
 
-  const reload = () =>
-    setRawPortfolios(
-      getPortfolios().filter(
-        (p) => p.managerId === managerId && p.teamId === activeTeam?.id && !p.closedAt,
-      ),
-    );
+  const reload = () => setRawPortfolios(getPortfolios().filter(visibleToTeam(activeTeam?.id)));
   useEffect(() => {
     reload();
     window.addEventListener("portfolios-updated", reload);
