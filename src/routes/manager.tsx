@@ -1,5 +1,7 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
+import { CallSessionProvider } from "@/lib/call-session";
+import { GlobalCallBar } from "@/components/global-call-bar";
 import { TeamPickerScreen } from "@/components/team-picker-screen";
 import { useAuth } from "@/lib/auth";
 import { useActiveTeam } from "@/lib/active-team-store";
@@ -50,9 +52,20 @@ function ManagerLayout() {
     );
   }
 
+  // Mirrors dashboard.tsx. Agent Live View renders the real CallQueueContent, which calls
+  // useCallSession() — mounted only above the dashboard's <Outlet/> until now, so opening that
+  // tab threw "useCallSession must be used within CallSessionProvider" and blanked the page.
+  //
+  // A separate provider instance per route tree, matching the existing shape: a call started
+  // under /manager lives for as long as the manager stays in that tree. GlobalCallBar comes
+  // with it so an in-progress call stays visible while moving between manager pages, exactly
+  // as it does for an agent.
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <CallSessionProvider>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+      <GlobalCallBar />
+    </CallSessionProvider>
   );
 }
