@@ -832,8 +832,11 @@ function AgentDashboardView({ stat }: { stat: AgentComputedStat }) {
         disabled here.
       </div>
 
-      {/* Faithful mirror of the agent's own dashboard (interactive={false} = no navigation) */}
-      <AgentDashboardContent interactive={false} />
+      {/* Faithful mirror of the agent's own dashboard (interactive={false} = no navigation).
+          stat.id is the agent's operational id (their email), the same key the dashboard uses
+          for assignments and dispositions — without passing it this rendered the MANAGER's own
+          dashboard under the selected agent's name. */}
+      <AgentDashboardContent agentId={stat.id} interactive={false} />
     </div>
   );
 }

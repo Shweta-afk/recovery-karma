@@ -47,6 +47,7 @@ import {
   type DispositionForm,
 } from "@/lib/call-queue/types";
 import { buildAssignedQueue } from "@/lib/call-queue/build-queue";
+import { CallQueueContent } from "./dashboard.call-queue";
 import { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active-call";
 import {
   DialerModeBar,
@@ -97,320 +98,7 @@ export const Route = createFileRoute("/manager/queue")({
 
 /* ─── Agent Live View (read-only) ─────────────────────────────────────────── */
 
-function AgentQueueView({
-  agentId,
-  onCall,
-  disabled,
-}: {
-  agentId: string;
-  onCall: (debtor: QueueDebtor) => void;
-  disabled: boolean;
-}) {
-  const [queue, setQueue] = useState<QueueDebtor[]>(() => buildAssignedQueue(agentId));
-  // Predictive dialer driven by the real engine + simulated provider (src/lib/dialer). Legs
-  // progress through the actual call state machine; swapping to server-side background
-  // dialing later is `mode: "server"` in the hook — no change here.
-  const dialer = useDialerRun();
-  // Which floating board to show while the dialer is running — mirrors the agent's own Call
-  // Queue: Productive Dial (dialerMode "predictive") opens several lines at once, Progressive
-  // Dial (dialerMode "productive") works one debtor at a time in list order.
-  const [activeDialMode, setActiveDialMode] = useState<"predictive" | "productive" | null>(null);
-  const [progressiveTargets, setProgressiveTargets] = useState<DialTarget[]>([]);
-  const reload = () => setQueue(buildAssignedQueue(agentId));
-  useEffect(() => {
-    reload();
-    // Switching to a different agent resets the dialer for the new queue.
-    dialer.stop();
-    setActiveDialMode(null);
-    window.addEventListener("assignments-updated", reload);
-    window.addEventListener("portfolios-updated", reload);
-    // queueStatus comes from the dispositions cache (buildAssignedQueue) — rebuild when it lands.
-    window.addEventListener("dispositions-updated", reload);
-    return () => {
-      window.removeEventListener("assignments-updated", reload);
-      window.removeEventListener("portfolios-updated", reload);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId]);
-  useStorageSync(reload);
-
-  if (!queue.length) {
-    return (
-      <p className="py-10 text-center text-sm text-muted-foreground">
-        No accounts assigned to this agent yet.
-      </p>
-    );
-  }
-
-  // Portfolio settings (call mode + dialer config) come from the agent's primary (first)
-  // assigned portfolio — the same source that drives the agent's own queue.
-  const primaryPortfolio = queue[0]?.portfolioId
-    ? getPortfolios().find((p) => p.id === queue[0].portfolioId)
-    : undefined;
-  const settings = primaryPortfolio?.settings ?? DEFAULT_PORTFOLIO_SETTINGS;
-  const portfolioMode: CallMode = settings.callMode;
-  const portfolioName = primaryPortfolio?.name ?? "No portfolio assigned";
-
-  const startProductive = async () => {
-    if (dialer.running) {
-      dialer.stop();
-      setActiveDialMode(null);
-      return;
-    }
-    // One click-to-call leg per agent — the pool size is the concurrency ceiling.
-    const agentNumbers = await fetchDialerAgentNumbers();
-    if (!agentNumbers.length) {
-      toast.error(
-        "No agents with a phone number configured — set one in Admin → Users before dialing.",
-      );
-      return;
-    }
-    setActiveDialMode("predictive");
-    try {
-      await dialer.start({
-        settings,
-        targets: queue.map((d) => ({
-          id: d.id,
-          name: d.name,
-          phone: d.phone,
-          portfolioId: d.portfolioId,
-          aiScore: d.aiScore,
-        })),
-        agentNumbers,
-      });
-    } catch (e) {
-      setActiveDialMode(null);
-      toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
-      return;
-    }
-    toast.success(
-      `Productive dialing this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}`,
-    );
-  };
-
-  const startProgressive = async () => {
-    if (dialer.running) {
-      dialer.stop();
-      setActiveDialMode(null);
-      return;
-    }
-    const agentNumbers = await fetchDialerAgentNumbers();
-    if (!agentNumbers.length) {
-      toast.error(
-        "No agents with a phone number configured — set one in Admin → Users before dialing.",
-      );
-      return;
-    }
-    const orderedTargets: DialTarget[] = queue.map((d) => ({
-      id: d.id,
-      name: d.name,
-      phone: d.phone,
-      portfolioId: d.portfolioId,
-      aiScore: d.aiScore,
-      altPhones: d.altPhones,
-    }));
-    setActiveDialMode("productive");
-    setProgressiveTargets(orderedTargets);
-    try {
-      await dialer.start({
-        settings: { ...settings, dialerMode: "productive" },
-        targets: orderedTargets,
-        agentNumbers,
-      });
-    } catch (e) {
-      setActiveDialMode(null);
-      setProgressiveTargets([]);
-      toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
-      return;
-    }
-    toast.success(
-      `Progressive calling this agent's queue — ${queue.length} account${queue.length === 1 ? "" : "s"}, one at a time`,
-    );
-  };
-
-  return (
-    <div className="space-y-3">
-      {/* Mode status bar — identical to the agent's, driven by this agent's portfolio */}
-      <DialerModeBar
-        portfolioMode={portfolioMode}
-        portfolioName={portfolioName}
-        dialerRunning={dialer.running}
-      />
-
-      {/* Productive / Progressive dialer toggles — same two modes the agent sees */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <p className="text-xs text-muted-foreground">
-          {dialer.running
-            ? "Dialer running — live lines progress through the real call state machine (simulated carrier)."
-            : "Preview the agent's live call activity (simulated)."}
-        </p>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            disabled={dialer.running && activeDialMode !== "predictive"}
-            onClick={startProductive}
-            className={cn(
-              "gap-1.5 text-sm",
-              dialer.running && activeDialMode === "predictive"
-                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                : "bg-success text-success-foreground hover:bg-success/90",
-            )}
-          >
-            {dialer.running && activeDialMode === "predictive" ? (
-              <>
-                <Square className="h-3.5 w-3.5" />
-                Stop Dialer
-              </>
-            ) : (
-              <>
-                <Zap className="h-3.5 w-3.5" />
-                Productive Dial
-              </>
-            )}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={dialer.running && activeDialMode !== "productive"}
-            onClick={startProgressive}
-            className="gap-1.5 text-sm"
-          >
-            {dialer.running && activeDialMode === "productive" ? (
-              <>
-                <Square className="h-3.5 w-3.5" />
-                Stop Dialer
-              </>
-            ) : (
-              <>
-                <ListOrdered className="h-3.5 w-3.5" />
-                Progressive Dial
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-border overflow-hidden">
-        <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
-          <Table>
-            <TableHeader className="sticky top-0 bg-card z-10">
-              <TableRow>
-                <TableHead>Debtor</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead className="text-right">Outstanding</TableHead>
-                <TableHead className="text-center">DPD</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>PTP</TableHead>
-                <TableHead>Scheduled</TableHead>
-                <TableHead className="w-20" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {queue.map((d) => {
-                const b = bucketOf(d.dpd);
-                const statusMeta = QUEUE_STATUS_META[d.queueStatus];
-                return (
-                  <TableRow key={d.id}>
-                    <TableCell>
-                      <div className="font-medium text-sm">{d.name}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {d.id} · {d.portfolio}
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{d.phone}</TableCell>
-                    <TableCell className="text-right text-sm">{formatINR(d.loanAmount)}</TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant="outline" className={cn("text-[10px]", BUCKET_META[b].color)}>
-                        {d.dpd}d
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={cn("text-xs", statusMeta.cls)}>
-                        {statusMeta.label}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      {d.ptpAmount ? (
-                        <span className="font-semibold text-blue-600">
-                          {formatINR(d.ptpAmount)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{d.scheduledAt}</TableCell>
-                    <TableCell>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 gap-1 text-xs"
-                        disabled={disabled}
-                        onClick={() => onCall(d)}
-                      >
-                        <Phone className="h-3 w-3" />
-                        Call
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      </div>
-
-      {/* Floating dialing board — every number currently ringing. Progressive Dial never has
-          more than one, so it gets its own sequential board below instead. */}
-      {dialer.running && activeDialMode !== "productive" && (
-        <DialingBoard liveCalls={dialer.legs} />
-      )}
-
-      {/* Floating Progressive Dial board — one debtor at a time, in list order */}
-      {dialer.running && activeDialMode === "productive" && (
-        <ProductiveDialBoard
-          targets={progressiveTargets}
-          liveCalls={dialer.legs}
-          onStop={() => {
-            dialer.stop();
-            setActiveDialMode(null);
-          }}
-        />
-      )}
-
-      {/* Floating live-calls panel — same component the agent sees, now fed by engine legs */}
-      {dialer.running && dialer.legs.length > 0 && (
-        <LiveCallsPanel
-          liveCalls={dialer.legs}
-          onDismiss={() => {
-            dialer.stop();
-            setActiveDialMode(null);
-          }}
-          onTake={(lc) => {
-            const d = queue.find((x) => x.id === lc.loanId);
-            if (d && !disabled) onCall(d);
-          }}
-          onTransfer={(lc) => toast.success(`${lc.debtor} redirected to next available agent`)}
-          onEndLeg={(lc) => {
-            dialer
-              .endLeg(lc.id)
-              .catch((e) => toast.error(e instanceof Error ? e.message : "Failed to end call"));
-            toast.success(`Ended call with ${lc.debtor}`);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function AgentLiveViewTab({
-  agents,
-  onCall,
-  hasActiveCall,
-}: {
-  agents: AgentRef[];
-  onCall: (debtor: QueueDebtor) => void;
-  hasActiveCall: boolean;
-}) {
+function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
   const [selected, setSelected] = useState(agents[0]?.id ?? "");
   useEffect(() => {
     if (!agents.some((a) => a.id === selected)) setSelected(agents[0]?.id ?? "");
@@ -441,11 +129,20 @@ function AgentLiveViewTab({
             ))}
           </SelectContent>
         </Select>
-        <span className="text-xs text-muted-foreground">
-          Exactly what this agent sees — call any account directly on their behalf.
-        </span>
       </div>
-      {selected && <AgentQueueView agentId={selected} onCall={onCall} disabled={hasActiveCall} />}
+      <div className="rounded-lg border border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+        Read-only mirror of {agents.find((a) => a.id === selected)?.name ?? "this agent"}&apos;s
+        Call Queue — the same screen they work, with every filter, column and panel they have.
+        Dialling is disabled here: a call placed from this view would be logged as that agent&apos;s
+        work. Use My Queue to dial.
+      </div>
+      {selected && (
+        <CallQueueContent
+          agentId={selected}
+          agentName={agents.find((a) => a.id === selected)?.name}
+          interactive={false}
+        />
+      )}
     </div>
   );
 }
@@ -903,11 +600,7 @@ function ManagerQueuePage() {
         </TabsList>
 
         <TabsContent value="live" className="mt-4">
-          <AgentLiveViewTab
-            agents={agents}
-            onCall={(d) => startCall(d, null)}
-            hasActiveCall={!!activeCall}
-          />
+          <AgentLiveViewTab agents={agents} />
         </TabsContent>
         <TabsContent value="overview" className="mt-4">
           <OverviewTab agents={agents} onViewAgent={(_agentId, t) => setTab(t)} />

@@ -213,13 +213,28 @@ function AgentDashboard() {
 
 /** The dashboard body, reused read-only by the manager's Agent Live View.
  * `interactive={false}` disables the quick-link navigation for the mirrored view. */
-export function AgentDashboardContent({ interactive = true }: { interactive?: boolean }) {
+export function AgentDashboardContent({
+  agentId: agentIdProp,
+  interactive = true,
+}: {
+  /** Whose dashboard to render. Defaults to the signed-in user.
+   *
+   * The manager's Agent Live View passed only `interactive={false}` and no id, so this
+   * resolved the agent from useAuth() — a manager saw THEIR OWN dashboard under the selected
+   * agent's name, directly beneath KPI cards that were genuinely that agent's. Half the
+   * screen was one person, half another. */
+  agentId?: string;
+  interactive?: boolean;
+}) {
   const [period, setPeriod] = useState<Period>("today");
   const [customDate, setCustomDate] = useState("");
 
   const { user } = useAuth();
-  const agentId = user?.email ?? user?.id ?? "";
-  const dailyCallTarget = useDailyCallTarget(user?.id);
+  const agentId = agentIdProp ?? user?.email ?? user?.id ?? "";
+  /** agents.daily_target is looked up by auth user id, which we do not have for a mirrored
+   * agent — fall back to the default target rather than showing the viewer's own. */
+  const isSelf = !agentIdProp || agentIdProp === (user?.email ?? user?.id);
+  const dailyCallTarget = useDailyCallTarget(isSelf ? user?.id : undefined);
   const { today, month, assignedPOS } = useAgentPeriodStats(agentId);
 
   // Today's raw call logs, for the time-breakdown panel below — calling time is computed

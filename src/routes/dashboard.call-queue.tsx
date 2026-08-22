@@ -151,11 +151,37 @@ export const Route = createFileRoute("/dashboard/call-queue")({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+/** Route wrapper — the signed-in agent's own, fully interactive queue. */
 function CallQueuePage() {
+  return <CallQueueContent />;
+}
+
+/**
+ * The whole Call Queue screen, reused read-only by the manager's Agent Live View.
+ *
+ * `agentId`/`agentName` default to the signed-in user, so the agent's own route is unchanged.
+ * Passing another agent's id renders THEIR queue — every filter, column, pill and panel the
+ * agent sees, rather than the cut-down copy the manager used to get.
+ *
+ * `interactive={false}` makes it observation-only: every path that would place a call is
+ * refused. That is not cosmetic. Dispositions are attributed by agentId (saveDisposition
+ * resolves it to an agents row), so a manager dialling from inside a view parameterised with
+ * the agent's id would silently log the call, and any PTP or payment on it, as work done by
+ * that agent. Read-only until that attribution is handled properly.
+ */
+export function CallQueueContent({
+  agentId: agentIdProp,
+  agentName: agentNameProp,
+  interactive = true,
+}: {
+  agentId?: string;
+  agentName?: string;
+  interactive?: boolean;
+} = {}) {
   const { user } = useAuth();
   // Operational identity is the account email (matches the roster + assignments)
-  const agentId = user?.email ?? user?.id ?? "AGT-ANON";
-  const agentName = user?.name ?? "Agent";
+  const agentId = agentIdProp ?? user?.email ?? user?.id ?? "AGT-ANON";
+  const agentName = agentNameProp ?? user?.name ?? "Agent";
 
   // Agent availability status
   const [status, setStatus] = useState<AgentStatus>("available");
@@ -310,6 +336,12 @@ function CallQueuePage() {
     debtor: QueueDebtor,
     opts?: { instant?: boolean; agentPhone?: string; callerId?: string },
   ) => {
+    // Single choke point for every dial path on this screen (row buttons, transfers,
+    // manual dial, screen-pop). Refusing here covers all of them at once.
+    if (!interactive) {
+      toast.error("Read-only view — calls can only be placed from your own queue");
+      return;
+    }
     singleCall.reset(); // clear any prior in-flight sim/timer
     setActiveCall({
       debtor,
@@ -1027,6 +1059,10 @@ function CallQueuePage() {
                   );
                   return;
                 }
+                if (!interactive) {
+                  toast.error("Read-only view — calls can only be placed from your own queue");
+                  return;
+                }
                 setActiveDialMode("predictive");
                 try {
                   await dialer.start({
@@ -1109,6 +1145,10 @@ function CallQueuePage() {
                   // — planProductiveBatch works through these after the primary number.
                   altPhones: d.altPhones,
                 }));
+                if (!interactive) {
+                  toast.error("Read-only view — calls can only be placed from your own queue");
+                  return;
+                }
                 setActiveDialMode("productive");
                 setProductiveTargets(orderedTargets);
                 try {
