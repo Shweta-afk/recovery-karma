@@ -126,6 +126,7 @@ function isSameMonth(iso: string, ref: Date): boolean {
 
 function PaymentsPage() {
   const [search, setSearch] = useState("");
+  const [portfolioFilter, setPortfolioFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<PaymentStatus | "all">("all");
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | "all">("all");
   const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
@@ -152,9 +153,39 @@ function PaymentsPage() {
     };
   }, []);
 
+  // Every portfolio present in the payments this user can see. Derived from the rows rather
+  // than from getPortfolios() so the list can never offer an option that yields nothing.
+  const portfolioOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const p of payments) {
+      if (p.portfolioId) byId.set(p.portfolioId, p.portfolioName ?? p.portfolioId);
+    }
+    return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [payments]);
+
+  // The portfolio filter SCOPES the page rather than just filtering the table: the KPI cards,
+  // the DPD breakdown and the method breakdown all read `scoped`, not `payments`. Filtering
+  // only the table would leave "Collected this month" reporting across every portfolio while
+  // the list underneath showed one — the two would contradict each other on screen.
+  const scoped = useMemo(
+    () =>
+      portfolioFilter === "all"
+        ? payments
+        : payments.filter((p) => p.portfolioId === portfolioFilter),
+    [payments, portfolioFilter],
+  );
+
+  // A portfolio that disappears (reassigned, closed) must not strand the page on an empty
+  // selection with no way back.
+  useEffect(() => {
+    if (portfolioFilter !== "all" && !portfolioOptions.some(([id]) => id === portfolioFilter)) {
+      setPortfolioFilter("all");
+    }
+  }, [portfolioOptions, portfolioFilter]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return payments.filter((p) => {
+    return scoped.filter((p) => {
       const matchSearch =
         !q ||
         p.debtorName.toLowerCase().includes(q) ||
@@ -165,18 +196,18 @@ function PaymentsPage() {
       const matchBucket = bucketFilter === "all" || bucketOf(p.dpd ?? 0) === bucketFilter;
       return matchSearch && matchStatus && matchMethod && matchBucket;
     });
-  }, [payments, search, statusFilter, methodFilter, bucketFilter]);
+  }, [scoped, search, statusFilter, methodFilter, bucketFilter]);
 
   const now = new Date();
-  const confirmedToday = payments.filter(
+  const confirmedToday = scoped.filter(
     (p) => p.status === "completed" && isSameDay(p.receivedAt ?? p.createdAt, now),
   );
   const confirmedAmount = confirmedToday.reduce((s, p) => s + p.amount, 0);
-  const totalMonth = payments
+  const totalMonth = scoped
     .filter((p) => p.status === "completed" && isSameMonth(p.receivedAt ?? p.createdAt, now))
     .reduce((s, p) => s + p.amount, 0);
-  const pendingCount = payments.filter((p) => p.status === "pending").length;
-  const failedCount = payments.filter((p) => p.status === "failed").length;
+  const pendingCount = scoped.filter((p) => p.status === "pending").length;
+  const failedCount = scoped.filter((p) => p.status === "failed").length;
 
   return (
     <div className="space-y-6">
@@ -332,10 +363,12 @@ function PaymentsPage() {
                     )}
                   >
                     <span>All Buckets</span>
-                    <span className="opacity-50">{payments.length}</span>
+                    {/* scoped, not payments — the per-bucket counts below are scoped, so an
+                        unscoped total here would exceed the sum of the rows under it. */}
+                    <span className="opacity-50">{scoped.length}</span>
                   </button>
                   {(["X", "1", "2", "NPA", "WriteOff"] as DPDBucket[]).map((b) => {
-                    const count = payments.filter((p) => bucketOf(p.dpd ?? 0) === b).length;
+                    const count = scoped.filter((p) => bucketOf(p.dpd ?? 0) === b).length;
                     if (count === 0) return null;
                     return (
                       <button
@@ -360,6 +393,30 @@ function PaymentsPage() {
                 </div>
               )}
             </div>
+
+            {/* Portfolio scope — only worth showing when there is a choice to make. */}
+            {portfolioOptions.length > 1 && (
+              <div className="flex gap-1.5 flex-wrap items-center">
+                <span className="text-xs text-muted-foreground mr-0.5">Portfolio</span>
+                {[["all", `All (${portfolioOptions.length})`] as const, ...portfolioOptions].map(
+                  ([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setPortfolioFilter(id)}
+                      className={cn(
+                        "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all",
+                        portfolioFilter === id
+                          ? "bg-foreground text-background border-foreground"
+                          : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/30",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ),
+                )}
+              </div>
+            )}
 
             {/* Method pills */}
             <div className="flex gap-1.5 flex-wrap">
@@ -386,7 +443,9 @@ function PaymentsPage() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-semibold">
                   {filtered.length} records
-                  {statusFilter !== "all" || methodFilter !== "all" ? " (filtered)" : ""}
+                  {statusFilter !== "all" || methodFilter !== "all" || portfolioFilter !== "all"
+                    ? " (filtered)"
+                    : ""}
                 </CardTitle>
                 <Button
                   size="sm"
@@ -620,15 +679,16 @@ function PaymentsPage() {
             </CardContent>
           </Card>
 
-          {/* Summary by method */}
-          {payments.length > 0 && (
+          {/* Summary by method — scoped, so it hides rather than showing a row of zeros when
+              the selected portfolio has no payments. */}
+          {scoped.length > 0 && (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               {(["upi", "card", "netbanking", "cash", "cheque", "link"] as PaymentMethod[]).map(
                 (m) => {
-                  const total = payments
+                  const total = scoped
                     .filter((p) => p.method === m && p.status === "completed")
                     .reduce((s, p) => s + p.amount, 0);
-                  const count = payments.filter((p) => p.method === m).length;
+                  const count = scoped.filter((p) => p.method === m).length;
                   if (count === 0) return null;
                   const Icon = METHOD_ICON[m];
                   return (
