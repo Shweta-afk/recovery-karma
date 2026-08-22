@@ -1,11 +1,45 @@
 import { getPortfolios, getAgentDebtorIds, debtorFromRow } from "@/lib/portfolio-store";
-import type { QueueDebtor } from "./types";
+import { getDispositions } from "@/lib/disposition-store";
+import type { CallOutcome, QueueDebtor } from "./types";
+
+/** Last call outcome -> the queue's own coarser status. Only these three outcomes change where
+ * a debtor sits in the Productive / Non-Productive split; everything else (refused, dispute,
+ * settlement, voicemail, paid) leaves the row where a never-called row sits, because the queue
+ * has no distinct bucket for them and silently folding them into "no answer" would misreport
+ * a contact that did happen. */
+const OUTCOME_TO_QUEUE_STATUS: Partial<Record<CallOutcome, QueueDebtor["queueStatus"]>> = {
+  promised: "ptp",
+  callback: "callback",
+  no_answer: "no_answer",
+};
+
+/** Most recent disposition per debtor, across every agent — the queue shows the debtor's real
+ * current state, not just what the signed-in agent personally last did with them. */
+function latestDispositionByDebtor() {
+  const latest = new Map<
+    string,
+    { time: string; outcome: CallOutcome; ptpAmount?: number; ptpDate?: string }
+  >();
+  for (const d of getDispositions()) {
+    if (!d.debtorId) continue;
+    const prev = latest.get(d.debtorId);
+    if (prev && prev.time >= d.time) continue;
+    latest.set(d.debtorId, {
+      time: d.time,
+      outcome: d.outcome as CallOutcome,
+      ptpAmount: d.ptpAmount,
+      ptpDate: d.ptpDate,
+    });
+  }
+  return latest;
+}
 
 /** Build a queue from portfolios assigned to this agent; returns empty if none assigned */
 export function buildAssignedQueue(agentId: string): QueueDebtor[] {
   const slices = getAgentDebtorIds(agentId);
   if (!slices.length) return [];
   const allPortfolios = getPortfolios();
+  const latest = latestDispositionByDebtor();
   const result: QueueDebtor[] = [];
   for (const { portfolioId, debtorIds } of slices) {
     const portfolio = allPortfolios.find((p) => p.id === portfolioId);
@@ -29,11 +63,25 @@ export function buildAssignedQueue(agentId: string): QueueDebtor[] {
         ...debtorFromRow(row, portfolio),
         loanReference: row.loanReference,
         portfolioId: portfolio.id,
-        queueStatus: "fresh",
-        scheduledAt: "—",
-        ptpAmount: 0,
+        // Derived from the debtor's most recent call, NOT hardcoded. This used to be a
+        // literal "fresh" for every row, which meant the Productive / Non-Productive
+        // breakdown could only ever read 0 callbacks, 0 PTPs, 0 no-answers and "everything"
+        // under Ringing / Fresh — even with PTPs sitting in the tracker directly below it.
+        ...queueFieldsFor(latest.get(row.id)),
       });
     }
   }
   return result;
+}
+
+/** The three disposition-derived fields on a queue row, defaulted to the never-called state. */
+function queueFieldsFor(
+  last: { outcome: CallOutcome; ptpAmount?: number; ptpDate?: string } | undefined,
+) {
+  if (!last) return { queueStatus: "fresh" as const, scheduledAt: "—", ptpAmount: 0 };
+  return {
+    queueStatus: OUTCOME_TO_QUEUE_STATUS[last.outcome] ?? ("fresh" as const),
+    scheduledAt: last.ptpDate ?? "—",
+    ptpAmount: last.ptpAmount ?? 0,
+  };
 }
