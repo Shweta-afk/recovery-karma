@@ -151,9 +151,16 @@ export const Route = createFileRoute("/dashboard/call-queue")({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-/** Route wrapper — the signed-in agent's own, fully interactive queue. */
+/** Route wrapper — the signed-in agent's own, fully interactive queue.
+ *
+ * Route.useSearch() lives HERE and not inside CallQueueContent. It resolves against the
+ * /dashboard/call-queue match, so calling it from a component rendered under a different
+ * route — which is exactly what the manager's Agent Live View does — throws
+ * "Invariant failed" and takes the whole page down. The wrapper is the only place that is
+ * guaranteed to be on this route, so the search param is read here and passed down. */
 function CallQueuePage() {
-  return <CallQueueContent />;
+  const { filter } = Route.useSearch();
+  return <CallQueueContent initialFilter={filter} />;
 }
 
 /**
@@ -180,9 +187,13 @@ function CallQueuePage() {
 export function CallQueueContent({
   agentId: agentIdProp,
   agentName: agentNameProp,
+  initialFilter,
 }: {
   agentId?: string;
   agentName?: string;
+  /** Seeds the status pill from ?filter=. Supplied by the route wrapper — this component must
+   * never read route search itself, see CallQueuePage. */
+  initialFilter?: QueueFilter;
 } = {}) {
   const { user } = useAuth();
   // Operational identity is the account email (matches the roster + assignments)
@@ -276,7 +287,6 @@ export function CallQueueContent({
     debtor: QueueDebtor;
     from: string;
   } | null>(null);
-  const { filter: initialFilter } = Route.useSearch();
   const [queueFilter, setQueueFilter] = useState<QueueFilter>(initialFilter ?? "all");
   const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
