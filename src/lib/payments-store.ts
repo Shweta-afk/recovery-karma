@@ -83,10 +83,22 @@ export function getSettlements(): SettlementRecord[] {
  * payments table is the whole financial record, so summing it here never double-counts a
  * call-logged payment. Feeds toPortfolio()'s Recovered KPI, which used to read call
  * dispositions alone and therefore could never reflect a bank-reported payment at all. */
-export function getPortfolioRecovered(portfolioId: string): number {
-  return getPayments()
-    .filter((p) => p.portfolioId === portfolioId && p.status === "completed")
-    .reduce((s, p) => s + p.amount, 0);
+export function getPortfolioRecovered(portfolioId: string): {
+  total: number;
+  bankReported: number;
+} {
+  const rows = getPayments().filter(
+    (p) => p.portfolioId === portfolioId && p.status === "completed",
+  );
+  return {
+    total: rows.reduce((s, p) => s + p.amount, 0),
+    // Split out so the portfolio KPI can say how much of the recovery arrived via a paid-file
+    // upload rather than agent collections — otherwise a manager uploads the bank's file and
+    // has no way to tell from this screen whether it landed.
+    bankReported: rows
+      .filter((p) => p.source === "bank_reported")
+      .reduce((s, p) => s + p.amount, 0),
+  };
 }
 
 /** Pulls the `payments` table (joined against debtors/portfolios/agents for display fields)

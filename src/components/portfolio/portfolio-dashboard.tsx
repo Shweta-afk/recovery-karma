@@ -77,6 +77,9 @@ export interface Portfolio {
   buckets: Record<DPDBucket, number>;
   totalOutstanding: number;
   recovered: number;
+  /** The slice of `recovered` that arrived via a bank paid-file upload rather than an agent
+   * collection. Surfaced on the Recovered KPI so an upload is visibly reflected. */
+  recoveredBankReported: number;
   ptpCount: number;
   contactRate: number;
   agents: string[];
@@ -137,11 +140,14 @@ export function toPortfolio(u: UploadedPortfolio): Portfolio {
     (email) => getAgentById(email)?.name ?? email,
   );
 
-  // Group by portfolio rather than walking each assigned agent's dispositions: the per-agent
-  // walk silently dropped every call made on a debtor who is currently unassigned (and every
-  // call by an agent since removed from the portfolio), so PTPs and contact rate under-read
-  // whenever assignment had moved on since the calls were made.
+  // Group by portfolio rather than walking each assigned agent's dispositions. The per-agent
+  // walk kept a call only when the caller IS the debtor's currently-assigned agent, so it
+  // dropped calls on since-unassigned debtors, calls by an agent since moved off the account,
+  // and calls by a manager (who has no debtors assigned to them at all). Observed live on
+  // 2026-08-22: it hid two of nine calls on portfolio 04f1fdec — including a ₹1,000 payment —
+  // reading 71% contact where the real figure was 78%.
   const stats = calcStats(getDispositionsByPortfolio(u.id));
+  const recoveredSplit = getPortfolioRecovered(u.id);
 
   const status: Portfolio["status"] =
     assignedAccounts === 0 ? "stale" : assignedAccounts >= u.rows.length ? "completed" : "active";
@@ -158,7 +164,8 @@ export function toPortfolio(u: UploadedPortfolio): Portfolio {
     // From the payments table, not stats.paidAmount — see getPortfolioRecovered. A call-logged
     // "paid" writes a payments row too, so this covers agent collections *and* bank-reported
     // paid-file uploads without double-counting either.
-    recovered: getPortfolioRecovered(u.id),
+    recovered: recoveredSplit.total,
+    recoveredBankReported: recoveredSplit.bankReported,
     ptpCount: stats.ptps,
     contactRate: stats.contactRate,
     agents,
@@ -945,7 +952,14 @@ export function PortfolioDetail({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: "Total Outstanding", val: formatINR(p.totalOutstanding) },
-              { label: "Recovered", val: formatINR(p.recovered), sub: `${recoveryPct}% of total` },
+              {
+                label: "Recovered",
+                val: formatINR(p.recovered),
+                sub:
+                  p.recoveredBankReported > 0
+                    ? `${recoveryPct}% of total · ${formatINR(p.recoveredBankReported)} via bank file`
+                    : `${recoveryPct}% of total`,
+              },
               { label: "PTPs Secured", val: String(p.ptpCount) },
               { label: "Contact Rate", val: `${p.contactRate}%` },
             ].map(({ label, val, sub }) => (

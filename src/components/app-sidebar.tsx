@@ -47,6 +47,10 @@ const managerItems = [
   { title: "Portfolio Overview", url: "/manager/portfolio", icon: FolderOpen },
   { title: "Portfolio Upload", url: "/manager/upload", icon: Upload },
   { title: "Call Audit", url: "/manager/audit", icon: AudioLines },
+  // Reuses the agent route, same as Call History above. A manager had no way to reach payments
+  // at all, which meant the bank paid-file they upload themselves (Portfolio Overview ->
+  // Upload Paid File) had nowhere to show up — the rows render as "Bank Reported" here.
+  { title: "Payments", url: "/dashboard/payments", icon: CreditCard },
   { title: "Reports", url: "/manager/reports", icon: FileBarChart },
   { title: "Settings", url: "/dashboard/settings", icon: Settings },
 ];
