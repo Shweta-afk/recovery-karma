@@ -50,6 +50,9 @@ const managerItems = [
   // Reuses the agent route, same as Call History above. A manager had no way to reach payments
   // at all, which meant the bank paid-file they upload themselves (Portfolio Overview ->
   // Upload Paid File) had nowhere to show up — the rows render as "Bank Reported" here.
+  // Both reuse the agent routes, same as Call History. The debtors page is role-aware: a
+  // manager sees their active team's whole book rather than the (empty) set assigned to them.
+  { title: "Debtors", url: "/dashboard/debtors", icon: Users },
   { title: "Payments", url: "/dashboard/payments", icon: CreditCard },
   { title: "Reports", url: "/manager/reports", icon: FileBarChart },
   { title: "Settings", url: "/dashboard/settings", icon: Settings },

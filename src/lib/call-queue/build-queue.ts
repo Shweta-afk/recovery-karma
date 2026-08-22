@@ -1,5 +1,5 @@
 import { getPortfolios, getAgentDebtorIds, debtorFromRow } from "@/lib/portfolio-store";
-import { getDispositions } from "@/lib/disposition-store";
+import { getLatestDispositionByDebtor } from "@/lib/disposition-store";
 import type { CallOutcome, QueueDebtor } from "./types";
 
 /** Last call outcome -> the queue's own coarser status. Only these three outcomes change where
@@ -13,33 +13,12 @@ const OUTCOME_TO_QUEUE_STATUS: Partial<Record<CallOutcome, QueueDebtor["queueSta
   no_answer: "no_answer",
 };
 
-/** Most recent disposition per debtor, across every agent — the queue shows the debtor's real
- * current state, not just what the signed-in agent personally last did with them. */
-function latestDispositionByDebtor() {
-  const latest = new Map<
-    string,
-    { time: string; outcome: CallOutcome; ptpAmount?: number; ptpDate?: string }
-  >();
-  for (const d of getDispositions()) {
-    if (!d.debtorId) continue;
-    const prev = latest.get(d.debtorId);
-    if (prev && prev.time >= d.time) continue;
-    latest.set(d.debtorId, {
-      time: d.time,
-      outcome: d.outcome as CallOutcome,
-      ptpAmount: d.ptpAmount,
-      ptpDate: d.ptpDate,
-    });
-  }
-  return latest;
-}
-
 /** Build a queue from portfolios assigned to this agent; returns empty if none assigned */
 export function buildAssignedQueue(agentId: string): QueueDebtor[] {
   const slices = getAgentDebtorIds(agentId);
   if (!slices.length) return [];
   const allPortfolios = getPortfolios();
-  const latest = latestDispositionByDebtor();
+  const latest = getLatestDispositionByDebtor();
   const result: QueueDebtor[] = [];
   for (const { portfolioId, debtorIds } of slices) {
     const portfolio = allPortfolios.find((p) => p.id === portfolioId);

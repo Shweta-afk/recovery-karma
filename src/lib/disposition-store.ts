@@ -452,6 +452,24 @@ export function getTeamDispositions(teamId: string): DispositionRecord[] {
   return getDispositions().filter((d) => d.teamId === teamId);
 }
 
+/** Most recent disposition per debtor, across every agent — "what is this account currently
+ * marked as". Deliberately not filtered by agent: an account's state is whatever the last
+ * person to call it recorded, not only what the signed-in user did with it.
+ *
+ * Shared by buildAssignedQueue (which derives the call queue's status pills from it) and the
+ * Accounts table on the manager/admin portfolio dashboards, so the two can never disagree
+ * about what an account is marked as. */
+export function getLatestDispositionByDebtor(): Map<string, DispositionRecord> {
+  const latest = new Map<string, DispositionRecord>();
+  for (const d of getDispositions()) {
+    if (!d.debtorId) continue;
+    const prev = latest.get(d.debtorId);
+    if (prev && prev.time >= d.time) continue;
+    latest.set(d.debtorId, d);
+  }
+  return latest;
+}
+
 export function getDispositionsByPortfolio(portfolioId: string): DispositionRecord[] {
   return getDispositions().filter((d) => d.portfolioId === portfolioId);
 }

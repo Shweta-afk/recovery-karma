@@ -66,6 +66,7 @@ import {
 } from "@/lib/escalation-store";
 import {
   saveDisposition,
+  refreshDispositions,
   type DispositionRecord,
   type CallOutcome as StoredOutcome,
 } from "@/lib/disposition-store";
@@ -123,6 +124,8 @@ function AgentQueueView({
     setActiveDialMode(null);
     window.addEventListener("assignments-updated", reload);
     window.addEventListener("portfolios-updated", reload);
+    // queueStatus comes from the dispositions cache (buildAssignedQueue) — rebuild when it lands.
+    window.addEventListener("dispositions-updated", reload);
     return () => {
       window.removeEventListener("assignments-updated", reload);
       window.removeEventListener("portfolios-updated", reload);
@@ -465,9 +468,16 @@ function OverviewTab({
     reload();
     window.addEventListener("assignments-updated", reload);
     window.addEventListener("portfolios-updated", reload);
+    // The PTP / Callback / Escalated / Fresh cards above read queueStatus, which
+    // buildAssignedQueue derives from dispositions. This page loaded neither the cache nor
+    // listened for it, so those cards read zero for the manager exactly as the agent's
+    // Productive / Non-Productive split did.
+    window.addEventListener("dispositions-updated", reload);
+    refreshDispositions();
     return () => {
       window.removeEventListener("assignments-updated", reload);
       window.removeEventListener("portfolios-updated", reload);
+      window.removeEventListener("dispositions-updated", reload);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents]);

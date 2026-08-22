@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { bucketOf, formatINR, type Debtor, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
+import { useActiveTeam } from "@/lib/active-team-store";
 import {
   getPortfolios,
   getAgentDebtorIds,
@@ -278,6 +279,13 @@ function sortDebtors(list: Debtor[], key: SortKey): Debtor[] {
 function DebtorsPage() {
   const { user } = useAuth();
   const agentId = user?.email ?? user?.id ?? "";
+  // Managers and admins have no debtors assigned to them personally, so the assigned-slices
+  // path below would hand them an empty book. They get the whole open portfolio instead —
+  // for a manager, scoped to the team they are currently working (the same scope Portfolio
+  // Overview uses); for an admin, everything RLS already lets them see.
+  const isSupervisor = user?.role === "manager" || user?.role === "admin";
+  const { activeTeam } = useActiveTeam(agentId);
+  const activeTeamId = activeTeam?.id;
 
   const [search, setSearch] = useState("");
   const [bucket, setBucket] = useState<DPDBucket | "all">("all");
@@ -295,7 +303,15 @@ function DebtorsPage() {
       const assignedSlices = getAgentDebtorIds(agentId);
       const portfolios = getPortfolios();
 
-      if (assignedSlices.length > 0) {
+      if (isSupervisor) {
+        // Closed cycles already carry rows: [] (see refreshPortfolios), so they contribute
+        // nothing here and no extra closedAt filter is needed.
+        const visible =
+          user?.role === "admin" ? portfolios : portfolios.filter((p) => p.teamId === activeTeamId);
+        const result: Debtor[] = [];
+        for (const p of visible) for (const r of p.rows) result.push(toDebtor(r, p));
+        setUploadedDebtors(result);
+      } else if (assignedSlices.length > 0) {
         // Agent has explicit assignments — show only those debtors
         const result: Debtor[] = [];
         for (const { portfolioId, debtorIds } of assignedSlices) {
@@ -316,7 +332,8 @@ function DebtorsPage() {
     return () => {
       window.removeEventListener("portfolios-updated", load);
     };
-  }, [agentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, isSupervisor, activeTeamId, user?.role]);
 
   // Only the debtors assigned to this agent from uploaded portfolios — no mock data
   const allDebtors = uploadedDebtors;
@@ -706,10 +723,7 @@ function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }) {
   }, []);
 
   const debtorCalls = useMemo(
-    () =>
-      disps
-        .filter((r) => r.debtorId === d.id)
-        .sort((a, b) => b.time.localeCompare(a.time)),
+    () => disps.filter((r) => r.debtorId === d.id).sort((a, b) => b.time.localeCompare(a.time)),
     [disps, d.id],
   );
   const debtorPayments = useMemo(
@@ -899,9 +913,7 @@ function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }) {
                   <div key={c.id} className="flex gap-3">
                     <div className="flex flex-col items-center">
                       <div className="h-2 w-2 rounded-full bg-muted-foreground mt-1.5" />
-                      {i < debtorCalls.length - 1 && (
-                        <div className="w-px flex-1 bg-border mt-1" />
-                      )}
+                      {i < debtorCalls.length - 1 && <div className="w-px flex-1 bg-border mt-1" />}
                     </div>
                     <div className="pb-4">
                       <div className="flex items-center gap-2 text-sm">

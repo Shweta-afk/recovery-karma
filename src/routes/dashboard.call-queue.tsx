@@ -171,10 +171,15 @@ function CallQueuePage() {
       setAllQueue(buildAssignedQueue(agentId));
     };
     window.addEventListener("portfolios-updated", reload);
+    // buildAssignedQueue derives queueStatus/scheduledAt/ptpAmount from the dispositions
+    // cache, so the queue has to rebuild when that cache lands — not just when portfolios do.
+    // refreshDispositions() below is async and usually resolves AFTER this first build.
+    window.addEventListener("dispositions-updated", reload);
     refreshPortfolios();
     refreshDispositions();
     return () => {
       window.removeEventListener("portfolios-updated", reload);
+      window.removeEventListener("dispositions-updated", reload);
     };
   }, [agentId]);
 

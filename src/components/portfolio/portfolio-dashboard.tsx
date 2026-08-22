@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   transferDebtor,
   transferDebtors,
@@ -64,7 +64,12 @@ import { cn } from "@/lib/utils";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { OUTCOME_META } from "@/lib/call-queue/types";
 import { getAgentById, type AgentRef } from "@/lib/team-store";
-import { getDispositionsByPortfolio, calcStats, type CallOutcome } from "@/lib/disposition-store";
+import {
+  getDispositionsByPortfolio,
+  getLatestDispositionByDebtor,
+  calcStats,
+  type CallOutcome,
+} from "@/lib/disposition-store";
 import { getPortfolioRecovered } from "@/lib/payments-store";
 
 export interface Portfolio {
@@ -212,9 +217,29 @@ export function StatCard({
 /* ─── portfolio detail drawer ───────────────────────────────────────────── */
 
 const UNASSIGNED = "__unassigned__";
+const ALL_MARKS = "__all__";
+const UNCONTACTED = "__uncontacted__";
 
 /** Per-account transfer control — moves one debtor to a different agent (or unassigns them)
  * without re-splitting the rest of the portfolio, unlike the bulk Reassign dialog. */
+/** The account's most recent call outcome — what an agent last marked it as. Distinct from
+ * DebtorStatusBadge below, which shows debtors.status (a lifecycle state set by a paid-file
+ * upload or a settlement, not by a call). */
+function MarkedAsBadge({ outcome }: { outcome?: CallOutcome }) {
+  if (!outcome) return <span className="text-[10px] text-muted-foreground">Not contacted</span>;
+  const meta = OUTCOME_META[outcome];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+        meta?.cls ?? "bg-muted text-muted-foreground border-border",
+      )}
+    >
+      {meta?.label ?? outcome}
+    </span>
+  );
+}
+
 /** debtors.status in the Accounts table. Without this column a debtor marked paid — by a
  * disposition or by the bank's paid-file upload (applyBulkPaidFile) — looked identical to an
  * active one, which is most of why a paid-file upload appeared to do nothing at all. */
@@ -245,6 +270,28 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkAgent, setBulkAgent] = useState<string>(UNASSIGNED);
   const [bulkMoving, setBulkMoving] = useState(false);
+  // "Marked as" filter. Managers and admins previously had no way at all to see, let alone
+  // filter by, what an account had been dispositioned as — that only existed on the agent's
+  // own call queue.
+  const [markedFilter, setMarkedFilter] = useState<string>(ALL_MARKS);
+
+  const latestByDebtor = useMemo(() => getLatestDispositionByDebtor(), []);
+  const markOf = (id: string) => latestByDebtor.get(id)?.outcome;
+
+  const visibleRows = useMemo(() => {
+    if (markedFilter === ALL_MARKS) return rows;
+    if (markedFilter === UNCONTACTED) return rows.filter((r) => !markOf(r.id));
+    return rows.filter((r) => markOf(r.id) === markedFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, markedFilter, latestByDebtor]);
+
+  const markCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const r of rows)
+      counts[markOf(r.id) ?? UNCONTACTED] = (counts[markOf(r.id) ?? UNCONTACTED] ?? 0) + 1;
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, latestByDebtor]);
 
   const handleTransfer = async (debtorId: string, value: string) => {
     setTransferringId(debtorId);
@@ -309,6 +356,24 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
           <ArrowLeftRight className="h-3.5 w-3.5" />
           Accounts · transfer individually or select several
         </div>
+        <Select value={markedFilter} onValueChange={setMarkedFilter}>
+          <SelectTrigger className="h-7 w-52 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_MARKS}>All accounts ({rows.length})</SelectItem>
+            <SelectItem value={UNCONTACTED}>
+              Not yet contacted ({markCounts[UNCONTACTED] ?? 0})
+            </SelectItem>
+            {(Object.keys(OUTCOME_META) as CallOutcome[])
+              .filter((o) => (markCounts[o] ?? 0) > 0)
+              .map((o) => (
+                <SelectItem key={o} value={o}>
+                  {OUTCOME_META[o].label} ({markCounts[o]})
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
         {selected.size > 0 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] text-muted-foreground">{selected.size} selected</span>
@@ -347,6 +412,7 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                 </th>
                 <th className="py-2 text-left font-medium text-muted-foreground">Debtor</th>
                 <th className="py-2 text-right font-medium text-muted-foreground">Outstanding</th>
+                <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Marked as</th>
                 <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Status</th>
                 <th className="py-2 pr-3 text-left font-medium text-muted-foreground">
                   Assigned to
@@ -355,7 +421,7 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {rows.map((r) => (
+              {visibleRows.map((r) => (
                 <tr key={r.id} className={selected.has(r.id) ? "bg-primary/5" : undefined}>
                   <td className="py-2 pl-3">
                     <Checkbox
@@ -368,6 +434,9 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                     <div className="text-[10px] text-muted-foreground">{r.loanReference}</div>
                   </td>
                   <td className="py-2 text-right tabular-nums">{formatINR(r.loanAmount)}</td>
+                  <td className="py-2 pl-3">
+                    <MarkedAsBadge outcome={markOf(r.id)} />
+                  </td>
                   <td className="py-2 pl-3">
                     <DebtorStatusBadge status={r.status} />
                   </td>
