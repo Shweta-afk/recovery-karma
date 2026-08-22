@@ -2,33 +2,29 @@
 -- DESTRUCTIVE — permanently deletes every CLOSED portfolio and everything under it.
 -- ═══════════════════════════════════════════════════════════════════════════════
 --
--- There is no undo. Before running any of this:
---
+-- There is no undo. Before running STEP B:
 --   1. Take a Supabase backup (Dashboard -> Database -> Backups). Not optional.
---   2. Run scripts/debug/closed-portfolio-purge-inventory.sql and READ IT. In particular
---      `also_in_open_pf`: where that equals `debtors`, the closed portfolio is a duplicate
---      re-upload and losing it costs nothing. Where it is lower, those rows are accounts that
---      were never carried forward, and `paid_value` is real money you are erasing the record
---      of. STEP 0 below refuses to proceed if anything looks load-bearing.
+--   2. Run closed-portfolio-purge-inventory.sql, then closed-portfolio-migrate-then-purge.sql,
+--      then STEP 0 here. Proceed only on "SAFE TO PROCEED".
 --
--- Why this is not a one-line DELETE: schema.sql declares every debtor FK WITHOUT
--- ON DELETE CASCADE --
---     call_logs.debtor_id, messages.debtor_id, payments.debtor_id,
---     disputes.debtor_id, settlement_requests.debtor_id  ->  debtors(id)
---     debtors.portfolio_id                               ->  portfolios(id)
--- so children must go first or the delete simply errors. Two references also point INTO the
--- doomed set from rows that SURVIVE, and must be unlinked first:
---     portfolios.replaces_portfolio_id   (an open cycle pointing back at the closed one)
---     debtors.retained_from_portfolio_id (a carried-forward debtor's origin)
--- Both are the retention chain: unlinking loses the "this account continued from that cycle"
--- provenance. That is unavoidable if the old cycle is deleted, and is a reason to reconsider.
+-- Why this discovers its dependants instead of listing them:
 --
--- HOW TO RUN: paste STEP 0 alone first. If it clears, paste STEPS 1-8 together and run them
--- as a SINGLE execution — the Supabase SQL Editor wraps one execution in one transaction, so
--- either all of it lands or none of it does. Do NOT add your own BEGIN/COMMIT: a nested
--- transaction has silently rolled work back in this project before (see CLAUDE.md).
+-- An earlier draft hand-listed five children of `debtors` (call_logs, messages, payments,
+-- disputes, settlement_requests). The app actually writes at least four more — escalations,
+-- ptp_escalations, reminders, retention_requests — and `escalations` has no migration in this
+-- repo at all, so its columns cannot be known from source. schema.sql declares none of these
+-- FKs as ON DELETE CASCADE, so a single missed table aborts the whole run.
+--
+-- STEP B therefore reads pg_constraint for every foreign key pointing at debtors and at
+-- portfolios and handles whatever it finds, including tables added after this was written.
+-- A nullable reference INTO the doomed set is nulled (that is the retention provenance —
+-- "this account continued from that cycle" — which is unavoidably lost); a NOT NULL one is
+-- deleted, because such a row cannot survive its parent.
+--
+-- No BEGIN/COMMIT: the SQL Editor wraps one execution in one transaction, and a nested one
+-- has silently rolled work back in this project before (see CLAUDE.md).
 
--- ── STEP 0: safety check. Run alone. Proceed only if it returns "SAFE TO PROCEED". ────────
+-- ── STEP 0: safety check. Run alone. Proceed only on "SAFE TO PROCEED". ───────────────────
 SELECT
   CASE
     WHEN unique_accounts = 0 AND paid_value = 0
@@ -59,64 +55,99 @@ FROM (
           (SELECT id FROM portfolios WHERE closed_at IS NOT NULL))), 0) AS paid_value
 ) x;
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- STEPS 1-8 — paste together, run once. Everything below is commented out on purpose;
--- uncomment the whole block only after STEP 0 and a backup.
--- ═══════════════════════════════════════════════════════════════════════════════
---
--- -- STEP 1: unlink survivors that point INTO the doomed set (must precede the deletes).
--- UPDATE portfolios SET replaces_portfolio_id = NULL
---  WHERE replaces_portfolio_id IN (SELECT id FROM portfolios WHERE closed_at IS NOT NULL);
---
--- UPDATE debtors SET retained_from_portfolio_id = NULL
---  WHERE retained_from_portfolio_id IN (SELECT id FROM portfolios WHERE closed_at IS NOT NULL);
---
--- -- STEP 2: retention_requests, only if that migration was ever applied here. The DO block
--- -- keeps this parse-safe on a database where the table does not exist — naming a missing
--- -- table directly would abort the whole script before anything ran.
--- DO $$
--- BEGIN
---   IF to_regclass('public.retention_requests') IS NOT NULL THEN
---     DELETE FROM retention_requests WHERE debtor_id IN (
---       SELECT id FROM debtors WHERE portfolio_id IN
---         (SELECT id FROM portfolios WHERE closed_at IS NOT NULL));
---   END IF;
--- END $$;
---
--- -- STEPS 3-7: children of debtors, in any order among themselves, but all before STEP 8.
--- DELETE FROM call_logs WHERE debtor_id IN (
---   SELECT id FROM debtors WHERE portfolio_id IN
---     (SELECT id FROM portfolios WHERE closed_at IS NOT NULL));
---
--- DELETE FROM messages WHERE debtor_id IN (
---   SELECT id FROM debtors WHERE portfolio_id IN
---     (SELECT id FROM portfolios WHERE closed_at IS NOT NULL));
---
--- DELETE FROM payments WHERE debtor_id IN (
---   SELECT id FROM debtors WHERE portfolio_id IN
---     (SELECT id FROM portfolios WHERE closed_at IS NOT NULL));
---
--- DELETE FROM disputes WHERE debtor_id IN (
---   SELECT id FROM debtors WHERE portfolio_id IN
---     (SELECT id FROM portfolios WHERE closed_at IS NOT NULL));
---
--- DELETE FROM settlement_requests WHERE debtor_id IN (
---   SELECT id FROM debtors WHERE portfolio_id IN
---     (SELECT id FROM portfolios WHERE closed_at IS NOT NULL));
---
--- -- STEP 8: the debtors, then the portfolios themselves. portfolio_agent_targets declares
--- -- ON DELETE CASCADE on portfolio_id, so it clears itself.
--- DELETE FROM debtors WHERE portfolio_id IN
---   (SELECT id FROM portfolios WHERE closed_at IS NOT NULL);
---
--- DELETE FROM portfolios WHERE closed_at IS NOT NULL;
+-- ── STEP A: DRY RUN. Read-only. Every table that will be touched, and by how much. ────────
+-- Run this before STEP B and read it. Anything surprising here is a reason to stop.
+WITH doomed_pf AS (SELECT id FROM portfolios WHERE closed_at IS NOT NULL),
+     doomed_d  AS (SELECT id FROM debtors WHERE portfolio_id IN (SELECT id FROM doomed_pf)),
+     fks AS (
+       SELECT con.conrelid::regclass::text AS child_table,
+              att.attname                  AS child_col,
+              con.confrelid::regclass::text AS parent_table,
+              att.attnotnull               AS col_not_null
+       FROM pg_constraint con
+       JOIN pg_attribute att
+         ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+       WHERE con.contype = 'f'
+         AND con.confrelid IN ('public.debtors'::regclass, 'public.portfolios'::regclass)
+     )
+SELECT f.parent_table || ' <- ' || f.child_table || '.' || f.child_col AS reference,
+       CASE WHEN f.parent_table = 'debtors' THEN 'DELETE rows'
+            WHEN f.child_table = 'debtors' AND f.child_col = 'portfolio_id' THEN 'DELETE rows'
+            WHEN f.col_not_null THEN 'DELETE rows'
+            ELSE 'SET NULL' END AS action,
+       (SELECT count(*) FROM doomed_d)  AS doomed_debtors,
+       (SELECT count(*) FROM doomed_pf) AS doomed_portfolios
+FROM fks f
+ORDER BY 1;
 
--- ── AFTER: verify, then hard-reload the app ──────────────────────────────────────────────
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- STEP B — the delete. Uncomment the whole block, paste it alone, run once.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- DO $$
+-- DECLARE
+--   r        RECORD;
+--   n        BIGINT;
+--   affected TEXT := '';
+-- BEGIN
+--   -- Materialised once: the sets must not shift as rows are deleted underneath them.
+--   CREATE TEMP TABLE _doomed_pf ON COMMIT DROP AS
+--     SELECT id FROM portfolios WHERE closed_at IS NOT NULL;
+--   CREATE TEMP TABLE _doomed_d ON COMMIT DROP AS
+--     SELECT id FROM debtors WHERE portfolio_id IN (SELECT id FROM _doomed_pf);
+--
+--   -- 1. Every child of portfolios EXCEPT debtors: null the reference if it is optional,
+--   --    delete the row if the FK is mandatory. Runs first so nothing points at a portfolio
+--   --    that is about to disappear.
+--   FOR r IN
+--     SELECT con.conrelid::regclass::text AS tbl, att.attname AS col, att.attnotnull AS req
+--     FROM pg_constraint con
+--     JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+--     WHERE con.contype = 'f' AND con.confrelid = 'public.portfolios'::regclass
+--       AND NOT (con.conrelid = 'public.debtors'::regclass AND att.attname = 'portfolio_id')
+--   LOOP
+--     IF r.req THEN
+--       EXECUTE format('DELETE FROM %I WHERE %I IN (SELECT id FROM _doomed_pf)', r.tbl, r.col);
+--     ELSE
+--       EXECUTE format('UPDATE %I SET %I = NULL WHERE %I IN (SELECT id FROM _doomed_pf)',
+--                      r.tbl, r.col, r.col);
+--     END IF;
+--     GET DIAGNOSTICS n = ROW_COUNT;
+--     IF n > 0 THEN affected := affected || format('%s.%s: %s; ', r.tbl, r.col, n); END IF;
+--   END LOOP;
+--
+--   -- 2. Every child of debtors, discovered rather than listed — this is where the
+--   --    hand-written version missed escalations, reminders and ptp_escalations.
+--   FOR r IN
+--     SELECT con.conrelid::regclass::text AS tbl, att.attname AS col
+--     FROM pg_constraint con
+--     JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+--     WHERE con.contype = 'f' AND con.confrelid = 'public.debtors'::regclass
+--   LOOP
+--     EXECUTE format('DELETE FROM %I WHERE %I IN (SELECT id FROM _doomed_d)', r.tbl, r.col);
+--     GET DIAGNOSTICS n = ROW_COUNT;
+--     IF n > 0 THEN affected := affected || format('%s.%s: %s; ', r.tbl, r.col, n); END IF;
+--   END LOOP;
+--
+--   -- 3. The debtors, then the portfolios.
+--   DELETE FROM debtors WHERE id IN (SELECT id FROM _doomed_d);
+--   GET DIAGNOSTICS n = ROW_COUNT;
+--   affected := affected || format('debtors: %s; ', n);
+--
+--   DELETE FROM portfolios WHERE id IN (SELECT id FROM _doomed_pf);
+--   GET DIAGNOSTICS n = ROW_COUNT;
+--   affected := affected || format('portfolios: %s', n);
+--
+--   RAISE NOTICE 'purged -> %', affected;
+-- END $$;
+
+-- ── AFTER: verify, then hard-reload every open tab ───────────────────────────────────────
 -- SELECT
 --   (SELECT count(*) FROM portfolios WHERE closed_at IS NOT NULL) AS closed_remaining,
 --   (SELECT count(*) FROM portfolios) AS portfolios,
 --   (SELECT count(*) FROM debtors)    AS debtors,
 --   (SELECT count(*) FROM payments)   AS payments;
 --
--- Every client caches debtors in localStorage (recoveryai_portfolios_cache), so the app keeps
--- showing deleted accounts until each open tab hard-reloads.
+-- closed_remaining must be 0. Clients cache debtors in localStorage
+-- (recoveryai_portfolios_cache), so the app keeps showing deleted accounts until each open
+-- tab reloads.
