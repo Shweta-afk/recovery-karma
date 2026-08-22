@@ -131,16 +131,15 @@ function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
         </Select>
       </div>
       <div className="rounded-lg border border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-        Read-only mirror of {agents.find((a) => a.id === selected)?.name ?? "this agent"}&apos;s
-        Call Queue — the same screen they work, with every filter, column and panel they have.
-        Dialling is disabled here: a call placed from this view would be logged as that agent&apos;s
-        work. Use My Queue to dial.
+        {agents.find((a) => a.id === selected)?.name ?? "This agent"}&apos;s Call Queue — the same
+        screen they work, with every filter, column and panel they have. You can call any account
+        directly from here; the call, its disposition and any PTP are logged as{" "}
+        <strong>your</strong> work, not theirs.
       </div>
       {selected && (
         <CallQueueContent
           agentId={selected}
           agentName={agents.find((a) => a.id === selected)?.name}
-          interactive={false}
         />
       )}
     </div>

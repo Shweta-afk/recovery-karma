@@ -159,29 +159,39 @@ function CallQueuePage() {
 /**
  * The whole Call Queue screen, reused read-only by the manager's Agent Live View.
  *
- * `agentId`/`agentName` default to the signed-in user, so the agent's own route is unchanged.
- * Passing another agent's id renders THEIR queue — every filter, column, pill and panel the
- * agent sees, rather than the cut-down copy the manager used to get.
+ * Two identities, deliberately separate — conflating them is what made the manager's view
+ * unsafe to dial from in the first place:
  *
- * `interactive={false}` makes it observation-only: every path that would place a call is
- * refused. That is not cosmetic. Dispositions are attributed by agentId (saveDisposition
- * resolves it to an agents row), so a manager dialling from inside a view parameterised with
- * the agent's id would silently log the call, and any PTP or payment on it, as work done by
- * that agent. Read-only until that attribution is handled properly.
+ *   agentId / agentName        WHOSE BOOK IS ON SCREEN. Defaults to the signed-in user, so
+ *                              the agent's own route is unchanged. The manager's Agent Live
+ *                              View passes the selected agent, rendering their real queue —
+ *                              every filter, column, pill and panel.
+ *
+ *   actingAgentId / -Name      WHO IS PLACING THE CALL. Always the signed-in user, never the
+ *                              prop. Dispositions, reminders and escalations are written
+ *                              against this, so a manager dialling from an agent's queue is
+ *                              recorded as the manager's own work rather than silently
+ *                              credited to the agent whose screen they happen to be reading.
+ *
+ * Side effects that write on the agent's behalf (PTP miss escalation, the due-reminder
+ * poller) run only when those two identities are the same — otherwise merely opening this
+ * tab would fire them under the viewed agent's name.
  */
 export function CallQueueContent({
   agentId: agentIdProp,
   agentName: agentNameProp,
-  interactive = true,
 }: {
   agentId?: string;
   agentName?: string;
-  interactive?: boolean;
 } = {}) {
   const { user } = useAuth();
   // Operational identity is the account email (matches the roster + assignments)
-  const agentId = agentIdProp ?? user?.email ?? user?.id ?? "AGT-ANON";
-  const agentName = agentNameProp ?? user?.name ?? "Agent";
+  const actingAgentId = user?.email ?? user?.id ?? "AGT-ANON";
+  const actingAgentName = user?.name ?? "Agent";
+  const agentId = agentIdProp ?? actingAgentId;
+  const agentName = agentNameProp ?? actingAgentName;
+  /** True on an agent's own queue; false when a manager is reading someone else's. */
+  const isSelf = agentId === actingAgentId;
 
   // Agent availability status
   const [status, setStatus] = useState<AgentStatus>("available");
@@ -336,12 +346,6 @@ export function CallQueueContent({
     debtor: QueueDebtor,
     opts?: { instant?: boolean; agentPhone?: string; callerId?: string },
   ) => {
-    // Single choke point for every dial path on this screen (row buttons, transfers,
-    // manual dial, screen-pop). Refusing here covers all of them at once.
-    if (!interactive) {
-      toast.error("Read-only view — calls can only be placed from your own queue");
-      return;
-    }
     singleCall.reset(); // clear any prior in-flight sim/timer
     setActiveCall({
       debtor,
@@ -481,8 +485,9 @@ export function CallQueueContent({
         debtorId: debtor.id,
         debtorName: debtor.name,
         phone: debtor.phone,
-        agentId,
-        agentName,
+        // The caller, not the queue's owner — see the identity note on CallQueueContent.
+        agentId: actingAgentId,
+        agentName: actingAgentName,
         portfolioName: debtor.portfolio,
         outcome: disposition.outcome as StoredOutcome,
         reason: disposition.reason || undefined,
@@ -518,7 +523,8 @@ export function CallQueueContent({
         if (dueDate) {
           const reminder: Reminder = {
             id: crypto.randomUUID(),
-            agentId,
+            // Follow-ups belong to whoever took the call.
+            agentId: actingAgentId,
             debtorId: debtor.id,
             debtorName: debtor.name,
             phone: debtor.phone,
@@ -551,8 +557,11 @@ export function CallQueueContent({
     setActiveCall(null);
   };
 
-  // When a PTP / callback date has arrived, remind the agent (fires once per due reminder)
+  // When a PTP / callback date has arrived, remind the agent (fires once per due reminder).
+  // Self only: markReminderNotified() burns the reminder, so a manager glancing at this agent's
+  // queue would consume their due-reminder popups and the agent would never see them.
   useEffect(() => {
+    if (!isSelf) return;
     refreshReminders().then(() => {
       const todayISO = new Date().toISOString().slice(0, 10);
       const due = getDueReminders(agentId, todayISO);
@@ -565,15 +574,19 @@ export function CallQueueContent({
         markReminderNotified(r.id).catch(() => {});
       });
     });
-  }, [agentId]);
+  }, [agentId, isSelf]);
 
   // Missed-PTP escalation, step 1 of the chain (agent -> manager) — see
   // ptp-escalation-store.ts. Runs opportunistically whenever this page loads or the agent logs
   // another call (ptpFollowups recomputes on loggedOutcomes); ptp_escalations dedupes so this
   // never re-notifies the same overdue PTP twice.
   useEffect(() => {
+    // Self only: this WRITES escalations attributed to the agent. Left ungated, a manager
+    // merely opening this agent's queue in Agent Live View would raise escalations in that
+    // agent's name without anyone acting.
+    if (!isSelf) return;
     escalateMissedPtpsToManager(agentId, ptpFollowups).catch(() => {});
-  }, [agentId, ptpFollowups]);
+  }, [agentId, ptpFollowups, isSelf]);
 
   const filterCounts = useMemo(
     () => ({
@@ -1059,10 +1072,6 @@ export function CallQueueContent({
                   );
                   return;
                 }
-                if (!interactive) {
-                  toast.error("Read-only view — calls can only be placed from your own queue");
-                  return;
-                }
                 setActiveDialMode("predictive");
                 try {
                   await dialer.start({
@@ -1145,10 +1154,6 @@ export function CallQueueContent({
                   // — planProductiveBatch works through these after the primary number.
                   altPhones: d.altPhones,
                 }));
-                if (!interactive) {
-                  toast.error("Read-only view — calls can only be placed from your own queue");
-                  return;
-                }
                 setActiveDialMode("productive");
                 setProductiveTargets(orderedTargets);
                 try {
@@ -1800,8 +1805,8 @@ export function CallQueueContent({
         <EscalationModal
           debtor={escalationCall.debtor}
           prefillNotes={escalationCall.notes}
-          agentId={agentId}
-          agentName={agentName}
+          agentId={actingAgentId}
+          agentName={actingAgentName}
           onClose={() => setEscalationCall(null)}
         />
       )}
