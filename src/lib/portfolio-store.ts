@@ -2,6 +2,7 @@ import type { DPDBucket, Debtor } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
 import { refreshRetentionRequests } from "./retention-store";
 import { fetchAllRows } from "./fetch-all-rows";
+import { fetchDebtorsShared } from "./debtors-fetch";
 import {
   STD_FIELDS,
   slotsFromDebtor,
@@ -164,14 +165,7 @@ export async function refreshPortfolios(): Promise<void> {
     supabase
       .from("portfolios")
       .select("id, name, lender_name, product_type, uploaded_at, settings, team_id, manager_id"),
-    fetchAllRows((from, to) =>
-      supabase
-        .from("debtors")
-        .select(
-          "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id, status",
-        )
-        .range(from, to),
-    ),
+    fetchDebtorsShared(),
     supabase.from("agents").select("id, email"),
   ]);
   if (pErr || dErr || !portfolioRows || !debtorRows || !agentRows) return;
@@ -272,32 +266,45 @@ export async function refreshPortfolios(): Promise<void> {
     agentTargets: targetsByPortfolio.get(p.id) ?? {},
     replacesPortfolioId: closeInfoByPortfolio.get(p.id)?.replacesPortfolioId,
     closedAt: closeInfoByPortfolio.get(p.id)?.closedAt,
-    rows: debtorRows
-      // Soft-removed debtors (see removeDebtor()) are excluded from every normal view — call
-      // queue, portfolio counts, assignment/transfer — without touching their call_logs/
-      // payments/etc. history. Recoverable via getRemovedDebtors()/restoreDebtor().
-      .filter((d) => d.portfolio_id === p.id && d.status !== "removed")
-      .map((d) => {
-        const retainedFromPortfolioId = retainedFromById.get(d.id);
-        return {
-          id: d.id,
-          loanReference: d.loan_reference ?? d.id,
-          name: d.name,
-          phone: d.phone_primary,
-          loanAmount: Number(d.loan_amount ?? 0),
-          dpd: d.dpd ?? 0,
-          bucket: dpd2bucket(d.dpd ?? 0),
-          email: d.email ?? "",
-          assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
-          status: d.status ?? undefined,
-          extra: (d.extra as Record<string, string>) ?? {},
-          altPhones: altPhonesById.get(d.id) ?? [],
-          retained: !!retainedFromPortfolioId,
-          retainedFrom: retainedFromPortfolioId
-            ? portfolioNameById.get(retainedFromPortfolioId)
-            : undefined,
-        };
-      }),
+    // A closed cycle's debtor rows are carried as [] rather than materialised. Every consumer
+    // of this cache already skips closed portfolios — buildAssignedQueue `continue`s on
+    // closedAt, and the team picker, Portfolio Overview and the upload page all filter
+    // `!p.closedAt` — so nothing renders them, yet they dominated the cache: five of the six
+    // 1,064-row portfolios live on 2026-08-22 were closed cycles of the same file, and with
+    // ~150 unmapped `extra` columns per debtor they pushed recoveryai_portfolios_cache to
+    // 7.5MB and over the localStorage quota on every refresh.
+    //
+    // The portfolio itself (id, name, closedAt, settings) is kept, so reopenPortfolio() and
+    // the retention/"continues that cycle" pickers still list it — reopening clears closed_at
+    // and the next refresh materialises its rows again.
+    rows: closeInfoByPortfolio.get(p.id)?.closedAt
+      ? []
+      : debtorRows
+          // Soft-removed debtors (see removeDebtor()) are excluded from every normal view — call
+          // queue, portfolio counts, assignment/transfer — without touching their call_logs/
+          // payments/etc. history. Recoverable via getRemovedDebtors()/restoreDebtor().
+          .filter((d) => d.portfolio_id === p.id && d.status !== "removed")
+          .map((d) => {
+            const retainedFromPortfolioId = retainedFromById.get(d.id);
+            return {
+              id: d.id,
+              loanReference: d.loan_reference ?? d.id,
+              name: d.name,
+              phone: d.phone_primary,
+              loanAmount: Number(d.loan_amount ?? 0),
+              dpd: d.dpd ?? 0,
+              bucket: dpd2bucket(d.dpd ?? 0),
+              email: d.email ?? "",
+              assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
+              status: d.status ?? undefined,
+              extra: (d.extra as Record<string, string>) ?? {},
+              altPhones: altPhonesById.get(d.id) ?? [],
+              retained: !!retainedFromPortfolioId,
+              retainedFrom: retainedFromPortfolioId
+                ? portfolioNameById.get(retainedFromPortfolioId)
+                : undefined,
+            };
+          }),
   }));
 
   try {

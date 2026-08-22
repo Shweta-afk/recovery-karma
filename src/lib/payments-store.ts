@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
+import { fetchDebtorsShared } from "./debtors-fetch";
 
 export type PaymentMethod = "upi" | "card" | "netbanking" | "cash" | "cheque" | "link";
 export type PaymentStatus = "pending" | "completed" | "failed" | "refunded";
@@ -115,12 +116,7 @@ export async function refreshPayments(): Promise<void> {
         .order("created_at", { ascending: false })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
-      supabase
-        .from("debtors")
-        .select("id, name, phone_primary, portfolio_id, dpd, loan_reference")
-        .range(from, to),
-    ),
+    fetchDebtorsShared(),
     supabase.from("portfolios").select("id, name, lender_name, product_type"),
     supabase.from("agents").select("id, name"),
   ]);

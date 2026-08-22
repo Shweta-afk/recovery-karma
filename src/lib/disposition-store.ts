@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
+import { fetchDebtorsShared } from "./debtors-fetch";
 // Type-only (erased) — the valid call_logs.outcome union, shared with fetch-debtors.
 import type { CallLogOutcome } from "./fetch-debtors";
 
@@ -118,12 +119,7 @@ export async function refreshDispositions(): Promise<void> {
         .order("created_at", { ascending: false })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
-      supabase
-        .from("debtors")
-        .select("id, name, phone_primary, portfolio_id, loan_amount, dpd")
-        .range(from, to),
-    ),
+    fetchDebtorsShared(),
     supabase.from("portfolios").select("id, name"),
     supabase.from("agents").select("id, email, name"),
     supabase.from("team_agents").select("team_id, agent_id"),
@@ -197,7 +193,8 @@ export async function refreshDispositions(): Promise<void> {
   };
 
   const disps: DispositionRecord[] = (logs as unknown as CallLogRow[]).map((l) => {
-    const debtor = debtorById.get(l.debtor_id);
+    // debtor_id is null for an ad-hoc Manual Dial call, which has no debtor row.
+    const debtor = l.debtor_id ? debtorById.get(l.debtor_id) : undefined;
     const portfolio = debtor?.portfolio_id ? portfolioById.get(debtor.portfolio_id) : undefined;
     const agent = agentById.get(l.agent_id);
     const amount = l.promise_amount != null ? Number(l.promise_amount) : undefined;
