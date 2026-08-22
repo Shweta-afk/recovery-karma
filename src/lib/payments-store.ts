@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { fetchAllRows } from "./fetch-all-rows";
 
 export type PaymentMethod = "upi" | "card" | "netbanking" | "cash" | "cheque" | "link";
 export type PaymentStatus = "pending" | "completed" | "failed" | "refunded";
@@ -51,7 +52,13 @@ export interface SettlementRecord {
 const PAY_KEY = "recoveryai_payments_cache";
 const STL_KEY = "recoveryai_settlements_cache";
 
+// Same quota fallback as portfolio-store/disposition-store: set only when the cache write
+// fails, so this tab serves its own freshest fetch rather than a stale snapshot.
+let paymentsFallback: PaymentRecord[] | null = null;
+let settlementsFallback: SettlementRecord[] | null = null;
+
 export function getPayments(): PaymentRecord[] {
+  if (paymentsFallback) return paymentsFallback;
   try {
     const raw = localStorage.getItem(PAY_KEY);
     return raw ? (JSON.parse(raw) as PaymentRecord[]) : [];
@@ -61,6 +68,7 @@ export function getPayments(): PaymentRecord[] {
 }
 
 export function getSettlements(): SettlementRecord[] {
+  if (settlementsFallback) return settlementsFallback;
   try {
     const raw = localStorage.getItem(STL_KEY);
     return raw ? (JSON.parse(raw) as SettlementRecord[]) : [];
@@ -69,12 +77,38 @@ export function getSettlements(): SettlementRecord[] {
   }
 }
 
+/** Every completed payment against a portfolio's debtors, whichever way it arrived: an agent
+ * logging a "paid" disposition (saveDisposition writes the payments row too) or a manager's
+ * bulk paid-file upload (applyBulkPaidFile — agent_id null, source 'bank_reported'). The
+ * payments table is the whole financial record, so summing it here never double-counts a
+ * call-logged payment. Feeds toPortfolio()'s Recovered KPI, which used to read call
+ * dispositions alone and therefore could never reflect a bank-reported payment at all. */
+export function getPortfolioRecovered(portfolioId: string): number {
+  return getPayments()
+    .filter((p) => p.portfolioId === portfolioId && p.status === "completed")
+    .reduce((s, p) => s + p.amount, 0);
+}
+
 /** Pulls the `payments` table (joined against debtors/portfolios/agents for display fields)
  * and refreshes the local cache. Mirrors disposition-store.refreshDispositions(). */
 export async function refreshPayments(): Promise<void> {
+  // payments and debtors both outgrow PostgREST's 1000-row cap — an unpaginated `debtors`
+  // read left every payment past row 1000 with no debtor, and therefore no portfolio, name or
+  // phone to display or filter on.
   const [payments, debtors, portfolios, agents] = await Promise.all([
-    supabase.from("payments").select("*").order("created_at", { ascending: false }),
-    supabase.from("debtors").select("id, name, phone_primary, portfolio_id, dpd, loan_reference"),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("payments")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("debtors")
+        .select("id, name, phone_primary, portfolio_id, dpd, loan_reference")
+        .range(from, to),
+    ),
     supabase.from("portfolios").select("id, name, lender_name, product_type"),
     supabase.from("agents").select("id, name"),
   ]);
@@ -146,7 +180,16 @@ export async function refreshPayments(): Promise<void> {
     };
   });
 
-  localStorage.setItem(PAY_KEY, JSON.stringify(recs));
+  try {
+    localStorage.setItem(PAY_KEY, JSON.stringify(recs));
+    paymentsFallback = null;
+  } catch (e) {
+    console.warn(
+      "[payments] localStorage quota exceeded — serving payments from memory only for this tab",
+      e,
+    );
+    paymentsFallback = recs;
+  }
   window.dispatchEvent(new CustomEvent("payments-updated"));
 }
 
@@ -154,7 +197,9 @@ export async function refreshPayments(): Promise<void> {
 export async function refreshSettlements(): Promise<void> {
   const [settlements, debtors, agents] = await Promise.all([
     supabase.from("settlement_requests").select("*").order("created_at", { ascending: false }),
-    supabase.from("debtors").select("id, name, loan_reference"),
+    fetchAllRows((from, to) =>
+      supabase.from("debtors").select("id, name, loan_reference").range(from, to),
+    ),
     supabase.from("agents").select("id, name"),
   ]);
 
@@ -212,6 +257,15 @@ export async function refreshSettlements(): Promise<void> {
     };
   });
 
-  localStorage.setItem(STL_KEY, JSON.stringify(recs));
+  try {
+    localStorage.setItem(STL_KEY, JSON.stringify(recs));
+    settlementsFallback = null;
+  } catch (e) {
+    console.warn(
+      "[payments] localStorage quota exceeded — serving settlements from memory only for this tab",
+      e,
+    );
+    settlementsFallback = recs;
+  }
   window.dispatchEvent(new CustomEvent("settlements-updated"));
 }

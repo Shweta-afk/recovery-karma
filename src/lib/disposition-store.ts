@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { fetchAllRows } from "./fetch-all-rows";
 // Type-only (erased) — the valid call_logs.outcome union, shared with fetch-debtors.
 import type { CallLogOutcome } from "./fetch-debtors";
 
@@ -80,7 +81,14 @@ export function isUuid(v: string | undefined | null): boolean {
   return typeof v === "string" && UUID_RE.test(v);
 }
 
+// Set only when the cache write below fails (quota exceeded — see refreshDispositions()) so
+// this tab keeps serving its own freshest fetch instead of silently falling back to whatever
+// smaller/stale snapshot localStorage still holds. Mirrors portfolio-store's fallback, and is
+// cleared again the next time a write succeeds, so the normal path is unaffected.
+let inMemoryFallback: DispositionRecord[] | null = null;
+
 export function getDispositions(): DispositionRecord[] {
+  if (inMemoryFallback) return inMemoryFallback;
   try {
     const raw = localStorage.getItem(KEY);
     return raw ? (JSON.parse(raw) as DispositionRecord[]) : [];
@@ -94,16 +102,28 @@ export function getDispositions(): DispositionRecord[] {
  * derived from team membership at read time — never stored — so it can't go stale like the
  * old localStorage version's manually-set `teamId` field did. */
 export async function refreshDispositions(): Promise<void> {
+  // call_logs and debtors both cross PostgREST's 1000-row cap on any real client, so both go
+  // through fetchAllRows(). Truncating `debtors` was the worse of the two: every call log
+  // whose debtor fell past row 1000 resolved to `undefined` here, losing its portfolioId —
+  // which silently zeroed out the per-portfolio KPI cards that group by it.
   const [callLogs, debtors, portfolios, agents, teamAgents] = await Promise.all([
-    supabase
-      .from("call_logs")
-      // `*` rather than an explicit column list: naming contact_name/contact_phone here
-      // makes the whole query 400 on any database where that migration has not been applied
-      // yet, which silently empties every history view. Selecting all columns keeps reads
-      // working across schema drift — the ad-hoc fields are simply absent until then.
-      .select("*")
-      .order("created_at", { ascending: false }),
-    supabase.from("debtors").select("id, name, phone_primary, portfolio_id, loan_amount, dpd"),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("call_logs")
+        // `*` rather than an explicit column list: naming contact_name/contact_phone here
+        // makes the whole query 400 on any database where that migration has not been applied
+        // yet, which silently empties every history view. Selecting all columns keeps reads
+        // working across schema drift — the ad-hoc fields are simply absent until then.
+        .select("*")
+        .order("created_at", { ascending: false })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("debtors")
+        .select("id, name, phone_primary, portfolio_id, loan_amount, dpd")
+        .range(from, to),
+    ),
     supabase.from("portfolios").select("id, name"),
     supabase.from("agents").select("id, email, name"),
     supabase.from("team_agents").select("team_id, agent_id"),
@@ -222,7 +242,20 @@ export async function refreshDispositions(): Promise<void> {
     };
   });
 
-  localStorage.setItem(KEY, JSON.stringify(disps));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(disps));
+    inMemoryFallback = null;
+  } catch (e) {
+    // Unguarded, this threw straight out of refreshDispositions() once the log history got
+    // big enough — before the event below ever fired — so every listening view stayed pinned
+    // to a stale cache with nothing logged. Serve from memory for this tab instead; only
+    // cross-tab live sync pauses.
+    console.warn(
+      "[dispositions] localStorage quota exceeded — serving dispositions from memory only for this tab",
+      e,
+    );
+    inMemoryFallback = disps;
+  }
   window.dispatchEvent(new CustomEvent("dispositions-updated"));
 }
 

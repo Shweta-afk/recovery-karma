@@ -1,6 +1,7 @@
 import type { DPDBucket, Debtor } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
 import { refreshRetentionRequests } from "./retention-store";
+import { fetchAllRows } from "./fetch-all-rows";
 import {
   STD_FIELDS,
   slotsFromDebtor,
@@ -116,32 +117,6 @@ export interface UploadedPortfolio {
 
 const KEY = "recoveryai_portfolios_cache";
 const CHUNK_SIZE = 500; // stays comfortably under Supabase's request-size limits per insert
-
-// PostgREST caps rows returned per request at db.max_rows (this project's default: 1000) —
-// silently, with no error and no truncation flag in the response. A 1064-row portfolio upload
-// inserts fine (writes aren't capped), but the very next refreshPortfolios() read-back — or
-// any other unpaginated debtors select — only sees the first 1000. fetchAllRows() pages past
-// that ceiling for every debtors query that isn't provably bounded under it.
-const MAX_PAGE_ROWS = 1000;
-
-async function fetchAllRows<T>(
-  page: (
-    from: number,
-    to: number,
-  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-): Promise<{ data: T[]; error: { message: string } | null }> {
-  const all: T[] = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await page(from, from + MAX_PAGE_ROWS - 1);
-    if (error) return { data: all, error };
-    if (!data || data.length === 0) break;
-    all.push(...data);
-    if (data.length < MAX_PAGE_ROWS) break;
-    from += MAX_PAGE_ROWS;
-  }
-  return { data: all, error: null };
-}
 
 // Set only when a write to localStorage fails (quota exceeded — see refreshPortfolios()) so
 // this tab keeps serving its own freshest fetch instead of crashing or falling back to

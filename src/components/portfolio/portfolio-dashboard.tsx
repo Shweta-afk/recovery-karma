@@ -64,12 +64,8 @@ import { cn } from "@/lib/utils";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { OUTCOME_META } from "@/lib/call-queue/types";
 import { getAgentById, type AgentRef } from "@/lib/team-store";
-import {
-  getAgentDispositions,
-  getDispositionsByPortfolio,
-  calcStats,
-  type CallOutcome,
-} from "@/lib/disposition-store";
+import { getDispositionsByPortfolio, calcStats, type CallOutcome } from "@/lib/disposition-store";
+import { getPortfolioRecovered } from "@/lib/payments-store";
 
 export interface Portfolio {
   id: string;
@@ -141,10 +137,11 @@ export function toPortfolio(u: UploadedPortfolio): Portfolio {
     (email) => getAgentById(email)?.name ?? email,
   );
 
-  const disps = Array.from(debtorIdsByAgent.entries()).flatMap(([agentId, debtorIds]) =>
-    getAgentDispositions(agentId).filter((d) => debtorIds.includes(d.debtorId)),
-  );
-  const stats = calcStats(disps);
+  // Group by portfolio rather than walking each assigned agent's dispositions: the per-agent
+  // walk silently dropped every call made on a debtor who is currently unassigned (and every
+  // call by an agent since removed from the portfolio), so PTPs and contact rate under-read
+  // whenever assignment had moved on since the calls were made.
+  const stats = calcStats(getDispositionsByPortfolio(u.id));
 
   const status: Portfolio["status"] =
     assignedAccounts === 0 ? "stale" : assignedAccounts >= u.rows.length ? "completed" : "active";
@@ -158,7 +155,10 @@ export function toPortfolio(u: UploadedPortfolio): Portfolio {
     assignedAccounts,
     buckets,
     totalOutstanding,
-    recovered: stats.paidAmount,
+    // From the payments table, not stats.paidAmount — see getPortfolioRecovered. A call-logged
+    // "paid" writes a payments row too, so this covers agent collections *and* bank-reported
+    // paid-file uploads without double-counting either.
+    recovered: getPortfolioRecovered(u.id),
     ptpCount: stats.ptps,
     contactRate: stats.contactRate,
     agents,
@@ -208,6 +208,29 @@ const UNASSIGNED = "__unassigned__";
 
 /** Per-account transfer control — moves one debtor to a different agent (or unassigns them)
  * without re-splitting the rest of the portfolio, unlike the bulk Reassign dialog. */
+/** debtors.status in the Accounts table. Without this column a debtor marked paid — by a
+ * disposition or by the bank's paid-file upload (applyBulkPaidFile) — looked identical to an
+ * active one, which is most of why a paid-file upload appeared to do nothing at all. */
+function DebtorStatusBadge({ status }: { status?: string }) {
+  const meta: Record<string, { label: string; cls: string }> = {
+    paid: { label: "Paid", cls: "bg-success/10 text-success border-success/20" },
+    settled: { label: "Settled", cls: "bg-success/10 text-success border-success/20" },
+    disputed: { label: "Disputed", cls: "bg-orange-500/10 text-orange-600 border-orange-400/20" },
+  };
+  const m = meta[status ?? ""];
+  if (!m) return <span className="text-[10px] text-muted-foreground">Active</span>;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+        m.cls,
+      )}
+    >
+      {m.label}
+    </span>
+  );
+}
+
 function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: AgentRef[] }) {
   const [transferringId, setTransferringId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -317,6 +340,7 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                 </th>
                 <th className="py-2 text-left font-medium text-muted-foreground">Debtor</th>
                 <th className="py-2 text-right font-medium text-muted-foreground">Outstanding</th>
+                <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Status</th>
                 <th className="py-2 pr-3 text-left font-medium text-muted-foreground">
                   Assigned to
                 </th>
@@ -337,6 +361,9 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                     <div className="text-[10px] text-muted-foreground">{r.loanReference}</div>
                   </td>
                   <td className="py-2 text-right tabular-nums">{formatINR(r.loanAmount)}</td>
+                  <td className="py-2 pl-3">
+                    <DebtorStatusBadge status={r.status} />
+                  </td>
                   <td className="py-2 pr-3">
                     <Select
                       value={r.assignedAgentId ?? UNASSIGNED}

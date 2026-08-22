@@ -31,6 +31,8 @@ import { useRoster, useTeams, getTeamsByManager } from "@/lib/team-store";
 import { saveNotification } from "@/lib/notification-store";
 import { useAuth } from "@/lib/auth";
 import { useStorageSync } from "@/lib/storage-sync";
+import { refreshDispositions } from "@/lib/disposition-store";
+import { refreshPayments } from "@/lib/payments-store";
 // Same full-screen portfolio dashboard the manager portal uses — Portfolio Assignment is
 // read-only here (no per-agent edit/reassign in admin's remit), so onEdit/onReassign/
 // onUploadPaid are simply omitted, which PortfolioDetail renders as a view-only dashboard.
@@ -69,8 +71,19 @@ function PortfolioAssignmentPage() {
   useEffect(() => {
     reload();
     window.addEventListener("portfolios-updated", reload);
+    // The read-only dashboard this page opens shows the same KPI cards as the manager's, and
+    // those read the dispositions + payments caches. Without refreshing them here the admin
+    // saw whatever happened to be cached — usually nothing at all, so every KPI read zero.
+    window.addEventListener("dispositions-updated", reload);
+    window.addEventListener("payments-updated", reload);
     refreshPortfolios();
-    return () => window.removeEventListener("portfolios-updated", reload);
+    refreshDispositions();
+    refreshPayments();
+    return () => {
+      window.removeEventListener("portfolios-updated", reload);
+      window.removeEventListener("dispositions-updated", reload);
+      window.removeEventListener("payments-updated", reload);
+    };
   }, []);
   useStorageSync(reload);
 

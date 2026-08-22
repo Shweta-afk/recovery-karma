@@ -84,6 +84,7 @@ import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { useTeamAgents, type AgentRef } from "@/lib/team-store";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { refreshDispositions } from "@/lib/disposition-store";
+import { refreshPayments } from "@/lib/payments-store";
 import { useAuth } from "@/lib/auth";
 import { useStorageSync } from "@/lib/storage-sync";
 import { AssignAgentsStep } from "@/components/assign-agents-step";
@@ -1108,11 +1109,16 @@ function PortfolioOverviewPage() {
     reload();
     window.addEventListener("portfolios-updated", reload);
     window.addEventListener("dispositions-updated", reload);
+    // The Recovered KPI now reads the payments cache (toPortfolio → getPortfolioRecovered),
+    // so this page has to populate and listen to it like the other two.
+    window.addEventListener("payments-updated", reload);
     refreshPortfolios();
     refreshDispositions();
+    refreshPayments();
     return () => {
       window.removeEventListener("portfolios-updated", reload);
       window.removeEventListener("dispositions-updated", reload);
+      window.removeEventListener("payments-updated", reload);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [managerId, activeTeam?.id]);
