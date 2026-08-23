@@ -970,8 +970,31 @@ export async function assignDebtors(
   portfolioId: string,
   allocation: Record<string, string[]>,
 ): Promise<void> {
-  const { data: agentRows } = await supabase.from("agents").select("id, email");
+  const { data: agentRows, error: agentErr } = await supabase.from("agents").select("id, email");
+  // Swallowing this left idByEmail empty, which used to mean "resolve nobody" — see below.
+  if (agentErr) throw agentErr;
   const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
+
+  // Every agent in the allocation is resolved to a UUID BEFORE the reset below, and an
+  // unresolvable one aborts the whole call.
+  //
+  // This loop used to sit after the reset and read `if (!agentUuid) continue;` — silently. The
+  // reset is unconditional and portfolio-wide, so a roster lookup that came back short (RLS
+  // scoping, a stale `agents` read, an email that no longer matches) wiped every assignment in
+  // the portfolio and then declined to write the new ones. The manager's UI reported success;
+  // the agent's Call Queue went to zero. Nothing logged it.
+  //
+  // Failing here costs a rejected click. Failing after the reset costs the assignment.
+  const unresolved = Object.entries(allocation)
+    .filter(([, debtorIds]) => debtorIds.length > 0)
+    .map(([agentEmail]) => agentEmail)
+    .filter((agentEmail) => !idByEmail.has(agentEmail));
+  if (unresolved.length) {
+    throw new Error(
+      `Cannot assign: no agent account found for ${unresolved.join(", ")}. ` +
+        `Nothing was changed — check the agent still exists under Admin → Users.`,
+    );
+  }
 
   const { error: resetErr } = await supabase
     .from("debtors")
@@ -981,11 +1004,9 @@ export async function assignDebtors(
 
   for (const [agentEmail, debtorIds] of Object.entries(allocation)) {
     if (!debtorIds.length) continue;
-    const agentUuid = idByEmail.get(agentEmail);
-    if (!agentUuid) continue;
     const { error } = await supabase
       .from("debtors")
-      .update({ assigned_agent_id: agentUuid })
+      .update({ assigned_agent_id: idByEmail.get(agentEmail)! })
       .in("id", debtorIds);
     if (error) throw error;
   }

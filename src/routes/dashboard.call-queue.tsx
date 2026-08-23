@@ -55,6 +55,7 @@ import {
   DEFAULT_PORTFOLIO_SETTINGS,
   type CallMode,
 } from "@/lib/portfolio-store";
+import { formatISTDate } from "@/lib/agent-time-stats";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
 import type { DialTarget } from "@/lib/dialer/engine";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
@@ -725,7 +726,7 @@ export function CallQueueContent({
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">Call Queue</h1>
-            <p className="text-sm text-muted-foreground">Live queue · 30 Jun 2026</p>
+            <p className="text-sm text-muted-foreground">Live queue · {formatISTDate()}</p>
           </div>
 
           {/* Agent availability status widget */}

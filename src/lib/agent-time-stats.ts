@@ -94,9 +94,7 @@ export function getAgentTimeStats(
   const loggedInSeconds =
     ringingSeconds + callingSeconds + dispositionSeconds + breakSeconds + idleSeconds;
 
-  const logoutTime = stillLoggedIn
-    ? null
-    : new Date(loginTime.getTime() + loggedInSeconds * 1000);
+  const logoutTime = stillLoggedIn ? null : new Date(loginTime.getTime() + loggedInSeconds * 1000);
 
   return {
     agentId,
@@ -124,6 +122,24 @@ export function formatDuration(totalSeconds: number): string {
 
 export function formatClockTime(d: Date): string {
   return d.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+}
+
+/**
+ * Today's date as the agent should see it, in IST.
+ *
+ * Both call-queue surfaces used to print the literal string "30 Jun 2026" — not a stale
+ * default that happened to be wrong, an actual hardcoded date sitting on screen above a live
+ * queue. IST rather than the browser's zone for the same reason the trend buckets are: the
+ * floor works Indian hours, and between 00:00 and 05:30 IST a UTC-derived date reads as
+ * yesterday.
+ */
+export function formatISTDate(d: Date = new Date()): string {
+  return d.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 /** A duration as a % of the agent's logged-in day — the fill for a progress-bar row. */

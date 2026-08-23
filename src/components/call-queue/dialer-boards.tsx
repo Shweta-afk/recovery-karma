@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useEffect } from "react";
 import { Phone, PhoneCall, BotMessageSquare, ChevronDown, ChevronUp, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatISTDate } from "@/lib/agent-time-stats";
 import type { CallMode } from "@/lib/portfolio-store";
 import type { DialTarget } from "@/lib/dialer/engine";
 import type { LiveCallEntry } from "@/lib/call-queue/types";
@@ -100,7 +101,7 @@ export function DialerModeBar({
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        <span className="text-[11px] text-muted-foreground">Today · 30 Jun 2026</span>
+        <span className="text-[11px] text-muted-foreground">Today · {formatISTDate()}</span>
       </div>
     </div>
   );
