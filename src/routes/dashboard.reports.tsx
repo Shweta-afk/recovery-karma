@@ -12,6 +12,7 @@ import {
   IndianRupee,
   Target,
   AlertTriangle,
+  CalendarRange,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -43,6 +44,9 @@ import {
   type PtpFollowup,
 } from "@/lib/disposition-store";
 import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
+import { MonthlyTrendPanel } from "@/components/reports/monthly-trend";
+import { compareMonths, dailySeries, deltaPct } from "@/lib/monthly-trend";
 import { formatINR, type DPDBucket } from "@/lib/mock-debtors";
 import { downloadCsv } from "@/lib/csv-export";
 import { OutcomeBreakdown, OUTCOME_LABELS } from "@/components/reports/outcome-breakdown";
@@ -116,7 +120,7 @@ const AXIS_TICK = { fontSize: 10, fill: "oklch(0.55 0.02 257)" };
 
 // ─── report definitions ─────────────────────────────────────────────────────────
 
-type ReportType = "weekly" | "portfolio" | "performance" | "outcomes" | "followups";
+type ReportType = "weekly" | "monthly" | "portfolio" | "performance" | "outcomes" | "followups";
 
 interface ReportDef {
   id: ReportType;
@@ -134,6 +138,13 @@ const REPORTS: ReportDef[] = [
     icon: BarChart2,
     description: "Calls, PTPs, and amount collected by day.",
     dateFiltered: true,
+  },
+  {
+    id: "monthly",
+    label: "Monthly Trend",
+    icon: CalendarRange,
+    description: "This month against last month, day by day.",
+    dateFiltered: false,
   },
   {
     id: "portfolio",
@@ -324,6 +335,29 @@ function followupsNarrative(followups: PtpFollowup[]): string {
 
 // ─── page ─────────────────────────────────────────────────────────────────────
 
+/** One line on how the month is pacing, in the same voice as the other narratives. Reads the
+ * like-for-like comparison, never this-month-to-date against a full last month. */
+function monthlyNarrative(disps: DispositionRecord[], payments: PaymentRecord[]): string {
+  const c = compareMonths(disps, payments);
+  const { window: w } = c;
+  if (c.current.calls === 0 && c.previousSamePeriod.calls === 0 && c.current.collected === 0) {
+    return `No activity logged in ${w.currentLabel} or the same stretch of ${w.previousLabel} yet.`;
+  }
+  const pct = deltaPct(c.current.collected, c.previousSamePeriod.collected);
+  const pace =
+    pct === null
+      ? c.current.collected > 0
+        ? `nothing was collected over the same days in ${w.previousLabel}, so there is no percentage to compare against`
+        : `nothing collected either month so far`
+      : `${pct >= 0 ? "up" : "down"} ${Math.abs(pct) < 10 ? Math.abs(pct).toFixed(1) : Math.round(Math.abs(pct))}% against the same days last month`;
+  return (
+    `Through ${w.asOfDay} ${w.currentLabel} you have logged ${c.current.calls.toLocaleString()} calls ` +
+    `and collected ${formatINR(c.current.collected)} — ${pace}. ` +
+    `${w.previousLabel} finished at ${formatINR(c.previousFull.collected)} across ` +
+    `${c.previousFull.calls.toLocaleString()} calls.`
+  );
+}
+
 function ReportsPage() {
   const { user } = useAuth();
   const agentId = user?.email ?? user?.id ?? "";
@@ -341,6 +375,21 @@ function ReportsPage() {
     window.addEventListener("dispositions-updated", load);
     refreshDispositions();
     return () => window.removeEventListener("dispositions-updated", load);
+  }, [agentId]);
+
+  // Collections come from the payments table, not from call_logs.paidAmount — see
+  // monthly-trend.ts. Scoped to this agent: a bank-reported paid-file row credits nobody, so it
+  // is deliberately absent here and shows up only in the team and company figures.
+  const [payments, setPayments] = useState<PaymentRecord[]>(() =>
+    agentId ? getPayments().filter((p) => p.agentId === agentId) : [],
+  );
+  useEffect(() => {
+    const load = () =>
+      setPayments(agentId ? getPayments().filter((p) => p.agentId === agentId) : []);
+    load();
+    window.addEventListener("payments-updated", load);
+    refreshPayments();
+    return () => window.removeEventListener("payments-updated", load);
   }, [agentId]);
 
   const [portfolioVersion, setPortfolioVersion] = useState(0);
@@ -379,6 +428,34 @@ function ReportsPage() {
         `collections-summary-${fromDate}-to-${toDate}.csv`,
         ["Date", "Calls", "PTPs", "Collected (₹)"],
         dailyRows.map((r) => [r.label, r.calls, r.ptps, r.collected]),
+      );
+    } else if (active === "monthly") {
+      const { window: w } = compareMonths(disps, payments);
+      const calls = dailySeries(disps, payments, "calls");
+      const ptps = dailySeries(disps, payments, "ptps");
+      const collected = dailySeries(disps, payments, "collected");
+      downloadCsv(
+        `monthly-trend-${w.currentLabel.replace(" ", "-")}.csv`,
+        [
+          "Day of month",
+          `Calls — ${w.currentLabel}`,
+          `Calls — ${w.previousLabel}`,
+          `PTPs — ${w.currentLabel}`,
+          `PTPs — ${w.previousLabel}`,
+          `Collected ₹ — ${w.currentLabel}`,
+          `Collected ₹ — ${w.previousLabel}`,
+        ],
+        calls.map((row, i) => [
+          row.day,
+          // null means the day hasn't happened yet this month — blank, not 0, so a
+          // spreadsheet average over the column isn't dragged down by days that don't exist.
+          row.current ?? "",
+          row.previous ?? "",
+          ptps[i].current ?? "",
+          ptps[i].previous ?? "",
+          collected[i].current ?? "",
+          collected[i].previous ?? "",
+        ]),
       );
     } else if (active === "portfolio") {
       downloadCsv(
@@ -559,6 +636,7 @@ function ReportsPage() {
               <Info className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
               <p className="text-sm text-foreground/90 leading-relaxed">
                 {active === "weekly" && weeklyNarrative(dailyRows, fromDate, toDate)}
+                {active === "monthly" && monthlyNarrative(disps, payments)}
                 {active === "portfolio" && portfolioNarrative(portfolioRows)}
                 {active === "performance" && performanceNarrative(dailyRows, fromDate, toDate)}
                 {active === "outcomes" && outcomeNarrative(rangeDisps)}
@@ -568,6 +646,13 @@ function ReportsPage() {
 
             {/* Chart + table */}
             {active === "weekly" && <WeeklyReport rows={dailyRows} />}
+            {active === "monthly" && (
+              <MonthlyTrendPanel
+                disps={disps}
+                payments={payments}
+                note="Collections counted here are the ones credited to you. A payment the bank reported in a paid-file upload has no collector, so it lands in your team's total but not in yours."
+              />
+            )}
             {active === "portfolio" && <PortfolioReport rows={portfolioRows} />}
             {active === "performance" && <PerformanceReport rows={dailyRows} />}
             {active === "outcomes" && <OutcomesReport disps={rangeDisps} />}

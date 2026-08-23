@@ -38,6 +38,8 @@ import {
   pctOfShift,
 } from "@/lib/agent-time-stats";
 import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
+import { MonthlyTrendCompact } from "@/components/reports/monthly-trend";
 import { useStorageSync } from "@/lib/storage-sync";
 
 export const Route = createFileRoute("/dashboard/")({
@@ -111,6 +113,39 @@ type PeriodStats = ReturnType<typeof extendedStats>;
 /** Real, Supabase-backed KPIs for the logged-in agent — replaces the old hardcoded
  * KPI_BY_PERIOD/PORTFOLIO_TOTAL_PRINCIPAL constants. Same cache-first + event-subscription
  * pattern as manager.index.tsx's useTeamStats. */
+/**
+ * This agent's whole call log and their credited payments — the two tables the month-over-month
+ * tile compares. Deliberately unfiltered by date: monthly-trend.ts owns the windowing, and
+ * pre-filtering here to the current month would leave last month's line with nothing to draw.
+ *
+ * Payments are matched on agentId, so a bank-reported paid-file row (which credits nobody)
+ * stays out of an agent's own figures — same rule as every other per-agent total in the app.
+ */
+function useAgentTrendData(agentId: string) {
+  const compute = () => ({
+    disps: agentId ? getAgentDispositions(agentId) : [],
+    payments: agentId ? getPayments().filter((p) => p.agentId === agentId) : [],
+  });
+
+  const [data, setData] = useState<{ disps: DispositionRecord[]; payments: PaymentRecord[] }>(
+    compute,
+  );
+  useEffect(() => {
+    const reload = () => setData(compute());
+    reload();
+    window.addEventListener("dispositions-updated", reload);
+    window.addEventListener("payments-updated", reload);
+    refreshDispositions();
+    refreshPayments();
+    return () => {
+      window.removeEventListener("dispositions-updated", reload);
+      window.removeEventListener("payments-updated", reload);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
+  return data;
+}
+
 function useAgentPeriodStats(agentId: string) {
   const compute = () => {
     const now = new Date();
@@ -236,6 +271,7 @@ export function AgentDashboardContent({
   const isSelf = !agentIdProp || agentIdProp === (user?.email ?? user?.id);
   const dailyCallTarget = useDailyCallTarget(isSelf ? user?.id : undefined);
   const { today, month, assignedPOS } = useAgentPeriodStats(agentId);
+  const trendData = useAgentTrendData(agentId);
 
   // Today's raw call logs, for the time-breakdown panel below — calling time is computed
   // straight from these (real); everything else getAgentTimeStats derives is a placeholder
@@ -679,91 +715,108 @@ export function AgentDashboardContent({
           </div>
         </section>
 
-        {/* ── My Activity Today: ringing / calling / disposition / idle, as progress bars ── */}
-        <div className="rounded-xl border border-border bg-card p-3 lg:w-1/2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              My Activity Today
-            </span>
-            <span
-              className="flex items-center gap-1 text-[10px] text-muted-foreground"
-              title="Calling time is real, from your logged calls. Ringing, idle, disposition and login/logout times are estimated — real presence tracking is coming soon."
-            >
-              <Info className="h-3 w-3" />
-              Estimated*
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-3 pb-2 border-b border-border">
-            <span className="flex items-center gap-1">
-              <LogIn className="h-3 w-3" />
-              {formatClockTime(myTimeStats.loginTime)}
-            </span>
-            <span className="text-foreground font-medium">
-              {formatDuration(myTimeStats.loggedInSeconds)} logged in
-            </span>
-            {myTimeStats.logoutTime ? (
+        {/* ── Activity + month-over-month trend, side by side on wide screens ── */}
+        <div className="flex flex-col gap-4 lg:flex-row">
+          {/* ── My Activity Today: ringing / calling / disposition / idle, as progress bars ── */}
+          <div className="rounded-xl border border-border bg-card p-3 lg:w-1/2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                My Activity Today
+              </span>
+              <span
+                className="flex items-center gap-1 text-[10px] text-muted-foreground"
+                title="Calling time is real, from your logged calls. Ringing, idle, disposition and login/logout times are estimated — real presence tracking is coming soon."
+              >
+                <Info className="h-3 w-3" />
+                Estimated*
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-3 pb-2 border-b border-border">
               <span className="flex items-center gap-1">
-                <LogOut className="h-3 w-3" />
-                {formatClockTime(myTimeStats.logoutTime)}
+                <LogIn className="h-3 w-3" />
+                {formatClockTime(myTimeStats.loginTime)}
               </span>
-            ) : (
-              <span className="flex items-center gap-1 text-success">
-                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-                Active
+              <span className="text-foreground font-medium">
+                {formatDuration(myTimeStats.loggedInSeconds)} logged in
               </span>
-            )}
-          </div>
-          <div className="space-y-2.5">
-            {[
-              {
-                label: "Ringing",
-                seconds: myTimeStats.ringingSeconds,
-                icon: PhoneIncoming,
-                cls: "bg-blue-500",
-              },
-              {
-                label: "Calling",
-                seconds: myTimeStats.callingSeconds,
-                icon: PhoneCall,
-                cls: "bg-primary",
-              },
-              {
-                label: "Disposition",
-                seconds: myTimeStats.dispositionSeconds,
-                icon: ClipboardList,
-                cls: "bg-amber-500",
-              },
-              {
-                label: "Break",
-                seconds: myTimeStats.breakSeconds,
-                icon: Coffee,
-                cls: "bg-orange-400",
-              },
-              {
-                label: "Idle",
-                seconds: myTimeStats.idleSeconds,
-                icon: Timer,
-                cls: "bg-muted-foreground/40",
-              },
-            ].map(({ label, seconds, icon: Icon, cls }) => {
-              const pct = pctOfShift(seconds, myTimeStats);
-              return (
-                <div key={label}>
-                  <div className="flex items-center justify-between text-[11px] mb-1">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <Icon className="h-3 w-3" />
-                      {label}
-                    </span>
-                    <span className="font-medium text-foreground tabular-nums">
-                      {formatDuration(seconds)}{" "}
-                      <span className="text-muted-foreground">({pct}%)</span>
-                    </span>
+              {myTimeStats.logoutTime ? (
+                <span className="flex items-center gap-1">
+                  <LogOut className="h-3 w-3" />
+                  {formatClockTime(myTimeStats.logoutTime)}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-success">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                  Active
+                </span>
+              )}
+            </div>
+            <div className="space-y-2.5">
+              {[
+                {
+                  label: "Ringing",
+                  seconds: myTimeStats.ringingSeconds,
+                  icon: PhoneIncoming,
+                  cls: "bg-blue-500",
+                },
+                {
+                  label: "Calling",
+                  seconds: myTimeStats.callingSeconds,
+                  icon: PhoneCall,
+                  cls: "bg-primary",
+                },
+                {
+                  label: "Disposition",
+                  seconds: myTimeStats.dispositionSeconds,
+                  icon: ClipboardList,
+                  cls: "bg-amber-500",
+                },
+                {
+                  label: "Break",
+                  seconds: myTimeStats.breakSeconds,
+                  icon: Coffee,
+                  cls: "bg-orange-400",
+                },
+                {
+                  label: "Idle",
+                  seconds: myTimeStats.idleSeconds,
+                  icon: Timer,
+                  cls: "bg-muted-foreground/40",
+                },
+              ].map(({ label, seconds, icon: Icon, cls }) => {
+                const pct = pctOfShift(seconds, myTimeStats);
+                return (
+                  <div key={label}>
+                    <div className="flex items-center justify-between text-[11px] mb-1">
+                      <span className="flex items-center gap-1.5 text-muted-foreground">
+                        <Icon className="h-3 w-3" />
+                        {label}
+                      </span>
+                      <span className="font-medium text-foreground tabular-nums">
+                        {formatDuration(seconds)}{" "}
+                        <span className="text-muted-foreground">({pct}%)</span>
+                      </span>
+                    </div>
+                    <Progress value={pct} className="h-1.5" indicatorClassName={cls} />
                   </div>
-                  <Progress value={pct} className="h-1.5" indicatorClassName={cls} />
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
+
+          <MonthlyTrendCompact
+            disps={trendData.disps}
+            payments={trendData.payments}
+            className="lg:w-1/2"
+            footer={
+              <Nav
+                to="/dashboard/reports"
+                className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                Full monthly trend in Reports →
+              </Nav>
+            }
+          />
         </div>
       </div>
     </InteractiveContext.Provider>

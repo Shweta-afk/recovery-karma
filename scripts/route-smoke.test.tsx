@@ -126,6 +126,15 @@ describe("routes render without composition errors", () => {
     expect(html.length).toBeGreaterThan(0);
   });
 
+  test("/dashboard mounts the agent home with its month-over-month tile", async () => {
+    const html = await renderRoute("/dashboard");
+    // Guard against going vacuous: the tile sits beside "My Activity Today" and is the only
+    // thing on this page that renders either string. Losing it to a layout edit should fail
+    // here rather than quietly leave a half-empty row on the agent's home screen.
+    expect(html).toContain("My Activity Today");
+    expect(html).toContain("This Month vs Last");
+  });
+
   test("/dashboard/payments renders", async () => {
     // renderRoute throws on any SSR render error; reaching the assertion is the pass.
     const html = await renderRoute("/dashboard/payments");

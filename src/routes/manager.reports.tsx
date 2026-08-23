@@ -13,6 +13,7 @@ import {
   Search,
   Trophy,
   Target,
+  User,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,9 @@ import {
   getPortfolioTotals,
   refreshReportMetrics,
 } from "@/lib/report-metrics-store";
+import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
+import { MonthlyTrendPanel, type TrendGroup } from "@/components/reports/monthly-trend";
+import { scopeToAgents, unattributedCollected } from "@/lib/monthly-trend";
 import { formatINR } from "@/lib/mock-debtors";
 import { downloadCsv } from "@/lib/csv-export";
 import {
@@ -80,6 +84,15 @@ function ManagerReportsPage() {
     // Only the active team's id should retrigger this, not every re-render of the team object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam?.id]);
+
+  const [allPayments, setAllPayments] = useState<PaymentRecord[]>(() => getPayments());
+  useEffect(() => {
+    const load = () => setAllPayments(getPayments());
+    load();
+    window.addEventListener("payments-updated", load);
+    refreshPayments();
+    return () => window.removeEventListener("payments-updated", load);
+  }, []);
 
   // Counts come from SQL aggregates, not from counting cached debtor rows — the portfolio
   // cache exceeds localStorage's quota on this dataset and serves a partial snapshot.
@@ -128,6 +141,31 @@ function ManagerReportsPage() {
   );
 
   const globalStats = useMemo(() => calcStats(disps), [disps]);
+
+  // The team's money, both ways it arrives: what the team's agents collected, plus what the
+  // bank reported against the team's own portfolios (agent_id null — nobody collected it, but
+  // it is unarguably this team's recovery and omitting it understates the team every month a
+  // paid file lands).
+  const teamPayments = useMemo(() => {
+    const roster = new Set(teamAgents.map((a) => a.id));
+    const teamPortfolioIds = new Set(portfolios.map((p) => p.id));
+    return allPayments.filter((p) =>
+      p.agentId === null
+        ? p.portfolioId !== undefined && teamPortfolioIds.has(p.portfolioId)
+        : roster.has(p.agentId),
+    );
+  }, [allPayments, teamAgents, portfolios]);
+
+  const agentTrendGroups = useMemo<TrendGroup[]>(
+    () =>
+      teamAgents.map((a) => {
+        const scoped = scopeToAgents(disps, allPayments, [a.id]);
+        return { id: a.id, name: a.name, sub: a.id, ...scoped };
+      }),
+    [teamAgents, disps, allPayments],
+  );
+
+  const teamUnattributed = useMemo(() => unattributedCollected(teamPayments), [teamPayments]);
 
   const agentStats = useMemo(
     () =>
@@ -268,6 +306,7 @@ function ManagerReportsPage() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="agents">By Agent</TabsTrigger>
+          <TabsTrigger value="trend">Monthly Trend</TabsTrigger>
           <TabsTrigger value="outcomes">Outcome Breakdown</TabsTrigger>
           <TabsTrigger value="followups">
             PTP Follow-ups
@@ -279,6 +318,28 @@ function ManagerReportsPage() {
           </TabsTrigger>
           <TabsTrigger value="detail">Call Log</TabsTrigger>
         </TabsList>
+
+        {/* ── MONTHLY TREND TAB ── */}
+        <TabsContent value="trend" className="mt-4">
+          <MonthlyTrendPanel
+            disps={disps}
+            payments={teamPayments}
+            note={
+              teamUnattributed.current > 0 || teamUnattributed.previousSamePeriod > 0
+                ? `${formatINR(teamUnattributed.current)} of this month's collections came from a paid-file upload with no collector, so it counts in the team total above but in no agent's row below (${formatINR(teamUnattributed.previousSamePeriod)} over the same days last month).`
+                : "Team totals include bank-reported paid-file collections; the per-agent table below only counts money credited to a person."
+            }
+            breakdowns={[
+              {
+                title: "Agent",
+                description: `Every agent in ${activeTeam.name}, this month against the same days last month`,
+                icon: User,
+                exportName: `team-${activeTeam.name.toLowerCase().replace(/\s+/g, "-")}-agents`,
+                groups: agentTrendGroups,
+              },
+            ]}
+          />
+        </TabsContent>
 
         {/* ── AGENTS TAB ── */}
         {/* ── OVERVIEW TAB ── */}

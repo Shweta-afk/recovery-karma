@@ -17,6 +17,8 @@ import {
   Target,
   ShieldAlert,
   Trophy,
+  User,
+  Building2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +36,8 @@ import {
 } from "@/lib/disposition-store";
 import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
 import { formatINR } from "@/lib/mock-debtors";
+import { MonthlyTrendPanel, type TrendGroup } from "@/components/reports/monthly-trend";
+import { scopeToAgents, unattributedCollected } from "@/lib/monthly-trend";
 import { getAgentTimeStats, formatDuration, formatClockTime } from "@/lib/agent-time-stats";
 import {
   getPayments,
@@ -96,6 +100,20 @@ function getISTHour(iso: string): number {
   }).formatToParts(new Date(iso));
   const hour = parts.find((p) => p.type === "hour")?.value;
   return hour ? parseInt(hour, 10) : 0;
+}
+
+/**
+ * Recovery rates in this dataset sit well under 1% (₹2,92,509 collected against ₹40,38,47,235
+ * placed = 0.07%), and `Math.round(x * 100)` flattened every one of them to a bare "0%" — which
+ * reads as "nothing was recorded" when money demonstrably was. Keep the ratio unrounded and only
+ * round here, with enough precision that a non-zero collection never renders as zero.
+ */
+function formatPct(value: number): string {
+  if (value === 0) return "0%";
+  if (value < 0.01) return "<0.01%";
+  if (value < 1) return `${value.toFixed(2)}%`;
+  if (value < 10) return `${value.toFixed(1)}%`;
+  return `${Math.round(value)}%`;
 }
 
 function formatIST(iso: string): string {
@@ -260,6 +278,53 @@ function AdminReportsPage() {
       .sort((a, b) => b.stats.total - a.stats.total);
   }, [teams, disps, activeCountByAgent]);
 
+  // ── month-over-month groupings ──────────────────────────────────────────────
+  // Company-wide totals use every payment, including bank-reported paid-file rows that no
+  // person collected. The team and agent breakdowns can't: a bank-reported row credits nobody,
+  // so it is attributed to a team only through the portfolio it belongs to, and to no agent at
+  // all. `companyUnattributed` names the resulting gap rather than leaving the tables looking
+  // like they lost money.
+  const teamTrendGroups = useMemo<TrendGroup[]>(
+    () =>
+      teams.map((team) => {
+        const roster = new Set(team.agentIds);
+        const teamPortfolioIds = new Set(
+          portfolios.filter((p) => p.teamId === team.id).map((p) => p.id),
+        );
+        return {
+          id: team.id,
+          name: team.name,
+          sub: `${team.agentIds.length} agent${team.agentIds.length === 1 ? "" : "s"}`,
+          disps: disps.filter((d) => d.teamId === team.id),
+          payments: payments.filter((p) =>
+            p.agentId === null
+              ? p.portfolioId !== undefined && teamPortfolioIds.has(p.portfolioId)
+              : roster.has(p.agentId),
+          ),
+        };
+      }),
+    [teams, disps, payments, portfolios],
+  );
+
+  const agentTrendGroups = useMemo<TrendGroup[]>(() => {
+    const seen = new Map<string, { name: string; teamName: string }>();
+    for (const team of teams) {
+      for (const aid of team.agentIds) {
+        if (!seen.has(aid)) {
+          seen.set(aid, { name: getAgentById(aid)?.name ?? aid, teamName: team.name });
+        }
+      }
+    }
+    return Array.from(seen.entries()).map(([aid, meta]) => ({
+      id: aid,
+      name: meta.name,
+      sub: meta.teamName,
+      ...scopeToAgents(disps, payments, [aid]),
+    }));
+  }, [teams, disps, payments]);
+
+  const companyUnattributed = useMemo(() => unattributedCollected(payments), [payments]);
+
   const filtered = search.trim()
     ? agentStats.filter(
         (a) =>
@@ -286,7 +351,8 @@ function AdminReportsPage() {
           name: p.portfolioName,
           placed: p.placedAmount,
           collected,
-          rate: p.placedAmount > 0 ? Math.round((collected / p.placedAmount) * 100) : 0,
+          // Unrounded — formatPct decides the precision at render time.
+          rate: p.placedAmount > 0 ? (collected / p.placedAmount) * 100 : 0,
         };
       })
       .filter((p) => p.placed > 0)
@@ -301,8 +367,7 @@ function AdminReportsPage() {
     () => payments.filter((p) => p.status === "completed").reduce((s, p) => s + p.amount, 0),
     [payments],
   );
-  const overallRecoveryRate =
-    totalPlaced > 0 ? Math.round((totalCollectedAllTime / totalPlaced) * 100) : 0;
+  const overallRecoveryRate = totalPlaced > 0 ? (totalCollectedAllTime / totalPlaced) * 100 : 0;
 
   // PTP-kept: of the promises an agent secured, how many were followed by a completed
   // payment from that same debtor afterward. Approximate by design — it confirms *a* payment
@@ -440,7 +505,7 @@ function AdminReportsPage() {
         <Stat
           icon={Target}
           label="Recovery Rate"
-          value={`${overallRecoveryRate}%`}
+          value={formatPct(overallRecoveryRate)}
           sub="collected ÷ placed"
         />
         <Stat
@@ -481,6 +546,7 @@ function AdminReportsPage() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="teams">By Team</TabsTrigger>
             <TabsTrigger value="agents">By Agent</TabsTrigger>
+            <TabsTrigger value="trend">Monthly Trend</TabsTrigger>
             <TabsTrigger value="outcomes">Outcome Breakdown</TabsTrigger>
             <TabsTrigger value="recovery">Recovery</TabsTrigger>
             <TabsTrigger value="disputes">Disputes</TabsTrigger>
@@ -1059,6 +1125,35 @@ function AdminReportsPage() {
           )}
         </TabsContent>
 
+        {/* ── MONTHLY TREND TAB ── */}
+        <TabsContent value="trend" className="mt-4">
+          <MonthlyTrendPanel
+            disps={disps}
+            payments={payments}
+            note={
+              companyUnattributed.current > 0 || companyUnattributed.previousSamePeriod > 0
+                ? `Company totals include ${formatINR(companyUnattributed.current)} this month from paid-file uploads that credit no collector (${formatINR(companyUnattributed.previousSamePeriod)} over the same days last month). That money is attributed to a team through its portfolio, and to no agent — so the agent table below will always sum lower than the company figure.`
+                : "Company totals include bank-reported paid-file collections. Those credit no agent, so the per-agent table can sum lower than the company figure."
+            }
+            breakdowns={[
+              {
+                title: "Team",
+                description: "Every team's month against the same days last month",
+                icon: Building2,
+                exportName: "company-teams",
+                groups: teamTrendGroups,
+              },
+              {
+                title: "Agent",
+                description: "Every agent in the company, ranked on the selected metric",
+                icon: User,
+                exportName: "company-agents",
+                groups: agentTrendGroups,
+              },
+            ]}
+          />
+        </TabsContent>
+
         {/* ── RECOVERY TAB ── */}
         <TabsContent value="recovery" className="mt-4 space-y-4">
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -1078,7 +1173,7 @@ function AdminReportsPage() {
             <Stat
               icon={TrendingUp}
               label="Recovery Rate"
-              value={`${overallRecoveryRate}%`}
+              value={formatPct(overallRecoveryRate)}
               sub="collected ÷ placed"
               green={overallRecoveryRate > 0}
             />
@@ -1107,7 +1202,12 @@ function AdminReportsPage() {
                     downloadCsv(
                       "recovery-by-portfolio.csv",
                       ["Portfolio", "Placed (₹)", "Collected (₹)", "Recovery Rate %"],
-                      recoveryByPortfolio.map((p) => [p.name, p.placed, p.collected, p.rate]),
+                      recoveryByPortfolio.map((p) => [
+                        p.name,
+                        p.placed,
+                        p.collected,
+                        p.rate.toFixed(2),
+                      ]),
                     )
                   }
                   className="inline-flex items-center gap-1.5 h-7 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -1143,11 +1243,11 @@ function AdminReportsPage() {
                 {
                   key: "rate",
                   header: "Recovery Rate",
-                  width: "w-44",
+                  width: "w-48",
                   render: (p) => (
                     <div className="flex items-center gap-1.5">
                       <Progress value={p.rate} className="h-1.5 flex-1" />
-                      <span className="w-9 text-right tabular-nums">{p.rate}%</span>
+                      <span className="w-14 text-right tabular-nums">{formatPct(p.rate)}</span>
                     </div>
                   ),
                 },
@@ -1156,7 +1256,7 @@ function AdminReportsPage() {
                 "Total",
                 formatINR(totalPlaced),
                 formatINR(totalCollectedAllTime),
-                `${overallRecoveryRate}%`,
+                formatPct(overallRecoveryRate),
               ]}
             />
           </ReportSection>
