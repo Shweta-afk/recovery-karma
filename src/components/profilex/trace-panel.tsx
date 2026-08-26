@@ -188,9 +188,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
         <Search className="h-8 w-8 text-muted-foreground/40" />
-        <p className="text-sm font-medium text-foreground">Skip tracing is not switched on</p>
+        <p className="text-sm font-medium text-foreground">Customer Insights is not switched on</p>
         <p className="text-xs text-muted-foreground max-w-xs">
-          An admin can enable skip tracing and set a monthly budget under Settings.
+          An admin can enable Customer Insights and set a monthly budget under Settings.
         </p>
       </div>
     );
@@ -200,9 +200,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
         <Search className="h-8 w-8 text-muted-foreground/40" />
-        <p className="text-sm font-medium text-foreground">No trace on file</p>
+        <p className="text-sm font-medium text-foreground">Nothing looked up yet</p>
         <p className="text-xs text-muted-foreground max-w-xs">
-          Ask your manager to run a trace for {debtorName}. Anything they find shows up here.
+          Ask your manager to look up {debtorName}. Anything they find shows up here.
         </p>
       </div>
     );

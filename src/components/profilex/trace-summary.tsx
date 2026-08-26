@@ -63,7 +63,7 @@ export function TraceSummary({
     if (variant === "bare") {
       return (
         <p className="text-xs text-muted-foreground italic">
-          No trace on file. A manager can run one from the debtor's Trace tab.
+          Nothing looked up yet. A manager can run this from the Insights tab.
         </p>
       );
     }
@@ -107,7 +107,7 @@ export function TraceSummary({
 
       {traced && (
         <p className="text-[10px] text-muted-foreground mt-2">
-          Traced {new Date(traced).toLocaleDateString("en-IN")}
+          Looked up {new Date(traced).toLocaleDateString("en-IN")}
         </p>
       )}
     </>
@@ -124,7 +124,7 @@ export function TraceSummary({
           <Search className="h-3.5 w-3.5 text-primary" />
         )}
         <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
-          Trace
+          Customer Insights
         </span>
       </div>
       {body}

@@ -279,9 +279,9 @@ function ActiveCallContent({
   // remounting it) between the ringing and connected renders, and a hook declared after an
   // early return would then violate the Rules of Hooks ("Rendered more hooks than during the
   // previous render").
-  const [infoTab, setInfoTab] = useState<"loan" | "personal" | "trace" | "payments" | "contacts">(
-    "loan",
-  );
+  const [infoTab, setInfoTab] = useState<
+    "loan" | "personal" | "insights" | "payments" | "contacts"
+  >("loan");
   // Gates Save & Close behind a preview of the SMS that outcome will trigger (PTP/callback
   // only — buildDispositionSms returns null for outcomes that don't send one), so the agent
   // sees exactly what the debtor is about to receive before it actually goes out.
@@ -1148,7 +1148,7 @@ function ActiveCallContent({
                 [
                   { key: "loan", label: "Loan Details" },
                   { key: "personal", label: "Personal" },
-                  { key: "trace", label: "Trace" },
+                  { key: "insights", label: "Insights" },
                   { key: "payments", label: "Payment History" },
                   { key: "contacts", label: "Contact History" },
                 ] as const
@@ -1449,7 +1449,7 @@ function ActiveCallContent({
               {/* ── PAYMENT HISTORY ── */}
               {/* Trace — read-only here. An agent mid-call needs the employer and UAN at a
                   glance; running a lookup costs money and stays a manager action. */}
-              {infoTab === "trace" && (
+              {infoTab === "insights" && (
                 <div className="space-y-4">
                   <TraceSummary debtorId={debtor.id} variant="bare" />
                 </div>
@@ -2280,7 +2280,7 @@ export function DebtorProfileSheet({
       <div className="flex-1 overflow-hidden">
         <Tabs defaultValue="overview" className="h-full flex flex-col">
           <TabsList className="flex-shrink-0 rounded-none border-b border-border bg-transparent px-6 h-10 justify-start gap-1 w-full">
-            {["overview", "calls", "trace", "messages", "payments", "disputes"].map((t) => (
+            {["overview", "calls", "insights", "messages", "payments", "disputes"].map((t) => (
               <TabsTrigger
                 key={t}
                 value={t}
@@ -2455,7 +2455,7 @@ export function DebtorProfileSheet({
           {/* Messages tab */}
           {/* Trace — the full panel, same as the debtors page: a manager opening a debtor from
               the call queue can run a lookup here, an agent sees the result read-only. */}
-          <TabsContent value="trace" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
+          <TabsContent value="insights" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
             <TracePanel debtorId={debtor.id} debtorName={debtor.name} />
           </TabsContent>
 

@@ -777,7 +777,7 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
       <div className="flex-1 overflow-hidden">
         <Tabs defaultValue="overview" className="h-full flex flex-col">
           <TabsList className="flex-shrink-0 rounded-none border-b border-border bg-transparent px-6 h-10 justify-start gap-1">
-            {["overview", "calls", "trace", "messages", "payments", "disputes"].map((t) => (
+            {["overview", "calls", "insights", "messages", "payments", "disputes"].map((t) => (
               <TabsTrigger
                 key={t}
                 value={t}
@@ -947,7 +947,7 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
 
           {/* Trace — ProfileX skip-tracing. Managers/admins can run a lookup here; agents see
               whatever their manager already paid for, read-only. Role gate lives in TracePanel. */}
-          <TabsContent value="trace" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
+          <TabsContent value="insights" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
             <TracePanel debtorId={d.id} debtorName={d.name} />
           </TabsContent>
 

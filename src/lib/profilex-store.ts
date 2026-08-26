@@ -70,7 +70,7 @@ export async function refreshTraces(debtorId: string): Promise<void> {
     .order("created_at", { ascending: false });
   // An empty result and a blocked result look the same to the UI, so surface the error rather
   // than caching [] and rendering a confident "no traces" over what is really an RLS problem.
-  if (error) throw new Error(`Could not load trace history (${error.message})`);
+  if (error) throw new Error(`Could not load lookup history (${error.message})`);
   byDebtor.set(debtorId, ((data ?? []) as Record<string, unknown>[]).map(toRecord));
   window.dispatchEvent(new CustomEvent(TRACES_UPDATED, { detail: { debtorId } }));
 }
