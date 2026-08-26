@@ -86,6 +86,7 @@ import { buildDispositionSms } from "@/lib/sms-templates";
 
 import { toast } from "sonner";
 import { TraceSummary } from "@/components/profilex/trace-summary";
+import { AssignedAgentLine } from "@/components/assigned-agent";
 import { TracePanel } from "@/components/profilex/trace-panel";
 
 // Active-call UI cluster extracted from dashboard.call-queue.tsx: the live-call panel/modal,
@@ -2225,6 +2226,7 @@ export function DebtorProfileSheet({
             <p className="text-xs text-muted-foreground mt-0.5">
               {debtor.loanReference ?? debtor.id} · {debtor.phone} · {debtor.language}
             </p>
+            <AssignedAgentLine debtorId={debtor.id} />
           </div>
         </div>
       </SheetHeader>

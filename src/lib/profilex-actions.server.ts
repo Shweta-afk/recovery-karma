@@ -372,10 +372,23 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       // practice, so surface the provider's own message rather than just the status code.
       const providerMessage =
         typeof json?.message === "string" ? json.message : raw.slice(0, 200) || "no detail given";
+
+      // The provider returns this same message for "your account cannot use this service" and
+      // for "your credentials are wrong", with nothing to tell them apart. Since a wrong
+      // credential fails EVERY service and this one is per-service, seeing it here almost always
+      // means the service is not on the account — say that, rather than making a manager decode
+      // "You Dont Have UAT Access!!!".
+      if (/UAT Access/i.test(providerMessage)) {
+        throw new Error(
+          `"${service.label}" is not enabled on your account with the data provider, so this ` +
+            `lookup cannot run. Nothing was charged. An admin needs to ask them to enable it — ` +
+            `other lookups may still work.`,
+        );
+      }
+
       throw new Error(
         `The data provider rejected this request (HTTP ${httpStatus}: ${providerMessage}). ` +
-          `This is a fault on their side, not a "nothing found" result — nothing was charged. ` +
-          `If it persists, the account may not have access to this lookup.`,
+          `This is a fault on their side, not a "nothing found" result — nothing was charged.`,
       );
     }
 

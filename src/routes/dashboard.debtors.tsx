@@ -34,6 +34,7 @@ import {
 } from "@/lib/portfolio-store";
 import { useAuth } from "@/lib/auth";
 import { TracePanel } from "@/components/profilex/trace-panel";
+import { AssignedAgentLine } from "@/components/assigned-agent";
 import {
   getDispositions,
   refreshDispositions,
@@ -747,6 +748,7 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
             <p className="text-xs text-muted-foreground mt-0.5">
               {displayId(d)} · {d.phone} · {d.language}
             </p>
+            <AssignedAgentLine debtorId={d.id} />
           </div>
         </div>
       </SheetHeader>

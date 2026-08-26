@@ -271,6 +271,45 @@ export async function fetchDebtorHistory(debtorId: string): Promise<DebtorHistor
   };
 }
 
+export interface AssignedAgent {
+  name: string;
+  email: string;
+  /** AGT-0001 / MGR-0002 — null for rows predating migrations/20260820_agent_code.sql. */
+  agentCode: string | null;
+}
+
+/**
+ * Who is working this account. Read from the debtor row rather than any cached roster, so it
+ * reflects a reassignment the moment it happens; RLS scopes it exactly as `debtors_select` does,
+ * so an agent only ever resolves this for a debtor they can already see.
+ *
+ * Returns null both when the debtor is unassigned and when the viewer cannot see the row — the
+ * caller renders "Unassigned" either way, which is the honest thing to show someone who isn't
+ * permitted to know.
+ */
+export async function fetchAssignedAgent(debtorId: string): Promise<AssignedAgent | null> {
+  const { data } = await supabase
+    .from("debtors")
+    .select("agents(name, email, agent_code)")
+    .eq("id", debtorId)
+    .maybeSingle();
+
+  // PostgREST returns an embedded to-one relation as an object, but some client/schema
+  // combinations surface it as a single-element array — accept both rather than silently
+  // rendering "Unassigned" for every debtor if that shape ever changes.
+  const raw = (data as { agents?: unknown } | null)?.agents;
+  const agent = (Array.isArray(raw) ? raw[0] : raw) as
+    | { name?: string; email?: string; agent_code?: string | null }
+    | undefined;
+  if (!agent?.name && !agent?.email) return null;
+
+  return {
+    name: agent.name ?? agent.email ?? "Unknown",
+    email: agent.email ?? "",
+    agentCode: agent.agent_code ?? null,
+  };
+}
+
 export async function fetchDebtorDetails(debtorId: string): Promise<DebtorDetails | null> {
   const { data } = await supabase
     .from("debtors")
