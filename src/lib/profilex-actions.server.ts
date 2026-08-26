@@ -143,13 +143,18 @@ async function callProfilex(
   body: Record<string, string>,
 ): Promise<{ httpStatus: number; json: Row | null; text: string }> {
   const base = normaliseBaseUrl(env("PROFILEX_BASE_URL"));
-  const clientUserId = env("PROFILEX_CLIENT_USER_ID");
+  // Named for the console's own "Client Hash ID" field, because the field sitting next to it is
+  // called "User Hash ID" and sending that one yields an error indistinguishable from having no
+  // account access at all. Naming the variable after anything else invites picking the wrong
+  // field, which is exactly what happened. PROFILEX_CLIENT_USER_ID is the legacy name, still
+  // honoured so existing deployments keep working.
+  const clientUserId = env("PROFILEX_CLIENT_HASH_ID") ?? env("PROFILEX_CLIENT_USER_ID");
   const secretKey = env("PROFILEX_SECRET_KEY");
   const accessKey = env("PROFILEX_ACCESS_KEY");
 
   if (!clientUserId || !secretKey || !accessKey) {
     throw new Error(
-      "Insights is not configured. Set PROFILEX_CLIENT_USER_ID, PROFILEX_SECRET_KEY and " +
+      "Insights is not configured. Set PROFILEX_CLIENT_HASH_ID, PROFILEX_SECRET_KEY and " +
         "PROFILEX_ACCESS_KEY in the server environment (and in Railway for production).",
     );
   }
@@ -353,7 +358,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         error:
           httpStatus === 200
             ? null
-            : `HTTP ${httpStatus} [client-user-id ${fingerprint(process.env.PROFILEX_CLIENT_USER_ID) /* raw, NOT trimmed: the whole point is to expose a stray character */}]: ${raw.slice(0, 400)}`,
+            : `HTTP ${httpStatus} [client-user-id ${fingerprint(process.env.PROFILEX_CLIENT_HASH_ID ?? process.env.PROFILEX_CLIENT_USER_ID) /* raw, NOT trimmed: the whole point is to expose a stray character */}]: ${raw.slice(0, 400)}`,
         completed_at: new Date().toISOString(),
       })
       .eq("id", pending.id)

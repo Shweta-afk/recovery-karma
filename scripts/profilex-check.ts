@@ -18,16 +18,16 @@ import { PROFILEX_SERVICES, getService } from "../src/lib/profilex/catalogue";
 import { normaliseBaseUrl } from "../src/lib/profilex/billing";
 
 const LIVE = process.argv.includes("--live");
-const REQUIRED = ["PROFILEX_CLIENT_USER_ID", "PROFILEX_SECRET_KEY", "PROFILEX_ACCESS_KEY"] as const;
+const REQUIRED = ["PROFILEX_CLIENT_HASH_ID", "PROFILEX_SECRET_KEY", "PROFILEX_ACCESS_KEY"] as const;
 
 // A number that is well-formed but will not resolve, so a live probe stays on the ₹0 path.
 const PROBE_MOBILE = "9999999999";
 
-// The console exposes BOTH a "Client Hash ID" and a "User Hash ID" while the API takes a single
-// `client-user-id` header, so which one it wants is genuinely ambiguous — and guessing wrong
-// returns the same opaque "You Dont Have UAT Access!!!" as having no access at all. Set this to
-// whichever of the two is NOT in PROFILEX_CLIENT_USER_ID and --live tries both.
-const ALT_CLIENT_ID = process.env.PROFILEX_CLIENT_HASH_ID;
+// The API takes one `client-user-id` header while the console shows both a "Client Hash ID" and
+// a "User Hash ID" — it wants the Client Hash ID, and sending the other returns the same opaque
+// "You Dont Have UAT Access!!!" as having no access at all. PROFILEX_CLIENT_USER_ID is the
+// legacy variable name; if set, --live probes it too so a stale deployment shows up here.
+const ALT_CLIENT_ID = process.env.PROFILEX_CLIENT_USER_ID;
 
 let failed = false;
 const fail = (msg: string) => {
@@ -76,9 +76,9 @@ for (const s of PROFILEX_SERVICES) {
 if (LIVE && !failed) {
   const service = getService("mobile-to-uan")!;
   const candidates: [string, string][] = [
-    ["PROFILEX_CLIENT_USER_ID", process.env.PROFILEX_CLIENT_USER_ID!],
+    ["PROFILEX_CLIENT_HASH_ID", process.env.PROFILEX_CLIENT_HASH_ID!],
   ];
-  if (ALT_CLIENT_ID) candidates.push(["PROFILEX_CLIENT_HASH_ID", ALT_CLIENT_ID]);
+  if (ALT_CLIENT_ID) candidates.push(["PROFILEX_CLIENT_USER_ID (legacy)", ALT_CLIENT_ID]);
 
   console.log(`\n  Probing ${service.label} with ${PROBE_MOBILE} (₹0 if not found, ₹3 if found)…`);
   let accepted = false;
@@ -114,7 +114,7 @@ if (LIVE && !failed) {
     );
 
     if (res.status === 200) {
-      console.log("  ✓ ACCEPTED — put this value in PROFILEX_CLIENT_USER_ID");
+      console.log("  ✓ ACCEPTED — this value belongs in PROFILEX_CLIENT_HASH_ID");
       accepted = true;
       break;
     }
