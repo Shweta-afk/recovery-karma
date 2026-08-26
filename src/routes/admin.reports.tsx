@@ -68,6 +68,7 @@ import {
 import { Stat } from "@/components/reports/stat-card";
 import { AgentCallLog } from "@/components/reports/agent-call-log";
 import { ProfilexSpendPanel } from "@/components/profilex/spend-panel";
+import { InsightsUsagePanel } from "@/components/profilex/usage-panel";
 import { DataTable, ReportSection } from "@/components/reports/data-table";
 import {
   Leaderboard,
@@ -1632,7 +1633,10 @@ function AdminReportsPage() {
         </TabsContent>
 
         {/* ── CALL LOG TAB ── */}
-        <TabsContent value="profilex" className="mt-4">
+        <TabsContent value="profilex" className="mt-4 space-y-6">
+          {/* Who spent it, then what it went on. Per-person first: every lookup is charged, so
+              the actionable question is which manager is running them, not which service. */}
+          <InsightsUsagePanel />
           <ProfilexSpendPanel />
         </TabsContent>
 

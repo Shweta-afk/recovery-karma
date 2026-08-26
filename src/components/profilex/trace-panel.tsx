@@ -118,6 +118,11 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
 export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorName: string }) {
   const { user } = useAuth();
   const canRun = user?.role === "manager" || user?.role === "admin";
+  // Cost is an admin concern, not a manager's. A manager deciding whether this debtor is worth
+  // looking up should weigh that on the merits of the account, not haggle with a price tag
+  // mid-shift — and the budget that actually constrains spend is admin-set and server-enforced
+  // anyway. Admins keep the figures, since they own the budget and the rate card.
+  const showCost = user?.role === "admin";
 
   const [, bump] = useState(0);
   const [running, setRunning] = useState<string | null>(null);
@@ -170,8 +175,10 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
       if (result.trace) mergeTrace(result.trace);
       toast.success(
         result.cached
-          ? `${service.label}: served from an earlier lookup — nothing charged`
-          : `${service.label} complete · ₹${result.cost.toFixed(2)}`,
+          ? `${service.label}: served from an earlier lookup`
+          : showCost
+            ? `${service.label} complete · ₹${result.cost.toFixed(2)}`
+            : `${service.label} complete`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : `${service.label} failed`);
@@ -230,7 +237,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
                   disabled={running !== null || needsUan}
                   onClick={() => setConfirming(service)}
                   className="flex-shrink-0 h-7 text-xs"
-                  title={needsUan ? "Run Mobile to UAN first" : priceLine(service)}
+                  title={needsUan ? "Run Mobile to UAN first" : service.blurb}
                 >
                   {running === service.id ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -243,9 +250,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
               )}
             </div>
 
-            {canRun && enabled === true && (
+            {canRun && enabled === true && (needsUan || showCost) && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1 mb-2">
-                <IndianRupee className="h-3 w-3" />
+                {!needsUan && <IndianRupee className="h-3 w-3" />}
                 {needsUan ? "Needs a UAN — run Mobile to UAN first" : priceLine(service)}
               </p>
             )}
@@ -255,7 +262,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
                 <ResultBody trace={trace} />
                 <p className="text-[10px] text-muted-foreground mt-2">
                   {new Date(trace.createdAt).toLocaleString("en-IN")}
-                  {trace.billable && ` · ₹${trace.cost.toFixed(2)}`}
+                  {showCost && trace.billable && ` · ₹${trace.cost.toFixed(2)}`}
                 </p>
               </div>
             ) : (
@@ -273,8 +280,10 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
           <AlertDialogHeader>
             <AlertDialogTitle>Run {confirming?.label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This looks up {debtorName}'s number and costs {confirming && priceLine(confirming)}.
-              The provider charges even when it finds nothing.
+              This looks up {debtorName}'s number with the data provider.
+              {showCost &&
+                confirming &&
+                ` Costs ${priceLine(confirming)}, charged even when nothing is found.`}
               {latest.has(confirming?.id ?? "") &&
                 " A recent result is already stored — if it is still within the cache window this will be served free."}
             </AlertDialogDescription>

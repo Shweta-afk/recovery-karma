@@ -43,6 +43,23 @@ const db = (): LooseDb => getSupabaseAdmin() as unknown as LooseDb;
 /** One row of profilex_spend_report. Declared concretely because a server fn's return value is
  *  serialised across the wire, and an index-signature type there widens the whole result to
  *  `unknown` for callers. */
+/** One row of profilex_usage_by_user: a single user's activity on a single service. */
+export interface UsageRow {
+  agent_id: string | null;
+  agent_name: string;
+  agent_email: string;
+  agent_role: string;
+  service_id: string;
+  lookups: number;
+  hits: number;
+  misses: number;
+  failures: number;
+  cached_reuses: number;
+  debtors_touched: number;
+  spend: number;
+  last_used: string | null;
+}
+
 export interface ServiceSpendRow {
   service_id: string;
   calls: number;
@@ -418,4 +435,27 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
     );
     if (error) throw new Error(`Could not save Insights settings (${error.message})`);
     return { ok: true };
+  });
+
+/**
+ * Who has been running lookups, and what it cost — the question an admin actually has when the
+ * monthly bill lands. Returns one row per user per service; the caller aggregates for the
+ * top-level view and reuses the same rows for the drill-down.
+ *
+ * The RPC is SECURITY INVOKER, so debtor_traces' own policy still scopes this: an admin sees
+ * their whole client, a manager only their own team.
+ */
+export const getProfilexUsage = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; since?: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "manager" && caller.role !== "admin") {
+      throw new Error("Only managers or admins can view Insights usage");
+    }
+    const admin = db();
+    const since = data.since ?? istMonthStart().toISOString();
+    const { data: rows, error } = await admin.rpc("profilex_usage_by_user", { p_since: since });
+    if (error) throw new Error(`Could not load Insights usage (${error.message})`);
+    return { since, rows: (rows as UsageRow[] | null) ?? [] };
   });
