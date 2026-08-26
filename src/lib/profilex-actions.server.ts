@@ -159,26 +159,48 @@ async function callProfilex(
     );
   }
 
-  const res = await fetch(`${base}${service.path}`, {
-    method: "POST",
-    headers: {
-      "client-user-id": clientUserId,
-      "secret-key": secretKey,
-      "access-key": accessKey,
-      "service-id": service.serviceId,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  const headers = {
+    "client-user-id": clientUserId,
+    "secret-key": secretKey,
+    "access-key": accessKey,
+    "service-id": service.serviceId,
+    "Content-Type": "application/json",
+  };
 
-  const text = await res.text();
+  // The provider intermittently returns HTTP 500 "You Dont Have UAT Access!!!" for a service
+  // that works seconds earlier and seconds later — observed on employment-latest, which
+  // succeeded 2 of 3 times in a row. Retrying costs NOTHING, because ProfileX bills on HTTP 200
+  // only, so a spurious failure is free to absorb and an agent gets an answer instead of an
+  // error they can do nothing about. A service genuinely not enabled fails all attempts and
+  // still surfaces, just a couple of seconds later.
+  const TRANSIENT = /UAT Access/i;
+  const ATTEMPTS = 3;
+
+  let res!: Response;
+  let text = "";
   let json: Row | null = null;
-  try {
-    json = JSON.parse(text) as Row;
-  } catch {
-    // Left null — a non-JSON body means something upstream is broken, and the raw text is
-    // preserved on the trace row so it can be diagnosed without re-running (and re-paying).
+
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    res = await fetch(`${base}${service.path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    text = await res.text();
+    json = null;
+    try {
+      json = JSON.parse(text) as Row;
+    } catch {
+      // Left null — a non-JSON body means something upstream is broken, and the raw text is
+      // preserved on the trace row so it can be diagnosed without re-running (and re-paying).
+    }
+
+    const retryable =
+      res.status === 500 && TRANSIENT.test(typeof json?.message === "string" ? json.message : text);
+    if (!retryable || attempt === ATTEMPTS - 1) break;
+    await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
   }
+
   return { httpStatus: res.status, json, text };
 }
 
