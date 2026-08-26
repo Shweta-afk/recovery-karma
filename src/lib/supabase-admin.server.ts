@@ -37,6 +37,9 @@ export function getSupabaseAdmin() {
 
 export interface VerifiedCaller {
   authUserId: string;
+  /** The caller's `agents.id` — what FK columns like `requested_by` need, as opposed to the
+   *  auth uid. Null only if the row somehow has no id, which `.single()` already rules out. */
+  agentId: string | null;
   clientId: string;
   role: Role;
 }
@@ -57,12 +60,22 @@ export async function verifyCaller(accessToken: string): Promise<VerifiedCaller 
   } = await admin.auth.getUser(accessToken);
   if (userErr || !user) return null;
 
-  const { data, error } = await admin
+  // Cast because the client is untyped (no generated Database types), so `.from()` widens to
+  // `never` and every column read below would otherwise be a type error.
+  const { data, error } = (await admin
     .from("agents")
-    .select("client_id, role")
+    .select("id, client_id, role")
     .eq("auth_user_id", user.id)
-    .single();
+    .single()) as {
+    data: { id: string; client_id: string; role: Role } | null;
+    error: unknown;
+  };
   if (error || !data?.client_id) return null;
 
-  return { authUserId: user.id, clientId: data.client_id as string, role: data.role as Role };
+  return {
+    authUserId: user.id,
+    agentId: data.id ?? null,
+    clientId: data.client_id,
+    role: data.role,
+  };
 }

@@ -36,7 +36,8 @@ different Cloudflare D1 backend from an earlier iteration of the project).
 - **Package manager:** bun
 - **UI:** Tailwind CSS v4 + shadcn/ui (Radix primitives)
 - **Real external APIs wired:** Supabase, Exotel (telephony), Groq (Whisper transcription),
-  Gemini (tone classification). **Present in `.env.example` but NOT wired to anything:**
+  Gemini (tone classification), ProfileX/Neokred (skip tracing — the only *paid-per-call*
+  integration in the app). **Present in `.env.example` but NOT wired to anything:**
   `ANTHROPIC_API_KEY`, `INTERAKT_API_KEY`, `RAZORPAY_KEY_ID`/`SECRET`,
   `ELEVENLABS_API_KEY`/`VOICE_ID` — zero references in `src/`. Don't assume any of these do
   something; see "What's real vs. aspirational" below.
@@ -297,6 +298,33 @@ classifies agent/debtor/overall tone. Requires
 the `AiSentimentPanel` in `manager.audit.tsx`. It's a _suggestion_ alongside the manager's own
 manual sentiment tag — never overwrites it.
 
+**ProfileX skip tracing IS real, and it costs money per call.** Manager/admin-triggered from the
+Trace tab on a debtor profile. Four VRE services are wired (`src/lib/profilex/catalogue.ts`):
+Mobile→UAN, Mobile→Prefill Ext, Employment Latest, Employment History. Three things make this
+unlike every other integration here:
+
+- **A "not found" is still billed.** ProfileX's rule is HTTP 200 + status `1` (found) → billed,
+  HTTP 200 + status `2`/`3` (not found) → **also billed**, HTTP 500 → not billed. Prices are per
+  service *and* per status (₹5 found / ₹1 not, etc.), so the rate card is
+  `{service: {status: ₹}}`, never a flat per-call cost. `priceFor()` deliberately fails
+  *expensive* on an unrecognised status — Employment Latest has been seen returning a null status
+  on success, and under-recording spend is the failure that matters.
+- **There is no balance or usage endpoint.** `debtor_traces` is the only record that spend
+  happened; it is what gets reconciled against Neokred's invoice. The `x-ratelimit-*` response
+  headers are a rate limit, *not* a credit balance — don't confuse the two.
+- **The employment endpoints take a UAN, not a phone.** The only route from a portfolio number to
+  employment data is `phone_primary → Mobile→UAN → uan → Employment`. That chain is what enforces
+  "portfolio numbers only": the phone is read from the debtor's row server-side and the UAN from a
+  stored trace on that same debtor — neither is ever accepted from the browser.
+
+Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the
+`profilex_settings` table, **not** `org-settings-store.ts`, which is localStorage-only and so
+unreadable by the server): manager/admin role gate, per-client monthly budget in IST, a
+found/not-found cache TTL, and a partial unique index that stops a double-click paying twice.
+`debtor_traces` has a SELECT policy only — every write goes through the service-role action, so an
+agent cannot create a trace and a manager cannot forge one. Agents see results read-only via the
+same `debtors_select` visibility the rest of the app uses.
+
 **No Razorpay.** Payment links are provided by the lending bank directly; an agent
 pastes/enters the bank's link manually, then shares it via WhatsApp/SMS/logs it. The
 `razorpay_payment_id`/`razorpay_link_id` DB columns are just generic text storage for that —
@@ -319,6 +347,7 @@ was never wired. `INTERAKT_API_KEY` is unused. The page is honest about this in 
 | `dashboard/payments`                                                   | ✅ Real `payments`/`settlement_requests` via `payments-store.ts`                                                            |
 | `dashboard/messages`                                                   | 🟡 Real `messages` table, but Send has no gateway behind it (see above)                                                     |
 | `dashboard/reports`                                                    | ❌ Still hardcoded narrative placeholder content, not wired                                                                 |
+| Debtor profile → Trace tab (`components/profilex/`)                    | ✅ Real ProfileX lookups; manager/admin run them, agents read-only. Needs `PROFILEX_*` env + the admin toggle |
 | `manager/portfolio` (Portfolio Overview)                               | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown                                      |
 | `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity` | ✅ Real                                                                                                                     |
 | `admin/portfolio` (Portfolio Assignment)                               | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only                                     |

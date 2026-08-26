@@ -67,6 +67,7 @@ import {
 } from "@/components/reports/outcome-breakdown";
 import { Stat } from "@/components/reports/stat-card";
 import { AgentCallLog } from "@/components/reports/agent-call-log";
+import { ProfilexSpendPanel } from "@/components/profilex/spend-panel";
 import { DataTable, ReportSection } from "@/components/reports/data-table";
 import {
   Leaderboard,
@@ -559,6 +560,7 @@ function AdminReportsPage() {
                 </Badge>
               )}
             </TabsTrigger>
+            <TabsTrigger value="profilex">ProfileX Spend</TabsTrigger>
             <TabsTrigger value="detail">Call Log</TabsTrigger>
           </TabsList>
         </div>
@@ -1630,6 +1632,10 @@ function AdminReportsPage() {
         </TabsContent>
 
         {/* ── CALL LOG TAB ── */}
+        <TabsContent value="profilex" className="mt-4">
+          <ProfilexSpendPanel />
+        </TabsContent>
+
         <TabsContent value="detail" className="mt-4">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-muted-foreground">{disps.length} calls total</span>

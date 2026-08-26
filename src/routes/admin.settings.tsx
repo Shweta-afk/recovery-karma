@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { getOrgSettings, saveOrgSettings, type OrgSettings } from "@/lib/org-settings-store";
 import { getMyClient, updateCompanyName } from "@/lib/client-store";
+import { ProfilexSettingsCard } from "@/components/profilex/profilex-settings-card";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({ meta: [{ title: "Settings · SamvadX Admin" }] }),
@@ -192,6 +193,8 @@ function AdminSettingsPage() {
           />
         </SettingRow>
       </SectionCard>
+
+      <ProfilexSettingsCard />
 
       <SectionCard
         icon={Plug}

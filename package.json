@@ -15,7 +15,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
     "test:logic": "bun run scripts/telephony-check.ts && bun run scripts/monthly-trend-check.ts && bun run test:routes && bun run check:sql",
     "check:sql": "node scripts/check-rls-safety.mjs",
-    "test:routes": "bun test scripts/"
+    "test:routes": "bun test scripts/",
+    "check:profilex": "bun run scripts/profilex-check.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

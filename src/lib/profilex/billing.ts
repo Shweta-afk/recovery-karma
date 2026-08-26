@@ -1,0 +1,76 @@
+// Pure billing/parsing helpers for the ProfileX integration, kept out of the .server.ts file so
+// they can be unit-tested without pulling in createServerFn or the Supabase admin client. These
+// decide what a lookup cost and which numbers it surfaced, so they are worth testing directly.
+
+/**
+ * Normalise whatever was put in PROFILEX_BASE_URL to the origin the catalogue paths expect.
+ *
+ * ProfileX hands out its base URL as `https://profilex-api.neokred.tech/core-svc/api/v2/`, but
+ * every path in the catalogue is copied verbatim from their Postman collection and already
+ * carries the `/core-svc/api/v2` prefix. Concatenating the two yields a doubled prefix and a
+ * 404 — and because this is an env var, it would fail silently in production rather than at
+ * build time. Accept either form instead of relying on whoever sets the variable getting the
+ * split right.
+ */
+export function normaliseBaseUrl(raw: string | undefined | null): string {
+  const trimmed = String(raw ?? "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (!trimmed) return "https://profilex-api.neokred.tech";
+  return trimmed.replace(/\/core-svc\/api\/v2$/i, "");
+}
+
+/** Start of the current calendar month in IST — the billing period the budget cap covers.
+ *  Doing this in UTC would roll the budget over 5.5h early and let a month's last evening
+ *  spend against the next month's cap. */
+/** A decoded ProfileX response body. Untyped by necessity — the shape differs per service. */
+export type Row = Record<string, unknown>;
+
+export function istMonthStart(now: Date = new Date()): Date {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  const startIst = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1, 0, 0, 0, 0);
+  return new Date(startIst - IST_OFFSET_MS);
+}
+
+/** ProfileX signals "found" with data.status "1"; "2"/"3" mean no record. At least one endpoint
+ *  (Employment Latest) returns a null status alongside a success message, so this normalises to
+ *  a string or null and lets pricing decide what an unknown status costs. */
+export function readProviderStatus(json: Row | null): string | null {
+  const raw = (json?.data as Row | undefined)?.status ?? json?.status;
+  if (raw === null || raw === undefined || raw === "") return null;
+  return String(raw);
+}
+
+export function isHit(status: string | null): boolean {
+  return status === "1";
+}
+
+/** Indian mobile numbers found anywhere in a response, normalised to bare 10 digits.
+ *  Scans generically rather than by known field name so that adding a contact-returning
+ *  endpoint to the catalogue later needs no change here. */
+export function extractPhones(node: unknown, found = new Set<string>()): Set<string> {
+  if (node === null || node === undefined) return found;
+  if (Array.isArray(node)) {
+    for (const v of node) extractPhones(v, found);
+    return found;
+  }
+  if (typeof node === "object") {
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (/phone|mobile|contact/i.test(k) && (typeof v === "string" || typeof v === "number")) {
+        const digits = String(v).replace(/\D/g, "");
+        // Accept a bare 10-digit number or one carrying the 91 country code; anything else is
+        // an id, a score or a landline we can't dial.
+        const ten = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+        if (/^[6-9]\d{9}$/.test(ten)) found.add(ten);
+      }
+      if (v && typeof v === "object") extractPhones(v, found);
+    }
+  }
+  return found;
+}
+
+export function normalisePhone(raw: string | null | undefined): string {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  return digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+}
