@@ -120,6 +120,14 @@ async function storedUan(debtorId: string): Promise<string | null> {
   return uan ? String(uan) : null;
 }
 
+/** First and last four characters of an identifier — enough to compare against what the
+ *  provider's console shows, without putting the value itself in a log or a database row.
+ *  Never use this on secret-key/access-key; those are secrets, the client id is an identifier. */
+function fingerprint(v: string | undefined): string {
+  if (!v) return "(unset)";
+  return v.length <= 8 ? "(too short)" : `${v.slice(0, 4)}…${v.slice(-4)}`;
+}
+
 async function callProfilex(
   service: ProfilexService,
   body: Record<string, string>,
@@ -327,7 +335,15 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         cost,
         transaction_id: (json?.transactionId as string | undefined) ?? null,
         response: json ?? { raw: raw.slice(0, 4000) },
-        error: httpStatus === 200 ? null : `HTTP ${httpStatus}: ${raw.slice(0, 500)}`,
+        // Record WHICH client id produced a failure. The provider returns an identical error for
+        // "no access" and "could not resolve your account from this id", so without this there is
+        // no way to tell a genuine entitlement problem from a deployment still running a stale
+        // env var — which is exactly the ambiguity that cost a day here, and Railway's variables
+        // have silently drifted from local before.
+        error:
+          httpStatus === 200
+            ? null
+            : `HTTP ${httpStatus} [client-user-id ${fingerprint(process.env.PROFILEX_CLIENT_USER_ID)}]: ${raw.slice(0, 400)}`,
         completed_at: new Date().toISOString(),
       })
       .eq("id", pending.id)
