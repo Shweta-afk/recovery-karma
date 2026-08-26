@@ -125,17 +125,27 @@ async function storedUan(debtorId: string): Promise<string | null> {
  *  Never use this on secret-key/access-key; those are secrets, the client id is an identifier. */
 function fingerprint(v: string | undefined): string {
   if (!v) return "(unset)";
-  return v.length <= 8 ? "(too short)" : `${v.slice(0, 4)}…${v.slice(-4)}`;
+  if (v.length <= 8) return "(too short)";
+  // Length included so a stray character is visible: these ids are 36-char UUIDs, so anything
+  // else means the value was pasted with whitespace or truncated.
+  return `${v.slice(0, 4)}…${v.slice(-4)} len=${v.length}`;
+}
+
+/** Env values pasted into a dashboard routinely arrive with a trailing newline or space, and a
+ *  credential header carrying one is rejected by the provider with the same opaque error as a
+ *  wrong credential — indistinguishable, and not worth a second day of debugging. */
+function env(name: string): string | undefined {
+  return process.env[name]?.trim() || undefined;
 }
 
 async function callProfilex(
   service: ProfilexService,
   body: Record<string, string>,
 ): Promise<{ httpStatus: number; json: Row | null; text: string }> {
-  const base = normaliseBaseUrl(process.env.PROFILEX_BASE_URL);
-  const clientUserId = process.env.PROFILEX_CLIENT_USER_ID;
-  const secretKey = process.env.PROFILEX_SECRET_KEY;
-  const accessKey = process.env.PROFILEX_ACCESS_KEY;
+  const base = normaliseBaseUrl(env("PROFILEX_BASE_URL"));
+  const clientUserId = env("PROFILEX_CLIENT_USER_ID");
+  const secretKey = env("PROFILEX_SECRET_KEY");
+  const accessKey = env("PROFILEX_ACCESS_KEY");
 
   if (!clientUserId || !secretKey || !accessKey) {
     throw new Error(
@@ -343,7 +353,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         error:
           httpStatus === 200
             ? null
-            : `HTTP ${httpStatus} [client-user-id ${fingerprint(process.env.PROFILEX_CLIENT_USER_ID)}]: ${raw.slice(0, 400)}`,
+            : `HTTP ${httpStatus} [client-user-id ${fingerprint(process.env.PROFILEX_CLIENT_USER_ID) /* raw, NOT trimmed: the whole point is to expose a stray character */}]: ${raw.slice(0, 400)}`,
         completed_at: new Date().toISOString(),
       })
       .eq("id", pending.id)
