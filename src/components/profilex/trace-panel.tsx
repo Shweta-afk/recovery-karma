@@ -188,9 +188,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
         <Search className="h-8 w-8 text-muted-foreground/40" />
-        <p className="text-sm font-medium text-foreground">Customer Insights is not switched on</p>
+        <p className="text-sm font-medium text-foreground">Insights is not switched on</p>
         <p className="text-xs text-muted-foreground max-w-xs">
-          An admin can enable Customer Insights and set a monthly budget under Settings.
+          An admin can enable Insights and set a monthly budget under Settings.
         </p>
       </div>
     );

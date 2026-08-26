@@ -114,7 +114,7 @@ async function callProfilex(
 
   if (!clientUserId || !secretKey || !accessKey) {
     throw new Error(
-      "Customer Insights is not configured. Set PROFILEX_CLIENT_USER_ID, PROFILEX_SECRET_KEY and " +
+      "Insights is not configured. Set PROFILEX_CLIENT_USER_ID, PROFILEX_SECRET_KEY and " +
         "PROFILEX_ACCESS_KEY in the server environment (and in Railway for production).",
     );
   }
@@ -174,7 +174,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 
     const settings = await loadSettings(caller.clientId);
     if (!settings.enabled) {
-      throw new Error("Customer Insights is turned off. An admin can enable it in Settings.");
+      throw new Error("Insights is turned off. An admin can enable it in Settings.");
     }
 
     // Resolve the input, still without trusting the browser for either value.
@@ -228,12 +228,11 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         p_client_id: caller.clientId,
         p_since: istMonthStart().toISOString(),
       });
-      if (spendErr)
-        throw new Error(`Could not check the Customer Insights budget (${spendErr.message})`);
+      if (spendErr) throw new Error(`Could not check the Insights budget (${spendErr.message})`);
       const spend = Number(spent ?? 0);
       if (spend >= settings.monthly_budget) {
         throw new Error(
-          `This month's Customer Insights budget is spent — ₹${spend.toFixed(2)} of ` +
+          `This month's Insights budget is spent — ₹${spend.toFixed(2)} of ` +
             `₹${settings.monthly_budget.toFixed(2)}. An admin can raise it in Settings.`,
         );
       }
@@ -361,7 +360,7 @@ export const getProfilexSpend = createServerFn({ method: "POST" })
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
     if (caller.role !== "manager" && caller.role !== "admin") {
-      throw new Error("Only managers or admins can view Customer Insights spend");
+      throw new Error("Only managers or admins can view Insights spend");
     }
     const admin = db();
     const since = data.since ?? istMonthStart().toISOString();
@@ -401,8 +400,7 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
     // Admin only: the budget cap is worthless if the people spending against it can raise it.
-    if (caller.role !== "admin")
-      throw new Error("Only admins can change Customer Insights settings");
+    if (caller.role !== "admin") throw new Error("Only admins can change Insights settings");
 
     const admin = db();
     const { error } = await admin.from("profilex_settings").upsert(
@@ -418,6 +416,6 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
       },
       { onConflict: "client_id" },
     );
-    if (error) throw new Error(`Could not save Customer Insights settings (${error.message})`);
+    if (error) throw new Error(`Could not save Insights settings (${error.message})`);
     return { ok: true };
   });

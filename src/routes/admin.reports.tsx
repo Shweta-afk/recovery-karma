@@ -560,7 +560,7 @@ function AdminReportsPage() {
                 </Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="profilex">Customer Insights</TabsTrigger>
+            <TabsTrigger value="profilex">Insights</TabsTrigger>
             <TabsTrigger value="detail">Call Log</TabsTrigger>
           </TabsList>
         </div>

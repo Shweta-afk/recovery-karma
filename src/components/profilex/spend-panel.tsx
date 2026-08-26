@@ -35,7 +35,7 @@ export function ProfilexSpendPanel() {
         setTotalSpend(Number(res.totalSpend));
         setBudget(Number(res.monthlyBudget));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load Customer Insights spend");
+        setError(e instanceof Error ? e.message : "Could not load Insights spend");
       } finally {
         setLoading(false);
       }
@@ -99,7 +99,7 @@ export function ProfilexSpendPanel() {
 
       <ReportSection
         title="By service"
-        description="Every Customer Insights lookup this month, and what it returned."
+        description="Every Insights lookup this month, and what it returned."
         icon={Search}
       >
         <DataTable

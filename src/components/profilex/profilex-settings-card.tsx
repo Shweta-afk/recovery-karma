@@ -39,7 +39,7 @@ export function ProfilexSettingsCard() {
         setMissTtlHours(s.miss_ttl_hours);
         setRateCard((s.rate_card as RateCard) ?? {});
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not load Customer Insights settings");
+        toast.error(e instanceof Error ? e.message : "Could not load Insights settings");
       } finally {
         setLoading(false);
       }
@@ -72,9 +72,9 @@ export function ProfilexSettingsCard() {
           rateCard,
         },
       });
-      toast.success("Customer Insights settings saved");
+      toast.success("Insights settings saved");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not save Customer Insights settings");
+      toast.error(e instanceof Error ? e.message : "Could not save Insights settings");
     } finally {
       setSaving(false);
     }
@@ -85,7 +85,7 @@ export function ProfilexSettingsCard() {
       <CardHeader className="border-b border-border pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Search className="h-4 w-4 text-primary" />
-          Customer Insights
+          Insights
           <Badge variant="secondary" className="text-[10px] ml-1">
             Billed per lookup
           </Badge>
@@ -104,7 +104,7 @@ export function ProfilexSettingsCard() {
           <>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-xs font-medium text-foreground">Enable Customer Insights</p>
+                <p className="text-xs font-medium text-foreground">Enable Insights</p>
                 <p className="text-[11px] text-muted-foreground">
                   Off by default. Nothing can be spent while this is off.
                 </p>

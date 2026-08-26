@@ -124,7 +124,7 @@ export function TraceSummary({
           <Search className="h-3.5 w-3.5 text-primary" />
         )}
         <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
-          Customer Insights
+          Insights
         </span>
       </div>
       {body}
