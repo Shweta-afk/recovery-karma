@@ -114,7 +114,7 @@ async function callProfilex(
 
   if (!clientUserId || !secretKey || !accessKey) {
     throw new Error(
-      "ProfileX is not configured. Set PROFILEX_CLIENT_USER_ID, PROFILEX_SECRET_KEY and " +
+      "Skip tracing is not configured. Set PROFILEX_CLIENT_USER_ID, PROFILEX_SECRET_KEY and " +
         "PROFILEX_ACCESS_KEY in the server environment (and in Railway for production).",
     );
   }
@@ -150,11 +150,11 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
     if (caller.role !== "manager" && caller.role !== "admin") {
-      throw new Error("Only managers or admins can run a ProfileX trace");
+      throw new Error("Only managers or admins can run a trace");
     }
 
     const service = getService(data.serviceId);
-    if (!service) throw new Error(`Unknown ProfileX service "${data.serviceId}"`);
+    if (!service) throw new Error(`Unknown trace service "${data.serviceId}"`);
 
     const admin = db();
 
@@ -174,7 +174,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 
     const settings = await loadSettings(caller.clientId);
     if (!settings.enabled) {
-      throw new Error("ProfileX lookups are turned off. An admin can enable them in Settings.");
+      throw new Error("Skip tracing is turned off. An admin can enable it in Settings.");
     }
 
     // Resolve the input, still without trusting the browser for either value.
@@ -228,11 +228,11 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         p_client_id: caller.clientId,
         p_since: istMonthStart().toISOString(),
       });
-      if (spendErr) throw new Error(`Could not check the ProfileX budget (${spendErr.message})`);
+      if (spendErr) throw new Error(`Could not check the tracing budget (${spendErr.message})`);
       const spend = Number(spent ?? 0);
       if (spend >= settings.monthly_budget) {
         throw new Error(
-          `This month's ProfileX budget is spent — ₹${spend.toFixed(2)} of ` +
+          `This month's tracing budget is spent — ₹${spend.toFixed(2)} of ` +
             `₹${settings.monthly_budget.toFixed(2)}. An admin can raise it in Settings.`,
         );
       }
@@ -318,7 +318,17 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       .single();
 
     if (httpStatus !== 200) {
-      throw new Error(`ProfileX returned HTTP ${httpStatus}. Nothing was billed for this attempt.`);
+      // Spell out that this is a FAULT, not a "no record found". A real not-found comes back
+      // HTTP 200 with provider status 2 and IS charged; a non-200 means the request never
+      // reached a data source. Conflating the two is exactly the confusion this caused in
+      // practice, so surface the provider's own message rather than just the status code.
+      const providerMessage =
+        typeof json?.message === "string" ? json.message : raw.slice(0, 200) || "no detail given";
+      throw new Error(
+        `The tracing provider rejected this request (HTTP ${httpStatus}: ${providerMessage}). ` +
+          `This is a fault on their side, not a "nothing found" result — nothing was charged. ` +
+          `If it persists, the account may not have access to this lookup.`,
+      );
     }
 
     // Writeback: any dialable number the trace surfaced joins the debtor's alternate numbers so
@@ -350,7 +360,7 @@ export const getProfilexSpend = createServerFn({ method: "POST" })
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
     if (caller.role !== "manager" && caller.role !== "admin") {
-      throw new Error("Only managers or admins can view ProfileX spend");
+      throw new Error("Only managers or admins can view tracing spend");
     }
     const admin = db();
     const since = data.since ?? istMonthStart().toISOString();
@@ -390,7 +400,7 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
     // Admin only: the budget cap is worthless if the people spending against it can raise it.
-    if (caller.role !== "admin") throw new Error("Only admins can change ProfileX settings");
+    if (caller.role !== "admin") throw new Error("Only admins can change skip tracing settings");
 
     const admin = db();
     const { error } = await admin.from("profilex_settings").upsert(
@@ -406,6 +416,6 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
       },
       { onConflict: "client_id" },
     );
-    if (error) throw new Error(`Could not save ProfileX settings (${error.message})`);
+    if (error) throw new Error(`Could not save skip tracing settings (${error.message})`);
     return { ok: true };
   });

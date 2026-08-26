@@ -39,7 +39,7 @@ export function ProfilexSettingsCard() {
         setMissTtlHours(s.miss_ttl_hours);
         setRateCard((s.rate_card as RateCard) ?? {});
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not load ProfileX settings");
+        toast.error(e instanceof Error ? e.message : "Could not load skip tracing settings");
       } finally {
         setLoading(false);
       }
@@ -72,9 +72,9 @@ export function ProfilexSettingsCard() {
           rateCard,
         },
       });
-      toast.success("ProfileX settings saved");
+      toast.success("Skip tracing settings saved");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not save ProfileX settings");
+      toast.error(e instanceof Error ? e.message : "Could not save skip tracing settings");
     } finally {
       setSaving(false);
     }
@@ -85,14 +85,14 @@ export function ProfilexSettingsCard() {
       <CardHeader className="border-b border-border pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Search className="h-4 w-4 text-primary" />
-          ProfileX Skip Tracing
+          Skip Tracing
           <Badge variant="secondary" className="text-[10px] ml-1">
             Billed per lookup
           </Badge>
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
           Managers can look up a debtor's employer and UAN from the number already on their account.
-          ProfileX charges per call — including when it finds nothing.
+          The provider charges per lookup — including when it finds nothing.
         </p>
       </CardHeader>
       <CardContent className="pt-4 space-y-5">
@@ -104,7 +104,7 @@ export function ProfilexSettingsCard() {
           <>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-xs font-medium text-foreground">Enable ProfileX lookups</p>
+                <p className="text-xs font-medium text-foreground">Enable skip tracing</p>
                 <p className="text-[11px] text-muted-foreground">
                   Off by default. Nothing can be spent while this is off.
                 </p>
@@ -166,8 +166,8 @@ export function ProfilexSettingsCard() {
             <div>
               <p className="text-xs font-medium text-foreground mb-1">Rate card (₹ per lookup)</p>
               <p className="text-[11px] text-muted-foreground mb-3">
-                ProfileX prices per service and per outcome. Keep these matching your Neokred
-                contract — every spend figure in Reports is calculated from them.
+                The provider prices per service and per outcome. Keep these matching your contract —
+                every spend figure in Reports is calculated from them.
               </p>
               <div className="space-y-2">
                 {PROFILEX_SERVICES.map((s) => (
@@ -202,7 +202,7 @@ export function ProfilexSettingsCard() {
                 ) : (
                   <Save className="h-3.5 w-3.5" />
                 )}
-                Save ProfileX settings
+                Save tracing settings
               </Button>
             </div>
           </>

@@ -188,7 +188,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
         <Search className="h-8 w-8 text-muted-foreground/40" />
-        <p className="text-sm font-medium text-foreground">ProfileX is not switched on</p>
+        <p className="text-sm font-medium text-foreground">Skip tracing is not switched on</p>
         <p className="text-xs text-muted-foreground max-w-xs">
           An admin can enable skip tracing and set a monthly budget under Settings.
         </p>
@@ -202,8 +202,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
         <Search className="h-8 w-8 text-muted-foreground/40" />
         <p className="text-sm font-medium text-foreground">No trace on file</p>
         <p className="text-xs text-muted-foreground max-w-xs">
-          Ask your manager to run a ProfileX lookup for {debtorName}. Anything they find shows up
-          here.
+          Ask your manager to run a trace for {debtorName}. Anything they find shows up here.
         </p>
       </div>
     );
@@ -274,8 +273,8 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
           <AlertDialogHeader>
             <AlertDialogTitle>Run {confirming?.label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This looks up {debtorName}'s number with ProfileX and costs{" "}
-              {confirming && priceLine(confirming)}. ProfileX charges even when it finds nothing.
+              This looks up {debtorName}'s number and costs {confirming && priceLine(confirming)}.
+              The provider charges even when it finds nothing.
               {latest.has(confirming?.id ?? "") &&
                 " A recent result is already stored — if it is still within the cache window this will be served free."}
             </AlertDialogDescription>

@@ -35,7 +35,7 @@ export function ProfilexSpendPanel() {
         setTotalSpend(Number(res.totalSpend));
         setBudget(Number(res.monthlyBudget));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load ProfileX spend");
+        setError(e instanceof Error ? e.message : "Could not load tracing spend");
       } finally {
         setLoading(false);
       }
@@ -45,7 +45,7 @@ export function ProfilexSpendPanel() {
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground py-6">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading ProfileX spend…
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading tracing spend…
       </div>
     );
   }
@@ -99,7 +99,7 @@ export function ProfilexSpendPanel() {
 
       <ReportSection
         title="By service"
-        description="Every ProfileX lookup this month, and what it returned."
+        description="Every trace lookup this month, and what it returned."
         icon={Search}
       >
         <DataTable
@@ -132,7 +132,7 @@ export function ProfilexSpendPanel() {
           ]}
           rows={rows}
           keyOf={(r) => r.service_id}
-          empty="No ProfileX lookups this month."
+          empty="No trace lookups this month."
         />
       </ReportSection>
     </div>
