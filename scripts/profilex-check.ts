@@ -23,6 +23,12 @@ const REQUIRED = ["PROFILEX_CLIENT_USER_ID", "PROFILEX_SECRET_KEY", "PROFILEX_AC
 // A number that is well-formed but will not resolve, so a live probe stays on the ₹0 path.
 const PROBE_MOBILE = "9999999999";
 
+// The console exposes BOTH a "Client Hash ID" and a "User Hash ID" while the API takes a single
+// `client-user-id` header, so which one it wants is genuinely ambiguous — and guessing wrong
+// returns the same opaque "You Dont Have UAT Access!!!" as having no access at all. Set this to
+// whichever of the two is NOT in PROFILEX_CLIENT_USER_ID and --live tries both.
+const ALT_CLIENT_ID = process.env.PROFILEX_CLIENT_HASH_ID;
+
 let failed = false;
 const fail = (msg: string) => {
   console.error(`  ✗ ${msg}`);
@@ -69,35 +75,64 @@ for (const s of PROFILEX_SERVICES) {
 
 if (LIVE && !failed) {
   const service = getService("mobile-to-uan")!;
-  console.log(`\n  Probing ${service.label} with ${PROBE_MOBILE} (₹0 if not found, ₹3 if found)…`);
-  const res = await fetch(`${baseUrl}${service.path}`, {
-    method: "POST",
-    headers: {
-      "client-user-id": process.env.PROFILEX_CLIENT_USER_ID!,
-      "secret-key": process.env.PROFILEX_SECRET_KEY!,
-      "access-key": process.env.PROFILEX_ACCESS_KEY!,
-      "service-id": service.serviceId,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ mobile: PROBE_MOBILE }),
-  });
-  const text = await res.text();
-  const status = (() => {
-    try {
-      return JSON.parse(text)?.data?.status ?? null;
-    } catch {
-      return null;
-    }
-  })();
+  const candidates: [string, string][] = [
+    ["PROFILEX_CLIENT_USER_ID", process.env.PROFILEX_CLIENT_USER_ID!],
+  ];
+  if (ALT_CLIENT_ID) candidates.push(["PROFILEX_CLIENT_HASH_ID", ALT_CLIENT_ID]);
 
-  console.log(`    HTTP ${res.status}, provider status ${JSON.stringify(status)}`);
-  console.log(
-    `    rate limit: ${res.headers.get("x-ratelimit-remaining") ?? "?"} of ${res.headers.get("x-ratelimit-limit") ?? "?"} remaining`,
-  );
-  if (res.status === 200) console.log("  ✓ credentials accepted");
-  else if (res.status === 401 || res.status === 403)
-    fail(`credentials rejected — ${text.slice(0, 200)}`);
-  else fail(`unexpected HTTP ${res.status} — ${text.slice(0, 200)}`);
+  console.log(`\n  Probing ${service.label} with ${PROBE_MOBILE} (₹0 if not found, ₹3 if found)…`);
+  let accepted = false;
+
+  for (const [label, clientId] of candidates) {
+    const res = await fetch(`${baseUrl}${service.path}`, {
+      method: "POST",
+      headers: {
+        "client-user-id": clientId,
+        "secret-key": process.env.PROFILEX_SECRET_KEY!,
+        "access-key": process.env.PROFILEX_ACCESS_KEY!,
+        "service-id": service.serviceId,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mobile: PROBE_MOBILE }),
+    });
+    const text = await res.text();
+    let providerMsg: string = text;
+    let status: unknown = null;
+    try {
+      const j = JSON.parse(text);
+      providerMsg = j?.message ?? text;
+      status = j?.data?.status ?? null;
+    } catch {
+      /* non-JSON body — the raw text is the best detail available */
+    }
+
+    console.log(`\n    client-user-id taken from ${label}:`);
+    console.log(`      HTTP ${res.status}, provider status ${JSON.stringify(status)}`);
+    console.log(`      ${String(providerMsg).slice(0, 120)}`);
+    console.log(
+      `      rate limit: ${res.headers.get("x-ratelimit-remaining") ?? "?"} of ${res.headers.get("x-ratelimit-limit") ?? "?"} remaining`,
+    );
+
+    if (res.status === 200) {
+      console.log("  ✓ ACCEPTED — put this value in PROFILEX_CLIENT_USER_ID");
+      accepted = true;
+      break;
+    }
+    // Free to have tried: ProfileX bills on HTTP 200 only, so a rejected permutation costs ₹0.
+    if (String(providerMsg).includes("UAT Access")) {
+      console.log("      (rejected, ₹0 — the account could not be resolved from this id)");
+    }
+  }
+
+  if (!accepted) {
+    fail(
+      candidates.length > 1
+        ? "neither client id was accepted — check the console's BASE URL matches PROFILEX_BASE_URL"
+        : "credentials rejected. The console shows BOTH a Client Hash ID and a User Hash ID, but " +
+            "the API takes one `client-user-id` header — set PROFILEX_CLIENT_HASH_ID to the value " +
+            "you are NOT currently using and re-run to try both.",
+    );
+  }
 } else if (!LIVE) {
   console.log("\n  (config only — pass --live to probe the API)");
 }
