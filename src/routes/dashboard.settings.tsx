@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { Phone, Clock, Zap, Bell, Shield, Volume2, Save, Mic } from "lucide-react";
+import { Phone, Clock, Zap, Bell, Shield, Volume2, Save, Mic, Info } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -124,15 +124,36 @@ function SettingRow({
 
 /* ─── page ───────────────────────────────────────────────────────────────── */
 
+const PREFS_KEY = "recoveryai_agent_call_settings";
+
 function AgentSettingsPage() {
-  const [cfg, setCfg] = useState({ ...DEFAULTS });
+  // Was `useState({ ...DEFAULTS })` with a save handler that ONLY fired a toast — nothing was
+  // written anywhere, so every control on this page reset on reload while the toast claimed
+  // "Changes will apply from your next login session". Persisting to localStorage at least
+  // makes "saved" true and keeps the agent's choices for when enforcement is built.
+  const [cfg, setCfg] = useState(() => {
+    try {
+      const raw = localStorage.getItem(PREFS_KEY);
+      return raw ? { ...DEFAULTS, ...(JSON.parse(raw) as typeof DEFAULTS) } : { ...DEFAULTS };
+    } catch {
+      return { ...DEFAULTS };
+    }
+  });
   const set = <K extends keyof typeof DEFAULTS>(k: K, v: (typeof DEFAULTS)[K]) =>
     setCfg((p) => ({ ...p, [k]: v }));
 
-  const handleSave = () =>
-    toast.success("Settings saved", {
-      description: "Changes will apply from your next login session.",
+  const handleSave = () => {
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(cfg));
+    } catch {
+      toast.error("Could not save — your browser blocked local storage");
+      return;
+    }
+    // Deliberately does NOT say these take effect. Nothing reads them yet.
+    toast.success("Preferences saved in this browser", {
+      description: "Not yet applied by the dialer — see the notice at the top of the page.",
     });
+  };
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -151,6 +172,23 @@ function AgentSettingsPage() {
       </div>
 
       {/* ── Productive Dialer ───────────────────────────────────────────── */}
+      {/* The previous version of this page saved nothing and told the agent the settings would
+          "apply from your next login session". They include DNC, DND honouring, consent
+          recording and retention — the kind of controls someone would reasonably believe were
+          protecting them and the debtor. Nothing reads any of them. */}
+      <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
+        <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+        <p className="text-[12px] text-muted-foreground">
+          <span className="font-semibold text-foreground">
+            These are saved preferences, not active settings.
+          </span>{" "}
+          They are stored in this browser and are{" "}
+          <span className="font-medium text-foreground">not yet applied</span> by the dialer,
+          recording or compliance checks. Attempt caps, calling hours and DNC/DND handling are not
+          enforced from here today.
+        </p>
+      </div>
+
       <SectionCard
         icon={Zap}
         title="Productive Dialer"

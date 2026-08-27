@@ -360,9 +360,18 @@ pastes/enters the bank's link manually, then shares it via WhatsApp/SMS/logs it.
 not FK'd to an actual Razorpay integration. `RAZORPAY_KEY_ID`/`SECRET` in `.env.example` are
 vestigial; don't build against them without confirming this has changed.
 
-**No WhatsApp/SMS gateway.** `dashboard/messages`'s Send button writes a real row to the
-`messages` table, but nothing actually reaches the debtor's phone — Interakt (or any gateway)
-was never wired. `INTERAKT_API_KEY` is unused. The page is honest about this in its own UI.
+**WhatsApp/SMS now go through Exotel — this section was stale until 2026-08-27.**
+`messages-store.ts`'s `sendMessage()` calls `sendWhatsAppMessage` / SMS in
+`telephony/server.ts`, which hit Exotel's real API before the row is written; `status` records
+whether the provider accepted it, and a failure is stored as `"failed"` rather than optimistic
+"sent". `INTERAKT_API_KEY` remains unused — Interakt was never the gateway.
+
+⚠️ Two caveats that decide whether a message actually lands: `sendWhatsApp` in
+`exotel-provider.ts` is marked **UNCONFIRMED against a real account** (the payload shape was
+written from Exotel's overview docs, not a tested integration), and WhatsApp sends fail until
+each template in `WA_TEMPLATES` is registered and Meta-approved. So "wired" is not the same as
+"delivering" — but it is no longer true that nothing leaves the building, and the Messages page
+no longer claims otherwise.
 
 ---
 
