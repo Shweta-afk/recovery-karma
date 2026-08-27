@@ -48,7 +48,13 @@ export async function refreshRoster(): Promise<void> {
   const { data, error } = await supabase
     .from("agents")
     .select("email, name, role, agent_code, daily_target")
-    .in("role", ["agent", "manager"]);
+    .in("role", ["agent", "manager"])
+    // Deactivated users drop out of the roster, which is what makes Admin > Users'
+    // "Deactivate" mean anything: they stop appearing in assignment pickers, team lists and
+    // queue views. Their existing rows are untouched — this is visibility, not deletion.
+    // `.or` rather than `.eq` because is_active is nullable and pre-existing rows may hold
+    // NULL, which `.eq("is_active", true)` would silently exclude.
+    .or("is_active.is.null,is_active.eq.true");
   if (error || !data) return;
   // Typed at the map rather than left to infer: the Supabase client has no generated Database
   // types, so `data` widens to never[] and every field access below is a type error. Naming the
