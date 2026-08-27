@@ -88,11 +88,18 @@ export const inviteUser = createServerFn({ method: "POST" })
     }
 
     if (data.role === "agent" && data.managerId) {
-      const teamErr = await addAgentToManagerTeam(caller.clientId, data.managerId, agentRow.id as string);
+      const teamErr = await addAgentToManagerTeam(
+        caller.clientId,
+        data.managerId,
+        agentRow.id as string,
+      );
       if (teamErr) {
         // The login and profile were created successfully — team assignment is a secondary
         // step, so surface it as a warning rather than rolling back the whole invite.
-        console.error(`[inviteUser] created ${email} but failed to assign to manager's team:`, teamErr);
+        console.error(
+          `[inviteUser] created ${email} but failed to assign to manager's team:`,
+          teamErr,
+        );
       }
     }
 

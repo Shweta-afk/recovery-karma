@@ -173,7 +173,7 @@ function AdminUsersPage() {
       return;
     const { error: err } = await supabase
       .from("agents")
-      .update({ is_active: next } as never)
+      .update({ is_active: next })
       .eq("id", agent.id);
 
     if (err) {

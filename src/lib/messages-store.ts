@@ -125,7 +125,9 @@ export async function sendMessage(m: {
   let status: MessageStatus = "sent";
   if (m.channel === "whatsapp" || m.channel === "sms") {
     if (!phone) {
-      console.error(`[messages] cannot send ${m.channel}: no phone on file for debtor ${m.debtorId}`);
+      console.error(
+        `[messages] cannot send ${m.channel}: no phone on file for debtor ${m.debtorId}`,
+      );
       status = "failed";
     } else {
       try {

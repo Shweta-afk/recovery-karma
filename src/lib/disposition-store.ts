@@ -309,7 +309,7 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
         dial_mode: d.dialMode ?? null,
         callback_date: d.outcome === "callback" ? (d.callbackDate ?? null) : null,
         callback_time: d.outcome === "callback" ? (d.callbackTime ?? null) : null,
-      } as never)
+      })
       .eq("id", logId);
     if (extraErr) {
       console.warn(
@@ -616,7 +616,7 @@ export async function backfillRecordings(records: DispositionRecord[]): Promise<
       .from("call_logs")
       // Cast for the same reason as the reads above: the generated Supabase types don't
       // cover this table's columns, so writes widen to `never`.
-      .update({ recording_url: url } as never)
+      .update({ recording_url: url })
       .eq("id", rec.id);
     if (error) {
       console.warn(`[dispositions] could not attach recording to ${rec.id}: ${error.message}`);
@@ -652,7 +652,7 @@ export async function setCallSentiment(
       sentiment,
       audited_by: agentUuid,
       audited_at: new Date().toISOString(),
-    } as never)
+    })
     .eq("id", callId);
   if (error) throw error;
   await refreshDispositions();

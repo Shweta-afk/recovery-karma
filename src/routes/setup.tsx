@@ -54,7 +54,9 @@ function SetupPage() {
         password: adminPassword,
       });
       if (loginError) {
-        setError(`Company created, but sign-in failed: ${loginError.message}. Try signing in manually.`);
+        setError(
+          `Company created, but sign-in failed: ${loginError.message}. Try signing in manually.`,
+        );
         setLoading(false);
         return;
       }
