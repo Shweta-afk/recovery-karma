@@ -86,6 +86,7 @@ import { exportCSV } from "@/lib/call-queue/mock-data";
 
 import { saveEscalation } from "@/lib/escalation-store";
 import { requestRetention, getRetentionRequestsFor } from "@/lib/retention-store";
+import { getPayments, refreshPayments } from "@/lib/payments-store";
 import {
   getDispositions,
   isUuid,
@@ -255,9 +256,44 @@ function ActiveCallContent({
   useEffect(() => {
     const bump = () => setDispositionsTick((t) => t + 1);
     window.addEventListener("dispositions-updated", bump);
+    window.addEventListener("payments-updated", bump);
     refreshDispositions().catch(() => {});
-    return () => window.removeEventListener("dispositions-updated", bump);
+    refreshPayments().catch(() => {});
+    return () => {
+      window.removeEventListener("dispositions-updated", bump);
+      window.removeEventListener("payments-updated", bump);
+    };
   }, []);
+
+  /**
+   * Real payment history for this debtor.
+   *
+   * `debtor.paymentHistory` — what the Payments tab used to read — is the same trap
+   * `contactHistory` was: populated only on the dead MOCK_DEBTORS fixture, never by
+   * debtorFromRow, so the tab was permanently empty in production while looking like a
+   * working feature.
+   *
+   * Status is NOT squeezed into the fixture's three-value enum (paid/bounced/missed). The real
+   * `payments` table has completed/pending/failed/refunded, and mapping "pending" onto "missed"
+   * would report a payment that is still in flight as one that never came.
+   */
+  const paymentRows = useMemo(() => {
+    if (!isUuid(debtor.id)) return debtor.paymentHistory ?? [];
+    return getPayments()
+      .filter((p) => p.debtorId === debtor.id)
+      .sort((a, b) => ((a.receivedAt ?? a.createdAt) < (b.receivedAt ?? b.createdAt) ? 1 : -1))
+      .map((p) => ({
+        date: new Date(p.receivedAt ?? p.createdAt).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        }),
+        amount: p.amount,
+        method: p.method ?? "—",
+        status: p.status === "completed" ? "paid" : p.status === "failed" ? "bounced" : p.status,
+        ref: p.notes || undefined,
+      }));
+  }, [debtor.id, debtor.paymentHistory, dispositionsTick]);
 
   // Live resolution of the retro-attach Loan ID, so the agent sees which account the call is
   // about to be filed against before they submit. Pure read over the portfolio cache.
@@ -1595,7 +1631,7 @@ function ActiveCallContent({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {(debtor.paymentHistory ?? []).map((p, i) => (
+                        {paymentRows.map((p, i) => (
                           <tr key={i} className="hover:bg-muted/20">
                             <td className="py-2.5 pl-4 text-foreground">{p.date}</td>
                             <td className="py-2.5 text-right font-medium text-foreground">
@@ -1625,7 +1661,7 @@ function ActiveCallContent({
                             </td>
                           </tr>
                         ))}
-                        {!debtor.paymentHistory?.length && (
+                        {!paymentRows.length && (
                           <tr>
                             <td
                               colSpan={5}

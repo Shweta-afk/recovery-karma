@@ -549,9 +549,10 @@ await saveDisposition({ ...data });
   Until then: run `tsc --noEmit | wc -l` before and after a change and compare the count rather
   than expecting zero.
 - `contactHistory` and `paymentHistory` on `Debtor` are only ever populated by the dead
-  `MOCK_DEBTORS` array. `contactHistory` was un-wired from the UI on 2026-08-27 (the in-call
-  notes panel and Contact History tab now read real `call_logs`); **`paymentHistory` is still
-  read by `active-call.tsx` and is therefore still always empty in production.**
+  `MOCK_DEBTORS` array. **Both were un-wired from the UI on 2026-08-27** — the in-call notes
+  panel and Contact History tab now read real `call_logs`, and the Payments tab reads real
+  `payments`. The two fields themselves survive only as the fallback for an ad-hoc manual call
+  (no debtor row behind it) and go away with the `MOCK_DEBTORS` array.
 
 **Done (2026-08-27):** the agent Reports page was listed as an unwired placeholder for weeks
 while being fully wired — check a page before believing this file about it. Manual Dial moved
