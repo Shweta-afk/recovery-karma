@@ -471,7 +471,7 @@ export const MOCK_DEBTORS: Debtor[] = [
     interestOutstanding: 28000,
     penaltyCharges: 10000,
     totalOverdue: 38000,
-    employer: "Tata Consultancy Services",
+    employer: "Infotech Services Ltd",
     employerType: "Salaried",
     monthlyIncome: 58000,
     bankName: "Axis Bank",

@@ -34,7 +34,7 @@ const EXOTEL_API_TOKEN = env("EXOTEL_API_TOKEN");
 /** "api.exotel.com" (Singapore) or "api.in.exotel.com" (Mumbai) — pick whichever region
  * your Exotel account was provisioned in; it's shown on the account dashboard. */
 const EXOTEL_SUBDOMAIN = env("EXOTEL_SUBDOMAIN") ?? "api.in.exotel.com";
-/** ExoPhone (virtual number) shown to the debtor. Falls back to whatever the account's
+/** Virtual number shown to the debtor. Falls back to whatever the account's
  * default is if omitted — this must be a number Exotel has assigned to the account, not an
  * agent's personal number. */
 const EXOTEL_CALLER_ID = env("EXOTEL_CALLER_ID");
@@ -45,9 +45,11 @@ function baseUrl(): string {
 
 function requireCredentials() {
   if (!EXOTEL_SID || !EXOTEL_API_KEY || !EXOTEL_API_TOKEN) {
+    // Reachable from an agent's toast when a call is attempted with no credentials, so it
+    // names the env vars (which an operator needs) without naming the vendor to the agent.
     throw new Error(
-      "EXOTEL_SID / EXOTEL_API_KEY / EXOTEL_API_TOKEN are not set — get these from the " +
-        "Exotel dashboard (Settings > API Credentials) and add them to .env.local or your environment",
+      "Telephony is not configured — TELEPHONY_SID / TELEPHONY_API_KEY / TELEPHONY_API_TOKEN " +
+        "(EXOTEL_* aliases) are unset. Ask your platform team to add them to the environment.",
     );
   }
 }
@@ -99,19 +101,19 @@ export const exotelProvider: TelephonyProvider = {
 
       const text = await response.text();
       if (!response.ok) {
-        throw new Error(`Exotel Connect failed: ${response.status} ${text}`);
+        throw new Error(`Call could not be placed (${response.status}): ${text}`);
       }
 
       const data = JSON.parse(text) as { Call?: { Sid?: string }; Sid?: string };
       const callId = data.Call?.Sid ?? data.Sid;
       if (!callId) {
-        throw new Error(`Exotel returned no call Sid: ${text}`);
+        throw new Error(`Telephony provider returned no call id: ${text}`);
       }
 
       return { providerCallId: callId };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`exotelProvider.startCall failed: ${msg}`);
+      throw new Error(`Could not start the call: ${msg}`);
     }
   },
 
@@ -174,19 +176,19 @@ export const exotelProvider: TelephonyProvider = {
 
       const text = await response.text();
       if (!response.ok) {
-        throw new Error(`Exotel SMS send failed: ${response.status} ${text}`);
+        throw new Error(`SMS could not be sent (${response.status}): ${text}`);
       }
 
       const data = JSON.parse(text) as { SMSMessage?: { Sid?: string }; Sid?: string };
       const messageId = data.SMSMessage?.Sid ?? data.Sid;
       if (!messageId) {
-        throw new Error(`Exotel returned no SMS Sid: ${text}`);
+        throw new Error(`Telephony provider returned no SMS id: ${text}`);
       }
 
       return { providerMessageId: messageId };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`exotelProvider.sendSms failed: ${msg}`);
+      throw new Error(`Could not send the SMS: ${msg}`);
     }
   },
 
@@ -207,11 +209,11 @@ export const exotelProvider: TelephonyProvider = {
     const providerCallId = pick<string>("CallSid");
     const customIdentifier = pick<string>("CustomField");
     if (!providerCallId && !customIdentifier) {
-      throw new Error("Invalid Exotel webhook: no CallSid/CustomField to correlate on");
+      throw new Error("Invalid telephony webhook: no call id to correlate on");
     }
 
     const rawStatus = pick<string>("Status");
-    if (!rawStatus) throw new Error("Invalid Exotel webhook: missing Status");
+    if (!rawStatus) throw new Error("Invalid telephony webhook: missing status");
 
     const duration = pick<string | number>("Duration", "ConversationDuration");
 
@@ -277,32 +279,29 @@ export async function sendWhatsApp(req: SendWhatsAppRequest): Promise<SendWhatsA
   };
 
   try {
-    const response = await fetch(
-      `https://${EXOTEL_SUBDOMAIN}/v2/accounts/${EXOTEL_SID}/messages`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: authHeader(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
+    const response = await fetch(`https://${EXOTEL_SUBDOMAIN}/v2/accounts/${EXOTEL_SID}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: authHeader(),
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(payload),
+    });
 
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(`Exotel WhatsApp send failed: ${response.status} ${text}`);
+      throw new Error(`WhatsApp message could not be sent (${response.status}): ${text}`);
     }
 
     const data = JSON.parse(text) as { sid?: string; id?: string };
     const messageId = data.sid ?? data.id;
     if (!messageId) {
-      throw new Error(`Exotel returned no WhatsApp message id: ${text}`);
+      throw new Error(`Telephony provider returned no WhatsApp message id: ${text}`);
     }
 
     return { providerMessageId: messageId };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`exotelProvider.sendWhatsApp failed: ${msg}`);
+    throw new Error(`Could not send the WhatsApp message: ${msg}`);
   }
 }

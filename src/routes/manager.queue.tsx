@@ -347,7 +347,7 @@ function MyQueueTab({
             />
           </div>
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Caller ID (ExoPhone)</label>
+            <label className="text-xs text-muted-foreground">Caller ID</label>
             <Select value={manualCallerId} onValueChange={setManualCallerId}>
               <SelectTrigger className="h-9 w-40 text-sm">
                 <SelectValue />

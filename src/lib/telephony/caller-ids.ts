@@ -14,6 +14,6 @@ export const TELEPHONY_CALLER_IDS: string[] = raw
 
 if (import.meta.env.DEV && TELEPHONY_CALLER_IDS.length === 0) {
   console.warn(
-    "[caller-ids] VITE_TELEPHONY_CALLER_IDS is not set — manual-dial caller ID pickers will be empty. Add the account's ExoPhone(s) to .env.local.",
+    "[caller-ids] VITE_TELEPHONY_CALLER_IDS is not set — manual-dial caller ID pickers will be empty. Add the account's virtual number(s) to .env.local.",
   );
 }

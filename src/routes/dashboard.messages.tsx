@@ -336,10 +336,8 @@ function MessagesPage() {
                 stopped being true: messages-store.sendMessage now calls Exotel through
                 telephony/server.ts before writing the row. Telling an agent a send goes nowhere
                 when it may actually deliver is the more dangerous of the two errors. */}
-            <span className="font-medium text-foreground">
-              Sending attempts a real delivery via Exotel
-            </span>{" "}
-            — the row's status reflects whether the provider accepted it, and shows{" "}
+            <span className="font-medium text-foreground">Sending attempts a real delivery</span> —
+            the row's status reflects whether the provider accepted it, and shows{" "}
             <span className="font-medium text-foreground">Failed</span> when credentials are missing
             or the WhatsApp template is not yet approved.
           </p>
