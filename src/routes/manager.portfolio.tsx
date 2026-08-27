@@ -78,7 +78,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn, parseCsvLine } from "@/lib/utils";
+import { cn, parseCsvText } from "@/lib/utils";
 import { normHeader } from "@/lib/column-mapper";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { useTeamAgents, type AgentRef } from "@/lib/team-store";
@@ -913,13 +913,17 @@ function BulkPaidUploadDialog({
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
-      const lines = text.split(/\r?\n/).filter(Boolean);
+      // See parseCsvText — line-splitting first corrupts any quoted field with a newline.
+      const lines = parseCsvText(text);
       if (lines.length < 2) {
         toast.error("CSV must have a header row and at least one data row");
         return;
       }
-      const h = parseCsvLine(lines[0]);
-      const r = lines.slice(1, 20001).map((l) => parseCsvLine(l));
+      const h = lines[0];
+      // Every row. This was capped at 20,000 and silently dropped the rest — on a paid-file
+      // reconciliation that means payments the bank reported are never applied, and nothing
+      // says so.
+      const r = lines.slice(1);
       setHeaders(h);
       setRows(r);
       setLoanIdCol(guessColumn(h, LOAN_ID_ALIASES));

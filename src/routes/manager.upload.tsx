@@ -32,7 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn, parseCsvLine } from "@/lib/utils";
+import { cn, parseCsvText } from "@/lib/utils";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import {
   createPortfolio,
@@ -282,7 +282,9 @@ function PortfolioUploadPage() {
       const reader = new FileReader();
       reader.onload = (e) => {
         const text = e.target?.result as string;
-        const lines = text.split(/\r?\n/).filter(Boolean);
+        // parseCsvText, not split-then-parse-each-line: a quoted address containing a newline
+        // would otherwise break one record into two and shift every column after it.
+        const lines = parseCsvText(text);
         if (lines.length < 2) {
           toast.error("CSV must have a header row and at least one data row");
           return;
@@ -291,12 +293,18 @@ function PortfolioUploadPage() {
         // exports) parses to "" — Radix's <Select.Item> throws on an empty value, so give any
         // blank column a positional placeholder name instead. Keeps array length/position in
         // sync with rawRows, which is indexed via rawHeaders.indexOf(h) elsewhere.
-        const headers = parseCsvLine(lines[0]).map((h, i) => (h.trim() ? h : `Column ${i + 1}`));
-        const rows = lines.slice(1, 5001).map((l) => parseCsvLine(l));
+        const headers = lines[0].map((h, i) => (h.trim() ? h : `Column ${i + 1}`));
+        // EVERY data row. This used to be `.slice(1, 5001)`, which silently discarded row 5001
+        // onward — the toast then reported "Parsed 5000 rows" and the manager had no way to
+        // know the rest of their file had been dropped. Portfolios here run past 10,000
+        // accounts, so this was losing half a book at a time.
+        const rows = lines.slice(1);
 
-        // Reuse a saved mapping for this bank if one exists, then resolve the rest
+        // Reuse a saved mapping for this bank if one exists, then resolve the rest.
+        // The resolver only needs a SAMPLE to infer column types from cell contents — that is
+        // where the row limit belonged all along, not on the data being imported.
         const template = findTemplate(lenderName, headers);
-        const result = resolveMapping(headers, rows, template?.mapping ?? null);
+        const result = resolveMapping(headers, rows.slice(0, 5000), template?.mapping ?? null);
 
         setRawHeaders(headers);
         setRawRows(rows);
