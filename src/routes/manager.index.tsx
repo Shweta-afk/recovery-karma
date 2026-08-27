@@ -53,7 +53,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { useTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useTeamAgents, FALLBACK_DAILY_TARGET, type AgentRef } from "@/lib/team-store";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { useAuth } from "@/lib/auth";
 import {
@@ -83,7 +83,9 @@ export const Route = createFileRoute("/manager/")({
 
 /* ─── real-data helpers ──────────────────────────────────────────────────── */
 
-const DEFAULT_DAILY_TARGET = 80; // matches the Supabase seed's agent daily_target
+// Fallback only, for an agent row whose daily_target is null. Real per-agent targets come
+// from the roster (AgentRef.dailyTarget) — never compare an agent to this constant.
+const DEFAULT_DAILY_TARGET = FALLBACK_DAILY_TARGET;
 
 function isToday(iso: string): boolean {
   const d = new Date(iso),
@@ -160,6 +162,8 @@ interface AgentComputedStat {
   paidToday: number;
   /** Month-to-date collections, IST — the numerator DRR measures progress against. */
   paidThisMonth: number;
+  /** THIS agent's agents.daily_target, not a shared constant. */
+  dailyTarget: number;
   totalPaid: number;
   contactRate: number;
   hasActivityToday: boolean;
@@ -199,6 +203,7 @@ function computeAgentStats(agent: AgentRef): AgentComputedStat {
     ptpAmountToday: today.ptpAmount,
     paidToday: today.paidAmount,
     paidThisMonth: thisMonth.paidAmount,
+    dailyTarget: agent.dailyTarget || DEFAULT_DAILY_TARGET,
     totalPaid: all.paidAmount,
     contactRate: all.contactRate,
     hasActivityToday: today.total > 0,
@@ -495,7 +500,7 @@ function AgentLeaderboard({ agents }: { agents: AgentComputedStat[] }) {
                 i + 1,
                 a.name,
                 a.callsToday,
-                DEFAULT_DAILY_TARGET,
+                a.dailyTarget,
                 a.contactRate,
                 a.totalPaid,
               ]),
@@ -558,11 +563,11 @@ function AgentLeaderboard({ agents }: { agents: AgentComputedStat[] }) {
                 <td className="py-3 pr-4">
                   <div className="flex items-center gap-2">
                     <Progress
-                      value={Math.min((a.callsToday / DEFAULT_DAILY_TARGET) * 100, 100)}
+                      value={Math.min((a.callsToday / a.dailyTarget) * 100, 100)}
                       className="h-1.5 flex-1"
                     />
                     <span className="text-xs text-muted-foreground w-16 flex-shrink-0">
-                      {a.callsToday}/{DEFAULT_DAILY_TARGET}
+                      {a.callsToday}/{a.dailyTarget}
                     </span>
                   </div>
                 </td>
@@ -1224,7 +1229,12 @@ function ManagerDashboardPage() {
   }, [teamDisps]);
 
   const teamCallsToday = agentStats.reduce((s, a) => s + a.callsToday, 0);
-  const teamTarget = DEFAULT_DAILY_TARGET * Math.max(agents.length, 1);
+  // Sum of each agent's OWN agents.daily_target. Was headcount x a hardcoded 80, which
+  // disagreed with what each agent saw on their own dashboard.
+  const teamTarget = Math.max(
+    agentStats.reduce((s, a) => s + a.dailyTarget, 0),
+    1,
+  );
   const teamPaidToday = agentStats.reduce((s, a) => s + a.paidToday, 0);
   // Team DRR: the whole team's monthly ₹ targets, less what they have collected month-to-date,
   // spread over the calendar days still left. Added alongside "Daily Target" (a CALL-count

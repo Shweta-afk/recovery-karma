@@ -22,6 +22,8 @@ import { saveNotification } from "./notification-store";
 import { getTeamByAgent, getAdminEmails } from "./team-store";
 import { isUuid, type CaseFollowup } from "./disposition-store";
 import { formatINR } from "./mock-debtors";
+import { todayIstKey } from "./date-filter";
+import { istDayKey } from "./monthly-trend";
 
 type EscalationLevel = "manager" | "admin";
 type CaseType = CaseFollowup["kind"];
@@ -138,7 +140,10 @@ export async function escalateMissedCasesToAdmin(followups: CaseFollowup[]): Pro
   const overdue = followups.filter((f) => f.daysLeft < 0 && isUuid(f.debtorId));
   if (!overdue.length) return;
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // Both sides of the "was this escalated before today" comparison are bucketed in IST. They
+  // used to be UTC on both sides — self-consistent, but it put the one-day grace boundary 5.5
+  // hours out of step with every other date in the app, so admins could be paged early.
+  const todayIso = todayIstKey();
   const { data: managerRows, error } = await supabase
     .from("ptp_escalations")
     .select("debtor_id, ptp_date, escalated_at, case_type")
@@ -151,7 +156,7 @@ export async function escalateMissedCasesToAdmin(followups: CaseFollowup[]): Pro
 
   const escalatedBeforeToday = new Set(
     managerRows
-      .filter((r) => (r.escalated_at as string).slice(0, 10) < todayIso)
+      .filter((r) => istDayKey(r.escalated_at as string) < todayIso)
       .map(
         (r) =>
           `${r.debtor_id}|${r.ptp_date}|${((r as { case_type?: string }).case_type as CaseType) ?? "ptp"}`,

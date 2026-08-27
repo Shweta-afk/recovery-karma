@@ -18,7 +18,16 @@ export interface AgentRef {
   // variants, duplicate names) or email (easy to mistype/paste wrong).
   // Null only for rows inserted before that migration ran and not yet backfilled.
   agentCode: string | null;
+  /** agents.daily_target — this agent's own call-count goal. Carried on the roster so
+   * supervisor views measure each agent against THEIR target: the manager dashboard used to
+   * compare everyone to a hardcoded 80, so an agent whose real target was 120 saw "45/120" on
+   * their own dashboard and "45/80" on their manager's. Falls back to 80 (the Supabase seed
+   * default) only when the column is null. */
+  dailyTarget: number;
 }
+
+/** The seed's agents.daily_target. Only a fallback for a row with none set. */
+export const FALLBACK_DAILY_TARGET = 80;
 
 const ROSTER_KEY = "recoveryai_roster_cache";
 
@@ -38,15 +47,26 @@ export function getAgentById(id: string): AgentRef | undefined {
 export async function refreshRoster(): Promise<void> {
   const { data, error } = await supabase
     .from("agents")
-    .select("email, name, role, agent_code")
+    .select("email, name, role, agent_code, daily_target")
     .in("role", ["agent", "manager"]);
   if (error || !data) return;
-  const roster: AgentRef[] = data.map((a) => ({
+  // Typed at the map rather than left to infer: the Supabase client has no generated Database
+  // types, so `data` widens to never[] and every field access below is a type error. Naming the
+  // shape here (it is the select string directly above) makes this mapper check properly.
+  type Row = {
+    email: string;
+    name: string;
+    role: string;
+    agent_code: string | null;
+    daily_target: number | null;
+  };
+  const roster: AgentRef[] = (data as unknown as Row[]).map((a) => ({
     id: a.email,
     name: a.name,
     email: a.email,
     role: a.role as "agent" | "manager",
     agentCode: a.agent_code,
+    dailyTarget: Number(a.daily_target) || FALLBACK_DAILY_TARGET,
   }));
   localStorage.setItem(ROSTER_KEY, JSON.stringify(roster));
   window.dispatchEvent(new CustomEvent("roster-updated"));

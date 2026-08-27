@@ -600,7 +600,10 @@ export function CallQueueContent({
   useEffect(() => {
     if (!isSelf) return;
     refreshReminders().then(() => {
-      const todayISO = new Date().toISOString().slice(0, 10);
+      // IST, not UTC. Reminder due-dates are IST calendar dates, but toISOString() reports
+      // the UTC day — so an agent on an early shift (before 05:30 IST) was shown YESTERDAY's
+      // reminders, burning them via markReminderNotified, and never shown today's at all.
+      const todayISO = todayIstKey();
       const due = getDueReminders(agentId, todayISO);
       due.forEach((r) => {
         toast(r.message, {

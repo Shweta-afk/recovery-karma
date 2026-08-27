@@ -20,6 +20,7 @@
  * not starting another manual dial.
  */
 import { useMemo, useState } from "react";
+import { useRouterState } from "@tanstack/react-router";
 import { Phone, PhoneOutgoing, X, History, Link2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -68,6 +69,7 @@ export function ManualDialDock() {
   const [name, setName] = useState("");
   const [callerId, setCallerId] = useState<string>(TELEPHONY_CALLER_IDS[0] ?? "");
 
+  const pathname = useRouterState({ select: (st) => st.location.pathname });
   const myId = user?.email ?? user?.id ?? "";
   const isAdmin = user?.role === "admin";
 
@@ -91,6 +93,12 @@ export function ManualDialDock() {
   // The boards own this corner during a dial run, and there is nothing to dial while a call is
   // already up.
   if (activeCall) return null;
+
+  // manager/queue is the one route that keeps its OWN activeCall state instead of using
+  // useCallSession, so a call started there is invisible to the check above — the dock would
+  // stay live during it and a second click would open a concurrent call with two separate
+  // state holders driving it. Hidden there entirely; that page has its own dialer.
+  if (pathname.startsWith("/manager/queue")) return null;
 
   const dial = () => {
     const dialled = number.trim();
