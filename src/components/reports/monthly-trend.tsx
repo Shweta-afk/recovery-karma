@@ -405,7 +405,7 @@ export function MonthlyTrendCompact({
   const def = TREND_METRICS.find((m) => m.key === metric)!;
   const { window: w } = comparison;
 
-  // Three rows, not all six: this is a glance tile. Collected is the number the floor is
+  // Three rows, not all seven: this is a glance tile. Collected is the number the floor is
   // measured on, PTP value is what is coming, calls is the effort behind both.
   const rows = TREND_METRICS.filter(
     (m) => m.key === "collected" || m.key === "ptpAmount" || m.key === "calls",
@@ -548,7 +548,8 @@ export function MonthlyTrendPanel({
         {note && <p className="mt-1 text-[11px] text-muted-foreground/80">{note}</p>}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+      {/* 7 metrics since Accounts was added — a 6-wide row left one orphaned on its own line. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-7">
         {TREND_METRICS.map((m) => (
           <TrendStat
             key={m.key}

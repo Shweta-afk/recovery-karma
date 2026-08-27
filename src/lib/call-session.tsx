@@ -29,6 +29,7 @@ const EMPTY_DISPOSITION: DispositionForm = {
   escalate: false,
   notes: "",
   followUpDate: "",
+  attachLoanId: "",
 };
 
 interface CallSessionCtx {

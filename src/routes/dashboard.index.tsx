@@ -40,6 +40,7 @@ import {
 import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
 import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
 import { MonthlyTrendCompact } from "@/components/reports/monthly-trend";
+import { computeDrr, monthDays, monthlyCollectionTarget } from "@/lib/daily-run-rate";
 import { useStorageSync } from "@/lib/storage-sync";
 
 export const Route = createFileRoute("/dashboard/")({
@@ -164,7 +165,8 @@ function useAgentPeriodStats(agentId: string) {
         for (const row of p.rows) if (idSet.has(row.id)) assignedPOS += row.loanAmount;
       }
     }
-    return { today, month, assignedPOS };
+    // Real, from portfolio_agent_targets — read as a MONTHLY figure (see daily-run-rate.ts).
+    return { today, month, assignedPOS, monthlyTarget: monthlyCollectionTarget(agentId) };
   };
 
   const [stats, setStats] = useState(compute);
@@ -270,7 +272,7 @@ export function AgentDashboardContent({
    * agent — fall back to the default target rather than showing the viewer's own. */
   const isSelf = !agentIdProp || agentIdProp === (user?.email ?? user?.id);
   const dailyCallTarget = useDailyCallTarget(isSelf ? user?.id : undefined);
-  const { today, month, assignedPOS } = useAgentPeriodStats(agentId);
+  const { today, month, assignedPOS, monthlyTarget } = useAgentPeriodStats(agentId);
   const trendData = useAgentTrendData(agentId);
 
   // Today's raw call logs, for the time-breakdown panel below — calling time is computed
@@ -378,20 +380,25 @@ export function AgentDashboardContent({
           </div>
         </div>
 
-        {/* ── Collections: Target / Shortfall / Run Rate / EOD Projection ── */}
+        {/* ── Collections: Target / Shortfall / DRR / EOD Projection ── */}
         {(() => {
-          // Follows the period toggle. Previously pinned to today.paidAmount against the daily
-          // target no matter what was selected, so picking This Month changed the Performance
-          // block below while this one silently kept showing today — half the page on each.
-          const target = scaleTarget(TARGETS.collections); // no real per-agent ₹ target field yet
+          // DRR is inherently a MONTHLY measure, so it always reads the month's collections —
+          // never periodStats, which follows the Today/Month toggle. Flipping the view must not
+          // change what the month still demands of you.
+          const drr = computeDrr(monthlyTarget, month.paidAmount);
+          const hasTarget = drr.drr !== null;
+          const md = monthDays();
           const actual = periodStats.paidAmount; // real, from call_logs
-          const shortfall = Math.max(0, target - actual);
           // Today: 6.5hrs-into-a-9hr-shift, a simplifying assumption — there's no real
           // shift-start tracking to compute "hours elapsed so far" from. Month: pace across the
           // working days elapsed so far, projected over the whole month.
           const projection = isMonth
             ? Math.round((actual / wd.elapsed) * wd.total)
             : Math.round((actual / 6.5) * 9);
+          // What the projection is judged against: the month's target, or today's DRR ask.
+          const projectionTarget = isMonth ? drr.target : (drr.drr ?? 0);
+          const DASH = "—"; // "no target set" — deliberately not rendered as ₹0, which reads
+          // as "nothing left to do".
           return (
             <div className="space-y-2">
               <SectionLabel>Collections · {periodLabel}</SectionLabel>
@@ -399,34 +406,54 @@ export function AgentDashboardContent({
                 {[
                   {
                     label: "Target",
-                    value: formatINR(target),
-                    sub: isMonth ? `${wd.total} working days` : "daily target",
+                    value: hasTarget ? formatINR(isMonth ? drr.target : drr.drr!) : DASH,
+                    sub: hasTarget
+                      ? isMonth
+                        ? `${md.total} days · month`
+                        : "required today"
+                      : "no monthly target set",
                     cls: "text-foreground",
                     bar: null,
                     filter: "paid" as const,
                   },
                   {
                     label: "Shortfall",
-                    value: formatINR(shortfall),
-                    sub: "gap to close",
-                    cls: shortfall === 0 ? "text-success" : "text-destructive",
+                    value: hasTarget ? formatINR(drr.shortfall) : DASH,
+                    sub: hasTarget ? "gap to close this month" : "needs a target",
+                    cls: !hasTarget
+                      ? "text-muted-foreground"
+                      : drr.met
+                        ? "text-success"
+                        : "text-destructive",
                     bar: null,
                     filter: "all" as const,
                   },
                   {
-                    label: "Run Rate",
-                    value: formatINR(projection),
-                    sub: isMonth ? "pace × month" : "pace × shift",
-                    cls: "text-amber-500",
+                    // Replaces the old "Run Rate" tile, which was a projection — and rendered
+                    // the exact same value as the projection tile beside it. DRR is the
+                    // opposite question: not where today's pace lands, but what the days left
+                    // must each deliver. It climbs as the month runs out.
+                    label: "DRR",
+                    value: hasTarget ? formatINR(drr.drr!) : DASH,
+                    sub: hasTarget
+                      ? drr.met
+                        ? "target met"
+                        : `per day · ${drr.daysRemaining} left`
+                      : "set a portfolio target",
+                    cls: hasTarget && !drr.met ? "text-amber-500" : "text-muted-foreground",
                     bar: null,
                     filter: "all" as const,
                   },
                   {
                     label: isMonth ? "Month Projection" : "EOD Projection",
                     value: formatINR(projection),
-                    sub: isMonth ? "est. month end" : "est. end of day",
-                    cls: projection >= target ? "text-success" : "text-destructive",
-                    bar: projection / target,
+                    sub: isMonth ? "est. month end · at this pace" : "est. end of day",
+                    cls: !hasTarget
+                      ? "text-foreground"
+                      : projection >= projectionTarget
+                        ? "text-success"
+                        : "text-destructive",
+                    bar: hasTarget && projectionTarget > 0 ? projection / projectionTarget : null,
                     filter: "ptp" as const,
                   },
                 ].map((s) => (

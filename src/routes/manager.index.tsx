@@ -38,6 +38,7 @@ import {
   AreaChart,
   Area,
 } from "recharts";
+import { computeDrr, istMonthKey, teamMonthlyCollectionTarget } from "@/lib/daily-run-rate";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -157,6 +158,8 @@ interface AgentComputedStat {
   ptpCountToday: number;
   ptpAmountToday: number;
   paidToday: number;
+  /** Month-to-date collections, IST — the numerator DRR measures progress against. */
+  paidThisMonth: number;
   totalPaid: number;
   contactRate: number;
   hasActivityToday: boolean;
@@ -166,6 +169,9 @@ interface AgentComputedStat {
 function computeAgentStats(agent: AgentRef): AgentComputedStat {
   const disps = getAgentDispositions(agent.id);
   const today = calcStats(disps.filter((d) => isToday(d.time)));
+  // Hoisted: computing the current month key per row runs an Intl format per disposition.
+  const nowMonth = istMonthKey(new Date().toISOString());
+  const thisMonth = calcStats(disps.filter((d) => istMonthKey(d.time) === nowMonth));
   const all = calcStats(disps);
 
   const slices = getAgentDebtorIds(agent.id);
@@ -192,6 +198,7 @@ function computeAgentStats(agent: AgentRef): AgentComputedStat {
     ptpCountToday: today.ptps,
     ptpAmountToday: today.ptpAmount,
     paidToday: today.paidAmount,
+    paidThisMonth: thisMonth.paidAmount,
     totalPaid: all.paidAmount,
     contactRate: all.contactRate,
     hasActivityToday: today.total > 0,
@@ -1219,6 +1226,13 @@ function ManagerDashboardPage() {
   const teamCallsToday = agentStats.reduce((s, a) => s + a.callsToday, 0);
   const teamTarget = DEFAULT_DAILY_TARGET * Math.max(agents.length, 1);
   const teamPaidToday = agentStats.reduce((s, a) => s + a.paidToday, 0);
+  // Team DRR: the whole team's monthly ₹ targets, less what they have collected month-to-date,
+  // spread over the calendar days still left. Added alongside "Daily Target" (a CALL-count
+  // goal) rather than replacing it — they answer different questions.
+  const teamDrr = computeDrr(
+    teamMonthlyCollectionTarget(agents.map((a) => a.id)),
+    agentStats.reduce((s, a) => s + a.paidThisMonth, 0),
+  );
   const teamPtpAmountToday = agentStats.reduce((s, a) => s + a.ptpAmountToday, 0);
   const teamOpenEscalations = agentStats.reduce((s, a) => s + a.openEscalations, 0);
 
@@ -1236,6 +1250,18 @@ function ManagerDashboardPage() {
       hint: `${teamCallsToday} / ${teamTarget} completed`,
       icon: Target,
       tone: "muted",
+    },
+    {
+      label: "Team DRR",
+      value: teamDrr.drr === null ? "—" : formatINR(teamDrr.drr),
+      hint:
+        teamDrr.drr === null
+          ? "no monthly targets set"
+          : teamDrr.met
+            ? "target met"
+            : `per day · ${teamDrr.daysRemaining} left`,
+      icon: Target,
+      tone: teamDrr.drr !== null && !teamDrr.met ? "warning" : "muted",
     },
     {
       label: "Contact Rate",
@@ -1313,7 +1339,8 @@ function ManagerDashboardPage() {
 
         {/* ── Team Analytics ── */}
         <TabsContent value="team" className="space-y-6 mt-4">
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+          {/* 7 stats since Team DRR was added — 6-wide left one orphaned on its own line. */}
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-7">
             {stats.map((s, i) => (
               <StatCard key={s.label} stat={s} index={i} />
             ))}

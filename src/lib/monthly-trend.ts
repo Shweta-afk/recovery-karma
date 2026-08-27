@@ -25,7 +25,14 @@
 import type { DispositionRecord } from "./disposition-store";
 import type { PaymentRecord } from "./payments-store";
 
-export type TrendMetricKey = "collected" | "calls" | "contacts" | "ptps" | "ptpAmount" | "payments";
+export type TrendMetricKey =
+  | "collected"
+  | "calls"
+  | "contacts"
+  | "ptps"
+  | "ptpAmount"
+  | "payments"
+  | "uniqueAccounts";
 
 export interface TrendMetrics {
   /** Call logs written. */
@@ -40,6 +47,22 @@ export interface TrendMetrics {
   collected: number;
   /** Count of completed payments. */
   payments: number;
+  /** Distinct accounts (loan IDs) with activity — contacted or collected from. Answers "how
+   * many accounts did we actually touch", which `calls` cannot: 200 calls to 40 accounts is a
+   * very different month from 200 calls to 200. See DayMetrics on why it can't be summed. */
+  uniqueAccounts: number;
+}
+
+/**
+ * A day's metrics plus the identities behind the distinct count.
+ *
+ * The set has to be carried, not just its size: a distinct count is **not additive**. An
+ * account called on Monday and again on Tuesday is one account for the week, but adding the
+ * two days' `uniqueAccounts` reports two. Ranges therefore union these sets and take the size
+ * of the union — see sumRange — and the cumulative series in dailySeries does the same.
+ */
+export interface DayMetrics extends TrendMetrics {
+  accounts: Set<string>;
 }
 
 export interface MetricDef {
@@ -56,6 +79,7 @@ export const TREND_METRICS: MetricDef[] = [
   { key: "contacts", label: "Contacts", currency: false },
   { key: "ptps", label: "PTPs", currency: false },
   { key: "payments", label: "Payments", currency: false },
+  { key: "uniqueAccounts", label: "Accounts", currency: false },
 ];
 
 // ─── IST day bucketing ──────────────────────────────────────────────────────────
@@ -69,8 +93,9 @@ const IST_DAY = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
-/** "YYYY-MM-DD" for an ISO timestamp, in IST. Empty string when the value isn't a date. */
-export function istDayKey(iso: string | undefined): string {
+/** "YYYY-MM-DD" for an ISO timestamp, in IST. Empty string when the value isn't a date —
+ * null included, since nullable timestamp columns come straight out of Supabase. */
+export function istDayKey(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -142,7 +167,19 @@ export function monthWindow(now: Date = new Date()): MonthWindow {
 // ─── bucketing ──────────────────────────────────────────────────────────────────
 
 function emptyMetrics(): TrendMetrics {
-  return { calls: 0, contacts: 0, ptps: 0, ptpAmount: 0, collected: 0, payments: 0 };
+  return {
+    calls: 0,
+    contacts: 0,
+    ptps: 0,
+    ptpAmount: 0,
+    collected: 0,
+    payments: 0,
+    uniqueAccounts: 0,
+  };
+}
+
+function emptyDayMetrics(): DayMetrics {
+  return { ...emptyMetrics(), accounts: new Set<string>() };
 }
 
 const NON_CONTACT = new Set(["no_answer", "voicemail"]);
@@ -157,12 +194,12 @@ const NON_CONTACT = new Set(["no_answer", "voicemail"]);
 export function bucketByDay(
   disps: DispositionRecord[],
   payments: PaymentRecord[],
-): Map<string, TrendMetrics> {
-  const byDay = new Map<string, TrendMetrics>();
-  const at = (key: string): TrendMetrics => {
+): Map<string, DayMetrics> {
+  const byDay = new Map<string, DayMetrics>();
+  const at = (key: string): DayMetrics => {
     let m = byDay.get(key);
     if (!m) {
-      m = emptyMetrics();
+      m = emptyDayMetrics();
       byDay.set(key, m);
     }
     return m;
@@ -173,6 +210,7 @@ export function bucketByDay(
     if (!key) continue;
     const m = at(key);
     m.calls++;
+    if (d.debtorId) m.accounts.add(d.debtorId);
     if (!NON_CONTACT.has(d.outcome)) m.contacts++;
     if (d.outcome === "promised") {
       m.ptps++;
@@ -189,22 +227,30 @@ export function bucketByDay(
     const m = at(key);
     m.collected += p.amount;
     m.payments++;
+    // A bank-uploaded receipt is activity on that account even though nobody called it.
+    if (p.debtorId) m.accounts.add(p.debtorId);
   }
+
+  // Materialise the per-day distinct count now that every row has landed.
+  for (const m of byDay.values()) m.uniqueAccounts = m.accounts.size;
 
   return byDay;
 }
 
 function sumRange(
-  byDay: Map<string, TrendMetrics>,
+  byDay: Map<string, DayMetrics>,
   year: number,
   month: number,
   fromDay: number,
   toDay: number,
 ): TrendMetrics {
   const total = emptyMetrics();
+  // Unioned, not added — see DayMetrics.
+  const accounts = new Set<string>();
   for (let day = fromDay; day <= toDay; day++) {
     const m = byDay.get(dayKey(year, month, day));
     if (!m) continue;
+    for (const id of m.accounts) accounts.add(id);
     total.calls += m.calls;
     total.contacts += m.contacts;
     total.ptps += m.ptps;
@@ -212,6 +258,7 @@ function sumRange(
     total.collected += m.collected;
     total.payments += m.payments;
   }
+  total.uniqueAccounts = accounts.size;
   return total;
 }
 
@@ -286,6 +333,12 @@ export function dailySeries(
   const points: TrendDayPoint[] = [];
   let curCum = 0;
   let prevCum = 0;
+  // The cumulative line for a DISTINCT count has to union identities as it walks the month,
+  // not add the daily figures — an account worked on three days is one account, not three.
+  // Every other metric is additive and ignores these.
+  const distinct = metric === "uniqueAccounts";
+  const curSeen = new Set<string>();
+  const prevSeen = new Set<string>();
 
   for (let day = 1; day <= span; day++) {
     const inCurrent = day <= w.asOfDay;
@@ -298,8 +351,21 @@ export function dailySeries(
       ? (byDay.get(dayKey(w.previousYear, w.previousMonth, day))?.[metric] ?? 0)
       : null;
 
-    if (cur !== null) curCum += cur;
-    if (prev !== null) prevCum += prev;
+    if (distinct) {
+      if (cur !== null) {
+        for (const id of byDay.get(dayKey(w.currentYear, w.currentMonth, day))?.accounts ?? [])
+          curSeen.add(id);
+        curCum = curSeen.size;
+      }
+      if (prev !== null) {
+        for (const id of byDay.get(dayKey(w.previousYear, w.previousMonth, day))?.accounts ?? [])
+          prevSeen.add(id);
+        prevCum = prevSeen.size;
+      }
+    } else {
+      if (cur !== null) curCum += cur;
+      if (prev !== null) prevCum += prev;
+    }
 
     points.push({
       day,

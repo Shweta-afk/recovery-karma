@@ -4,6 +4,7 @@ import { fetchDebtorsShared } from "./debtors-fetch";
 import { createJsonCache } from "./json-cache";
 // Type-only (erased) — the valid call_logs.outcome union, shared with fetch-debtors.
 import type { CallLogOutcome } from "./fetch-debtors";
+import type { DialMode } from "./call-queue/types";
 
 export type CallOutcome =
   | "paid"
@@ -41,6 +42,12 @@ export interface DispositionRecord {
   /** HH:mm the agent committed to call the debtor back at on ptpDate. Requires
    * migrations/20260811_call_logs_promise_time.sql — absent until then. */
   ptpTime?: string;
+  /** When a "callback" disposition agreed to ring back. Deliberately separate from
+   * ptpDate/ptpTime: a callback is not a promise to pay, carries no promise_amount, and
+   * overloading the promise columns would make every "rows with a promise_date" query start
+   * counting callbacks. Requires migrations/20260827_case_escalations.sql. */
+  callbackDate?: string;
+  callbackTime?: string;
   paidAmount?: number;
   paidRef?: string; // already folded into `notes` by the caller before saving — not read back
   loanAmount?: number;
@@ -50,6 +57,10 @@ export interface DispositionRecord {
   durationSeconds?: number;
   /** Who handled the call — drives the channel shown in Activity History. */
   callType?: "human" | "ai" | "ivr" | "bot";
+  /** How the call was PLACED (manual dock, queue click, multi-line, sequential) — orthogonal
+   * to callType above, which is who handled it. Undefined for calls logged before
+   * migrations/20260827_call_logs_dial_mode.sql; shown as "Before tracking", never guessed. */
+  dialMode?: DialMode;
   /** Provider's id for the call, used to backfill the recording once it is published. */
   providerCallId?: string;
   /** Manager's QA tag for this call's tone — see CallSentiment. Absent on any call not yet
@@ -173,6 +184,11 @@ export async function refreshDispositions(): Promise<void> {
     audited_at?: string | null;
     // Optional: present only once 20260811_call_logs_outcome_reason.sql has been applied.
     outcome_reason?: string | null;
+    // Optional: present only once 20260827_call_logs_dial_mode.sql has been applied.
+    dial_mode?: string | null;
+    // Optional: present only once 20260827_case_escalations.sql has been applied.
+    callback_date?: string | null;
+    callback_time?: string | null;
     // Optional: present only once 20260814_call_logs_ai_sentiment.sql has been applied.
     ai_transcript?: string | null;
     ai_agent_tone?: string | null;
@@ -204,6 +220,9 @@ export async function refreshDispositions(): Promise<void> {
       portfolioName: portfolio?.name,
       outcome: l.outcome as CallOutcome,
       reason: l.outcome_reason ?? undefined,
+      dialMode: (l.dial_mode as DialMode | null) ?? undefined,
+      callbackDate: l.callback_date ?? undefined,
+      callbackTime: l.callback_time ?? undefined,
       notes: l.raw_notes ?? "",
       ptpAmount: l.outcome === "promised" ? amount : undefined,
       ptpDate: l.outcome === "promised" ? (l.promise_date ?? undefined) : undefined,
@@ -281,18 +300,22 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   });
   if (error) throw error;
 
-  if (d.reason || d.ptpTime) {
+  if (d.reason || d.ptpTime || d.dialMode || d.callbackDate) {
     const { error: extraErr } = await supabase
       .from("call_logs")
       .update({
         outcome_reason: d.reason || null,
         promise_time: d.outcome === "promised" ? (d.ptpTime ?? null) : null,
+        dial_mode: d.dialMode ?? null,
+        callback_date: d.outcome === "callback" ? (d.callbackDate ?? null) : null,
+        callback_time: d.outcome === "callback" ? (d.callbackTime ?? null) : null,
       } as never)
       .eq("id", logId);
     if (extraErr) {
       console.warn(
         `[dispositions] saved ${logId} but couldn't set reason/call-back time — ` +
-          `run migrations/20260811_call_logs_outcome_reason.sql and _promise_time.sql:`,
+          `run migrations/20260811_call_logs_outcome_reason.sql, _promise_time.sql ` +
+          `and 20260827_call_logs_dial_mode.sql:`,
         extraErr.message,
       );
     }
@@ -368,6 +391,99 @@ export interface PtpFollowup {
   prevAttempts: number;
   notes: string;
   dpd?: number;
+}
+
+/** A commitment the debtor or agent made that has a due date and can therefore be MISSED —
+ * the unit the escalation chain works in. Kept separate from PtpFollowup (which the PTP
+ * tracker UI is built on, and whose fields are all PTP-specific) so a callback never has to
+ * masquerade as a promise with a zero amount. */
+export interface CaseFollowup {
+  kind: "ptp" | "callback";
+  id: string;
+  debtorId: string;
+  debtorName: string;
+  phone: string;
+  /** ISO date the commitment was due. */
+  dueDateIso: string;
+  /** HH:mm, when one was captured. */
+  dueTime?: string;
+  /** ₹ promised — PTPs only; a callback commits to a conversation, not a payment. */
+  amount?: number;
+  /** Negative when overdue. */
+  daysLeft: number;
+  notes: string;
+}
+
+/**
+ * Every open, dated commitment across these dispositions — PTPs and callbacks alike.
+ *
+ * "Open" means the same thing it means for PTPs: only the LATEST disposition per debtor
+ * counts. A debtor who promised on Monday and was marked refused on Tuesday has no live
+ * commitment, and a callback superseded by an actual conversation is not still owed.
+ */
+export function computeCaseFollowups(disps: DispositionRecord[]): CaseFollowup[] {
+  const byDebtor = new Map<string, DispositionRecord[]>();
+  for (const d of disps) {
+    const list = byDebtor.get(d.debtorId);
+    if (list) list.push(d);
+    else byDebtor.set(d.debtorId, [d]);
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const rows: CaseFollowup[] = [];
+  for (const [debtorId, records] of byDebtor) {
+    const latest = [...records].sort(
+      (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime(),
+    )[0];
+
+    let kind: CaseFollowup["kind"];
+    let dueDate: string | undefined;
+    let dueTime: string | undefined;
+    let amount: number | undefined;
+
+    if (latest.outcome === "promised" && latest.ptpDate && latest.ptpAmount != null) {
+      kind = "ptp";
+      dueDate = latest.ptpDate;
+      dueTime = latest.ptpTime;
+      amount = latest.ptpAmount;
+    } else if (latest.outcome === "callback" && latest.callbackDate) {
+      // callbackDate is absent on any call logged before 20260827_case_escalations.sql, so
+      // older callbacks simply never escalate rather than escalating with a wrong date.
+      kind = "callback";
+      dueDate = latest.callbackDate;
+      dueTime = latest.callbackTime;
+    } else {
+      continue;
+    }
+
+    rows.push({
+      kind,
+      id: latest.id,
+      debtorId,
+      debtorName: latest.debtorName,
+      phone: latest.phone,
+      dueDateIso: dueDate,
+      dueTime,
+      amount,
+      daysLeft: Math.round((new Date(dueDate).getTime() - today.getTime()) / 86_400_000),
+      notes: latest.notes,
+    });
+  }
+
+  return rows.sort((a, b) => a.daysLeft - b.daysLeft);
+}
+
+/** One agent's open commitments — feeds step 1 of the escalation chain. */
+export function getCaseFollowups(agentId: string): CaseFollowup[] {
+  return computeCaseFollowups(getAgentDispositions(agentId));
+}
+
+/** Every commitment across a manager's team — feeds step 2. */
+export function getTeamCaseFollowups(agentIds: string[]): CaseFollowup[] {
+  const idSet = new Set(agentIds);
+  return computeCaseFollowups(getDispositions().filter((d) => idSet.has(d.agentId)));
 }
 
 /** Shared by getPtpFollowups (one agent) and getTeamPtpFollowups (a manager's whole team) —

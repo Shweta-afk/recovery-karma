@@ -543,10 +543,15 @@ function ManagerQueuePage() {
         ptpAmount: disposition.ptpAmount ? parseFloat(disposition.ptpAmount) : undefined,
         ptpDate: disposition.ptpDate || undefined,
         ptpTime: disposition.ptpTime || undefined,
+        // Only meaningful on a callback; the escalation chain reads these to know when a
+        // promised call-back was due (see ptp-escalation-store.ts).
+        callbackDate: disposition.callbackDate || undefined,
+        callbackTime: disposition.callbackTime || undefined,
         paidAmount: disposition.paidAmount ? parseFloat(disposition.paidAmount) : undefined,
         paidRef: disposition.paidRef || undefined,
         loanAmount: debtor.loanAmount,
         dpd: debtor.dpd,
+        dialMode: activeCall.dialMode ?? "single",
         recordingUrl: activeCall.recordingUrl,
         providerCallId: activeCall.providerCallId,
         time: now.toISOString(),

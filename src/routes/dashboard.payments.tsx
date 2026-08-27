@@ -32,6 +32,8 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import { EMPTY_RANGE, inDateRange, type DateRange } from "@/lib/date-filter";
 import { formatINR, bucketOf, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
 import { getDispositions, refreshDispositions } from "@/lib/disposition-store";
 import {
@@ -128,6 +130,7 @@ function isSameMonth(iso: string, ref: Date): boolean {
 
 function PaymentsPage() {
   const [search, setSearch] = useState("");
+  const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
   const [portfolioFilter, setPortfolioFilter] = useState<string>("all");
   const [collectorFilter, setCollectorFilter] = useState<string>("all");
   const [activity, setActivity] = useState<"payments" | "ptp" | "callback">("payments");
@@ -180,10 +183,14 @@ function PaymentsPage() {
   // the list underneath showed one — the two would contradict each other on screen.
   const scoped = useMemo(
     () =>
-      portfolioFilter === "all"
+      (portfolioFilter === "all"
         ? payments
-        : payments.filter((p) => p.portfolioId === portfolioFilter),
-    [payments, portfolioFilter],
+        : payments.filter((p) => p.portfolioId === portfolioFilter)
+      )
+        // Dated on when the money arrived, falling back to when the row was written for a
+        // payment still pending — `receivedAt` is absent until it lands.
+        .filter((p) => inDateRange(p.receivedAt ?? p.createdAt, dateRange)),
+    [payments, portfolioFilter, dateRange],
   );
 
   // Who has actually collected anything in the scoped set, with their role, so a manager's
@@ -214,8 +221,9 @@ function PaymentsPage() {
       .filter((d) => d.outcome === wanted)
       .filter((d) => portfolioFilter === "all" || d.portfolioId === portfolioFilter)
       .filter((d) => collectorFilter === "all" || d.agentId === collectorFilter)
+      .filter((d) => inDateRange(d.time, dateRange))
       .sort((a, b) => (a.time < b.time ? 1 : -1));
-  }, [activity, portfolioFilter, collectorFilter, dispositionsTick]);
+  }, [activity, portfolioFilter, collectorFilter, dateRange, dispositionsTick]);
 
   // Managers collect too — from their own escalation queue and by dialling on an agent's
   // behalf. Splitting the total is the whole point of the request; a blended figure hides it.
@@ -375,6 +383,8 @@ function PaymentsPage() {
                 </button>
               )}
             </div>
+
+            <DateRangeFilter value={dateRange} onChange={setDateRange} />
 
             {/* Status pills */}
             <div className="flex gap-1.5 flex-wrap">

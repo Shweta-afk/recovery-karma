@@ -302,6 +302,33 @@ function empties() {
   );
 }
 
+/** Distinct account counting — the one metric that is NOT additive across days. */
+function distinctAccounts() {
+  const now = new Date("2026-08-22T12:00:00Z");
+  // Same account worked on three separate days, plus one other account once.
+  const disps = [
+    disp("2026-08-10T06:00:00Z", "promised", { debtorId: "acc-1" }),
+    disp("2026-08-11T06:00:00Z", "no_answer", { debtorId: "acc-1" }),
+    disp("2026-08-12T06:00:00Z", "callback", { debtorId: "acc-1" }),
+    disp("2026-08-12T07:00:00Z", "promised", { debtorId: "acc-2" }),
+  ];
+  const c = compareMonths(disps, [], now);
+  eq("distinct: 4 calls across 3 days", c.current.calls, 4);
+  eq("distinct: but only 2 accounts touched", c.current.uniqueAccounts, 2);
+
+  // A payment on an account nobody called still counts as an account touched.
+  const c2 = compareMonths(disps, [pay("2026-08-13T06:00:00Z", 500, { debtorId: "acc-3" })], now);
+  eq("distinct: payment-only account counts", c2.current.uniqueAccounts, 3);
+
+  // The cumulative series must union, not add: on the 12th the running total is still 2.
+  const series = dailySeries(disps, [], "uniqueAccounts", now);
+  const on12 = series.find((p) => p.day === 12);
+  eq("distinct: cumulative unions across days", on12?.currentCumulative, 2);
+  eq("distinct: that day alone saw 2 accounts", on12?.current, 2);
+  const on11 = series.find((p) => p.day === 11);
+  eq("distinct: repeat visit does not raise the cumulative", on11?.currentCumulative, 1);
+}
+
 istBucketing();
 windows();
 comparison();
@@ -309,6 +336,7 @@ deltas();
 series();
 scoping();
 empties();
+distinctAccounts();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

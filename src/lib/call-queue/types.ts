@@ -48,6 +48,9 @@ export interface QueueDebtor extends Debtor {
 
 export interface ActiveCall {
   debtor: QueueDebtor;
+  /** How this call was placed — set at dial time, read when the disposition is written so
+   * call_logs.dial_mode reflects what the agent actually did. */
+  dialMode?: DialMode;
   phase: CallPhase;
   view: CallView;
   muted: boolean;
@@ -62,6 +65,9 @@ export interface ActiveCall {
 }
 
 export interface DispositionForm {
+  /** Loan/Account ID typed AFTER an unmapped manual call, to bind it to the right debtor on
+   * save. Empty for every other call — the queue already knows whose account it is. */
+  attachLoanId: string;
   outcome: CallOutcome | "";
   /** Sub-reason for the chosen outcome, e.g. "Switched off" for no_answer — see
    * OUTCOME_REASONS in active-call.tsx. Cleared whenever outcome changes. */
@@ -83,6 +89,7 @@ export interface DispositionForm {
 }
 
 export const EMPTY_DISPOSITION: DispositionForm = {
+  attachLoanId: "",
   outcome: "",
   reason: "",
   ptpAmount: "",
@@ -184,4 +191,54 @@ export interface CallControlProps {
   onAddPhone: (phone: string) => Promise<void>;
   /** Places a fresh call to a specific number for the debtor already on screen. */
   onCallNumber: (phone: string) => void;
+}
+
+/**
+ * How a call was originated — stored on call_logs.dial_mode (20260827_call_logs_dial_mode.sql).
+ * Distinct from `callType`, which records who HANDLED the call (human/ai/ivr/bot).
+ */
+export type DialMode = "manual" | "single" | "multi_line" | "sequential";
+
+/**
+ * ⚠️ The single place the stored dial mode is translated to what the agent sees. Keep it that
+ * way — the dialer's UI labels and its internal enum are swapped from each other on purpose:
+ * the button reading "Productive Dial" is internally `dialerMode: "predictive"`, and the one
+ * reading "Progressive Dial" is internally `dialerMode: "productive"`. The stored values
+ * deliberately use neither word, so the confusion stops at this boundary instead of spreading
+ * into the database and every query written against it.
+ */
+export const DIAL_MODE_META: Record<DialMode, { label: string; short: string; cls: string }> = {
+  manual: {
+    label: "Manual Dial",
+    short: "Manual",
+    cls: "bg-purple-500/8 text-purple-500/80 border-purple-400/15",
+  },
+  single: {
+    label: "Call Queue",
+    short: "Queue",
+    cls: "bg-muted text-muted-foreground border-border",
+  },
+  // Button label: "Productive Dial" (internally dialerMode "predictive") — several lines open
+  // at once.
+  multi_line: {
+    label: "Productive Dial",
+    short: "Productive",
+    cls: "bg-success/8 text-success/70 border-success/15",
+  },
+  // Button label: "Progressive Dial" (internally dialerMode "productive") — one debtor at a
+  // time, in list order.
+  sequential: {
+    label: "Progressive Dial",
+    short: "Progressive",
+    cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15",
+  },
+};
+
+/** Rows logged before dial_mode existed carry NULL — shown as this rather than guessed at. */
+export const UNKNOWN_DIAL_MODE_LABEL = "Before tracking";
+
+/** The internal dialerMode enum -> what actually happened on the wire. The enum's two values
+ * mean the opposite of what their names suggest; see DIAL_MODE_META. */
+export function dialModeFromDialerMode(mode: "predictive" | "productive"): DialMode {
+  return mode === "predictive" ? "multi_line" : "sequential";
 }

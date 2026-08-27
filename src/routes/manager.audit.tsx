@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import { EMPTY_RANGE, inDateRange, type DateRange } from "@/lib/date-filter";
 import { bucketOf, BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { OUTCOME_META } from "@/lib/call-queue/types";
 import { useAuth } from "@/lib/auth";
@@ -482,6 +484,7 @@ function CallAuditPage() {
   );
 
   const [search, setSearch] = useState("");
+  const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
   const [filterCaller, setFilterCaller] = useState<CallerType | "all">("all");
   const [filterOutcome, setFilterOutcome] = useState<string>("all");
   const [filterBucket, setFilterBucket] = useState<DPDBucket | "all">("all");
@@ -498,6 +501,7 @@ function CallAuditPage() {
 
   const filtered = useMemo(() => {
     return calls.filter((c) => {
+      if (!inDateRange(c.time, dateRange)) return false;
       if (filterCaller !== "all" && callerTypeOf(c) !== filterCaller) return false;
       if (filterOutcome !== "all" && c.outcome !== filterOutcome) return false;
       if (filterBucket !== "all" && bucketFor(c) !== filterBucket) return false;
@@ -519,7 +523,7 @@ function CallAuditPage() {
       }
       return true;
     });
-  }, [calls, search, filterCaller, filterOutcome, filterBucket, filterSentiment]);
+  }, [calls, search, dateRange, filterCaller, filterOutcome, filterBucket, filterSentiment]);
 
   const withRecording = calls.filter((c) => !!c.recordingUrl).length;
   const unreviewed = calls.filter((c) => !c.sentiment).length;
@@ -649,6 +653,7 @@ function CallAuditPage() {
               )}
             </SelectContent>
           </Select>
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
           <Select
             value={filterCaller}
             onValueChange={(v) => setFilterCaller(v as CallerType | "all")}
@@ -749,6 +754,7 @@ function CallAuditPage() {
               className="h-9 text-xs text-muted-foreground gap-1"
               onClick={() => {
                 setSearch("");
+                setDateRange(EMPTY_RANGE);
                 setFilterCaller("all");
                 setFilterOutcome("all");
                 setFilterBucket("all");

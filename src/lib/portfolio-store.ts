@@ -1159,6 +1159,36 @@ export async function addDebtorPhone(debtorId: string, phone: string): Promise<v
  * employer/income/language — language falls back to "English" when the file has no mapped
  * language column); the raw bag is also kept as `_uploadedExtra` for the generic "every CSV
  * column" fallback view the debtor page already renders. */
+/**
+ * Resolve a Loan/Account ID typed by an agent to the debtor it belongs to.
+ *
+ * This is what lets Manual Dial attach an off-queue call (an alternate number, a relative's
+ * phone) to the right account instead of logging it against nothing. Without it a manual call
+ * writes `debtor_id: null` and never appears on the debtor's own history.
+ *
+ * Matched case-insensitively and trimmed, the same normalisation `mergePortfolioRows` and
+ * `reconcileRetentionRequests` use for loan_reference — so a match here means the same thing a
+ * match there does.
+ *
+ * Scoped to the portfolios already in the cache, which RLS has scoped to what this user may
+ * see. An agent cannot use this to reach an account they have no access to: an unknown ID
+ * simply returns null and the call proceeds unmapped.
+ */
+export function findDebtorByLoanReference(
+  ref: string,
+): { row: UploadedDebtor; portfolio: UploadedPortfolio; debtor: Debtor } | null {
+  const needle = ref.trim().toLowerCase();
+  if (!needle) return null;
+  for (const portfolio of getPortfolios()) {
+    for (const row of portfolio.rows) {
+      if ((row.loanReference ?? "").trim().toLowerCase() === needle) {
+        return { row, portfolio, debtor: debtorFromRow(row, portfolio) };
+      }
+    }
+  }
+  return null;
+}
+
 export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio): Debtor {
   const extra = row.extra ?? {};
   const income = parseFloat((extra.income ?? "").replace(/[,₹\s]/g, ""));
@@ -1177,6 +1207,7 @@ export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio)
     lastContacted: "—",
     portfolio: portfolio.name,
     language: extra.language || "English",
+    assignedAgentId: row.assignedAgentId,
     dob: extra.dob || undefined,
     city: extra.city || undefined,
     state: extra.state || undefined,
