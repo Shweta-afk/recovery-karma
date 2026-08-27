@@ -53,16 +53,24 @@ export async function refreshRoster(): Promise<void> {
 }
 
 /** Reads the cache immediately, then refreshes from Supabase in the background and
- * updates when new data lands (same tab, and cross-tab via storage-sync). */
-export function useRoster(): AgentRef[] {
-  const [roster, setRoster] = useState<AgentRef[]>(() => getRoster());
+ * updates when new data lands (same tab, and cross-tab via storage-sync).
+ *
+ * `enabled` exists for pages where only some roles need the roster (the Debtors page renders
+ * an "Assigned to" filter for supervisors only): a hook can't be called conditionally, so the
+ * caller passes false instead and skips the fetch rather than making every agent pull a
+ * roster their view never shows. */
+export function useRoster(enabled = true): AgentRef[] {
+  const [roster, setRoster] = useState<AgentRef[]>(() => (enabled ? getRoster() : []));
   useEffect(() => {
+    if (!enabled) return;
     const reload = () => setRoster(getRoster());
     window.addEventListener("roster-updated", reload);
     refreshRoster();
     return () => window.removeEventListener("roster-updated", reload);
-  }, []);
-  useStorageSync(() => setRoster(getRoster()));
+  }, [enabled]);
+  useStorageSync(() => {
+    if (enabled) setRoster(getRoster());
+  });
   return roster;
 }
 
