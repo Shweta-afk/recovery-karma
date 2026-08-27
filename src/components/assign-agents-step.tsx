@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn, parseCsvLine } from "@/lib/utils";
+import { cn, parseCsvText } from "@/lib/utils";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { normHeader } from "@/lib/column-mapper";
 import { downloadCsv } from "@/lib/csv-export";
@@ -192,13 +192,15 @@ export function AssignAgentsStep({
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
-      const lines = text.split(/\r?\n/).filter(Boolean);
+      // parseCsvText for the same reason every other import path uses it — quoted fields with
+      // embedded newlines, escaped quotes, and a BOM on the first header.
+      const lines = parseCsvText(text);
       if (lines.length < 2) {
         setCsvError("CSV must have a header row and at least one data row");
         return;
       }
 
-      const headers = parseCsvLine(lines[0]).map(normHeader);
+      const headers = lines[0].map(normHeader);
       const loanIdx = headers.findIndex((h) => LOAN_ID_HEADERS.has(h));
       const agentIdx = headers.findIndex((h) => AGENT_ID_HEADERS.has(h));
       if (loanIdx === -1 || agentIdx === -1) {
@@ -217,16 +219,31 @@ export function AssignAgentsStep({
         // CSVs built before Agent ID existed, or built from name only.
         if (a.agentCode) agentIdByKey.set(a.agentCode.trim().toLowerCase(), a.id);
         agentIdByKey.set(a.id.trim().toLowerCase(), a.id);
-        agentIdByKey.set(a.name.trim().toLowerCase(), a.id);
       });
+
+      // Names are the ONLY non-unique key here (agent code and email are unique by
+      // construction). Registering them blindly meant two agents called "Rahul Sharma" left
+      // whichever was processed last owning every row naming him — accounts silently assigned
+      // to the wrong person, with nothing in the UI to show it. Ambiguous names are left
+      // unregistered so those rows surface as unmatched and the manager can disambiguate.
+      const nameCounts = new Map<string, number>();
+      agents.forEach((a) => {
+        const key = a.name.trim().toLowerCase();
+        nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+      });
+      agents.forEach((a) => {
+        const key = a.name.trim().toLowerCase();
+        // Never let a name shadow a real agent code or email that happens to collide with it.
+        if (nameCounts.get(key) === 1 && !agentIdByKey.has(key)) agentIdByKey.set(key, a.id);
+      });
+      const ambiguousNames = [...nameCounts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
 
       const allocation: Record<string, string[]> = {};
       const assignedDebtorIds = new Set<string>();
       const unmatchedLoanIds: string[] = [];
       const unmatchedAgentIds: string[] = [];
 
-      for (const line of lines.slice(1)) {
-        const cells = parseCsvLine(line);
+      for (const cells of lines.slice(1)) {
         const loanId = (cells[loanIdx] ?? "").trim();
         const agentKey = (cells[agentIdx] ?? "").trim();
         if (!loanId || !agentKey) continue;
@@ -240,7 +257,13 @@ export function AssignAgentsStep({
 
         const agentId = agentIdByKey.get(agentKey.toLowerCase());
         if (!agentId) {
-          unmatchedAgentIds.push(agentKey);
+          // Say WHY when the name is ambiguous — "not found" would send the manager looking
+          // for a typo when the real problem is two agents sharing a name.
+          unmatchedAgentIds.push(
+            ambiguousNames.includes(agentKey.toLowerCase())
+              ? `${agentKey} (more than one agent has this name — use their Agent ID)`
+              : agentKey,
+          );
           continue;
         }
 
