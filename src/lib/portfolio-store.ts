@@ -135,6 +135,24 @@ function isMissingTableError(e: { message?: string; code?: string } | null): boo
 const KEY = "recoveryai_portfolios_cache";
 const CHUNK_SIZE = 500; // stays comfortably under Supabase's request-size limits per insert
 
+/**
+ * Chunk size for `.in("id", [...])` FILTERS, which is a much tighter budget than CHUNK_SIZE.
+ *
+ * An insert sends its rows in the POST body. A filter goes in the URL query string, so 500
+ * UUIDs is roughly an 18KB URL — past the 8-16KB most proxies and servers accept. The failure
+ * is a 414 or a truncated filter, neither of which surfaces as a useful error.
+ *
+ * 100 UUIDs is about 3.7KB, which leaves real headroom.
+ */
+const ID_FILTER_CHUNK = 100;
+
+/** Runs an id-filtered write in URL-safe batches. */
+async function inChunks(ids: string[], run: (chunk: string[]) => Promise<void>): Promise<void> {
+  for (let i = 0; i < ids.length; i += ID_FILTER_CHUNK) {
+    await run(ids.slice(i, i + ID_FILTER_CHUNK));
+  }
+}
+
 const cache = createJsonCache<UploadedPortfolio>(KEY);
 
 export function getPortfolios(): UploadedPortfolio[] {
@@ -595,14 +613,14 @@ export async function mergePortfolioRows(
         return !ref || !newRefs.has(ref);
       })
       .map((d) => d.id as string);
-    for (let i = 0; i < toRemove.length; i += CHUNK_SIZE) {
-      const chunk = toRemove.slice(i, i + CHUNK_SIZE);
+    // ID_FILTER_CHUNK, not CHUNK_SIZE: this is a URL filter, not a request body.
+    await inChunks(toRemove, async (chunk) => {
       const { error } = await supabase
         .from("debtors")
         .update({ status: "removed" })
         .in("id", chunk);
       if (error) throw error;
-    }
+    });
     removed = toRemove.length;
   }
 
@@ -1002,13 +1020,20 @@ export async function assignDebtors(
     .eq("portfolio_id", portfolioId);
   if (resetErr) throw resetErr;
 
+  // Chunked. An agent holding a few thousand accounts put every one of their UUIDs into a
+  // single URL filter, which is long enough to be rejected or truncated. That failure lands
+  // AFTER the unconditional reset above — so the portfolio ends up with every debtor
+  // unassigned, which is the exact outcome the guard above this was written to prevent.
   for (const [agentEmail, debtorIds] of Object.entries(allocation)) {
     if (!debtorIds.length) continue;
-    const { error } = await supabase
-      .from("debtors")
-      .update({ assigned_agent_id: idByEmail.get(agentEmail)! })
-      .in("id", debtorIds);
-    if (error) throw error;
+    const agentUuid = idByEmail.get(agentEmail)!;
+    await inChunks(debtorIds, async (chunk) => {
+      const { error } = await supabase
+        .from("debtors")
+        .update({ assigned_agent_id: agentUuid })
+        .in("id", chunk);
+      if (error) throw error;
+    });
   }
 
   await refreshPortfolios();
@@ -1050,11 +1075,13 @@ export async function transferDebtors(debtorIds: string[], agentId: string | nul
     agentUuid = agentRows?.[0]?.id ?? null;
     if (!agentUuid) throw new Error(`Agent "${agentId}" not found`);
   }
-  const { error } = await supabase
-    .from("debtors")
-    .update({ assigned_agent_id: agentUuid })
-    .in("id", debtorIds);
-  if (error) throw error;
+  await inChunks(debtorIds, async (chunk) => {
+    const { error } = await supabase
+      .from("debtors")
+      .update({ assigned_agent_id: agentUuid })
+      .in("id", chunk);
+    if (error) throw error;
+  });
   await refreshPortfolios();
 }
 

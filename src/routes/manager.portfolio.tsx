@@ -721,6 +721,15 @@ function EditPortfolioDialog({
                   Optional collection goal per agent for this portfolio — separate from account
                   allocation.
                 </p>
+                {/* This is load-bearing, not decoration. DRR on the agent and manager
+                    dashboards divides this figure by the days left in the month, and the
+                    column (portfolio_agent_targets.target_amount) has no period of its own to
+                    enforce the convention. A portfolio-lifetime number entered here silently
+                    distorts every DRR on the platform — no error, just wrong figures. */}
+                <p className="-mt-1 text-[11px] font-medium text-amber-500">
+                  Enter a MONTHLY figure. These feed the Daily Run Rate (DRR) on the dashboards,
+                  which divides the target by the days remaining in the month.
+                </p>
                 <div className="divide-y divide-border rounded-lg border border-border">
                   {agents.map((a) => {
                     const t = targets[a.id] ?? {};
@@ -730,7 +739,9 @@ function EditPortfolioDialog({
                           {a.name}
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <Label className="text-[10px] text-muted-foreground">₹ Target</Label>
+                          <Label className="text-[10px] text-muted-foreground">
+                            ₹ Target / month
+                          </Label>
                           <Input
                             type="number"
                             min={0}
@@ -745,7 +756,9 @@ function EditPortfolioDialog({
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <Label className="text-[10px] text-muted-foreground">Accounts</Label>
+                          <Label className="text-[10px] text-muted-foreground">
+                            Accounts / month
+                          </Label>
                           <Input
                             type="number"
                             min={0}

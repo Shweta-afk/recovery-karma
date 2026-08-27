@@ -104,7 +104,8 @@ export function computeDrr(target: number, achieved: number, now: Date = new Dat
  * ⚠️ `target_amount` has **no period column**. Reading it as a MONTHLY figure is a convention
  * this function establishes, not something the schema enforces — a manager who enters a
  * portfolio-lifetime number there will silently distort every DRR on the platform. The
- * target-setting UI labels it "per month" for exactly this reason. See docs/BACKLOG.md.
+ * target-setting UI (Edit Portfolio -> Agent Targets) labels the field "₹ Target / month" and
+ * warns about it — that labelling is the ONLY guard, so keep it if you touch that dialog.
  *
  * Returns 0 when nothing is set, which `computeDrr` reports as `drr: null` rather than
  * inventing a target.
