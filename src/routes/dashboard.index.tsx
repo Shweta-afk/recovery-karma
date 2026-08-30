@@ -320,6 +320,30 @@ export function AgentDashboardContent({
 
   // Today's PTP generation — always today's stock, independent of the period toggle
   const todayGeneration = { count: today.ptps, ptpAmount: today.ptpAmount };
+
+  // Hoisted out of the Collections block below so the Queue card's "Today's Performance" tile
+  // measures against the SAME number the DRR tile shows. Two independent computeDrr() calls
+  // would be free to drift apart on one screen.
+  const drr = computeDrr(monthlyTarget, month.paidAmount);
+
+  /**
+   * Generation vs performance, side by side — the pair asked for.
+   *
+   * Generation is what today PROMISED (PTPs raised). Performance is what today actually
+   * DELIVERED (₹ collected). Showing only generation flatters a day full of promises that
+   * nobody paid, which is the failure mode this pairing exists to expose.
+   *
+   * Measured against today's DRR — the amount the remaining days each have to deliver — rather
+   * than a flat daily target, so the bar moves with how the month is actually going. Null when
+   * no monthly target is set; the tile then shows the amount with no comparison rather than
+   * inventing one.
+   */
+  const todayPerformance = {
+    collected: today.paidAmount,
+    payments: today.paid,
+    required: drr.drr,
+    pct: drr.drr && drr.drr > 0 ? today.paidAmount / drr.drr : null,
+  };
   const projectedRecovery = kpi.totalPTPAmount + kpi.todayPaidAmount;
 
   return (
@@ -385,7 +409,6 @@ export function AgentDashboardContent({
           // DRR is inherently a MONTHLY measure, so it always reads the month's collections —
           // never periodStats, which follows the Today/Month toggle. Flipping the view must not
           // change what the month still demands of you.
-          const drr = computeDrr(monthlyTarget, month.paidAmount);
           const hasTarget = drr.drr !== null;
           const md = monthDays();
           const actual = periodStats.paidAmount; // real, from call_logs
@@ -588,7 +611,7 @@ export function AgentDashboardContent({
                 Open <ExternalLink className="h-2.5 w-2.5" />
               </Nav>
             </div>
-            <div className="flex-1 grid grid-cols-3 gap-2">
+            <div className="flex-1 grid grid-cols-2 gap-2">
               <Nav
                 to="/dashboard/call-queue"
                 search={{ filter: "all" }}
@@ -633,6 +656,48 @@ export function AgentDashboardContent({
                 <div className="text-[9px] text-muted-foreground leading-tight">
                   {todayGeneration.count} PTPs today
                 </div>
+              </Nav>
+              {/* Today's Performance — the delivery half of the pair above it. Generation is
+                  what was promised today; this is what actually arrived. */}
+              <Nav
+                to="/dashboard/call-queue"
+                search={{ filter: "paid" }}
+                className="rounded-lg border border-amber-400/30 bg-amber-500/5 p-2.5 text-center flex flex-col justify-center transition-all hover:border-amber-400/50 hover:shadow-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <div
+                  className={cn(
+                    "text-base font-bold tabular-nums leading-tight",
+                    todayPerformance.pct === null
+                      ? "text-amber-500"
+                      : todayPerformance.pct >= 1
+                        ? "text-success"
+                        : "text-amber-500",
+                  )}
+                >
+                  {formatINR(todayPerformance.collected)}
+                </div>
+                <div className="text-[10px] font-medium text-foreground leading-tight mt-1">
+                  Today&apos;s Performance
+                </div>
+                <div className="text-[9px] text-muted-foreground leading-tight">
+                  {/* Against today's DRR, not a flat daily target — see todayPerformance. With
+                      no monthly target set there is nothing honest to compare against, so the
+                      payment count is shown instead of a fabricated percentage. */}
+                  {todayPerformance.required === null
+                    ? `${todayPerformance.payments} payment${todayPerformance.payments === 1 ? "" : "s"} today`
+                    : `of ${formatINR(todayPerformance.required)} needed today`}
+                </div>
+                {todayPerformance.pct !== null && (
+                  <div className="mt-1.5 h-0.5 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full rounded-full",
+                        todayPerformance.pct >= 1 ? "bg-success" : "bg-amber-500",
+                      )}
+                      style={{ width: `${Math.min(todayPerformance.pct * 100, 100)}%` }}
+                    />
+                  </div>
+                )}
               </Nav>
             </div>
           </div>
