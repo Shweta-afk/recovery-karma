@@ -147,14 +147,27 @@ function TrendChart({
   payments,
   def,
   mode,
+  posByDebtor,
+  compareTo,
 }: {
   disps: DispositionRecord[];
   payments: PaymentRecord[];
   def: MetricDef;
   mode: ChartMode;
+  posByDebtor?: Map<string, number>;
+  /** Kept in step with the panel's picker, or the chart would plot a different comparison
+   * month from the tiles directly above it. */
+  compareTo?: string;
 }) {
-  const series = useMemo(() => dailySeries(disps, payments, def.key), [disps, payments, def.key]);
-  const { window: w } = useMemo(() => compareMonths(disps, payments), [disps, payments]);
+  const series = useMemo(
+    () => dailySeries(disps, payments, def.key, new Date(), posByDebtor, compareTo),
+    [disps, payments, def.key, posByDebtor, compareTo],
+  );
+  // Same comparison month as the series above, so the axis labels match the data.
+  const { window: w } = useMemo(
+    () => compareMonths(disps, payments, new Date(), posByDebtor, compareTo),
+    [disps, payments, posByDebtor, compareTo],
+  );
 
   const currentKey = mode === "cumulative" ? "currentCumulative" : "current";
   const previousKey = mode === "cumulative" ? "previousCumulative" : "previous";
@@ -400,6 +413,8 @@ export function MonthlyTrendCompact({
 }) {
   const [metric, setMetric] = useState<TrendMetricKey>("collected");
 
+  // Compact tile: always this month vs last, with no POS map. The full panel is where the
+  // comparison month and the POS metrics are selectable.
   const comparison = useMemo(() => compareMonths(disps, payments), [disps, payments]);
   const series = useMemo(() => dailySeries(disps, payments, metric), [disps, payments, metric]);
   const def = TREND_METRICS.find((m) => m.key === metric)!;
@@ -515,22 +530,43 @@ export function MonthlyTrendCompact({
  * re-sorts every breakdown table on collections. Splitting the selector per section meant
  * reading three different metrics off one screen and mistaking them for the same one.
  */
+/** Latest month a comparison can point at: the one before this one. Comparing a month with
+ * itself, or with the future, has no meaning — monthWindow rejects both, and the input should
+ * not offer them in the first place. */
+function monthInputMax(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth(); // already 0-based, so this IS last month
+  const year = m === 0 ? y - 1 : y;
+  const month = m === 0 ? 12 : m;
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
 export function MonthlyTrendPanel({
   disps,
   payments,
   breakdowns = [],
   /** Shown under the header — e.g. that bank-reported collections credit no agent. */
   note,
+  posByDebtor,
 }: {
   disps: DispositionRecord[];
   payments: PaymentRecord[];
   breakdowns?: TrendBreakdown[];
   note?: string;
+  /** debtorId -> principal, for the POS Worked / POS Promised metrics. Omit and they read 0. */
+  posByDebtor?: Map<string, number>;
 }) {
   const [metric, setMetric] = useState<TrendMetricKey>("collected");
   const [mode, setMode] = useState<ChartMode>("cumulative");
+  // Which month to compare against. Empty = the month immediately before, which is what this
+  // always did before the picker existed.
+  const [compareTo, setCompareTo] = useState("");
 
-  const comparison = useMemo(() => compareMonths(disps, payments), [disps, payments]);
+  const comparison = useMemo(
+    () => compareMonths(disps, payments, new Date(), posByDebtor, compareTo || undefined),
+    [disps, payments, posByDebtor, compareTo],
+  );
   const def = TREND_METRICS.find((m) => m.key === metric)!;
   const { window: w } = comparison;
 
@@ -546,6 +582,31 @@ export function MonthlyTrendPanel({
           visible.
         </p>
         {note && <p className="mt-1 text-[11px] text-muted-foreground/80">{note}</p>}
+
+        {/* Compare against any earlier month, not only the one immediately before. Useful for
+            "how does this August compare with last August" rather than only with July. */}
+        <div className="mt-2 flex items-center gap-2">
+          <label htmlFor="compare-month" className="text-[11px] text-muted-foreground">
+            Compare with
+          </label>
+          <input
+            id="compare-month"
+            type="month"
+            value={compareTo}
+            max={monthInputMax()}
+            onChange={(e) => setCompareTo(e.target.value)}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          {compareTo && (
+            <button
+              type="button"
+              onClick={() => setCompareTo("")}
+              className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+            >
+              reset to last month
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 7 metrics since Accounts was added — a 6-wide row left one orphaned on its own line. */}
@@ -592,7 +653,14 @@ export function MonthlyTrendPanel({
           </div>
         </CardHeader>
         <CardContent>
-          <TrendChart disps={disps} payments={payments} def={def} mode={mode} />
+          <TrendChart
+            disps={disps}
+            payments={payments}
+            def={def}
+            mode={mode}
+            posByDebtor={posByDebtor}
+            compareTo={compareTo || undefined}
+          />
         </CardContent>
       </Card>
 

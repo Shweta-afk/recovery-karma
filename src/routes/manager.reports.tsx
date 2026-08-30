@@ -31,7 +31,7 @@ import {
   calcStats,
   type DispositionRecord,
 } from "@/lib/disposition-store";
-import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { getPortfolios, refreshPortfolios, posByDebtorMap } from "@/lib/portfolio-store";
 import {
   getAgentAccountCounts,
   getPortfolioTotals,
@@ -116,6 +116,9 @@ function ManagerReportsPage() {
   );
 
   const [portfolioVersion, setPortfolioVersion] = useState(0);
+  // Principal per debtor, for the POS Worked / POS Promised trend metrics. Keyed on the
+  // portfolio cache version so it refreshes with the rest of the page.
+  const posByDebtor = useMemo(() => posByDebtorMap(), [portfolioVersion]);
   useEffect(() => {
     const bump = () => setPortfolioVersion((n) => n + 1);
     window.addEventListener("portfolios-updated", bump);
@@ -322,6 +325,7 @@ function ManagerReportsPage() {
         {/* ── MONTHLY TREND TAB ── */}
         <TabsContent value="trend" className="mt-4">
           <MonthlyTrendPanel
+            posByDebtor={posByDebtor}
             disps={disps}
             payments={teamPayments}
             note={
