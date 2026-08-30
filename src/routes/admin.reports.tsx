@@ -38,7 +38,13 @@ import { getPortfolios, refreshPortfolios, posByDebtorMap } from "@/lib/portfoli
 import { formatINR } from "@/lib/mock-debtors";
 import { MonthlyTrendPanel, type TrendGroup } from "@/components/reports/monthly-trend";
 import { scopeToAgents, unattributedCollected } from "@/lib/monthly-trend";
-import { getAgentTimeStats, formatDuration, formatClockTime } from "@/lib/agent-time-stats";
+import {
+  getAgentTimeStats,
+  formatDuration,
+  formatDurationOrDash,
+  formatClockTime,
+} from "@/lib/agent-time-stats";
+import { todayPresenceKey } from "@/lib/agent-presence-store";
 import {
   getPayments,
   refreshPayments,
@@ -236,15 +242,20 @@ function AdminReportsPage() {
       // vs. estimated (idle/disposition/login-logout) pending a real presence-log table.
       const todayTimeStats = team.agentIds.map((aid) => {
         const todayDisps = teamDisps.filter((d) => d.agentId === aid && isSameDay(d.time, now));
-        return getAgentTimeStats(aid, todayDisps);
+        // No presence intervals passed: this is a cross-team roll-up and presence is
+        // per-agent-per-day. Break/idle come back null and are skipped below rather
+        // than counted as zero.
+        return getAgentTimeStats(aid, todayDisps, todayPresenceKey());
       });
+      // Averaged only over agents whose day was actually tracked — including untracked agents
+      // as 0% idle would drag the team average down with data that does not exist.
+      const tracked = todayTimeStats.filter(
+        (t) => t.presenceRecorded && (t.loggedInSeconds ?? 0) > 0,
+      );
       const avgIdlePct =
-        todayTimeStats.length > 0
+        tracked.length > 0
           ? Math.round(
-              (todayTimeStats.reduce(
-                (s, t) => s + (t.loggedInSeconds > 0 ? t.idleSeconds / t.loggedInSeconds : 0),
-                0,
-              ) /
+              (tracked.reduce((s, t) => s + (t.idleSeconds ?? 0) / (t.loggedInSeconds ?? 1), 0) /
                 todayTimeStats.length) *
                 100,
             )
@@ -831,7 +842,7 @@ function AdminReportsPage() {
                               const as_ = calcStats(ad);
                               const ref = getAgentById(aid);
                               const todayAd = ad.filter((d) => isSameDay(d.time, new Date()));
-                              const ts = getAgentTimeStats(aid, todayAd);
+                              const ts = getAgentTimeStats(aid, todayAd, todayPresenceKey());
                               return (
                                 <tr key={aid} className="hover:bg-muted/20">
                                   <td className="py-2 px-3 font-medium text-foreground">
@@ -861,17 +872,21 @@ function AdminReportsPage() {
                                     )}
                                   </td>
                                   <td className="py-2 px-3 text-left text-muted-foreground whitespace-nowrap">
-                                    {formatClockTime(ts.loginTime)} –{" "}
-                                    {ts.logoutTime ? formatClockTime(ts.logoutTime) : "now"}
+                                    {ts.loginTime ? formatClockTime(ts.loginTime) : "—"} –{" "}
+                                    {ts.logoutTime
+                                      ? formatClockTime(ts.logoutTime)
+                                      : ts.presenceRecorded
+                                        ? "now"
+                                        : "—"}
                                   </td>
                                   <td className="py-2 px-3 text-right text-blue-500 tabular-nums">
-                                    {formatDuration(ts.ringingSeconds)}
+                                    {formatDurationOrDash(ts.ringingSeconds)}
                                   </td>
                                   <td className="py-2 px-3 text-right text-foreground font-medium tabular-nums">
                                     {formatDuration(ts.callingSeconds)}
                                   </td>
                                   <td className="py-2 px-3 text-right text-muted-foreground tabular-nums">
-                                    {formatDuration(ts.idleSeconds)}
+                                    {formatDurationOrDash(ts.idleSeconds)}
                                   </td>
                                 </tr>
                               );

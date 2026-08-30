@@ -37,6 +37,11 @@ import {
 } from "@/lib/date-filter";
 import { useActiveTeam } from "@/lib/active-team-store";
 import {
+  fetchStatusIntervals,
+  todayPresenceKey,
+  type StatusInterval,
+} from "@/lib/agent-presence-store";
+import {
   useTeamAgents,
   useRoster,
   getTeams,
@@ -57,6 +62,7 @@ import { escalateMissedCasesToAdmin } from "@/lib/ptp-escalation-store";
 import {
   getAgentTimeStats,
   formatDuration,
+  formatDurationOrDash,
   formatClockTime,
   pctOfShift,
   type AgentTimeStats,
@@ -185,6 +191,21 @@ function TeamActivityPage() {
   }, [agents, allDisps]);
 
   const ranged = isRangeActive(dateRange);
+  // Presence is per-day, so a multi-day range reports on its first day rather than silently
+  // summing several shifts into one. Shown in the label below.
+  const todayIso = todayPresenceKey();
+  const presenceDay = ranged && dateRange.from ? dateRange.from : todayIso;
+
+  // agent_status_log is the real source for break/idle/login. Fetched here and passed down;
+  // without it getAgentTimeStats returns nulls, which render as "—" rather than as zero.
+  const [intervals, setIntervals] = useState<StatusInterval[]>([]);
+  useEffect(() => {
+    const ids = agents.map((a) => a.id);
+    if (!ids.length) return;
+    fetchStatusIntervals(ids, presenceDay)
+      .then(setIntervals)
+      .catch(() => setIntervals([]));
+  }, [agents, presenceDay]);
   const periodLabel = ranged ? describeRange(dateRange) : "Today";
 
   const rows = useMemo(() => {
@@ -198,7 +219,7 @@ function TeamActivityPage() {
         : mine.filter((d) => isSameDay(d.time, now));
       return {
         agent,
-        stats: getAgentTimeStats(agent.id, scoped),
+        stats: getAgentTimeStats(agent.id, scoped, presenceDay, intervals),
         today: calcStats(scoped),
       };
     });
@@ -217,9 +238,11 @@ function TeamActivityPage() {
         case "calling":
           return (a.stats.callingSeconds - b.stats.callingSeconds) * dir;
         case "idle":
-          return (a.stats.idleSeconds - b.stats.idleSeconds) * dir;
+          // Untracked days sort last rather than as zero, which would rank an agent whose
+          // presence was never recorded as the most efficient on the team.
+          return ((a.stats.idleSeconds ?? Infinity) - (b.stats.idleSeconds ?? Infinity)) * dir;
         case "loggedIn":
-          return (a.stats.loggedInSeconds - b.stats.loggedInSeconds) * dir;
+          return ((a.stats.loggedInSeconds ?? -1) - (b.stats.loggedInSeconds ?? -1)) * dir;
         default:
           return 0;
       }
@@ -383,20 +406,25 @@ function TeamActivityPage() {
                         </div>
                       </td>
                       <td className="py-2.5 text-xs text-muted-foreground">
-                        {formatClockTime(stats.loginTime)}
+                        {stats.loginTime ? formatClockTime(stats.loginTime) : "—"}
                       </td>
                       <td className="py-2.5 text-xs text-muted-foreground">
+                        {/* "Active" only when we KNOW they are still in an open interval. An
+                            untracked day has no logout because nothing was recorded, which is
+                            not the same as being on shift. */}
                         {stats.logoutTime ? (
                           formatClockTime(stats.logoutTime)
-                        ) : (
+                        ) : stats.presenceRecorded ? (
                           <span className="inline-flex items-center gap-1 text-success">
                             <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
                             Active
                           </span>
+                        ) : (
+                          "—"
                         )}
                       </td>
                       <td className="py-2.5 text-right text-xs font-medium text-foreground tabular-nums">
-                        {formatDuration(stats.loggedInSeconds)}
+                        {formatDurationOrDash(stats.loggedInSeconds)}
                       </td>
                       <td className="py-2.5 text-right text-xs font-semibold text-foreground tabular-nums">
                         {today.total}
