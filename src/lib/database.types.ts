@@ -4,6 +4,11 @@
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
 // Generated from 21 tables.
+//
+// ⚠️ `live_calls` below was added BY HAND, ahead of
+// migrations/20260830_live_calls.sql being applied to the live database — the generator can
+// only see tables that already exist. Once that migration has run, `bun run gen:types` will
+// reproduce it identically and this note can go.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -433,6 +438,54 @@ export interface Database {
           agent_id?: string | null;
           resolved?: boolean | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      live_calls: {
+        Row: {
+          id: string;
+          client_id: string;
+          agent_id: string;
+          debtor_id: string | null;
+          provider_call_id: string | null;
+          phase: string;
+          dial_mode: string | null;
+          contact_name: string | null;
+          contact_phone: string | null;
+          loan_reference: string | null;
+          started_at: string;
+          last_seen_at: string;
+          ended_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          agent_id: string;
+          debtor_id?: string | null;
+          provider_call_id?: string | null;
+          phase: string;
+          dial_mode?: string | null;
+          contact_name?: string | null;
+          contact_phone?: string | null;
+          loan_reference?: string | null;
+          started_at?: string;
+          last_seen_at?: string;
+          ended_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          agent_id?: string;
+          debtor_id?: string | null;
+          provider_call_id?: string | null;
+          phase?: string;
+          dial_mode?: string | null;
+          contact_name?: string | null;
+          contact_phone?: string | null;
+          loan_reference?: string | null;
+          started_at?: string;
+          last_seen_at?: string;
+          ended_at?: string | null;
         };
         Relationships: [];
       };
