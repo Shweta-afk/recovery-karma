@@ -42,7 +42,12 @@ import {
   type DispositionRecord,
   type PtpFollowup,
 } from "@/lib/disposition-store";
-import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import {
+  getAgentDebtorIds,
+  getPortfolios,
+  refreshPortfolios,
+  posByDebtorMap,
+} from "@/lib/portfolio-store";
 import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
 import { getAgentTimeStats, formatDuration, formatDurationOrDash } from "@/lib/agent-time-stats";
 import { MonthlyTrendPanel } from "@/components/reports/monthly-trend";
@@ -532,6 +537,8 @@ function ReportsPage() {
   }, [agentId]);
 
   const [portfolioVersion, setPortfolioVersion] = useState(0);
+  // Principal per debtor, for the POS trend metrics.
+  const posByDebtor = useMemo(() => posByDebtorMap(), [portfolioVersion]);
   useEffect(() => {
     const bump = () => setPortfolioVersion((n) => n + 1);
     window.addEventListener("portfolios-updated", bump);
@@ -818,6 +825,7 @@ function ReportsPage() {
             {active === "weekly" && <WeeklyReport rows={dailyRows} />}
             {active === "monthly" && (
               <MonthlyTrendPanel
+                posByDebtor={posByDebtor}
                 disps={disps}
                 payments={payments}
                 note="Collections counted here are the ones credited to you. A payment the bank reported in a paid-file upload has no collector, so it lands in your team's total but not in yours."

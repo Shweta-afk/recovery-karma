@@ -34,7 +34,7 @@ import {
   calcStats,
   type DispositionRecord,
 } from "@/lib/disposition-store";
-import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { getPortfolios, refreshPortfolios, posByDebtorMap } from "@/lib/portfolio-store";
 import { formatINR } from "@/lib/mock-debtors";
 import { MonthlyTrendPanel, type TrendGroup } from "@/components/reports/monthly-trend";
 import { scopeToAgents, unattributedCollected } from "@/lib/monthly-trend";
@@ -157,6 +157,8 @@ function AdminReportsPage() {
   }, []);
 
   const portfolios = useMemo(() => getPortfolios(), []);
+  // Principal per debtor, for the POS Worked / POS Promised trend metrics.
+  const posByDebtor = useMemo(() => posByDebtorMap(), []);
   const teamName = (teamId?: string) => teams.find((t) => t.id === teamId)?.name ?? "—";
 
   useEffect(() => {
@@ -1146,6 +1148,7 @@ function AdminReportsPage() {
         {/* ── MONTHLY TREND TAB ── */}
         <TabsContent value="trend" className="mt-4">
           <MonthlyTrendPanel
+            posByDebtor={posByDebtor}
             disps={disps}
             payments={payments}
             note={
