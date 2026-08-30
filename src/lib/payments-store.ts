@@ -167,7 +167,12 @@ export async function refreshPayments(): Promise<void> {
       id: r.id,
       debtorId: r.debtor_id ?? "",
       debtorName: debtor?.name ?? "",
-      loanId: debtor?.loan_reference ?? r.debtor_id ?? "",
+      // NOT the debtor UUID as a fallback. A payment can be visible while its debtor is not:
+      // bank-reported rows are client-wide, but debtors_select scopes an agent to their own
+      // accounts. That fallback put a raw internal id in the Loan ID column, which means
+      // nothing to a user and leaks a database identifier onto the screen. Empty instead, and
+      // the UI says the account is not visible.
+      loanId: debtor?.loan_reference ?? "",
       phone: debtor?.phone_primary ?? "",
       portfolioId: debtor?.portfolio_id ?? undefined,
       portfolioName: portfolio?.name,

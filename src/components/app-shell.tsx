@@ -143,7 +143,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar role={user.role} />
 
-        <div className="flex flex-1 flex-col">
+        {/* min-w-0 is load-bearing. A flex item defaults to min-width:auto, so this column
+            refuses to shrink below the widest thing inside it — and a wide table (Call Queue,
+            Debtors, Reports) then pushes the ENTIRE app sideways instead of scrolling within
+            its own `overflow-auto` container. Measured on the live app: 1492px of content in a
+            1440px viewport. */}
+        <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-4 border-b border-border bg-card px-4">
             <div className="flex items-center gap-2">
               <SidebarTrigger />

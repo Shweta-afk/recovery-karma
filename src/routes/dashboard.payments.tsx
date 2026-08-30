@@ -681,9 +681,18 @@ function PaymentsPage() {
                             onClick={() => setExpandedId(expanded ? null : p.id)}
                           >
                             <TableCell>
-                              <div className="font-medium text-sm">{p.debtorName || "—"}</div>
+                              {/* A payment whose debtor this user cannot see — a bank-reported
+                                  row on someone else's account. Say that, rather than showing a
+                                  dash and an internal id and leaving them to guess. */}
+                              <div className="font-medium text-sm">
+                                {p.debtorName || (
+                                  <span className="text-muted-foreground italic">
+                                    Account not visible to you
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-[11px] text-muted-foreground">
-                                {p.loanId} · DPD {p.dpd ?? "—"}d
+                                {p.loanId ? `${p.loanId} · ` : ""}DPD {p.dpd ?? "—"}d
                               </div>
                             </TableCell>
                             <TableCell>

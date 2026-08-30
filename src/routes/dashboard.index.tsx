@@ -725,7 +725,12 @@ export function AgentDashboardContent({
         <section>
           <div className="flex items-center justify-between">
             <SectionLabel>My Performance vs Target · {periodLabel}</SectionLabel>
-            <span className="text-[11px] text-muted-foreground">Targets set by your manager</span>
+            {/* Only the call target is real (agents.daily_target). The other five are constants
+                in TARGETS above — claiming a manager set them is simply false, and it sits
+                directly under a DRR tile that correctly says no target is set. */}
+            <span className="text-[11px] text-muted-foreground">
+              Calls target is set by your manager · the rest are placeholder defaults
+            </span>
           </div>
 
           <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
@@ -833,13 +838,18 @@ export function AgentDashboardContent({
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 My Activity Today
               </span>
-              <span
-                className="flex items-center gap-1 text-[10px] text-muted-foreground"
-                title="Calling time is real, from your logged calls. Ringing, idle, disposition and login/logout times are estimated — real presence tracking is coming soon."
-              >
-                <Info className="h-3 w-3" />
-                Estimated*
-              </span>
+              {/* These were estimates until time tracking landed; they are measured now. The
+                  badge only appears when nothing was RECORDED for the day, which is a different
+                  statement and the one that is still true. */}
+              {!myTimeStats.presenceRecorded && (
+                <span
+                  className="flex items-center gap-1 text-[10px] text-amber-500"
+                  title="Your status has not been recorded yet today, so break and idle cannot be calculated. Talk time is always measured."
+                >
+                  <Info className="h-3 w-3" />
+                  Not recorded yet
+                </span>
+              )}
             </div>
             <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-3 pb-2 border-b border-border">
               <span className="flex items-center gap-1">
@@ -854,11 +864,14 @@ export function AgentDashboardContent({
                   <LogOut className="h-3 w-3" />
                   {formatClockTime(myTimeStats.logoutTime)}
                 </span>
-              ) : (
+              ) : myTimeStats.presenceRecorded ? (
                 <span className="flex items-center gap-1 text-success">
                   <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
                   Active
                 </span>
+              ) : (
+                // No logout because nothing was recorded — not because the agent is on shift.
+                <span className="text-muted-foreground">—</span>
               )}
             </div>
             <div className="space-y-2.5">
