@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 21 tables.
+// Generated from 23 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -129,8 +129,6 @@ export interface Database {
           promise_date: string | null;
           callback_datetime: string | null;
           duration_seconds: number | null;
-          ring_seconds: number | null;
-          wrap_seconds: number | null;
           raw_notes: string | null;
           ai_notes: string | null;
           recording_url: string | null;
@@ -153,6 +151,8 @@ export interface Database {
           dial_mode: string | null;
           callback_date: string | null;
           callback_time: string | null;
+          ring_seconds: number | null;
+          wrap_seconds: number | null;
         };
         Insert: {
           id?: string;
@@ -164,8 +164,6 @@ export interface Database {
           promise_date?: string | null;
           callback_datetime?: string | null;
           duration_seconds?: number | null;
-          ring_seconds?: number | null;
-          wrap_seconds?: number | null;
           raw_notes?: string | null;
           ai_notes?: string | null;
           recording_url?: string | null;
@@ -188,6 +186,8 @@ export interface Database {
           dial_mode?: string | null;
           callback_date?: string | null;
           callback_time?: string | null;
+          ring_seconds?: number | null;
+          wrap_seconds?: number | null;
         };
         Update: {
           id?: string;
@@ -199,8 +199,6 @@ export interface Database {
           promise_date?: string | null;
           callback_datetime?: string | null;
           duration_seconds?: number | null;
-          ring_seconds?: number | null;
-          wrap_seconds?: number | null;
           raw_notes?: string | null;
           ai_notes?: string | null;
           recording_url?: string | null;
@@ -223,6 +221,8 @@ export interface Database {
           dial_mode?: string | null;
           callback_date?: string | null;
           callback_time?: string | null;
+          ring_seconds?: number | null;
+          wrap_seconds?: number | null;
         };
         Relationships: [];
       };
@@ -466,6 +466,54 @@ export interface Database {
           agent_id?: string | null;
           resolved?: boolean | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      live_calls: {
+        Row: {
+          id: string;
+          client_id: string;
+          agent_id: string;
+          debtor_id: string | null;
+          provider_call_id: string | null;
+          phase: string;
+          dial_mode: string | null;
+          contact_name: string | null;
+          contact_phone: string | null;
+          loan_reference: string | null;
+          started_at: string;
+          last_seen_at: string;
+          ended_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          agent_id: string;
+          debtor_id?: string | null;
+          provider_call_id?: string | null;
+          phase: string;
+          dial_mode?: string | null;
+          contact_name?: string | null;
+          contact_phone?: string | null;
+          loan_reference?: string | null;
+          started_at?: string;
+          last_seen_at?: string;
+          ended_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          agent_id?: string;
+          debtor_id?: string | null;
+          provider_call_id?: string | null;
+          phase?: string;
+          dial_mode?: string | null;
+          contact_name?: string | null;
+          contact_phone?: string | null;
+          loan_reference?: string | null;
+          started_at?: string;
+          last_seen_at?: string;
+          ended_at?: string | null;
         };
         Relationships: [];
       };
