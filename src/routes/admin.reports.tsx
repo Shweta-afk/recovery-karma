@@ -73,6 +73,7 @@ import {
 } from "@/components/reports/outcome-breakdown";
 import { Stat } from "@/components/reports/stat-card";
 import { AgentCallLog } from "@/components/reports/agent-call-log";
+import { AgentReportDetail } from "@/components/reports/agent-detail";
 import { ProfilexSpendPanel } from "@/components/profilex/spend-panel";
 import { InsightsUsagePanel } from "@/components/profilex/usage-panel";
 import { DataTable, ReportSection } from "@/components/reports/data-table";
@@ -1072,7 +1073,20 @@ function AdminReportsPage() {
                               colSpan={9}
                               className="border-b border-border bg-muted/10 px-4 py-3"
                             >
-                              <AgentCallLog disps={a.disps} agentName={a.name} />
+                              {/* Same per-agent report managers get. Admins are not scoped to
+                                  a team, so this works for anyone on the client. */}
+                              <div className="space-y-4">
+                                <AgentReportDetail
+                                  agentId={a.agentId}
+                                  agentName={a.name}
+                                  disps={a.disps}
+                                  payments={payments.filter((p) => p.agentId === a.agentId)}
+                                  posByDebtor={posByDebtor}
+                                />
+                                <div className="border-t border-border pt-3">
+                                  <AgentCallLog disps={a.disps} agentName={a.name} />
+                                </div>
+                              </div>
                             </td>
                           </tr>
                         )}
