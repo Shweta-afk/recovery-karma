@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useAuth } from "@/lib/auth";
+import { useAuth, homeRouteForRole, type Role } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -48,9 +48,9 @@ function LoginPage() {
     // Redirect based on role
     setTimeout(() => {
       const role = loggedInUser?.role ?? user?.role;
-      if (role === "admin") navigate({ to: "/admin" });
-      else if (role === "manager") navigate({ to: "/manager" });
-      else navigate({ to: "/dashboard" });
+      // Same helper the sidebar logo uses, so the two can never disagree about where a role
+      // lands.
+      navigate({ to: homeRouteForRole(role as Role | undefined) });
     }, 150);
   };
 
@@ -63,7 +63,9 @@ function LoginPage() {
         </div>
 
         <div className="space-y-5">
-          <h1 className="text-3xl font-semibold leading-tight">India's modern platform for NBFCs &amp; ARCs.</h1>
+          <h1 className="text-3xl font-semibold leading-tight">
+            India's modern platform for NBFCs &amp; ARCs.
+          </h1>
           <p className="max-w-md text-sm text-white/70">
             Run compliant outbound calling, SMS &amp; UPI collection workflows from one operator
             console. Built for RBI fair-practice guidelines.
@@ -77,7 +79,9 @@ function LoginPage() {
 
         <div className="space-y-0.5">
           <p className="text-xs text-white/40">© 2026 SamvadX Technologies Pvt. Ltd.</p>
-          <p className="text-xs italic text-white/40">Powered by Axiotta Technologies Private Limited</p>
+          <p className="text-xs italic text-white/40">
+            Powered by Axiotta Technologies Private Limited
+          </p>
         </div>
       </div>
 

@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn, parseCsvLine } from "@/lib/utils";
+import { cn, parseCsvText } from "@/lib/utils";
 import { dpd2bucket, type UploadedDebtor } from "@/lib/portfolio-store";
 import { resolveMapping, confidenceLabel, type MappingResult } from "@/lib/column-mapper";
 import { findTemplate, refreshMappingTemplates } from "@/lib/mapping-template-store";
@@ -160,16 +160,19 @@ export function CsvImportStep({
       const reader = new FileReader();
       reader.onload = (e) => {
         const text = e.target?.result as string;
-        const lines = text.split(/\r?\n/).filter(Boolean);
+        // See parseCsvText — line-splitting first corrupts any quoted field with a newline.
+        const lines = parseCsvText(text);
         if (lines.length < 2) {
           toast.error("CSV must have a header row and at least one data row");
           return;
         }
-        const headers = parseCsvLine(lines[0]);
-        const rows = lines.slice(1, 5001).map((l) => parseCsvLine(l));
+        const headers = lines[0];
+        // Every row — `.slice(1, 5001)` silently dropped everything past 5,000. The sample cap
+        // belongs on the type-inference pass below, not on the data being imported.
+        const rows = lines.slice(1);
 
         const template = findTemplate(lenderName, headers);
-        const result = resolveMapping(headers, rows, template?.mapping ?? null);
+        const result = resolveMapping(headers, rows.slice(0, 5000), template?.mapping ?? null);
 
         setRawHeaders(headers);
         setRawRows(rows);

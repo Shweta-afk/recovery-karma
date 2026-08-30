@@ -14,8 +14,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const createCompany = createServerFn({ method: "POST" })
   .inputValidator(
-    (d: { companyName: string; adminName: string; adminEmail: string; adminPassword: string }) =>
-      d,
+    (d: { companyName: string; adminName: string; adminEmail: string; adminPassword: string }) => d,
   )
   .handler(async ({ data }) => {
     const companyName = data.companyName.trim();
@@ -93,10 +92,9 @@ export const createCompany = createServerFn({ method: "POST" })
         });
       return {
         ok: false as const,
-        error:
-          /duplicate key|already exists/i.test(agentErr.message)
-            ? "That email already has an account."
-            : agentErr.message,
+        error: /duplicate key|already exists/i.test(agentErr.message)
+          ? "That email already has an account."
+          : agentErr.message,
       };
     }
 

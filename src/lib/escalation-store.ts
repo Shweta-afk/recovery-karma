@@ -105,13 +105,13 @@ export async function refreshEscalations(): Promise<void> {
   const agentById = new Map(agentRows.map((a) => [a.id, a]));
 
   const escalations: Escalation[] = rows.map((e) => {
-    const debtor = debtorById.get(e.debtor_id);
+    const debtor = debtorById.get(e.debtor_id ?? "");
     const portfolio = debtor?.portfolio_id ? portfolioById.get(debtor.portfolio_id) : undefined;
-    const agent = agentById.get(e.agent_id);
+    const agent = agentById.get(e.agent_id ?? "");
     return {
       id: e.id,
       debtor: {
-        id: e.debtor_id,
+        id: e.debtor_id ?? "",
         name: debtor?.name ?? "",
         phone: debtor?.phone_primary ?? "",
         altPhone: debtor?.phone_alternate ?? undefined,
@@ -130,8 +130,8 @@ export async function refreshEscalations(): Promise<void> {
       notes: e.notes ?? "",
       agentId: agent?.email ?? "",
       agentName: agent?.name ?? "",
-      createdAt: e.created_at,
-      resolved: e.resolved,
+      createdAt: e.created_at ?? "",
+      resolved: e.resolved ?? false,
     };
   });
 

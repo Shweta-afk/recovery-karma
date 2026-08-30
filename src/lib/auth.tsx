@@ -3,6 +3,25 @@ import { supabase } from "./supabase";
 
 export type Role = "agent" | "manager" | "admin";
 
+/**
+ * Where a role's "home" is - the single source of truth for it.
+ *
+ * This existed inline in login.tsx while the sidebar's SamvadX logo linked to "/dashboard" for
+ * everyone, so a manager clicking the logo landed on the AGENT dashboard: their own per-agent
+ * page, which shows empty or irrelevant data because managers are not individually assigned
+ * debtors. The sidebar hides the whole Agent Workspace group from managers for exactly that
+ * reason - the logo was the one link that bypassed it, which is why the app appeared to have
+ * two different manager dashboards.
+ *
+ * Every "go home" affordance must route through this. Adding a role, or moving a landing page,
+ * should mean editing one function.
+ */
+export function homeRouteForRole(role: Role | undefined): "/dashboard" | "/manager" | "/admin" {
+  if (role === "admin") return "/admin";
+  if (role === "manager") return "/manager";
+  return "/dashboard";
+}
+
 export interface AuthUser {
   /** Supabase auth.users UUID — use this as the canonical agentId */
   id: string;
@@ -44,7 +63,10 @@ function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${AUTH_CALL_TIMEOUT_MS}ms`)), AUTH_CALL_TIMEOUT_MS),
+      setTimeout(
+        () => reject(new Error(`${label} timed out after ${AUTH_CALL_TIMEOUT_MS}ms`)),
+        AUTH_CALL_TIMEOUT_MS,
+      ),
     ),
   ]);
 }
@@ -53,7 +75,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function fetchAgentProfile(authUserId: string, forceRefresh = false): Promise<AuthUser | null> {
+  async function fetchAgentProfile(
+    authUserId: string,
+    forceRefresh = false,
+  ): Promise<AuthUser | null> {
     // Check cache first (avoid redundant queries on auth state changes)
     const cacheKey = `agent-profile-${authUserId}`;
     const cached = forceRefresh ? null : localStorage.getItem(cacheKey);
@@ -72,7 +97,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // not a real Promise, and withTimeout's generic needs one to infer the result type.
     const { data, error } = await withTimeout(
       Promise.resolve(
-        supabase.from("agents").select("name, email, role, agent_phone").eq("auth_user_id", authUserId).single(),
+        supabase
+          .from("agents")
+          .select("name, email, role, agent_phone")
+          .eq("auth_user_id", authUserId)
+          .single(),
       ),
       "agents lookup",
     );

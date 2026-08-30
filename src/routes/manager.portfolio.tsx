@@ -78,7 +78,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn, parseCsvLine } from "@/lib/utils";
+import { cn, parseCsvText } from "@/lib/utils";
 import { normHeader } from "@/lib/column-mapper";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import { useTeamAgents, type AgentRef } from "@/lib/team-store";
@@ -721,6 +721,15 @@ function EditPortfolioDialog({
                   Optional collection goal per agent for this portfolio — separate from account
                   allocation.
                 </p>
+                {/* This is load-bearing, not decoration. DRR on the agent and manager
+                    dashboards divides this figure by the days left in the month, and the
+                    column (portfolio_agent_targets.target_amount) has no period of its own to
+                    enforce the convention. A portfolio-lifetime number entered here silently
+                    distorts every DRR on the platform — no error, just wrong figures. */}
+                <p className="-mt-1 text-[11px] font-medium text-amber-500">
+                  Enter a MONTHLY figure. These feed the Daily Run Rate (DRR) on the dashboards,
+                  which divides the target by the days remaining in the month.
+                </p>
                 <div className="divide-y divide-border rounded-lg border border-border">
                   {agents.map((a) => {
                     const t = targets[a.id] ?? {};
@@ -730,7 +739,9 @@ function EditPortfolioDialog({
                           {a.name}
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <Label className="text-[10px] text-muted-foreground">₹ Target</Label>
+                          <Label className="text-[10px] text-muted-foreground">
+                            ₹ Target / month
+                          </Label>
                           <Input
                             type="number"
                             min={0}
@@ -745,7 +756,9 @@ function EditPortfolioDialog({
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <Label className="text-[10px] text-muted-foreground">Accounts</Label>
+                          <Label className="text-[10px] text-muted-foreground">
+                            Accounts / month
+                          </Label>
                           <Input
                             type="number"
                             min={0}
@@ -913,13 +926,17 @@ function BulkPaidUploadDialog({
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
-      const lines = text.split(/\r?\n/).filter(Boolean);
+      // See parseCsvText — line-splitting first corrupts any quoted field with a newline.
+      const lines = parseCsvText(text);
       if (lines.length < 2) {
         toast.error("CSV must have a header row and at least one data row");
         return;
       }
-      const h = parseCsvLine(lines[0]);
-      const r = lines.slice(1, 20001).map((l) => parseCsvLine(l));
+      const h = lines[0];
+      // Every row. This was capped at 20,000 and silently dropped the rest — on a paid-file
+      // reconciliation that means payments the bank reported are never applied, and nothing
+      // says so.
+      const r = lines.slice(1);
       setHeaders(h);
       setRows(r);
       setLoanIdCol(guessColumn(h, LOAN_ID_ALIASES));

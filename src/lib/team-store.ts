@@ -18,7 +18,16 @@ export interface AgentRef {
   // variants, duplicate names) or email (easy to mistype/paste wrong).
   // Null only for rows inserted before that migration ran and not yet backfilled.
   agentCode: string | null;
+  /** agents.daily_target — this agent's own call-count goal. Carried on the roster so
+   * supervisor views measure each agent against THEIR target: the manager dashboard used to
+   * compare everyone to a hardcoded 80, so an agent whose real target was 120 saw "45/120" on
+   * their own dashboard and "45/80" on their manager's. Falls back to 80 (the Supabase seed
+   * default) only when the column is null. */
+  dailyTarget: number;
 }
+
+/** The seed's agents.daily_target. Only a fallback for a row with none set. */
+export const FALLBACK_DAILY_TARGET = 80;
 
 const ROSTER_KEY = "recoveryai_roster_cache";
 
@@ -38,31 +47,56 @@ export function getAgentById(id: string): AgentRef | undefined {
 export async function refreshRoster(): Promise<void> {
   const { data, error } = await supabase
     .from("agents")
-    .select("email, name, role, agent_code")
-    .in("role", ["agent", "manager"]);
+    .select("email, name, role, agent_code, daily_target")
+    .in("role", ["agent", "manager"])
+    // Deactivated users drop out of the roster, which is what makes Admin > Users'
+    // "Deactivate" mean anything: they stop appearing in assignment pickers, team lists and
+    // queue views. Their existing rows are untouched — this is visibility, not deletion.
+    // `.or` rather than `.eq` because is_active is nullable and pre-existing rows may hold
+    // NULL, which `.eq("is_active", true)` would silently exclude.
+    .or("is_active.is.null,is_active.eq.true");
   if (error || !data) return;
-  const roster: AgentRef[] = data.map((a) => ({
+  // Typed at the map rather than left to infer: the Supabase client has no generated Database
+  // types, so `data` widens to never[] and every field access below is a type error. Naming the
+  // shape here (it is the select string directly above) makes this mapper check properly.
+  type Row = {
+    email: string;
+    name: string;
+    role: string;
+    agent_code: string | null;
+    daily_target: number | null;
+  };
+  const roster: AgentRef[] = (data as unknown as Row[]).map((a) => ({
     id: a.email,
     name: a.name,
     email: a.email,
     role: a.role as "agent" | "manager",
     agentCode: a.agent_code,
+    dailyTarget: Number(a.daily_target) || FALLBACK_DAILY_TARGET,
   }));
   localStorage.setItem(ROSTER_KEY, JSON.stringify(roster));
   window.dispatchEvent(new CustomEvent("roster-updated"));
 }
 
 /** Reads the cache immediately, then refreshes from Supabase in the background and
- * updates when new data lands (same tab, and cross-tab via storage-sync). */
-export function useRoster(): AgentRef[] {
-  const [roster, setRoster] = useState<AgentRef[]>(() => getRoster());
+ * updates when new data lands (same tab, and cross-tab via storage-sync).
+ *
+ * `enabled` exists for pages where only some roles need the roster (the Debtors page renders
+ * an "Assigned to" filter for supervisors only): a hook can't be called conditionally, so the
+ * caller passes false instead and skips the fetch rather than making every agent pull a
+ * roster their view never shows. */
+export function useRoster(enabled = true): AgentRef[] {
+  const [roster, setRoster] = useState<AgentRef[]>(() => (enabled ? getRoster() : []));
   useEffect(() => {
+    if (!enabled) return;
     const reload = () => setRoster(getRoster());
     window.addEventListener("roster-updated", reload);
     refreshRoster();
     return () => window.removeEventListener("roster-updated", reload);
-  }, []);
-  useStorageSync(() => setRoster(getRoster()));
+  }, [enabled]);
+  useStorageSync(() => {
+    if (enabled) setRoster(getRoster());
+  });
   return roster;
 }
 
@@ -104,7 +138,7 @@ export async function refreshTeams(): Promise<void> {
 
   const byId = new Map(agentRows.map((a) => [a.id, a]));
   const teams: Team[] = teamRows.map((t) => {
-    const manager = byId.get(t.manager_id);
+    const manager = byId.get(t.manager_id ?? "");
     const agentIds = memberRows
       .filter((m) => m.team_id === t.id)
       .map((m) => byId.get(m.agent_id)?.email)
@@ -115,7 +149,7 @@ export async function refreshTeams(): Promise<void> {
       managerId: manager?.email ?? "",
       managerName: manager?.name ?? "",
       agentIds,
-      createdAt: t.created_at,
+      createdAt: t.created_at ?? "",
     };
   });
 

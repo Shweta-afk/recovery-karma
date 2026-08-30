@@ -47,6 +47,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { todayIstKey } from "@/lib/date-filter";
 import { bucketOf, formatINR, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
 import {
   getPortfolios,
@@ -54,6 +55,7 @@ import {
   addDebtorPhone,
   DEFAULT_PORTFOLIO_SETTINGS,
   type CallMode,
+  findDebtorByLoanReference,
 } from "@/lib/portfolio-store";
 import { formatISTDate } from "@/lib/agent-time-stats";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
@@ -64,6 +66,8 @@ import {
   QUEUE_FILTERS,
   OUTCOME_META,
   QUEUE_STATUS_META,
+  dialModeFromDialerMode,
+  type DialMode,
   STATUS_META,
   PRODUCTIVE_STATUSES,
   NON_PRODUCTIVE_STATUSES,
@@ -107,8 +111,10 @@ import {
 } from "@/components/call-queue/dialer-boards";
 import {
   saveDisposition,
+  isUuid,
   getAgentDispositions,
   getPtpFollowups,
+  getCaseFollowups,
   refreshDispositions,
   type DispositionRecord,
   type CallOutcome as StoredOutcome,
@@ -121,7 +127,7 @@ import {
   type Reminder,
 } from "@/lib/reminder-store";
 import { buildDispositionSms } from "@/lib/sms-templates";
-import { escalateMissedPtpsToManager } from "@/lib/ptp-escalation-store";
+import { escalateMissedCasesToManager } from "@/lib/ptp-escalation-store";
 
 import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
@@ -273,13 +279,11 @@ export function CallQueueContent({
   // fixed list-position progress (done / current / upcoming) rather than just the live legs.
   const [productiveTargets, setProductiveTargets] = useState<DialTarget[]>([]);
   const [prodFilter, setProdFilter] = useState<ProdFilter>("all");
-  const [manualDialPageOpen, setManualDialPageOpen] = useState(false);
-  const [manualDialNumber, setManualDialNumber] = useState("");
-  const [manualDialName, setManualDialName] = useState("");
-  // Caller ID shown to the debtor — must be a DID/ExoPhone on the account, never a personal number.
-  const [manualDialCallerId, setManualDialCallerId] = useState<string>(
-    TELEPHONY_CALLER_IDS[0] ?? "",
-  );
+  // Caller ID the dialer runs present to the debtor — must be a DID/ExoPhone on the account,
+  // never a personal number. Fixed to the first configured DID now that the manual-dial form
+  // (which used to own the picker) has moved to ManualDialDock; the dialer boards below still
+  // need a caller ID to run with.
+  const manualDialCallerId = TELEPHONY_CALLER_IDS[0] ?? "";
   const [retainedOpen, setRetainedOpen] = useState(false);
   const [predictiveNotif, setPredictiveNotif] = useState<string | null>(null);
   const [ptpBannerDismissed, setPtpBannerDismissed] = useState(false);
@@ -355,11 +359,20 @@ export function CallQueueContent({
 
   const startCall = (
     debtor: QueueDebtor,
-    opts?: { instant?: boolean; agentPhone?: string; callerId?: string },
+    opts?: {
+      instant?: boolean;
+      agentPhone?: string;
+      callerId?: string;
+      /** Defaults to "single" — an ordinary one-at-a-time click-to-call, which is what every
+       * queue row, the PTP tracker and a transfer all are. The boards and the Manual Dial
+       * dock pass their own. */
+      dialMode?: DialMode;
+    },
   ) => {
     singleCall.reset(); // clear any prior in-flight sim/timer
     setActiveCall({
       debtor,
+      dialMode: opts?.dialMode ?? "single",
       phase: opts?.instant ? "connected" : "ringing",
       view: "panel",
       muted: false,
@@ -383,6 +396,7 @@ export function CallQueueContent({
       escalate: false,
       notes: "",
       followUpDate: "",
+      attachLoanId: "",
     });
     // A transferred call is already live on the AI side — connect instantly; a fresh dial rings
     // first, then connects when the (simulated) provider reports the debtor answered.
@@ -491,21 +505,32 @@ export function CallQueueContent({
       const combinedNotes = [autoNote, disposition.notes.trim()].filter(Boolean).join(" — ");
 
       // Persist to disposition store
+      // Retro-attach: an unmapped manual call can name its account at disposition time. When
+      // it resolves, the log is written against the REAL debtor row — which is what puts the
+      // call (and its notes) on that account's history instead of nowhere. Ignored when it
+      // doesn't match, and irrelevant for any call that already has a debtor behind it.
+      const attached = findDebtorByLoanReference(disposition.attachLoanId);
+      const attachTo = attached && !isUuid(debtor.id) ? attached : null;
+
       const record: DispositionRecord = {
         id: crypto.randomUUID(),
-        debtorId: debtor.id,
-        debtorName: debtor.name,
+        debtorId: attachTo ? attachTo.debtor.id : debtor.id,
+        debtorName: attachTo ? attachTo.debtor.name : debtor.name,
         phone: debtor.phone,
         // The caller, not the queue's owner — see the identity note on CallQueueContent.
         agentId: actingAgentId,
         agentName: actingAgentName,
-        portfolioName: debtor.portfolio,
+        portfolioName: attachTo ? attachTo.portfolio.name : debtor.portfolio,
         outcome: disposition.outcome as StoredOutcome,
         reason: disposition.reason || undefined,
         notes: combinedNotes,
         ptpAmount: disposition.ptpAmount ? parseFloat(disposition.ptpAmount) : undefined,
         ptpDate: disposition.ptpDate || undefined,
         ptpTime: disposition.ptpTime || undefined,
+        // Only meaningful on a callback; the escalation chain reads these to know when a
+        // promised call-back was due (see ptp-escalation-store.ts).
+        callbackDate: disposition.callbackDate || undefined,
+        callbackTime: disposition.callbackTime || undefined,
         paidAmount: disposition.paidAmount ? parseFloat(disposition.paidAmount) : undefined,
         paidRef: disposition.paidRef || undefined,
         loanAmount: debtor.loanAmount,
@@ -513,6 +538,7 @@ export function CallQueueContent({
         // Present only if the provider published a recording before the agent dispositioned.
         // Some providers publish these asynchronously, so this is often still empty here and
         // has to be backfilled later once the provider makes it available.
+        dialMode: activeCall?.dialMode ?? "single",
         recordingUrl: activeCall?.recordingUrl,
         // Lets the recording be attached later, once the provider publishes it.
         providerCallId: activeCall?.providerCallId,
@@ -574,7 +600,10 @@ export function CallQueueContent({
   useEffect(() => {
     if (!isSelf) return;
     refreshReminders().then(() => {
-      const todayISO = new Date().toISOString().slice(0, 10);
+      // IST, not UTC. Reminder due-dates are IST calendar dates, but toISOString() reports
+      // the UTC day — so an agent on an early shift (before 05:30 IST) was shown YESTERDAY's
+      // reminders, burning them via markReminderNotified, and never shown today's at all.
+      const todayISO = todayIstKey();
       const due = getDueReminders(agentId, todayISO);
       due.forEach((r) => {
         toast(r.message, {
@@ -596,7 +625,10 @@ export function CallQueueContent({
     // merely opening this agent's queue in Agent Live View would raise escalations in that
     // agent's name without anyone acting.
     if (!isSelf) return;
-    escalateMissedPtpsToManager(agentId, ptpFollowups).catch(() => {});
+    // Every dated commitment, not just PTPs — a callback the agent agreed to and never made
+    // escalates on the same chain. getCaseFollowups covers both; ptpFollowups above stays
+    // PTP-only because the PTP tracker UI it feeds is promise-specific.
+    escalateMissedCasesToManager(agentId, getCaseFollowups(agentId)).catch(() => {});
   }, [agentId, ptpFollowups, isSelf]);
 
   const filterCounts = useMemo(
@@ -611,6 +643,15 @@ export function CallQueueContent({
     }),
     [allQueue],
   );
+
+  // "Remaining" = accounts in the queue not yet worked TODAY, judged by lastContacted, which
+  // is an IST day key (see fetch-debtors.ts) — so the count rolls over at midnight IST rather
+  // than at 05:30 the way a UTC comparison would. Every other count on this row stays as-is;
+  // this is the one an agent actually works down to zero.
+  const remainingToday = useMemo(() => {
+    const today = todayIstKey();
+    return allQueue.filter((d) => d.lastContacted !== today).length;
+  }, [allQueue]);
 
   const filteredQueue = useMemo(() => {
     let rows = allQueue;
@@ -828,8 +869,14 @@ export function CallQueueContent({
       {/* ── Summary Stats ── */}
       <section className="space-y-3 animate-in fade-in duration-400">
         {/* Overall row */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
+            {
+              label: "Remaining",
+              value: remainingToday.toString(),
+              sub: "not yet worked today",
+              cls: "text-amber-500",
+            },
             {
               label: "Total Count",
               value: allQueue.length.toString(),
@@ -974,91 +1021,11 @@ export function CallQueueContent({
 
           {/* Dialer controls — above the queue, not in page header */}
           <div className="flex items-center gap-2">
-            {/* Manual Dial */}
-            <div className="relative">
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5 text-sm"
-                onClick={() => setManualDialPageOpen((o) => !o)}
-              >
-                <Hash className="h-3.5 w-3.5" />
-                Manual Dial
-              </Button>
-              {manualDialPageOpen && (
-                <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-lg border border-border bg-card shadow-xl p-4 space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Manual Outbound Call
-                  </p>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground">Debtor name (optional)</label>
-                    <Input
-                      placeholder="e.g. Rahul Sharma"
-                      value={manualDialName}
-                      onChange={(e) => setManualDialName(e.target.value)}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground">Phone number to call</label>
-                    <Input
-                      placeholder="+91 XXXXX XXXXX"
-                      value={manualDialNumber}
-                      onChange={(e) => setManualDialNumber(e.target.value)}
-                      className="h-8 text-sm font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground">Caller ID (ExoPhone)</label>
-                    <Select value={manualDialCallerId} onValueChange={setManualDialCallerId}>
-                      <SelectTrigger className="h-8 text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TELEPHONY_CALLER_IDS.map((did) => (
-                          <SelectItem key={did} value={did}>
-                            {did}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button
-                    className="w-full gap-1.5 h-8 text-sm"
-                    disabled={!manualDialNumber}
-                    onClick={() => {
-                      const name = manualDialName || manualDialNumber;
-                      // Create a temporary debtor object for manual dial
-                      const manualDebtor: QueueDebtor = {
-                        id: `manual-${Date.now()}`,
-                        name: name,
-                        phone: manualDialNumber,
-                        loanReference: "Manual Dial",
-                        loanAmount: 0,
-                        dpd: 0,
-                        aiScore: 0,
-                        status: "contacted",
-                        portfolio: "Manual",
-                        queueStatus: "fresh",
-                        retained: false,
-                      };
-                      // Agent leg comes from the signed-in agent; the DID is only the caller ID.
-                      startCall(manualDebtor, { callerId: manualDialCallerId });
-                      toast.success(`Calling ${name} from ${manualDialCallerId}…`);
-                      setManualDialPageOpen(false);
-                      setManualDialNumber("");
-                      setManualDialName("");
-                    }}
-                  >
-                    <Phone className="h-3.5 w-3.5" />
-                    Call Now
-                  </Button>
-                  <p className="text-[10px] text-muted-foreground text-center">
-                    Call will be logged and recorded automatically.
-                  </p>
-                </div>
-              )}
-            </div>
+            {/* Manual Dial moved out of this page entirely — it now lives in the
+                always-available ManualDialDock (bottom-left, mounted at the dashboard and
+                manager layout level), so an agent can dial from anywhere instead of only
+                from here. It also gained a Loan ID field, which binds an off-queue call to
+                a real account. See src/components/manual-dial-dock.tsx. */}
 
             {/* "Productive Dial" button — dialerMode "predictive" internally (kept as-is; only
                 the display label changed). Real engine + simulated provider via useDialerRun. */}
@@ -1797,7 +1764,12 @@ export function CallQueueContent({
           }}
           onTake={(lc) => {
             const debtor = allQueue.find((d) => d.id === lc.loanId) ?? allQueue[0];
-            startCall(debtor);
+            // Taking a leg off the running dialer — attribute it to whichever board produced
+            // it, not to "single". activeDialMode is the INTERNAL enum, whose two values read
+            // backwards; dialModeFromDialerMode is the one place that is untangled.
+            startCall(debtor, {
+              dialMode: activeDialMode ? dialModeFromDialerMode(activeDialMode) : "single",
+            });
           }}
           onTransfer={(lc) => {
             toast.success(`${lc.debtor} redirected to next available agent`);

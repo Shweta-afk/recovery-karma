@@ -27,7 +27,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import type { Role } from "@/lib/auth";
+import { homeRouteForRole, type Role } from "@/lib/auth";
 
 const agentItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
@@ -76,7 +76,9 @@ export function AppSidebar({ role }: { role: Role }) {
   return (
     <Sidebar collapsible="offcanvas">
       <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
-        <Link to="/dashboard" className="flex flex-col items-start gap-1.5">
+        {/* The role's own landing page, NOT a hardcoded /dashboard - that dropped
+            managers and admins onto the agent dashboard. */}
+        <Link to={homeRouteForRole(role)} className="flex flex-col items-start gap-1.5">
           <div className="rounded-md px-3 py-1.5 dark:bg-white">
             <img src="/logo.png" alt="SamvadX" className="h-7 w-auto object-contain" />
           </div>

@@ -38,6 +38,11 @@ export interface Debtor {
   lastContacted: string | null;
   portfolio: string;
   language: string;
+  // The agent this account is booked to, as their account email (debtors.assigned_agent_id
+  // resolved through the roster) — undefined when nobody is assigned. Carried on the debtor so
+  // a supervisor's list can be filtered/grouped by owner without a per-row lookup; an agent's
+  // own list is by definition all their own, so nothing reads it there.
+  assignedAgentId?: string;
   // Personal
   gender?: "Male" | "Female" | "Other";
   dob?: string;
@@ -466,7 +471,7 @@ export const MOCK_DEBTORS: Debtor[] = [
     interestOutstanding: 28000,
     penaltyCharges: 10000,
     totalOverdue: 38000,
-    employer: "Tata Consultancy Services",
+    employer: "Infotech Services Ltd",
     employerType: "Salaried",
     monthlyIncome: 58000,
     bankName: "Axis Bank",

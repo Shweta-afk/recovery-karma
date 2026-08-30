@@ -13,6 +13,7 @@
 // Math.random(), so the same agent shows the same numbers on every render/surface within a
 // day instead of jittering on each remount.
 import type { DispositionRecord } from "./disposition-store";
+import { istDayKey } from "./monthly-trend";
 
 export interface AgentTimeStats {
   agentId: string;
@@ -58,7 +59,11 @@ function seededRandom(seed: string): () => number {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  // IST, not UTC. toISOString() reports the UTC day, so between midnight and 05:30 IST this
+  // returned YESTERDAY — which shifted the placeholder seed onto the wrong day and made
+  // `isToday` false during a real early-morning shift. Matches the day boundary used by
+  // date-filter.ts and the reports page.
+  return istDayKey(new Date().toISOString());
 }
 
 /** One agent's time breakdown for a given day (defaults to today). `disps` should already be

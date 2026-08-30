@@ -45,7 +45,13 @@ const AGENT = {
 // team membership only — every provider, layout and page under test is the real one, because
 // substituting those is what would make this test stop reflecting production.
 beforeAll(async () => {
+  // Spread the real module and override only the signed-in state, the same way the team-store
+  // mock below does. Listing exports by hand meant every NEW export from auth.tsx broke all
+  // five route tests with "Export named 'x' not found" — a failure about the mock, not the
+  // code under test.
+  const authModule = await import("../src/lib/auth");
   mock.module("@/lib/auth", () => ({
+    ...authModule,
     useAuth: () => ({
       user: MANAGER,
       loading: false,

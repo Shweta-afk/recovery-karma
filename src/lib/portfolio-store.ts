@@ -1,5 +1,6 @@
 import type { DPDBucket, Debtor } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
+import type { Database, Json } from "./database.types";
 import { refreshRetentionRequests } from "./retention-store";
 import { fetchAllRows } from "./fetch-all-rows";
 import { createJsonCache } from "./json-cache";
@@ -135,6 +136,24 @@ function isMissingTableError(e: { message?: string; code?: string } | null): boo
 const KEY = "recoveryai_portfolios_cache";
 const CHUNK_SIZE = 500; // stays comfortably under Supabase's request-size limits per insert
 
+/**
+ * Chunk size for `.in("id", [...])` FILTERS, which is a much tighter budget than CHUNK_SIZE.
+ *
+ * An insert sends its rows in the POST body. A filter goes in the URL query string, so 500
+ * UUIDs is roughly an 18KB URL — past the 8-16KB most proxies and servers accept. The failure
+ * is a 414 or a truncated filter, neither of which surfaces as a useful error.
+ *
+ * 100 UUIDs is about 3.7KB, which leaves real headroom.
+ */
+const ID_FILTER_CHUNK = 100;
+
+/** Runs an id-filtered write in URL-safe batches. */
+async function inChunks(ids: string[], run: (chunk: string[]) => Promise<void>): Promise<void> {
+  for (let i = 0; i < ids.length; i += ID_FILTER_CHUNK) {
+    await run(ids.slice(i, i + ID_FILTER_CHUNK));
+  }
+}
+
 const cache = createJsonCache<UploadedPortfolio>(KEY);
 
 export function getPortfolios(): UploadedPortfolio[] {
@@ -248,10 +267,10 @@ export async function refreshPortfolios(): Promise<void> {
     name: p.name,
     lender: p.lender_name ?? "",
     product: p.product_type ? (PRODUCT_ENUM_TO_LABEL[p.product_type] ?? p.product_type) : "",
-    uploadedAt: p.uploaded_at,
+    uploadedAt: p.uploaded_at ?? "",
     managerId: p.manager_id ? emailById.get(p.manager_id) : undefined,
     teamId: p.team_id ?? undefined,
-    settings: (p.settings as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
+    settings: (p.settings as unknown as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
     agentTargets: targetsByPortfolio.get(p.id) ?? {},
     replacesPortfolioId: closeInfoByPortfolio.get(p.id)?.replacesPortfolioId,
     closedAt: closeInfoByPortfolio.get(p.id)?.closedAt,
@@ -438,7 +457,9 @@ export async function createPortfolio(
     total_accounts: uploadable.length,
     manager_id: managerAgentId,
     team_id: p.teamId,
-    settings: p.settings,
+    // jsonb column: the generated Json type has no index signature, PortfolioSettings does
+    // not satisfy it structurally, and neither is wrong — this is the seam between them.
+    settings: p.settings as unknown as Json,
     replaces_portfolio_id: p.replacesPortfolioId ?? null,
   });
   if (pErr) throw pErr;
@@ -471,7 +492,7 @@ export async function createPortfolio(
   for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
     const chunk = toInsert.slice(i, i + CHUNK_SIZE).map((r) => ({
       id: r.id,
-      client_id: me?.client_id,
+      client_id: me?.client_id ?? null,
       portfolio_id: p.id,
       assigned_agent_id: assignedIdFor.get(r.id) ?? null,
       name: r.name,
@@ -559,7 +580,10 @@ export async function mergePortfolioRows(
         };
         if (row.name.trim()) update.name = row.name;
         if (row.phone.trim()) update.phone_primary = row.phone;
-        return supabase.from("debtors").update(update).eq("id", id);
+        return supabase
+          .from("debtors")
+          .update(update as Database["public"]["Tables"]["debtors"]["Update"])
+          .eq("id", id);
       }),
     );
     const failed = results.find((r) => r.error);
@@ -569,7 +593,7 @@ export async function mergePortfolioRows(
   for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
     const chunk = toInsert.slice(i, i + CHUNK_SIZE).map((r) => ({
       id: r.id,
-      client_id: me?.client_id,
+      client_id: me?.client_id ?? null,
       portfolio_id: portfolioId,
       assigned_agent_id: null,
       name: r.name,
@@ -595,14 +619,14 @@ export async function mergePortfolioRows(
         return !ref || !newRefs.has(ref);
       })
       .map((d) => d.id as string);
-    for (let i = 0; i < toRemove.length; i += CHUNK_SIZE) {
-      const chunk = toRemove.slice(i, i + CHUNK_SIZE);
+    // ID_FILTER_CHUNK, not CHUNK_SIZE: this is a URL filter, not a request body.
+    await inChunks(toRemove, async (chunk) => {
       const { error } = await supabase
         .from("debtors")
         .update({ status: "removed" })
         .in("id", chunk);
       if (error) throw error;
-    }
+    });
     removed = toRemove.length;
   }
 
@@ -864,7 +888,10 @@ export async function updatePortfolioMeta(
   if (patch.product !== undefined)
     update.product_type = patch.product ? (PRODUCT_LABEL_TO_ENUM[patch.product] ?? null) : null;
 
-  const { error } = await supabase.from("portfolios").update(update).eq("id", id);
+  const { error } = await supabase
+    .from("portfolios")
+    .update(update as Database["public"]["Tables"]["portfolios"]["Update"])
+    .eq("id", id);
   if (error) throw error;
   await refreshPortfolios();
 }
@@ -880,7 +907,7 @@ export async function setPortfolioAgentTargets(
   const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
 
   const toUpsert: {
-    client_id?: string;
+    client_id?: string | null;
     portfolio_id: string;
     agent_id: string;
     target_amount: number | null;
@@ -896,7 +923,7 @@ export async function setPortfolioAgentTargets(
       continue;
     }
     toUpsert.push({
-      client_id: me?.client_id,
+      client_id: me?.client_id ?? null,
       portfolio_id: portfolioId,
       agent_id: agentId,
       target_amount: t.targetAmount ?? null,
@@ -1002,13 +1029,20 @@ export async function assignDebtors(
     .eq("portfolio_id", portfolioId);
   if (resetErr) throw resetErr;
 
+  // Chunked. An agent holding a few thousand accounts put every one of their UUIDs into a
+  // single URL filter, which is long enough to be rejected or truncated. That failure lands
+  // AFTER the unconditional reset above — so the portfolio ends up with every debtor
+  // unassigned, which is the exact outcome the guard above this was written to prevent.
   for (const [agentEmail, debtorIds] of Object.entries(allocation)) {
     if (!debtorIds.length) continue;
-    const { error } = await supabase
-      .from("debtors")
-      .update({ assigned_agent_id: idByEmail.get(agentEmail)! })
-      .in("id", debtorIds);
-    if (error) throw error;
+    const agentUuid = idByEmail.get(agentEmail)!;
+    await inChunks(debtorIds, async (chunk) => {
+      const { error } = await supabase
+        .from("debtors")
+        .update({ assigned_agent_id: agentUuid })
+        .in("id", chunk);
+      if (error) throw error;
+    });
   }
 
   await refreshPortfolios();
@@ -1050,11 +1084,13 @@ export async function transferDebtors(debtorIds: string[], agentId: string | nul
     agentUuid = agentRows?.[0]?.id ?? null;
     if (!agentUuid) throw new Error(`Agent "${agentId}" not found`);
   }
-  const { error } = await supabase
-    .from("debtors")
-    .update({ assigned_agent_id: agentUuid })
-    .in("id", debtorIds);
-  if (error) throw error;
+  await inChunks(debtorIds, async (chunk) => {
+    const { error } = await supabase
+      .from("debtors")
+      .update({ assigned_agent_id: agentUuid })
+      .in("id", chunk);
+    if (error) throw error;
+  });
   await refreshPortfolios();
 }
 
@@ -1159,6 +1195,36 @@ export async function addDebtorPhone(debtorId: string, phone: string): Promise<v
  * employer/income/language — language falls back to "English" when the file has no mapped
  * language column); the raw bag is also kept as `_uploadedExtra` for the generic "every CSV
  * column" fallback view the debtor page already renders. */
+/**
+ * Resolve a Loan/Account ID typed by an agent to the debtor it belongs to.
+ *
+ * This is what lets Manual Dial attach an off-queue call (an alternate number, a relative's
+ * phone) to the right account instead of logging it against nothing. Without it a manual call
+ * writes `debtor_id: null` and never appears on the debtor's own history.
+ *
+ * Matched case-insensitively and trimmed, the same normalisation `mergePortfolioRows` and
+ * `reconcileRetentionRequests` use for loan_reference — so a match here means the same thing a
+ * match there does.
+ *
+ * Scoped to the portfolios already in the cache, which RLS has scoped to what this user may
+ * see. An agent cannot use this to reach an account they have no access to: an unknown ID
+ * simply returns null and the call proceeds unmapped.
+ */
+export function findDebtorByLoanReference(
+  ref: string,
+): { row: UploadedDebtor; portfolio: UploadedPortfolio; debtor: Debtor } | null {
+  const needle = ref.trim().toLowerCase();
+  if (!needle) return null;
+  for (const portfolio of getPortfolios()) {
+    for (const row of portfolio.rows) {
+      if ((row.loanReference ?? "").trim().toLowerCase() === needle) {
+        return { row, portfolio, debtor: debtorFromRow(row, portfolio) };
+      }
+    }
+  }
+  return null;
+}
+
 export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio): Debtor {
   const extra = row.extra ?? {};
   const income = parseFloat((extra.income ?? "").replace(/[,₹\s]/g, ""));
@@ -1177,6 +1243,7 @@ export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio)
     lastContacted: "—",
     portfolio: portfolio.name,
     language: extra.language || "English",
+    assignedAgentId: row.assignedAgentId,
     dob: extra.dob || undefined,
     city: extra.city || undefined,
     state: extra.state || undefined,

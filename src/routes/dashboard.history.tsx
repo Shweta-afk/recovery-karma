@@ -40,6 +40,9 @@ import {
   type DispositionRecord,
 } from "@/lib/disposition-store";
 import { useAuth } from "@/lib/auth";
+import { DIAL_MODE_META, UNKNOWN_DIAL_MODE_LABEL, type DialMode } from "@/lib/call-queue/types";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import { EMPTY_RANGE, inDateRange, isRangeActive, type DateRange } from "@/lib/date-filter";
 
 export const Route = createFileRoute("/dashboard/history")({
   head: () => ({
@@ -79,6 +82,9 @@ interface ActivityEvent {
   /** Presence (regardless of recordingUrl) means the call actually connected and has
    * something to backfill a recording from — distinguishes "pending" from "never happened". */
   providerCallId?: string;
+  /** How the call was placed. Undefined for rows logged before dial_mode existed, and for
+   * non-call events (SMS/WhatsApp), which have no dial mode by definition. */
+  dialMode?: DialMode;
   /** ISO timestamp, kept for sorting — `date`/`time` are display-only. */
   rawTime: string;
 }
@@ -191,6 +197,7 @@ export function toActivityEvents(disps: DispositionRecord[], now = new Date()): 
         loanId: d.portfolioName ?? "",
         contact: d.phone,
         channel: channelFor(d.callType),
+        dialMode: d.dialMode,
         direction: "outbound",
         actor: d.agentName || d.agentId || "System",
         result: OUTCOME_LABEL[d.outcome] ?? d.outcome,
@@ -213,6 +220,13 @@ function ActivityHistoryPage() {
   const [channel, setChannel] = useState<Channel | "all">("all");
   const [result, setResult] = useState<string>("all");
   const [day, setDay] = useState<"all" | DayBucket>("all");
+  // "unknown" is its own selectable bucket, not folded into any real mode — those rows
+  // predate dial_mode and their true mode is genuinely not known.
+  const [dialMode, setDialMode] = useState<DialMode | "unknown" | "all">("all");
+  // Kept alongside the today/yesterday/older dropdown rather than replacing it: the dropdown
+  // is the one-click common case, this is "show me the 14th". Both apply (AND), so picking a
+  // date while the dropdown says Yesterday correctly yields nothing unless they agree.
+  const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
   const [search, setSearch] = useState("");
 
   const { user } = useAuth();
@@ -263,6 +277,9 @@ function ActivityHistoryPage() {
       if (channel !== "all" && e.channel !== channel) return false;
       if (result !== "all" && e.result !== result) return false;
       if (day !== "all" && e.day !== day) return false;
+      if (!inDateRange(e.rawTime, dateRange)) return false;
+      if (dialMode === "unknown" && e.dialMode) return false;
+      if (dialMode !== "all" && dialMode !== "unknown" && e.dialMode !== dialMode) return false;
       if (
         q &&
         !(
@@ -276,12 +293,14 @@ function ActivityHistoryPage() {
         return false;
       return true;
     });
-  }, [events, channel, result, day, search]);
+  }, [events, channel, result, day, dateRange, dialMode, search]);
 
   const resetFilters = () => {
     setChannel("all");
     setResult("all");
     setDay("all");
+    setDialMode("all");
+    setDateRange(EMPTY_RANGE);
     setSearch("");
   };
 
@@ -446,7 +465,30 @@ function ActivityHistoryPage() {
                 <SelectItem value="older">Older</SelectItem>
               </SelectContent>
             </Select>
-            {(channel !== "all" || result !== "all" || day !== "all" || search) && (
+            <DateRangeFilter value={dateRange} onChange={setDateRange} />
+            {/* Splits the merged list by how each call was PLACED — Manual, Call Queue,
+                Productive, Progressive. See DIAL_MODE_META for why the stored values avoid
+                the words "productive"/"predictive" entirely. */}
+            <Select value={dialMode} onValueChange={(v) => setDialMode(v as typeof dialMode)}>
+              <SelectTrigger className="h-9 w-[150px] text-sm">
+                <SelectValue placeholder="Dial type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All dial types</SelectItem>
+                {(Object.keys(DIAL_MODE_META) as DialMode[]).map((m) => (
+                  <SelectItem key={m} value={m}>
+                    {DIAL_MODE_META[m].label}
+                  </SelectItem>
+                ))}
+                <SelectItem value="unknown">{UNKNOWN_DIAL_MODE_LABEL}</SelectItem>
+              </SelectContent>
+            </Select>
+            {(channel !== "all" ||
+              result !== "all" ||
+              day !== "all" ||
+              isRangeActive(dateRange) ||
+              dialMode !== "all" ||
+              search) && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -504,6 +546,20 @@ function ActivityHistoryPage() {
                             <m.icon className="h-3 w-3" />
                             {m.short}
                           </Badge>
+                          {/* How it was dialled, under the channel — the two are different
+                              questions (who handled it vs how it was placed) and the merged
+                              list gave no way to tell a manual call from a queue call. */}
+                          {e.dialMode && (
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "mt-1 block w-fit text-[9px] font-medium",
+                                DIAL_MODE_META[e.dialMode].cls,
+                              )}
+                            >
+                              {DIAL_MODE_META[e.dialMode].short}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           <div className="font-medium text-sm text-foreground">{e.debtorName}</div>

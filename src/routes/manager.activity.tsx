@@ -27,6 +27,14 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import {
+  EMPTY_RANGE,
+  describeRange,
+  inDateRange,
+  isRangeActive,
+  type DateRange,
+} from "@/lib/date-filter";
 import { useActiveTeam } from "@/lib/active-team-store";
 import {
   useTeamAgents,
@@ -42,10 +50,10 @@ import {
   getDispositions,
   refreshDispositions,
   calcStats,
-  getTeamPtpFollowups,
+  getTeamCaseFollowups,
   type DispositionRecord,
 } from "@/lib/disposition-store";
-import { escalateMissedPtpsToAdmin } from "@/lib/ptp-escalation-store";
+import { escalateMissedCasesToAdmin } from "@/lib/ptp-escalation-store";
 import {
   getAgentTimeStats,
   formatDuration,
@@ -159,30 +167,42 @@ function TeamActivityPage() {
   };
 
   const allDisps = useAllDispositions();
+  // Empty range = today, which is exactly what this page did before the filter existed —
+  // so the default view is unchanged and only an explicit pick widens it.
+  const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
   const [sortKey, setSortKey] = useState<SortKey>("calling");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  // Missed-PTP escalation, step 2 of the chain (manager -> admin) — see
+  // Missed-commitment escalation, step 2 of the chain (manager -> admin) — PTPs AND
+  // callbacks. See
   // ptp-escalation-store.ts. Only escalates a PTP that was already sent to this manager on a
   // previous day and is still unresolved today; runs opportunistically whenever this page
   // loads, same as the agent-side step 1 on Call Queue.
   useEffect(() => {
     const agentIds = agents.map((a) => a.id);
     if (!agentIds.length) return;
-    escalateMissedPtpsToAdmin(getTeamPtpFollowups(agentIds)).catch(() => {});
+    escalateMissedCasesToAdmin(getTeamCaseFollowups(agentIds)).catch(() => {});
   }, [agents, allDisps]);
+
+  const ranged = isRangeActive(dateRange);
+  const periodLabel = ranged ? describeRange(dateRange) : "Today";
 
   const rows = useMemo(() => {
     const now = new Date();
     return agents.map((agent: AgentRef) => {
-      const todayDisps = allDisps.filter((d) => d.agentId === agent.id && isSameDay(d.time, now));
+      const mine = allDisps.filter((d) => d.agentId === agent.id);
+      // `today` keeps its name — it is still today's numbers until a range is picked, and the
+      // column headers/labels follow `periodLabel` below rather than the key.
+      const scoped = ranged
+        ? mine.filter((d) => inDateRange(d.time, dateRange))
+        : mine.filter((d) => isSameDay(d.time, now));
       return {
         agent,
-        stats: getAgentTimeStats(agent.id, todayDisps),
-        today: calcStats(todayDisps),
+        stats: getAgentTimeStats(agent.id, scoped),
+        today: calcStats(scoped),
       };
     });
-  }, [agents, allDisps]);
+  }, [agents, allDisps, ranged, dateRange]);
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -240,10 +260,13 @@ function TeamActivityPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Team Activity</h1>
           <p className="text-sm text-muted-foreground">
-            {activeTeam ? activeTeam.name : "Roster and today's performance for your team."}
+            {activeTeam
+              ? `${activeTeam.name} · ${periodLabel}`
+              : `Roster and ${ranged ? periodLabel : "today's"} performance for your team.`}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
           <span
             className="flex items-center gap-1.5 text-xs text-muted-foreground rounded-lg border border-border bg-card px-2.5 py-1.5"
             title="Calling time is real, from logged calls. Ringing, idle, disposition, break and login/logout times are estimated — real presence tracking is coming soon."

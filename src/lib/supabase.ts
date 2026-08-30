@@ -1,6 +1,46 @@
 import { createClient } from "@supabase/supabase-js";
+import type { Database } from "./database.types";
 
-let supabaseInstance: ReturnType<typeof createClient> | null = null;
+/**
+ * A permissive stand-in for generated Supabase types.
+ *
+ * `createClient(url, key)` with no schema generic resolves `.from(anything)` to `never`, so
+ * every column read in this codebase was a type error — 315 of them on main, which made
+ * `bun run typecheck` (and therefore CI) fail permanently and buried any REAL type error in
+ * the noise. `never` gives no safety either, so this is not a trade of rigour for green: it is
+ * strictly better than what it replaces.
+ *
+ * The proper fix is generated types:
+ *
+ *   bunx supabase gen types typescript --project-id <id> > src/lib/database.types.ts
+ *
+ * then swap `GenericSchema` for that `Database`. Until someone runs it against the live
+ * project, this keeps typecheck meaningful for everything that is NOT a Supabase row.
+ */
+type GenericRow = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+export interface GenericSchema {
+  public: {
+    Tables: {
+      [table: string]: {
+        Row: GenericRow;
+        Insert: GenericRow;
+        Update: GenericRow;
+        Relationships: [];
+      };
+    };
+    Views: {
+      [view: string]: { Row: GenericRow; Relationships: [] };
+    };
+    Functions: {
+      [fn: string]: { Args: GenericRow; Returns: unknown };
+    };
+    Enums: { [name: string]: string };
+    CompositeTypes: { [name: string]: GenericRow };
+  };
+}
+
+let supabaseInstance: ReturnType<typeof createClient<Database>> | null = null;
 
 export function getSupabaseConfig() {
   // Server-side: read from process.env (Railway production)
@@ -26,27 +66,31 @@ export function getSupabase() {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error(
       `Missing Supabase config.\n` +
-      `Set SUPABASE_URL and SUPABASE_ANON_KEY env vars (production)\n` +
-      `or VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (development).\n` +
-      `SUPABASE_URL: ${supabaseUrl ? "✓" : "missing"}\n` +
-      `SUPABASE_ANON_KEY: ${supabaseAnonKey ? "✓" : "missing"}`,
+        `Set SUPABASE_URL and SUPABASE_ANON_KEY env vars (production)\n` +
+        `or VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (development).\n` +
+        `SUPABASE_URL: ${supabaseUrl ? "✓" : "missing"}\n` +
+        `SUPABASE_ANON_KEY: ${supabaseAnonKey ? "✓" : "missing"}`,
     );
   }
 
-  supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
+  supabaseInstance = createClient<Database>(supabaseUrl, supabaseAnonKey);
   return supabaseInstance;
 }
 
+// Lazy proxy: the real client is only constructed on first property access, so importing this
+// module never throws on missing env (which would break SSR prerender and every test).
 export const supabase = new Proxy(new Object(), {
   get(_, prop) {
-    return (getSupabase() as any)[prop];
+    return (getSupabase() as unknown as Record<string | symbol, unknown>)[prop];
   },
-}) as ReturnType<typeof createClient>;
+}) as ReturnType<typeof createClient<Database>>;
 
 /** The logged-in user's own `agents` row (id + client_id) — every write to a
  * client-scoped table needs client_id to satisfy RLS, and agent_id/uploaded_by
  * style FKs need the agents.id UUID rather than the auth uid or email. */
-export async function getMyAgentRow(): Promise<{ id: string; client_id: string } | null> {
+// client_id is nullable in the schema (an agents row can exist before it is attached to a
+// client), so the caller has to handle that rather than the type quietly asserting otherwise.
+export async function getMyAgentRow(): Promise<{ id: string; client_id: string | null } | null> {
   const {
     data: { user },
   } = await supabase.auth.getUser();

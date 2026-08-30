@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Phone,
   PhoneCall,
@@ -66,7 +66,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { bucketOf, formatINR, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
+import {
+  bucketOf,
+  formatINR,
+  type DPDBucket,
+  BUCKET_META,
+  type ContactAttempt,
+} from "@/lib/mock-debtors";
 
 import {
   OUTCOME_META,
@@ -80,7 +86,14 @@ import { exportCSV } from "@/lib/call-queue/mock-data";
 
 import { saveEscalation } from "@/lib/escalation-store";
 import { requestRetention, getRetentionRequestsFor } from "@/lib/retention-store";
-import type { PtpFollowup } from "@/lib/disposition-store";
+import { getPayments, refreshPayments } from "@/lib/payments-store";
+import {
+  getDispositions,
+  isUuid,
+  refreshDispositions,
+  type PtpFollowup,
+} from "@/lib/disposition-store";
+import { findDebtorByLoanReference } from "@/lib/portfolio-store";
 import { leftoverExtraKeys } from "@/lib/csv-fields";
 import { buildDispositionSms } from "@/lib/sms-templates";
 
@@ -236,6 +249,56 @@ function ActiveCallContent({
 }: CallControlProps) {
   const { debtor, phase, muted, held, elapsed } = call;
 
+  // Prior notes for this debtor are read from the disposition cache; refresh once on mount so
+  // calls made by OTHER agents (now readable — see the migration referenced below) are present,
+  // and re-read whenever anything in the app writes a disposition.
+  const [dispositionsTick, setDispositionsTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setDispositionsTick((t) => t + 1);
+    window.addEventListener("dispositions-updated", bump);
+    window.addEventListener("payments-updated", bump);
+    refreshDispositions().catch(() => {});
+    refreshPayments().catch(() => {});
+    return () => {
+      window.removeEventListener("dispositions-updated", bump);
+      window.removeEventListener("payments-updated", bump);
+    };
+  }, []);
+
+  /**
+   * Real payment history for this debtor.
+   *
+   * `debtor.paymentHistory` — what the Payments tab used to read — is the same trap
+   * `contactHistory` was: populated only on the dead MOCK_DEBTORS fixture, never by
+   * debtorFromRow, so the tab was permanently empty in production while looking like a
+   * working feature.
+   *
+   * Status is NOT squeezed into the fixture's three-value enum (paid/bounced/missed). The real
+   * `payments` table has completed/pending/failed/refunded, and mapping "pending" onto "missed"
+   * would report a payment that is still in flight as one that never came.
+   */
+  const paymentRows = useMemo(() => {
+    if (!isUuid(debtor.id)) return debtor.paymentHistory ?? [];
+    return getPayments()
+      .filter((p) => p.debtorId === debtor.id)
+      .sort((a, b) => ((a.receivedAt ?? a.createdAt) < (b.receivedAt ?? b.createdAt) ? 1 : -1))
+      .map((p) => ({
+        date: new Date(p.receivedAt ?? p.createdAt).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        }),
+        amount: p.amount,
+        method: p.method ?? "—",
+        status: p.status === "completed" ? "paid" : p.status === "failed" ? "bounced" : p.status,
+        ref: p.notes || undefined,
+      }));
+  }, [debtor.id, debtor.paymentHistory, dispositionsTick]);
+
+  // Live resolution of the retro-attach Loan ID, so the agent sees which account the call is
+  // about to be filed against before they submit. Pure read over the portfolio cache.
+  const attachMatch = findDebtorByLoanReference(disposition.attachLoanId);
+
   // elapsed ticks centrally in CallSessionProvider so it keeps counting regardless of which
   // call UI (or none) is currently mounted — nothing to do here but read it off `call`.
 
@@ -287,6 +350,38 @@ function ActiveCallContent({
   // only — buildDispositionSms returns null for outcomes that don't send one), so the agent
   // sees exactly what the debtor is about to receive before it actually goes out.
   const [smsPreviewOpen, setSmsPreviewOpen] = useState(false);
+
+  // Previous notes / prior contact history for the side scroll during a live call.
+  //
+  // Built from this debtor's REAL call logs. `debtor.contactHistory` — what this used to read —
+  // is only ever populated on the MOCK_DEBTORS fixture; debtorFromRow (the path every real
+  // debtor takes) never sets it, so this panel was permanently empty in production while
+  // looking like a working feature.
+  //
+  // Every agent's notes on this debtor, not just the current agent's: an account that changed
+  // hands, or came back as a retained account, carries its history with it. That breadth is
+  // enforced in the database by call_logs_select (see
+  // migrations/20260827_notes_visible_on_shared_debtor.sql) — this only displays what RLS
+  // already allows, so it cannot leak an account the viewer has no access to.
+  const priorHistory: ContactAttempt[] = useMemo(() => {
+    if (!isUuid(debtor.id)) return debtor.contactHistory ?? []; // ad-hoc manual call: no account
+    return getDispositions()
+      .filter((d) => d.debtorId === debtor.id)
+      .sort((a, b) => (a.time < b.time ? 1 : -1))
+      .map((d) => {
+        const at = new Date(d.time);
+        const label = OUTCOME_META[d.outcome as keyof typeof OUTCOME_META]?.label ?? d.outcome;
+        return {
+          date: at.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
+          time: at.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+          channel: "call" as const,
+          // The disposition AND the note together — the note is the part worth reading, and
+          // showing the outcome alone is what made this panel useless even when populated.
+          outcome: d.notes?.trim() ? `${label} — ${d.notes.trim()}` : label,
+          agent: d.agentName || "—",
+        };
+      });
+  }, [debtor.id, debtor.contactHistory, dispositionsTick]);
 
   /* ── Ringing: compact single-row ── */
   if (phase === "ringing") {
@@ -537,9 +632,6 @@ function ActiveCallContent({
       )}
     </>
   );
-
-  // Previous notes / prior contact history for the side scroll during a live call
-  const priorHistory = debtor.contactHistory ?? [];
 
   // What Save & Close is about to trigger — null for outcomes that don't send an SMS at all.
   const smsPreview = buildDispositionSms(disposition.outcome, debtor.name, disposition);
@@ -1117,6 +1209,34 @@ function ActiveCallContent({
                     className="min-h-[80px] resize-none"
                   />
                 </div>
+                {/* Retro-attach: an unmapped manual call (dialled straight from the dock with
+                    no Loan ID) can still be pulled onto the right account here, rather than
+                    being stranded as an orphaned record forever. Only shown when there is
+                    genuinely nothing behind the call — a queue call already knows its debtor. */}
+                {!isUuid(debtor.id) && (
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
+                      Attach to Loan / Account ID <span className="opacity-70">(optional)</span>
+                    </label>
+                    <Input
+                      placeholder="e.g. LN-40021"
+                      value={disposition.attachLoanId}
+                      onChange={(e) => up({ attachLoanId: e.target.value })}
+                      className="h-8 text-sm"
+                    />
+                    {disposition.attachLoanId.trim() &&
+                      (attachMatch ? (
+                        <p className="text-[11px] font-medium text-success">
+                          Will be logged against {attachMatch.debtor.name} ·{" "}
+                          {attachMatch.portfolio.name}
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-amber-500">
+                          No account matches — this call stays unmapped
+                        </p>
+                      ))}
+                  </div>
+                )}
                 <div className="flex items-center justify-between gap-3 pt-1 border-t border-border">
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
@@ -1511,7 +1631,7 @@ function ActiveCallContent({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {(debtor.paymentHistory ?? []).map((p, i) => (
+                        {paymentRows.map((p, i) => (
                           <tr key={i} className="hover:bg-muted/20">
                             <td className="py-2.5 pl-4 text-foreground">{p.date}</td>
                             <td className="py-2.5 text-right font-medium text-foreground">
@@ -1541,7 +1661,7 @@ function ActiveCallContent({
                             </td>
                           </tr>
                         ))}
-                        {!debtor.paymentHistory?.length && (
+                        {!paymentRows.length && (
                           <tr>
                             <td
                               colSpan={5}
@@ -1560,7 +1680,9 @@ function ActiveCallContent({
               {/* ── CONTACT HISTORY ── */}
               {infoTab === "contacts" && (
                 <div className="space-y-3">
-                  {(debtor.contactHistory ?? []).map((c, i) => (
+                  {/* Same real, cross-agent history as the in-call panel — this tab read the
+                      mock-only `contactHistory` field too, so it was always empty. */}
+                  {priorHistory.map((c, i) => (
                     <div
                       key={i}
                       className="rounded-xl border border-border bg-card p-4 flex items-start gap-4"
@@ -1605,7 +1727,7 @@ function ActiveCallContent({
                       </div>
                     </div>
                   ))}
-                  {!debtor.contactHistory?.length && (
+                  {!priorHistory.length && (
                     <div className="py-12 text-center text-muted-foreground text-sm">
                       No contact history
                     </div>

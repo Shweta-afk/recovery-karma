@@ -94,7 +94,12 @@ function AdminSettingsPage() {
       return;
     }
     saveOrgSettings(cfg);
-    toast.success("Settings saved", { description: "Org-wide defaults updated." });
+    // Company name IS saved org-wide (clients.company_name). Everything else goes to
+    // localStorage and is read by nothing — saying "org-wide defaults updated" told an admin
+    // their compliance guardrails were live when they were not.
+    toast.success("Company name saved", {
+      description: "Other preferences are stored in this browser only and are not yet enforced.",
+    });
   };
 
   return (
@@ -142,10 +147,28 @@ function AdminSettingsPage() {
         </SettingRow>
       </SectionCard>
 
+      {/* Said plainly and near the top, because the previous copy on this page made specific
+          regulatory claims ("RBI/TRAI guardrails enforced across every team", "DNC-listed
+          accounts are automatically skipped org-wide") that nothing in the app implements. An
+          admin reasonably concluded DNC screening was active. In a collections product that is
+          a compliance exposure, not a cosmetic bug. */}
+      <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
+        <Shield className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+        <p className="text-[12px] text-muted-foreground">
+          <span className="font-semibold text-foreground">
+            Only Company Name is saved for your organisation.
+          </span>{" "}
+          Calling hours, DNC/DND enforcement and contact limits below are stored in{" "}
+          <span className="font-medium text-foreground">this browser only</span>, are not shared
+          with your team, and are <span className="font-medium text-foreground">not enforced</span>{" "}
+          by the dialer or the call queue. Treat them as notes until enforcement is built.
+        </p>
+      </div>
+
       <SectionCard
         icon={Clock}
         title="Working Hours"
-        description="Default calling window applied to new portfolios unless overridden per portfolio."
+        description="Saved preference. NOT yet applied to portfolios or the dialer."
       >
         <SettingRow label="Calling hours">
           <div className="flex items-center gap-2">
@@ -169,12 +192,12 @@ function AdminSettingsPage() {
       <SectionCard
         icon={Shield}
         title="Compliance"
-        description="RBI/TRAI fair-practice guardrails enforced across every team."
-        badge="TRAI / RBI"
+        description="Saved preferences. NOT yet enforced anywhere in the app — see the notice below."
+        badge="Not enforced"
       >
         <SettingRow
           label="Enforce DNC registry"
-          hint="Accounts on the national Do-Not-Call list are automatically skipped org-wide."
+          hint="Records the intent to skip DNC-listed accounts. There is no DNC list connected, so nothing is skipped today."
         >
           <Switch checked={cfg.enforceDnc} onCheckedChange={(v) => set("enforceDnc", v)} />
         </SettingRow>

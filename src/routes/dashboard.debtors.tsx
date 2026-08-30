@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Phone,
   MessageCircle,
@@ -14,6 +14,7 @@ import {
   ChevronDown,
   FileDown,
   Upload,
+  UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -24,8 +25,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import { EMPTY_RANGE, inDayRange, type DateRange } from "@/lib/date-filter";
 import { bucketOf, formatINR, type Debtor, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
 import { useActiveTeam } from "@/lib/active-team-store";
+import { useRoster } from "@/lib/team-store";
 import {
   getPortfolios,
   getAgentDebtorIds,
@@ -67,6 +71,11 @@ function formatDuration(seconds?: number): string {
   const s = seconds % 60;
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
+
+/** Filter value standing for "nobody owns this account". A sentinel rather than `undefined`
+ * so the dropdown can round-trip it as a plain string alongside real agent emails; the "@" makes
+ * it impossible to collide with one. */
+const UNASSIGNED = "@unassigned";
 
 export const Route = createFileRoute("/dashboard/debtors")({
   head: () => ({ meta: [{ title: "Debtor Profiles · SamvadX" }] }),
@@ -289,11 +298,31 @@ function DebtorsPage() {
   const { activeTeam } = useActiveTeam(agentId);
   const activeTeamId = activeTeam?.id;
 
+  // Only supervisors see (and so only they fetch) the roster — it exists purely to put a name
+  // and agent code against the emails stored on each debtor.
+  const roster = useRoster(isSupervisor);
+  const agentLabel = useCallback(
+    (email: string) => {
+      const a = roster.find((r) => r.id === email);
+      if (!a) return email; // roster still loading, or the agent has since been removed
+      return a.agentCode ? `${a.name} · ${a.agentCode}` : a.name;
+    },
+    [roster],
+  );
+
   const [search, setSearch] = useState("");
+  // Filters on LAST CONTACTED, the only date a debtor row carries — i.e. "who did I last
+  // speak to in this window", and with an open `to`, "who has gone cold since".
+  const [contactedRange, setContactedRange] = useState<DateRange>(EMPTY_RANGE);
   const [bucket, setBucket] = useState<DPDBucket | "all">("all");
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
   const [portfolio, setPortfolio] = useState<string>("all");
   const [portfolioDropOpen, setPortfolioDropOpen] = useState(false);
+  // Supervisors only — an agent's book is by definition all their own, so the control is not
+  // rendered for them. "all" = no filter, UNASSIGNED = accounts nobody is working yet,
+  // anything else = that agent's account email.
+  const [assignee, setAssignee] = useState<string>("all");
+  const [assigneeDropOpen, setAssigneeDropOpen] = useState(false);
   const [sort, setSort] = useState<SortKey>("dpd_desc");
   const [sortOpen, setSortOpen] = useState(false);
   const [selected, setSelected] = useState<Debtor | null>(null);
@@ -344,17 +373,45 @@ function DebtorsPage() {
     [allDebtors],
   );
 
+  // Owners of the book actually on screen, each with a headcount — built from the debtors
+  // themselves rather than the whole roster, so the list never offers an agent who has nothing
+  // in this book and comes back empty. Unassigned accounts get their own entry (the gap a
+  // manager most wants to find), listed last.
+  const assigneeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const d of allDebtors) {
+      const key = d.assignedAgentId ?? UNASSIGNED;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const named = Array.from(counts.entries())
+      .filter(([id]) => id !== UNASSIGNED)
+      .map(([id, count]) => ({ id, label: agentLabel(id), count }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    const unassigned = counts.get(UNASSIGNED);
+    return unassigned
+      ? [...named, { id: UNASSIGNED, label: "Unassigned", count: unassigned }]
+      : named;
+  }, [allDebtors, agentLabel]);
+
+  // A manager switching teams (or a reassignment landing) can retire the agent being filtered
+  // on. Left alone that reads as "this agent has zero accounts"; drop back to All instead.
+  useEffect(() => {
+    if (assignee !== "all" && !assigneeOptions.some((o) => o.id === assignee)) setAssignee("all");
+  }, [assignee, assigneeOptions]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const list = allDebtors.filter((d) => {
+      if (!inDayRange(d.lastContacted, contactedRange)) return false;
       if (bucket !== "all" && bucketOf(d.dpd) !== bucket) return false;
       if (portfolio !== "all" && d.portfolio !== portfolio) return false;
+      if (assignee !== "all" && (d.assignedAgentId ?? UNASSIGNED) !== assignee) return false;
       if (q && !d.name.toLowerCase().includes(q) && !displayId(d).toLowerCase().includes(q))
         return false;
       return true;
     });
     return sortDebtors(list, sort);
-  }, [search, bucket, portfolio, sort, allDebtors]);
+  }, [search, contactedRange, bucket, portfolio, assignee, sort, allDebtors]);
 
   const currentSortLabel = SORT_OPTIONS.find((s) => s.key === sort)?.label ?? "";
 
@@ -370,6 +427,7 @@ function DebtorsPage() {
 
         {/* ── Search + filters ── */}
         <div className="flex flex-wrap items-center gap-2">
+          <DateRangeFilter value={contactedRange} onChange={setContactedRange} />
           <div className="relative flex-1 min-w-[200px] max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
@@ -397,6 +455,7 @@ function DebtorsPage() {
                 setBucketDropOpen((o) => !o);
                 setPortfolioDropOpen(false);
                 setSortOpen(false);
+                setAssigneeDropOpen(false);
               }}
               className={cn(
                 "flex items-center gap-1.5 h-8 rounded-lg border px-2.5 text-xs transition-all",
@@ -455,6 +514,7 @@ function DebtorsPage() {
                 setPortfolioDropOpen((o) => !o);
                 setBucketDropOpen(false);
                 setSortOpen(false);
+                setAssigneeDropOpen(false);
               }}
               className={cn(
                 "flex items-center gap-1.5 h-8 rounded-lg border px-2.5 text-xs transition-all",
@@ -505,6 +565,76 @@ function DebtorsPage() {
             )}
           </div>
 
+          {/* Assigned-to dropdown — supervisors only; an agent's book is all their own. */}
+          {isSupervisor && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setAssigneeDropOpen((o) => !o);
+                  setBucketDropOpen(false);
+                  setPortfolioDropOpen(false);
+                  setSortOpen(false);
+                }}
+                className={cn(
+                  "flex items-center gap-1.5 h-8 rounded-lg border px-2.5 text-xs transition-all",
+                  assignee !== "all"
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+                )}
+              >
+                <UserRound className="h-3 w-3 opacity-70" />
+                {assignee === "all"
+                  ? "Assigned to"
+                  : assignee === UNASSIGNED
+                    ? "Unassigned"
+                    : agentLabel(assignee)}
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+              {assigneeDropOpen && (
+                <div className="absolute left-0 top-full mt-1 z-30 w-60 max-h-72 overflow-y-auto rounded-lg border border-border bg-card shadow-lg py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssignee("all");
+                      setAssigneeDropOpen(false);
+                    }}
+                    className={cn(
+                      "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between gap-2",
+                      assignee === "all" ? "font-medium text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    <span>All Agents</span>
+                    <span className="opacity-50">{allDebtors.length}</span>
+                  </button>
+                  {assigneeOptions.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      onClick={() => {
+                        setAssignee(o.id);
+                        setAssigneeDropOpen(false);
+                      }}
+                      className={cn(
+                        "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between gap-2",
+                        assignee === o.id ? "font-medium text-foreground" : "text-muted-foreground",
+                        o.id === UNASSIGNED && "italic",
+                      )}
+                    >
+                      <span className="truncate">{o.label}</span>
+                      <span className="opacity-50 flex-shrink-0">{o.count}</span>
+                    </button>
+                  ))}
+                  {assigneeOptions.length === 0 && (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">
+                      No accounts in this book yet.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Sort dropdown */}
           <div className="relative">
             <button
@@ -513,6 +643,7 @@ function DebtorsPage() {
                 setSortOpen((o) => !o);
                 setBucketDropOpen(false);
                 setPortfolioDropOpen(false);
+                setAssigneeDropOpen(false);
               }}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 h-8 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-all"
             >
@@ -565,6 +696,9 @@ function DebtorsPage() {
                   "Portfolio",
                   "Language",
                   "Last Contacted",
+                  // Only a supervisor's export spans more than one agent, so only theirs needs
+                  // to say who each account belongs to.
+                  ...(isSupervisor ? ["Assigned To"] : []),
                 ];
                 const rows = filtered.map((d) => [
                   d.name,
@@ -576,6 +710,9 @@ function DebtorsPage() {
                   d.portfolio,
                   d.language,
                   d.lastContacted,
+                  ...(isSupervisor
+                    ? [d.assignedAgentId ? agentLabel(d.assignedAgentId) : "Unassigned"]
+                    : []),
                 ]);
                 const csv =
                   "﻿" + [headers, ...rows].map((r) => r.map(sanitize).join(",")).join("\n");
@@ -598,16 +735,30 @@ function DebtorsPage() {
         {/* ── Card grid ── */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filtered.map((d, i) => (
-            <DebtorCard key={d.id} d={d} index={i} onView={() => setSelected(d)} />
+            <DebtorCard
+              key={d.id}
+              d={d}
+              index={i}
+              onView={() => setSelected(d)}
+              assignedTo={
+                isSupervisor ? (d.assignedAgentId ? agentLabel(d.assignedAgentId) : "") : undefined
+              }
+            />
           ))}
           {filtered.length === 0 && (
             <div className="col-span-full py-16 text-center space-y-2">
               {allDebtors.length === 0 ? (
                 <>
-                  <p className="text-sm text-muted-foreground">No accounts assigned to you yet.</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isSupervisor
+                      ? "No accounts in this book yet."
+                      : "No accounts assigned to you yet."}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     <Upload className="inline h-3 w-3 mr-1" />
-                    Ask your manager to upload a portfolio and assign you accounts.
+                    {isSupervisor
+                      ? "Upload a portfolio to start assigning accounts."
+                      : "Ask your manager to upload a portfolio and assign you accounts."}
                   </p>
                 </>
               ) : (
@@ -639,7 +790,19 @@ function DebtorsPage() {
 
 // ─── Debtor card ──────────────────────────────────────────────────────────────
 
-function DebtorCard({ d, index, onView }: { d: Debtor; index: number; onView: () => void }) {
+function DebtorCard({
+  d,
+  index,
+  onView,
+  assignedTo,
+}: {
+  d: Debtor;
+  index: number;
+  onView: () => void;
+  /** Resolved owner name, shown to supervisors so a filtered list says whose it is. Undefined
+   * for agents, whose whole book is their own and would just repeat their name on every card. */
+  assignedTo?: string;
+}) {
   const b = bucketOf(d.dpd);
   const bucketMeta = BUCKET_META[b];
 
@@ -690,6 +853,17 @@ function DebtorCard({ d, index, onView }: { d: Debtor; index: number; onView: ()
             Score {d.aiScore}/10
           </span>
         </div>
+
+        {assignedTo !== undefined && (
+          <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+            <UserRound className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+            {d.assignedAgentId ? (
+              <span className="text-muted-foreground truncate">{assignedTo}</span>
+            ) : (
+              <span className="text-muted-foreground italic">Unassigned</span>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -934,7 +1108,15 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
                           {c.callType === "human" ? "Agent" : (c.callType ?? "Agent").toUpperCase()}
                         </Badge>
                       </div>
-                      <div className="text-xs text-muted-foreground">{formatCallDate(c.time)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {formatCallDate(c.time)}
+                        {/* Who wrote it. This list now includes calls made by OTHER agents on
+                            the same account (call_logs_select was widened — see
+                            migrations/20260827_notes_visible_on_shared_debtor.sql), and an
+                            unattributed note from someone else is far less useful than an
+                            attributed one. */}
+                        {c.agentName && <> · {c.agentName}</>}
+                      </div>
                       {c.notes && (
                         <div className="mt-1 text-xs bg-muted rounded px-2 py-1 text-foreground/80">
                           {c.notes}

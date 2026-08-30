@@ -133,9 +133,7 @@ function AdminTeamsPage() {
       )}
 
       <CreateTeamDialog open={showCreate} onClose={() => setShowCreate(false)} />
-      {editingTeam && (
-        <EditTeamDialog team={editingTeam} onClose={() => setEditingTeam(null)} />
-      )}
+      {editingTeam && <EditTeamDialog team={editingTeam} onClose={() => setEditingTeam(null)} />}
     </div>
   );
 }
@@ -466,9 +464,7 @@ function EditTeamDialog({ team, onClose }: { team: Team; onClose: () => void }) 
   const [selectedManager, setSelectedManager] = useState<AgentRef | null>(
     roster.find((r) => r.id === team.managerId) ?? null,
   );
-  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(
-    new Set(team.agentIds),
-  );
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(team.agentIds));
   const [managerOpen, setManagerOpen] = useState(false);
   const [agentSearch, setAgentSearch] = useState("");
   const [saving, setSaving] = useState(false);
@@ -649,7 +645,11 @@ function EditTeamDialog({ team, onClose }: { team: Team; onClose: () => void }) 
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!name || !selectedManager || saving} className="gap-1.5">
+          <Button
+            onClick={handleSave}
+            disabled={!name || !selectedManager || saving}
+            className="gap-1.5"
+          >
             {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Save Changes
           </Button>

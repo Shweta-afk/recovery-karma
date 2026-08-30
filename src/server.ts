@@ -2,10 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
-import {
-  TELEPHONY_WEBHOOK_PATH,
-  handleTelephonyWebhook,
-} from "./lib/telephony/webhook-handler";
+import { TELEPHONY_WEBHOOK_PATH, handleTelephonyWebhook } from "./lib/telephony/webhook-handler";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;

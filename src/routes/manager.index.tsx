@@ -38,6 +38,7 @@ import {
   AreaChart,
   Area,
 } from "recharts";
+import { computeDrr, istMonthKey, teamMonthlyCollectionTarget } from "@/lib/daily-run-rate";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,7 +53,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { useTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useTeamAgents, FALLBACK_DAILY_TARGET, type AgentRef } from "@/lib/team-store";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { useAuth } from "@/lib/auth";
 import {
@@ -82,7 +83,9 @@ export const Route = createFileRoute("/manager/")({
 
 /* ─── real-data helpers ──────────────────────────────────────────────────── */
 
-const DEFAULT_DAILY_TARGET = 80; // matches the Supabase seed's agent daily_target
+// Fallback only, for an agent row whose daily_target is null. Real per-agent targets come
+// from the roster (AgentRef.dailyTarget) — never compare an agent to this constant.
+const DEFAULT_DAILY_TARGET = FALLBACK_DAILY_TARGET;
 
 function isToday(iso: string): boolean {
   const d = new Date(iso),
@@ -157,6 +160,10 @@ interface AgentComputedStat {
   ptpCountToday: number;
   ptpAmountToday: number;
   paidToday: number;
+  /** Month-to-date collections, IST — the numerator DRR measures progress against. */
+  paidThisMonth: number;
+  /** THIS agent's agents.daily_target, not a shared constant. */
+  dailyTarget: number;
   totalPaid: number;
   contactRate: number;
   hasActivityToday: boolean;
@@ -166,6 +173,9 @@ interface AgentComputedStat {
 function computeAgentStats(agent: AgentRef): AgentComputedStat {
   const disps = getAgentDispositions(agent.id);
   const today = calcStats(disps.filter((d) => isToday(d.time)));
+  // Hoisted: computing the current month key per row runs an Intl format per disposition.
+  const nowMonth = istMonthKey(new Date().toISOString());
+  const thisMonth = calcStats(disps.filter((d) => istMonthKey(d.time) === nowMonth));
   const all = calcStats(disps);
 
   const slices = getAgentDebtorIds(agent.id);
@@ -192,6 +202,8 @@ function computeAgentStats(agent: AgentRef): AgentComputedStat {
     ptpCountToday: today.ptps,
     ptpAmountToday: today.ptpAmount,
     paidToday: today.paidAmount,
+    paidThisMonth: thisMonth.paidAmount,
+    dailyTarget: agent.dailyTarget || DEFAULT_DAILY_TARGET,
     totalPaid: all.paidAmount,
     contactRate: all.contactRate,
     hasActivityToday: today.total > 0,
@@ -488,7 +500,7 @@ function AgentLeaderboard({ agents }: { agents: AgentComputedStat[] }) {
                 i + 1,
                 a.name,
                 a.callsToday,
-                DEFAULT_DAILY_TARGET,
+                a.dailyTarget,
                 a.contactRate,
                 a.totalPaid,
               ]),
@@ -551,11 +563,11 @@ function AgentLeaderboard({ agents }: { agents: AgentComputedStat[] }) {
                 <td className="py-3 pr-4">
                   <div className="flex items-center gap-2">
                     <Progress
-                      value={Math.min((a.callsToday / DEFAULT_DAILY_TARGET) * 100, 100)}
+                      value={Math.min((a.callsToday / a.dailyTarget) * 100, 100)}
                       className="h-1.5 flex-1"
                     />
                     <span className="text-xs text-muted-foreground w-16 flex-shrink-0">
-                      {a.callsToday}/{DEFAULT_DAILY_TARGET}
+                      {a.callsToday}/{a.dailyTarget}
                     </span>
                   </div>
                 </td>
@@ -1217,8 +1229,20 @@ function ManagerDashboardPage() {
   }, [teamDisps]);
 
   const teamCallsToday = agentStats.reduce((s, a) => s + a.callsToday, 0);
-  const teamTarget = DEFAULT_DAILY_TARGET * Math.max(agents.length, 1);
+  // Sum of each agent's OWN agents.daily_target. Was headcount x a hardcoded 80, which
+  // disagreed with what each agent saw on their own dashboard.
+  const teamTarget = Math.max(
+    agentStats.reduce((s, a) => s + a.dailyTarget, 0),
+    1,
+  );
   const teamPaidToday = agentStats.reduce((s, a) => s + a.paidToday, 0);
+  // Team DRR: the whole team's monthly ₹ targets, less what they have collected month-to-date,
+  // spread over the calendar days still left. Added alongside "Daily Target" (a CALL-count
+  // goal) rather than replacing it — they answer different questions.
+  const teamDrr = computeDrr(
+    teamMonthlyCollectionTarget(agents.map((a) => a.id)),
+    agentStats.reduce((s, a) => s + a.paidThisMonth, 0),
+  );
   const teamPtpAmountToday = agentStats.reduce((s, a) => s + a.ptpAmountToday, 0);
   const teamOpenEscalations = agentStats.reduce((s, a) => s + a.openEscalations, 0);
 
@@ -1236,6 +1260,18 @@ function ManagerDashboardPage() {
       hint: `${teamCallsToday} / ${teamTarget} completed`,
       icon: Target,
       tone: "muted",
+    },
+    {
+      label: "Team DRR",
+      value: teamDrr.drr === null ? "—" : formatINR(teamDrr.drr),
+      hint:
+        teamDrr.drr === null
+          ? "no monthly targets set"
+          : teamDrr.met
+            ? "target met"
+            : `per day · ${teamDrr.daysRemaining} left`,
+      icon: Target,
+      tone: teamDrr.drr !== null && !teamDrr.met ? "warning" : "muted",
     },
     {
       label: "Contact Rate",
@@ -1313,7 +1349,8 @@ function ManagerDashboardPage() {
 
         {/* ── Team Analytics ── */}
         <TabsContent value="team" className="space-y-6 mt-4">
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+          {/* 7 stats since Team DRR was added — 6-wide left one orphaned on its own line. */}
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-7">
             {stats.map((s, i) => (
               <StatCard key={s.label} stat={s} index={i} />
             ))}

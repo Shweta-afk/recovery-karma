@@ -17,6 +17,7 @@ import {
   X,
   Copy,
   KeyRound,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -68,6 +69,10 @@ interface AgentRow {
   // Short auto-generated identifier (AGT-0001, ...) — see migrations/20260820_agent_code.sql.
   // The preferred match key in Portfolio Upload's "Assign Agents" mapping CSV.
   agent_code: string | null;
+  /** agents.is_active. A deactivated user keeps every row that references them —
+   * call logs, payments, assignments — but drops out of the roster, so they stop
+   * appearing in assignment pickers and team lists. */
+  is_active: boolean;
   created_at: string;
 }
 
@@ -99,7 +104,7 @@ function AdminUsersPage() {
     const { data, error: err } = await supabase
       .from("agents")
       .select(
-        "id, auth_user_id, name, email, role, agent_phone, provider_agent_id, agent_code, created_at",
+        "id, auth_user_id, name, email, role, agent_phone, provider_agent_id, agent_code, is_active, created_at",
       )
       .order("created_at", { ascending: false });
 
@@ -142,16 +147,42 @@ function AdminUsersPage() {
     refreshRoster();
   };
 
-  const handleDelete = async (agent: AgentRow) => {
-    if (!confirm(`Remove ${agent.name} from the system?`)) return;
-    const { error: err } = await supabase.from("agents").delete().eq("id", agent.id);
+  /**
+   * Deactivate, not delete.
+   *
+   * This used to run `.delete()` on the agents row. Every table that records who did something
+   * — call_logs, payments, messages, debtors.assigned_agent_id — references agents(id) with no
+   * ON DELETE clause, i.e. NO ACTION. So removing anyone who had ever made a call failed with a
+   * raw foreign-key violation surfaced straight into a toast, and removing someone who hadn't
+   * left their auth.users login behind with no profile.
+   *
+   * agents.is_active already existed in the schema and nothing used it. Setting it is the
+   * operation that was actually wanted: the person stops appearing in the roster (and so in
+   * assignment pickers, team lists and queues) while every record of what they did survives.
+   */
+  const handleDeactivate = async (agent: AgentRow) => {
+    const next = !agent.is_active;
+    if (
+      next === false &&
+      !confirm(
+        `Deactivate ${agent.name}?\n\nThey will no longer appear in team lists or assignment ` +
+          `pickers, and cannot be assigned new accounts. Their call history, payments and past ` +
+          `assignments are kept, and you can reactivate them here at any time.`,
+      )
+    )
+      return;
+    const { error: err } = await supabase
+      .from("agents")
+      .update({ is_active: next })
+      .eq("id", agent.id);
 
     if (err) {
-      toast.error("Failed to remove: " + err.message);
+      toast.error(`Failed to ${next ? "reactivate" : "deactivate"}: ` + err.message);
       return;
     }
-    setAgents((prev) => prev.filter((a) => a.id !== agent.id));
-    toast.success(`${agent.name} removed`);
+    // Kept in the list rather than filtered out — an admin has to be able to see and undo this.
+    setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, is_active: next } : a)));
+    toast.success(`${agent.name} ${next ? "reactivated" : "deactivated"}`);
     refreshRoster();
   };
 
@@ -287,7 +318,7 @@ function AdminUsersPage() {
                       onRoleChange={handleRoleChange}
                       onEdit={() => setEditAgent(agent)}
                       onResetPassword={() => setResetAgent(agent)}
-                      onDelete={handleDelete}
+                      onDelete={handleDeactivate}
                     />
                   ))}
                 </tbody>
@@ -356,6 +387,16 @@ function UserRow({
                   className="text-[9px] px-1.5 py-0 h-4 border-amber-400/40 text-amber-600"
                 >
                   Pending login
+                </Badge>
+              )}
+              {/* Deactivated users stay in this list so an admin can find and undo it — the
+                  badge is the only thing distinguishing them here. */}
+              {!agent.is_active && (
+                <Badge
+                  variant="outline"
+                  className="text-[9px] px-1.5 py-0 h-4 border-destructive/40 text-destructive"
+                >
+                  Deactivated
                 </Badge>
               )}
             </div>
@@ -453,10 +494,22 @@ function UserRow({
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => onDelete(agent)}
-                className="text-xs gap-2 text-destructive focus:text-destructive"
+                className={cn(
+                  "text-xs gap-2",
+                  agent.is_active && "text-destructive focus:text-destructive",
+                )}
               >
-                <Trash2 className="h-3.5 w-3.5" />
-                Remove User
+                {agent.is_active ? (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Deactivate User
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reactivate User
+                  </>
+                )}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

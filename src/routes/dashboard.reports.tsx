@@ -13,6 +13,7 @@ import {
   Target,
   AlertTriangle,
   CalendarRange,
+  Clock3,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -31,8 +32,6 @@ import {
 } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import {
@@ -45,10 +44,12 @@ import {
 } from "@/lib/disposition-store";
 import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
 import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
+import { getAgentTimeStats, formatDuration } from "@/lib/agent-time-stats";
 import { MonthlyTrendPanel } from "@/components/reports/monthly-trend";
-import { compareMonths, dailySeries, deltaPct } from "@/lib/monthly-trend";
+import { compareMonths, dailySeries, deltaPct, istDayKey } from "@/lib/monthly-trend";
 import { formatINR, type DPDBucket } from "@/lib/mock-debtors";
 import { downloadCsv } from "@/lib/csv-export";
+import { DateRangeFilter } from "@/components/date-range-filter";
 import { OutcomeBreakdown, OUTCOME_LABELS } from "@/components/reports/outcome-breakdown";
 import { Stat } from "@/components/reports/stat-card";
 
@@ -59,8 +60,21 @@ export const Route = createFileRoute("/dashboard/reports")({
 
 // ─── date-range helpers ────────────────────────────────────────────────────────
 
+/**
+ * The IST calendar day for a Date — NOT `toISOString().slice(0, 10)`, which this page used to
+ * use and which reports the **UTC** day.
+ *
+ * Two separate bugs came from that. A call logged at 00:30 IST is 19:00 UTC the previous day,
+ * so it was counted against yesterday in every daily chart, range filter and CSV export. And
+ * `enumerateDays` builds Dates from `${from}T00:00:00`, i.e. LOCAL midnight — for a viewer in
+ * IST that is 18:30 UTC the day before, so the chart's own day labels were shifted back one.
+ *
+ * Going through istDayKey fixes both and, more importantly, makes this page agree with
+ * MonthlyTrendPanel rendered directly beneath it, which was already IST-bucketed. One screen
+ * showing two different definitions of "a day" is worse than either definition alone.
+ */
 function isoDay(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return istDayKey(d.toISOString());
 }
 function defaultFrom(): string {
   const d = new Date();
@@ -71,8 +85,8 @@ function defaultTo(): string {
   return isoDay(new Date());
 }
 function inRange(iso: string, from: string, to: string): boolean {
-  const day = iso.slice(0, 10);
-  return day >= from && day <= to;
+  const day = istDayKey(iso);
+  return Boolean(day) && day >= from && day <= to;
 }
 // Capped so a fat-fingered multi-year range can't render a chart with thousands of bars.
 function enumerateDays(from: string, to: string): string[] {
@@ -120,7 +134,14 @@ const AXIS_TICK = { fontSize: 10, fill: "oklch(0.55 0.02 257)" };
 
 // ─── report definitions ─────────────────────────────────────────────────────────
 
-type ReportType = "weekly" | "monthly" | "portfolio" | "performance" | "outcomes" | "followups";
+type ReportType =
+  | "weekly"
+  | "monthly"
+  | "portfolio"
+  | "performance"
+  | "time"
+  | "outcomes"
+  | "followups";
 
 interface ReportDef {
   id: ReportType;
@@ -150,14 +171,23 @@ const REPORTS: ReportDef[] = [
     id: "portfolio",
     label: "Portfolio Health",
     icon: Activity,
-    description: "DPD bucket mix across your assigned accounts.",
-    dateFiltered: false,
+    description: "Principal, DPD mix, and how much of each book you actually worked.",
+    // Was false when this was a pure snapshot. It now carries collected / accounts-touched
+    // columns that only mean anything against a date range, so the picker has to apply.
+    dateFiltered: true,
   },
   {
     id: "performance",
     label: "My Performance",
     icon: TrendingUp,
     description: "Contact rate and PTP conversion trend.",
+    dateFiltered: true,
+  },
+  {
+    id: "time",
+    label: "Time & Effort",
+    icon: Clock3,
+    description: "Talk time per day — plus estimated ringing, wrap, break and idle.",
     dateFiltered: true,
   },
   {
@@ -206,7 +236,7 @@ interface DailyRow {
 
 function computeDaily(disps: DispositionRecord[], days: string[]): DailyRow[] {
   return days.map((day) => {
-    const dayDisps = disps.filter((d) => d.time.slice(0, 10) === day);
+    const dayDisps = disps.filter((d) => istDayKey(d.time) === day);
     const stats = calcStats(dayDisps);
     return {
       day,
@@ -223,12 +253,26 @@ function computeDaily(disps: DispositionRecord[], days: string[]): DailyRow[] {
 interface PortfolioHealthRow {
   name: string;
   total: number;
+  /** Principal on the book for these accounts. NOTE: `debtors.outstanding_balance` is written
+   * as a straight COPY of `loan_amount` at upload (three sites in portfolio-store.ts), so
+   * principal and outstanding are the same number in this system today. Shown once and
+   * labelled "Principal (POS)" rather than as two columns implying a distinction the data
+   * does not have — that would be a fabricated breakdown. Splitting them for real needs the
+   * bank's file to carry a separate outstanding column. */
   outstanding: number;
+  /** ₹ collected against this portfolio inside the selected range. */
+  collected: number;
+  /** Distinct accounts in this portfolio worked at least once in the range — NOT call count.
+   * 40 calls into 12 accounts is a very different week from 40 into 40. */
+  accountsTouched: number;
   bucketCount: Record<DPDBucket, number>;
   bucketPct: Record<DPDBucket, number>;
 }
 
-function computePortfolioHealth(agentId: string): PortfolioHealthRow[] {
+function computePortfolioHealth(
+  agentId: string,
+  rangeDisps: DispositionRecord[],
+): PortfolioHealthRow[] {
   const slices = getAgentDebtorIds(agentId);
   const portfolios = getPortfolios();
   const rows: PortfolioHealthRow[] = [];
@@ -248,9 +292,76 @@ function computePortfolioHealth(agentId: string): PortfolioHealthRow[] {
     const bucketPct = Object.fromEntries(
       BUCKET_ORDER.map((b) => [b, Math.round((bucketCount[b] / total) * 100)]),
     ) as Record<DPDBucket, number>;
-    rows.push({ name: p.name, total, outstanding, bucketCount, bucketPct });
+
+    // Scoped to the accounts of THIS portfolio that belong to this agent, so the collected
+    // figure and the outstanding figure beside it describe the same set of accounts.
+    const mine = rangeDisps.filter((d) => idSet.has(d.debtorId));
+    const collected = mine.reduce((sum, d) => sum + (d.paidAmount ?? 0), 0);
+    const accountsTouched = new Set(mine.map((d) => d.debtorId)).size;
+
+    rows.push({
+      name: p.name,
+      total,
+      outstanding,
+      collected,
+      accountsTouched,
+      bucketCount,
+      bucketPct,
+    });
   }
   return rows.sort((a, b) => b.total - a.total);
+}
+
+// ─── time & effort ──────────────────────────────────────────────────────────────
+//
+// ⚠️ Only TALK TIME is measured. It is Σ call_logs.duration_seconds, a real stored column.
+//
+// Ringing, wrap, break and idle come from agent-time-stats.ts, which generates them from a
+// seeded RNG because the schema has no presence or status history and the dialer never
+// persists when a leg starts ringing. They are plausible and stable per (agent, day) — they
+// are not observations.
+//
+// That distinction matters more here than on a dashboard tile: a report gets exported to CSV
+// and used to judge people. So the measured and the estimated columns are kept visually
+// separate, the estimated ones are labelled in the table header AND in the CSV header, and the
+// panel says plainly which is which. Do not quietly merge the two groups.
+
+interface TimeRow {
+  day: string;
+  label: string;
+  calls: number;
+  /** REAL — Σ duration_seconds. */
+  talkSeconds: number;
+  /** REAL — mean call length. */
+  avgSeconds: number;
+  /** REAL — the longest single call that day. */
+  longestSeconds: number;
+  /** ESTIMATED, all four. */
+  ringingSeconds: number;
+  wrapSeconds: number;
+  breakSeconds: number;
+  idleSeconds: number;
+}
+
+function computeTimeRows(agentId: string, disps: DispositionRecord[], days: string[]): TimeRow[] {
+  return days.map((day) => {
+    const dayDisps = disps.filter((d) => istDayKey(d.time) === day);
+    const durations = dayDisps.map((d) => d.durationSeconds ?? 0);
+    const talkSeconds = durations.reduce((a, b) => a + b, 0);
+    const est = getAgentTimeStats(agentId, dayDisps, day);
+    return {
+      day,
+      label: formatDayLabel(day),
+      calls: dayDisps.length,
+      talkSeconds,
+      avgSeconds: dayDisps.length ? Math.round(talkSeconds / dayDisps.length) : 0,
+      longestSeconds: durations.length ? Math.max(...durations) : 0,
+      ringingSeconds: est.ringingSeconds,
+      wrapSeconds: est.dispositionSeconds,
+      breakSeconds: est.breakSeconds,
+      idleSeconds: est.idleSeconds,
+    };
+  });
 }
 
 // ─── narrative (computed from the real numbers above — no LLM call behind this) ──
@@ -303,6 +414,23 @@ function performanceNarrative(rows: DailyRow[], from: string, to: string): strin
     `connected calls. Contact rate is ${trendWord} across the period${
       withCalls.length > 1 && Math.abs(delta) > 3 ? ` (${delta > 0 ? "+" : ""}${delta} pts)` : ""
     }.`
+  );
+}
+
+/** Deliberately says nothing about idle or ringing: those are estimates, and a sentence
+ * asserting them in prose reads as fact in a way a column labelled "(est.)" does not. */
+function timeNarrative(rows: TimeRow[]): string {
+  const calls = rows.reduce((s, r) => s + r.calls, 0);
+  if (calls === 0) return "No calls logged in this range, so there is no talk time to report.";
+  const talk = rows.reduce((s, r) => s + r.talkSeconds, 0);
+  const busiest = rows.reduce((a, b) => (b.talkSeconds > a.talkSeconds ? b : a));
+  const activeDays = rows.filter((r) => r.calls > 0).length;
+  return (
+    `${formatDuration(talk)} on the phone across ${calls} call${calls === 1 ? "" : "s"} ` +
+    `over ${activeDays} active day${activeDays === 1 ? "" : "s"}, averaging ` +
+    `${formatDuration(Math.round(talk / calls))} per call. Busiest day was ${busiest.label} ` +
+    `(${formatDuration(busiest.talkSeconds)}). Ringing, wrap, break and idle in the table are ` +
+    `estimates, not measurements.`
   );
 }
 
@@ -406,10 +534,16 @@ function ReportsPage() {
     [disps, fromDate, toDate],
   );
   const dailyRows = useMemo(() => computeDaily(rangeDisps, days), [rangeDisps, days]);
+  const timeRows = useMemo(
+    () => computeTimeRows(agentId, rangeDisps, days),
+    [agentId, rangeDisps, days],
+  );
   const portfolioRows = useMemo(
-    () => computePortfolioHealth(agentId),
+    () => computePortfolioHealth(agentId, rangeDisps),
+    // rangeDisps added: the collected / accounts-touched columns are range-scoped, so this
+    // must recompute when the date filter moves, not only when portfolios reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agentId, portfolioVersion],
+    [agentId, portfolioVersion, rangeDisps],
   );
   // `disps` isn't read directly below — it's a dependency so this recomputes whenever the
   // dispositions cache updates (getPtpFollowups reads that same cache internally).
@@ -466,6 +600,34 @@ function ReportsPage() {
           r.total,
           r.outstanding,
           ...BUCKET_ORDER.map((b) => `${r.bucketCount[b]} (${r.bucketPct[b]}%)`),
+        ]),
+      );
+    } else if (active === "time") {
+      // "(est.)" is carried into the CSV header too — an exported file has none of the
+      // on-screen framing, so the column names have to say it themselves.
+      downloadCsv(
+        `time-and-effort-${fromDate}-to-${toDate}.csv`,
+        [
+          "Date",
+          "Calls",
+          "Talk (s)",
+          "Avg call (s)",
+          "Longest call (s)",
+          "Ringing (s, ESTIMATED)",
+          "Wrap (s, ESTIMATED)",
+          "Break (s, ESTIMATED)",
+          "Idle (s, ESTIMATED)",
+        ],
+        timeRows.map((r) => [
+          r.label,
+          r.calls,
+          r.talkSeconds,
+          r.avgSeconds,
+          r.longestSeconds,
+          r.ringingSeconds,
+          r.wrapSeconds,
+          r.breakSeconds,
+          r.idleSeconds,
         ]),
       );
     } else if (active === "performance") {
@@ -587,32 +749,18 @@ function ReportsPage() {
               <div className="flex flex-wrap items-center gap-2">
                 {report.dateFiltered ? (
                   <>
-                    <div className="flex items-center gap-1.5">
-                      <Label htmlFor="from" className="text-xs text-muted-foreground">
-                        From
-                      </Label>
-                      <Input
-                        id="from"
-                        type="date"
-                        value={fromDate}
-                        max={toDate}
-                        onChange={(e) => setFromDate(e.target.value)}
-                        className="h-8 w-36 text-xs"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Label htmlFor="to" className="text-xs text-muted-foreground">
-                        To
-                      </Label>
-                      <Input
-                        id="to"
-                        type="date"
-                        value={toDate}
-                        min={fromDate}
-                        onChange={(e) => setToDate(e.target.value)}
-                        className="h-8 w-36 text-xs"
-                      />
-                    </div>
+                    {/* The same control as Activity History, Payments, Messages, Call Audit,
+                        Manager Activity and Debtors — one date filter, learned once. It also
+                        swaps a reversed range rather than silently rendering an empty report,
+                        which the two bare inputs here could not do. */}
+                    <DateRangeFilter
+                      value={{ from: fromDate, to: toDate }}
+                      onChange={(r) => {
+                        setFromDate(r.from);
+                        setToDate(r.to);
+                      }}
+                      showIcon={false}
+                    />
                   </>
                 ) : (
                   <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
@@ -639,6 +787,7 @@ function ReportsPage() {
                 {active === "monthly" && monthlyNarrative(disps, payments)}
                 {active === "portfolio" && portfolioNarrative(portfolioRows)}
                 {active === "performance" && performanceNarrative(dailyRows, fromDate, toDate)}
+                {active === "time" && timeNarrative(timeRows)}
                 {active === "outcomes" && outcomeNarrative(rangeDisps)}
                 {active === "followups" && followupsNarrative(followups)}
               </p>
@@ -655,6 +804,7 @@ function ReportsPage() {
             )}
             {active === "portfolio" && <PortfolioReport rows={portfolioRows} />}
             {active === "performance" && <PerformanceReport rows={dailyRows} />}
+            {active === "time" && <TimeReport rows={timeRows} />}
             {active === "outcomes" && <OutcomesReport disps={rangeDisps} />}
             {active === "followups" && <FollowupsReport followups={followups} />}
           </CardContent>
@@ -774,6 +924,26 @@ function WeeklyReport({ rows }: { rows: DailyRow[] }) {
   );
 }
 
+/** "All portfolios" row. Counts and money sum; the two percentages are recomputed from the
+ * summed numerator and denominator rather than averaged — averaging percentages across
+ * portfolios of different sizes gives a number that is simply wrong. */
+function totalsRow(rows: PortfolioHealthRow[]): (string | number)[] {
+  const accounts = rows.reduce((s, r) => s + r.total, 0);
+  const principal = rows.reduce((s, r) => s + r.outstanding, 0);
+  const worked = rows.reduce((s, r) => s + r.accountsTouched, 0);
+  const collected = rows.reduce((s, r) => s + r.collected, 0);
+  return [
+    "All portfolios",
+    accounts,
+    formatINR(principal),
+    worked,
+    `${accounts ? Math.round((worked / accounts) * 100) : 0}%`,
+    formatINR(collected),
+    principal ? `${((collected / principal) * 100).toFixed(2)}%` : "\u2014",
+    ...BUCKET_ORDER.map((b) => `${rows.reduce((s, r) => s + r.bucketCount[b], 0)}`),
+  ];
+}
+
 function PortfolioReport({ rows }: { rows: PortfolioHealthRow[] }) {
   if (rows.length === 0) return <EmptyState message="No accounts are currently assigned to you." />;
   return (
@@ -801,16 +971,34 @@ function PortfolioReport({ rows }: { rows: PortfolioHealthRow[] }) {
         headers={[
           "Portfolio",
           "Accounts",
-          "Outstanding",
+          "Principal (POS)",
+          "Worked",
+          "Coverage",
+          "Collected",
+          "Recovery",
           ...BUCKET_ORDER.map((b) => BUCKET_SHORT[b]),
         ]}
-        rows={rows.map((r) => [
-          r.name,
-          r.total,
-          formatINR(r.outstanding),
-          ...BUCKET_ORDER.map((b) => `${r.bucketCount[b]} (${r.bucketPct[b]}%)`),
-        ])}
+        rows={[
+          ...rows.map((r) => [
+            r.name,
+            r.total,
+            formatINR(r.outstanding),
+            r.accountsTouched,
+            // How much of the book was actually reached — "Accounts" alone never showed this.
+            `${r.total ? Math.round((r.accountsTouched / r.total) * 100) : 0}%`,
+            formatINR(r.collected),
+            // Against principal, so it is comparable across portfolios of different sizes.
+            r.outstanding ? `${((r.collected / r.outstanding) * 100).toFixed(2)}%` : "\u2014",
+            ...BUCKET_ORDER.map((b) => `${r.bucketCount[b]} (${r.bucketPct[b]}%)`),
+          ]),
+          ...(rows.length > 1 ? [totalsRow(rows)] : []),
+        ]}
       />
+      <p className="text-[11px] text-muted-foreground">
+        Principal and outstanding are the same figure in this system \u2014 the bank file carries no
+        separate outstanding balance, so it is stored as a copy of the loan amount. Recovery % is
+        against that principal.
+      </p>
     </div>
   );
 }
@@ -849,6 +1037,107 @@ function PerformanceReport({ rows }: { rows: DailyRow[] }) {
         headers={["Date", "Calls", "Contact Rate", "PTP Rate"]}
         rows={rows.map((r) => [r.label, r.calls, `${r.contactRate}%`, `${r.ptpRate}%`])}
       />
+    </div>
+  );
+}
+
+function TimeReport({ rows }: { rows: TimeRow[] }) {
+  if (rows.every((r) => r.calls === 0))
+    return <EmptyState message="No calls logged in this range yet." />;
+
+  const totalTalk = rows.reduce((s, r) => s + r.talkSeconds, 0);
+  const totalCalls = rows.reduce((s, r) => s + r.calls, 0);
+  const busiest = rows.reduce((a, b) => (b.talkSeconds > a.talkSeconds ? b : a));
+
+  return (
+    <div className="space-y-3">
+      {/* Measured figures, stated as such and kept apart from the estimates below. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          { label: "Talk time", value: formatDuration(totalTalk), sub: "measured" },
+          {
+            label: "Avg call",
+            value: formatDuration(totalCalls ? Math.round(totalTalk / totalCalls) : 0),
+            sub: `over ${totalCalls} call${totalCalls === 1 ? "" : "s"}`,
+          },
+          {
+            label: "Longest call",
+            value: formatDuration(Math.max(...rows.map((r) => r.longestSeconds))),
+            sub: "measured",
+          },
+          { label: "Busiest day", value: busiest.label, sub: formatDuration(busiest.talkSeconds) },
+        ].map((c) => (
+          <div key={c.label} className="rounded-lg border border-border bg-card px-3 py-2.5">
+            <div className="text-base font-bold tabular-nums leading-tight text-foreground">
+              {c.value}
+            </div>
+            <div className="mt-0.5 text-[11px] font-medium text-foreground">{c.label}</div>
+            <div className="text-[10px] text-muted-foreground">{c.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={rows}>
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.muted} vertical={false} />
+          <XAxis dataKey="label" tick={AXIS_TICK} />
+          <YAxis tick={AXIS_TICK} tickFormatter={(v: number) => `${Math.round(v / 60)}m`} />
+          <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [formatDuration(v)]} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Bar
+            dataKey="talkSeconds"
+            name="Talk (measured)"
+            stackId="t"
+            fill={CHART_COLORS.primary}
+          />
+          <Bar
+            dataKey="ringingSeconds"
+            name="Ringing (est.)"
+            stackId="t"
+            fill={CHART_COLORS.muted}
+          />
+          <Bar dataKey="wrapSeconds" name="Wrap (est.)" stackId="t" fill={CHART_COLORS.success} />
+          <Bar dataKey="idleSeconds" name="Idle (est.)" stackId="t" fill={CHART_COLORS.warning} />
+        </BarChart>
+      </ResponsiveContainer>
+
+      <ReportTable
+        headers={[
+          "Date",
+          "Calls",
+          "Talk",
+          "Avg",
+          "Longest",
+          "Ringing (est.)",
+          "Wrap (est.)",
+          "Break (est.)",
+          "Idle (est.)",
+        ]}
+        rows={rows.map((r) => [
+          r.label,
+          r.calls,
+          formatDuration(r.talkSeconds),
+          formatDuration(r.avgSeconds),
+          formatDuration(r.longestSeconds),
+          formatDuration(r.ringingSeconds),
+          formatDuration(r.wrapSeconds),
+          formatDuration(r.breakSeconds),
+          formatDuration(r.idleSeconds),
+        ])}
+      />
+
+      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
+        <p className="text-[11px] text-muted-foreground">
+          <span className="font-semibold text-foreground">
+            Only talk time, call counts and call lengths are measured.
+          </span>{" "}
+          Ringing, wrap, break and idle are <em>estimates</em> — this system has no presence or
+          status tracking, and the dialer does not record when a leg starts ringing. They are
+          derived from call volume and are stable per day, but they are not observations of what
+          anyone did. Do not use them to assess an agent.
+        </p>
+      </div>
     </div>
   );
 }

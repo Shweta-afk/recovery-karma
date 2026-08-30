@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { istDayKey } from "./monthly-trend";
 import type { Debtor } from "./mock-debtors";
 
 // The supabase client here is untyped (no generated Database type), so query rows come back
@@ -96,7 +97,11 @@ export async function fetchDebtorsByAgent(agentId: string): Promise<Debtor[]> {
     return [];
   }
 
-  const portfolioIds = portfolios.map((p) => p.portfolio_id);
+  // Filtered, not just mapped: portfolio_id is nullable on the join row, and a null in the
+  // `.in()` list matches nothing while making the filter harder to reason about.
+  const portfolioIds = portfolios
+    .map((p) => p.portfolio_id)
+    .filter((id): id is string => typeof id === "string");
 
   // Fetch debtors from assigned portfolios
   const { data, error } = await supabase
@@ -136,9 +141,10 @@ export async function fetchDebtorsByAgent(agentId: string): Promise<Debtor[]> {
     dpd: row.dpd || 0,
     aiScore: row.ai_score || 0,
     scoreReason: row.ai_score_reason || "",
-    lastContacted: row.last_contacted_at
-      ? new Date(row.last_contacted_at).toISOString().split("T")[0]
-      : null,
+    // IST, not UTC. `toISOString()` reports the UTC day, so a call taken between midnight
+    // and 05:30 IST used to show as the PREVIOUS day here — and drop out of a same-day
+    // filter. The day rolls at midnight IST, matching lib/date-filter.ts.
+    lastContacted: istDayKey(row.last_contacted_at) || null,
     portfolio: row.portfolios?.name || "Unknown Portfolio",
     language: "Hindi",
   })) as Debtor[];
@@ -182,9 +188,10 @@ export async function fetchDebtors(clientId?: string): Promise<Debtor[]> {
     dpd: row.dpd || 0,
     aiScore: row.ai_score || 0,
     scoreReason: row.ai_score_reason || "",
-    lastContacted: row.last_contacted_at
-      ? new Date(row.last_contacted_at).toISOString().split("T")[0]
-      : null,
+    // IST, not UTC. `toISOString()` reports the UTC day, so a call taken between midnight
+    // and 05:30 IST used to show as the PREVIOUS day here — and drop out of a same-day
+    // filter. The day rolls at midnight IST, matching lib/date-filter.ts.
+    lastContacted: istDayKey(row.last_contacted_at) || null,
     portfolio: row.portfolios?.name || "Unknown Portfolio",
     language: "Hindi",
   })) as Debtor[];

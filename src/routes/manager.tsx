@@ -2,6 +2,7 @@ import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
 import { CallSessionProvider } from "@/lib/call-session";
 import { GlobalCallBar } from "@/components/global-call-bar";
+import { ManualDialDock } from "@/components/manual-dial-dock";
 import { TeamPickerScreen } from "@/components/team-picker-screen";
 import { useAuth } from "@/lib/auth";
 import { useActiveTeam } from "@/lib/active-team-store";
@@ -66,6 +67,8 @@ function ManagerLayout() {
         <Outlet />
       </AppShell>
       <GlobalCallBar />
+      {/* Always-available manual dialer, bottom-left — see manual-dial-dock.tsx. */}
+      <ManualDialDock />
     </CallSessionProvider>
   );
 }

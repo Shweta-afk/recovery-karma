@@ -48,8 +48,15 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import { EMPTY_RANGE, inDateRange, type DateRange } from "@/lib/date-filter";
 import { bucketOf, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
-import { getPortfolios, refreshPortfolios, type UploadedDebtor } from "@/lib/portfolio-store";
+import {
+  getPortfolios,
+  getAgentDebtorIds,
+  refreshPortfolios,
+  type UploadedDebtor,
+} from "@/lib/portfolio-store";
 import { useAuth } from "@/lib/auth";
 import {
   getMessages,
@@ -106,10 +113,7 @@ const IVR_OUTCOME_LABEL: Record<string, string> = {
   settlement: "Settlement",
 };
 
-const MSG_STATUS_META: Record<
-  MessageRecord["status"],
-  { label: string; cls: string }
-> = {
+const MSG_STATUS_META: Record<MessageRecord["status"], { label: string; cls: string }> = {
   sent: { label: "Sent", cls: "bg-muted text-muted-foreground border-border" },
   delivered: { label: "Delivered", cls: "bg-success/8 text-success/70 border-success/15" },
   read: { label: "Read", cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15" },
@@ -151,12 +155,17 @@ function initialsFor(name: string): string {
 function MessagesPage() {
   const { user } = useAuth();
   const agentEmail = user?.email ?? "";
+  const isSupervisor = user?.role === "manager" || user?.role === "admin";
 
   const [activeTab, setActiveTab] = useState<Tab>("whatsapp");
   const [activeDebtorId, setActiveDebtorId] = useState<string | null>(null);
   const [template, setTemplate] = useState("");
   const [input, setInput] = useState("");
   const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
+  // Applies to the IVR and SMS logs, which are flat per-event lists. Deliberately NOT
+  // applied to the WhatsApp thread list: a conversation spans days, so date-filtering it
+  // would hide live threads rather than narrow a log.
+  const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
   const [composeDropOpen, setComposeDropOpen] = useState(false);
   const [sending, setSending] = useState(false);
@@ -168,18 +177,33 @@ function MessagesPage() {
   useEffect(() => {
     const loadMessages = () => setMessages(getMessages());
     const loadDisps = () => setDisps(getDispositions());
-    const loadDebtors = () =>
-      setAllDebtors(getPortfolios().flatMap((p) => p.rows));
+    // Scoped to this agent's own accounts. This used to flatten every portfolio in the cache,
+    // which handed an agent the name and number of debtors booked to someone else through the
+    // "new message" picker — the same accounts the Debtors page and call queue correctly hide.
+    // Supervisors keep the whole book they can already see.
+    const loadDebtors = () => {
+      const portfolios = getPortfolios();
+      if (isSupervisor) {
+        setAllDebtors(portfolios.flatMap((p) => p.rows));
+        return;
+      }
+      const assigned = new Set(getAgentDebtorIds(agentEmail).flatMap((slice) => slice.debtorIds));
+      setAllDebtors(portfolios.flatMap((p) => p.rows).filter((r) => assigned.has(r.id)));
+    };
 
     window.addEventListener("messages-updated", loadMessages);
     window.addEventListener("dispositions-updated", loadDisps);
     window.addEventListener("portfolios-updated", loadDebtors);
 
-    refreshMessages().then(loadMessages).catch((e) => console.warn("[messages] refresh failed:", e));
+    refreshMessages()
+      .then(loadMessages)
+      .catch((e) => console.warn("[messages] refresh failed:", e));
     refreshDispositions()
       .then(loadDisps)
       .catch((e) => console.warn("[messages] disposition refresh failed:", e));
-    refreshPortfolios().then(loadDebtors).catch((e) => console.warn("[messages] portfolio refresh failed:", e));
+    refreshPortfolios()
+      .then(loadDebtors)
+      .catch((e) => console.warn("[messages] portfolio refresh failed:", e));
     loadDebtors();
 
     return () => {
@@ -187,7 +211,9 @@ function MessagesPage() {
       window.removeEventListener("dispositions-updated", loadDisps);
       window.removeEventListener("portfolios-updated", loadDebtors);
     };
-  }, []);
+    // agentEmail/isSupervisor decide which debtors loadDebtors keeps, and both start empty
+    // while auth resolves — without them here an agent's picker would stay empty for good.
+  }, [agentEmail, isSupervisor]);
 
   const debtorById = useMemo(() => new Map(allDebtors.map((d) => [d.id, d])), [allDebtors]);
 
@@ -213,9 +239,11 @@ function MessagesPage() {
           messages: sorted,
         };
       })
-      .sort((a, b) => b.messages[b.messages.length - 1].sentAt.localeCompare(
-        a.messages[a.messages.length - 1].sentAt,
-      ));
+      .sort((a, b) =>
+        b.messages[b.messages.length - 1].sentAt.localeCompare(
+          a.messages[a.messages.length - 1].sentAt,
+        ),
+      );
   }, [messages, debtorById]);
 
   const filteredConversations = useMemo(() => {
@@ -278,8 +306,12 @@ function MessagesPage() {
 
   // ── IVR: real call_logs where call_type = 'ivr' ──
   const ivrRecords = useMemo(
-    () => disps.filter((d) => d.callType === "ivr").sort((a, b) => b.time.localeCompare(a.time)),
-    [disps],
+    () =>
+      disps
+        .filter((d) => d.callType === "ivr")
+        .filter((d) => inDateRange(d.time, dateRange))
+        .sort((a, b) => b.time.localeCompare(a.time)),
+    [disps, dateRange],
   );
 
   // ── SMS: real messages where channel = 'sms' ──
@@ -287,8 +319,9 @@ function MessagesPage() {
     () =>
       messages
         .filter((m) => m.channel === "sms")
+        .filter((m) => inDateRange(m.sentAt, dateRange))
         .sort((a, b) => b.sentAt.localeCompare(a.sentAt)),
-    [messages],
+    [messages, dateRange],
   );
 
   return (
@@ -298,9 +331,15 @@ function MessagesPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Messages</h1>
           <p className="text-sm text-muted-foreground">
-            WhatsApp conversations, IVR call logs, and SMS delivery status. There's no WhatsApp/SMS
-            gateway wired up yet, so sending here logs a real record but doesn't reach the debtor's
-            phone.
+            WhatsApp conversations, IVR call logs, and SMS delivery status.{" "}
+            {/* This used to say there was no gateway and that nothing reached the debtor. That
+                stopped being true: messages-store.sendMessage now calls Exotel through
+                telephony/server.ts before writing the row. Telling an agent a send goes nowhere
+                when it may actually deliver is the more dangerous of the two errors. */}
+            <span className="font-medium text-foreground">Sending attempts a real delivery</span> —
+            the row's status reflects whether the provider accepted it, and shows{" "}
+            <span className="font-medium text-foreground">Failed</span> when credentials are missing
+            or the WhatsApp template is not yet approved.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -470,9 +509,7 @@ function MessagesPage() {
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-foreground truncate">
-                        {c.name}
-                      </span>
+                      <span className="text-sm font-medium text-foreground truncate">{c.name}</span>
                       <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-1">
                         {c.time}
                       </span>
@@ -601,6 +638,9 @@ function MessagesPage() {
       {/* IVR */}
       {activeTab === "ivr" && (
         <div className="flex-1 overflow-auto">
+          <div className="mb-3 flex justify-end">
+            <DateRangeFilter value={dateRange} onChange={setDateRange} />
+          </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 mb-4">
             {[
               { label: "Total IVR Calls", value: ivrRecords.length },
@@ -647,7 +687,10 @@ function MessagesPage() {
                   <TableBody>
                     {ivrRecords.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-12 text-sm text-muted-foreground">
+                        <TableCell
+                          colSpan={6}
+                          className="text-center py-12 text-sm text-muted-foreground"
+                        >
                           No IVR calls logged yet.
                         </TableCell>
                       </TableRow>
@@ -690,6 +733,9 @@ function MessagesPage() {
       {/* SMS */}
       {activeTab === "sms" && (
         <div className="flex-1 overflow-auto">
+          <div className="mb-3 flex justify-end">
+            <DateRangeFilter value={dateRange} onChange={setDateRange} />
+          </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
             {[
               { label: "Total Sent", value: smsRecords.length },
@@ -727,7 +773,10 @@ function MessagesPage() {
                   <TableBody>
                     {smsRecords.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-12 text-sm text-muted-foreground">
+                        <TableCell
+                          colSpan={6}
+                          className="text-center py-12 text-sm text-muted-foreground"
+                        >
                           No SMS sent yet.
                         </TableCell>
                       </TableRow>
