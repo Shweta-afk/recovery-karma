@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { todayIstKey } from "@/lib/date-filter";
+import { setAgentStatus, closeOpenStatus } from "@/lib/agent-presence-store";
 import { bucketOf, formatINR, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
 import {
   getPortfolios,
@@ -191,6 +192,16 @@ function CallQueuePage() {
  * poller) run only when those two identities are the same — otherwise merely opening this
  * tab would fire them under the viewed agent's name.
  */
+/** Whole seconds between two ISO instants, or undefined when either is missing or the pair is
+ * nonsensical. Undefined means "not recorded" and must never be reported as zero. */
+function secondsBetween(from: string | undefined, to: string | undefined): number | undefined {
+  if (!from || !to) return undefined;
+  const a = new Date(from).getTime();
+  const b = new Date(to).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return undefined;
+  return Math.round((b - a) / 1000);
+}
+
 export function CallQueueContent({
   agentId: agentIdProp,
   agentName: agentNameProp,
@@ -357,6 +368,20 @@ export function CallQueueContent({
     activeCallRef.current = activeCall;
   }, [activeCall]);
 
+  // Open an "available" interval when an agent opens their own queue, and close it when the
+  // tab goes away. Without this, an agent who never touches the status picker records nothing
+  // and their whole day reads as untracked.
+  useEffect(() => {
+    if (!isSelf) return;
+    void setAgentStatus("available");
+    const bye = () => void closeOpenStatus();
+    window.addEventListener("pagehide", bye);
+    return () => {
+      window.removeEventListener("pagehide", bye);
+      void closeOpenStatus();
+    };
+  }, [isSelf]);
+
   const startCall = (
     debtor: QueueDebtor,
     opts?: {
@@ -373,6 +398,9 @@ export function CallQueueContent({
     setActiveCall({
       debtor,
       dialMode: opts?.dialMode ?? "single",
+      // Start of the ring, so ring time can be measured rather than estimated. A transfer
+      // (`instant`) is already connected, so its ring time is zero, not unknown.
+      dialStartedAt: new Date().toISOString(),
       phase: opts?.instant ? "connected" : "ringing",
       view: "panel",
       muted: false,
@@ -542,6 +570,10 @@ export function CallQueueContent({
         // Some providers publish these asynchronously, so this is often still empty here and
         // has to be backfilled later once the provider makes it available.
         dialMode: activeCall?.dialMode ?? "single",
+        // Measured, not estimated. Undefined rather than 0 when the moments were not
+        // captured — a call whose ring time is unknown must not be reported as instant.
+        ringSeconds: secondsBetween(activeCall?.dialStartedAt, activeCall?.answeredAt),
+        wrapSeconds: secondsBetween(activeCall?.endedAt, now.toISOString()),
         recordingUrl: activeCall?.recordingUrl,
         // Lets the recording be attached later, once the provider publishes it.
         providerCallId: activeCall?.providerCallId,
@@ -795,6 +827,12 @@ export function CallQueueContent({
                     onClick={() => {
                       setStatus(key);
                       setStatusOpen(false);
+                      // Persisted now, not just held in React state. This picker has existed
+                      // since the beginning and was never saved, which is why break and idle
+                      // time had to be invented — see agent-presence-store.ts. Only for the
+                      // agent's own queue: a manager viewing someone else's must not stamp
+                      // presence under their name.
+                      if (isSelf) void setAgentStatus(key);
                     }}
                     className={cn(
                       "w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-muted/50",

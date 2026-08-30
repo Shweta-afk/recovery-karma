@@ -58,6 +58,35 @@ export function CallSessionProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCall?.phase]);
 
+  /**
+   * Stamp the call's own timeline as it moves through its phases.
+   *
+   * This is what turns ring and wrap time into MEASUREMENTS. Both were previously produced by
+   * a seeded RNG in agent-time-stats.ts because nothing recorded when a call was answered or
+   * when it ended — the information existed only as a transient React phase and was thrown
+   * away.
+   *
+   * Done here rather than in useSingleCall because this provider sees every call regardless of
+   * which dialer path started it, and because both of that hook's modes (sim and server) reach
+   * the same phases through different code.
+   */
+  useEffect(() => {
+    const phase = activeCall?.phase;
+    if (!phase) return;
+    setActiveCall((c) => {
+      if (!c) return c;
+      if (phase === "connected" && !c.answeredAt) {
+        return { ...c, answeredAt: new Date().toISOString() };
+      }
+      // Stamped once, so wrap time runs from when the call actually finished rather than from
+      // whenever the agent got round to opening the disposition form.
+      if (phase === "ended" && !c.endedAt) {
+        return { ...c, endedAt: new Date().toISOString() };
+      }
+      return c;
+    });
+  }, [activeCall?.phase]);
+
   return (
     <Ctx.Provider value={{ activeCall, setActiveCall, disposition, setDisposition }}>
       {children}

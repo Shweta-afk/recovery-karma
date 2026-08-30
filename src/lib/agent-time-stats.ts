@@ -1,121 +1,148 @@
-// Per-agent time/attendance breakdown — Calling, Disposition (wrap-up), Idle, Login/Logout.
+// Per-agent time breakdown — Calling, Ringing, Wrap, Break, Idle, Login/Logout.
 //
-// Calling time is REAL: it's the sum of call_logs.duration_seconds already stored for every
-// logged call (see disposition-store.ts). Everything else here — disposition/wrap time, idle
-// time, login/logout — is a UI PLACEHOLDER. The schema has no presence/status history at all
-// today (AgentStatus in call-queue/types.ts is local React state that's never persisted), so
-// there's nothing real to read yet. This file exists so all three surfaces that show these
-// numbers (agent's own dashboard, the agent-facing Team Activity page, and admin Reports) stay
-// consistent with each other and are trivial to swap over once a real `agent_status_log` table
-// exists — see the calculation notes below each field.
+// ── This file used to make its numbers up ─────────────────────────────────────────────────
+// Until 2026-08-30 only `callingSeconds` was real. Ringing, wrap, break, idle and the
+// login/logout clock were produced by a seeded RNG (stable per agent+day, which made them look
+// convincingly like data) because the schema recorded none of it. Those figures appear on the
+// agent dashboard, Team Activity and the Reports "Time & Effort" report — places where people
+// judge how someone spent their working day.
 //
-// Placeholder values are deterministic per (agentId, date) via a seeded RNG rather than
-// Math.random(), so the same agent shows the same numbers on every render/surface within a
-// day instead of jittering on each remount.
+// They are now MEASURED:
+//   callingSeconds      Σ call_logs.duration_seconds        (always was real)
+//   ringingSeconds      Σ call_logs.ring_seconds            (dialer, 20260830 migration)
+//   dispositionSeconds  Σ call_logs.wrap_seconds            (disposition submit)
+//   break / idle / login / logout   from agent_status_log   (the status picker, now persisted)
+//
+// ── Null means NOT RECORDED, and must never be rendered as zero ───────────────────────────
+// Tracking is forward-only: nothing can reconstruct a day that predates the migration, and an
+// agent who took no breaks must not look identical to one whose breaks were never tracked.
+// Every field that can be unknown is `number | null`, and `presenceRecorded` says whether the
+// day was tracked at all. Rendering null as "—" is the point of the type.
 import type { DispositionRecord } from "./disposition-store";
-import { istDayKey } from "./monthly-trend";
+import type { AgentStatus } from "./call-queue/types";
+import type { StatusInterval } from "./agent-presence-store";
 
 export interface AgentTimeStats {
   agentId: string;
-  /** PLACEHOLDER — would be Σ (answered_at or abandoned_at − dial_started_at) per call attempt.
-   * Needs the dialer to timestamp when a leg starts ringing and when it's answered/gives up —
-   * neither is persisted anywhere today (use-single-call.ts holds this only in memory). */
-  ringingSeconds: number;
-  /** REAL — sum of call_logs.duration_seconds for the period. */
+  /** REAL — Σ call_logs.duration_seconds. Never null; a day with no calls is genuinely 0. */
   callingSeconds: number;
-  /** PLACEHOLDER — would be disposition_submitted_at − call_ended_at per call, summed. Needs
-   * a `wrap_seconds` column captured client-side at disposition-submit time. */
-  dispositionSeconds: number;
-  /** PLACEHOLDER — would be Σ duration of Break/Lunch/Training intervals from a status log. */
-  breakSeconds: number;
-  /** PLACEHOLDER — loggedInSeconds − (calling + disposition + break). Time marked "Available"
-   * but not on a call or wrapping one up. */
-  idleSeconds: number;
-  /** PLACEHOLDER — first status-log row of the day ("login"). */
-  loginTime: Date;
-  /** PLACEHOLDER — last status-log row of the day, or null if still logged in ("logout"). */
+  /** Σ ring_seconds. Null when no call in the period carries one (all pre-migration). */
+  ringingSeconds: number | null;
+  /** Σ wrap_seconds — call end to disposition submit. */
+  dispositionSeconds: number | null;
+  /** Break + lunch + training, from agent_status_log. Null when the day was not tracked. */
+  breakSeconds: number | null;
+  /** Logged-in time not spent calling, ringing, wrapping or on break. Null when untracked. */
+  idleSeconds: number | null;
+  /** First non-offline interval of the day. */
+  loginTime: Date | null;
+  /** End of the last closed interval, or null when the agent is still logged in. */
   logoutTime: Date | null;
-  /** PLACEHOLDER — logoutTime (or now) − loginTime. */
-  loggedInSeconds: number;
-  /** Always true today — flips to false per-field once agent_status_log lands. Surfaced so
-   * the UI can badge these numbers as estimated rather than presenting them as live fact. */
-  isEstimated: boolean;
+  /** Total non-offline time. Null when the day was not tracked. */
+  loggedInSeconds: number | null;
+  /** False when agent_status_log has nothing for this agent on this day. */
+  presenceRecorded: boolean;
 }
 
-// Deterministic seed from a string (agent email + date) — mulberry32, good enough for stable
-// UI placeholders, not for anything security- or fairness-sensitive.
-function seededRandom(seed: string): () => number {
-  let h = 1779033703 ^ seed.length;
-  for (let i = 0; i < seed.length; i++) {
-    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
-    h = (h << 13) | (h >>> 19);
-  }
-  return () => {
-    h = Math.imul(h ^ (h >>> 16), 2246822507);
-    h = Math.imul(h ^ (h >>> 13), 3266489909);
-    h ^= h >>> 16;
-    return (h >>> 0) / 4294967296;
-  };
+const BREAK_STATUSES: AgentStatus[] = ["break", "lunch", "training"];
+
+/** Overlap in seconds between an interval and the IST day, so a shift spanning midnight is
+ * counted against each day only for the part that fell in it. */
+function secondsInDay(interval: StatusInterval, dayStart: number, dayEnd: number): number {
+  const from = Math.max(new Date(interval.startedAt).getTime(), dayStart);
+  // An interval still open is counted up to now, never to the end of the day — an agent who
+  // is 20 minutes into their shift has not been available for 14 hours.
+  const rawEnd = interval.endedAt ? new Date(interval.endedAt).getTime() : Date.now();
+  const to = Math.min(rawEnd, dayEnd);
+  return to > from ? Math.round((to - from) / 1000) : 0;
 }
 
-function todayIso(): string {
-  // IST, not UTC. toISOString() reports the UTC day, so between midnight and 05:30 IST this
-  // returned YESTERDAY — which shifted the placeholder seed onto the wrong day and made
-  // `isToday` false during a real early-morning shift. Matches the day boundary used by
-  // date-filter.ts and the reports page.
-  return istDayKey(new Date().toISOString());
-}
-
-/** One agent's time breakdown for a given day (defaults to today). `disps` should already be
- * filtered to that agent — pass getAgentDispositions(agentId) or a date-filtered slice of it. */
+/**
+ * One agent's time breakdown for a day.
+ *
+ * `disps` should already be that agent's, filtered to the day. `intervals` come from
+ * fetchStatusIntervals; pass an empty array when presence has not been loaded, and every
+ * presence-derived field comes back null rather than fabricated.
+ */
 export function getAgentTimeStats(
   agentId: string,
   disps: DispositionRecord[],
-  dateIso: string = todayIso(),
+  dateIso: string,
+  intervals: StatusInterval[] = [],
 ): AgentTimeStats {
   const callingSeconds = disps.reduce((s, d) => s + (d.durationSeconds ?? 0), 0);
 
-  const rand = seededRandom(`${agentId}|${dateIso}`);
+  // Summed only over calls that actually carry the field. `null` when none do, so a period of
+  // pre-migration calls reports "not recorded" instead of a confident 0.
+  const withRing = disps.filter((d) => d.ringSeconds != null);
+  const withWrap = disps.filter((d) => d.wrapSeconds != null);
+  const ringingSeconds = withRing.length
+    ? withRing.reduce((s, d) => s + (d.ringSeconds ?? 0), 0)
+    : null;
+  const dispositionSeconds = withWrap.length
+    ? withWrap.reduce((s, d) => s + (d.wrapSeconds ?? 0), 0)
+    : null;
 
-  // Placeholder shift start somewhere in a plausible 9:00–10:30 AM window.
-  const [y, m, dd] = dateIso.split("-").map(Number);
-  const loginTime = new Date(y, m - 1, dd, 9, Math.round(rand() * 90));
+  const mine = intervals.filter((i) => i.agentId === agentId);
+  const presenceRecorded = mine.length > 0;
 
-  const isToday = dateIso === todayIso();
-  // A handful of agents are shown "still logged in" for today; every past day gets a logout.
-  const stillLoggedIn = isToday && rand() < 0.35;
+  if (!presenceRecorded) {
+    return {
+      agentId,
+      callingSeconds,
+      ringingSeconds,
+      dispositionSeconds,
+      breakSeconds: null,
+      idleSeconds: null,
+      loginTime: null,
+      logoutTime: null,
+      loggedInSeconds: null,
+      presenceRecorded: false,
+    };
+  }
 
-  const ringingSeconds = Math.round(disps.length * (8 + rand() * 12)); // ~8–20s ring per call
-  const dispositionSeconds = Math.round(disps.length * (25 + rand() * 35)); // ~25–60s wrap/call
-  const breakSeconds = Math.round((30 + rand() * 40) * 60); // ~30–70 min of break/lunch/training
+  // IST day bounds. +05:30 is fixed for India — no DST to account for.
+  const dayStart = new Date(`${dateIso}T00:00:00+05:30`).getTime();
+  const dayEnd = new Date(`${dateIso}T23:59:59.999+05:30`).getTime();
 
-  // Idle is whatever's left of a plausible logged-in day after ringing/calling/wrap/break —
-  // never negative; a quiet day (few calls) shows more idle time, which is the honest story.
-  const targetLoggedInSeconds = Math.round((7.5 + rand() * 1.5) * 3600); // ~7.5–9h shift
-  const idleSeconds = Math.max(
-    0,
-    targetLoggedInSeconds - ringingSeconds - callingSeconds - dispositionSeconds - breakSeconds,
-  );
-  const loggedInSeconds =
-    ringingSeconds + callingSeconds + dispositionSeconds + breakSeconds + idleSeconds;
+  let loggedInSeconds = 0;
+  let breakSeconds = 0;
+  let earliest = Number.POSITIVE_INFINITY;
+  let latestClosed = 0;
+  let anyOpen = false;
 
-  const logoutTime = stillLoggedIn ? null : new Date(loginTime.getTime() + loggedInSeconds * 1000);
+  for (const i of mine) {
+    const secs = secondsInDay(i, dayStart, dayEnd);
+    if (i.status !== "offline") loggedInSeconds += secs;
+    if (BREAK_STATUSES.includes(i.status)) breakSeconds += secs;
+
+    const startedAt = new Date(i.startedAt).getTime();
+    if (i.status !== "offline" && startedAt < earliest) earliest = startedAt;
+    if (i.endedAt) latestClosed = Math.max(latestClosed, new Date(i.endedAt).getTime());
+    else anyOpen = true;
+  }
+
+  // Whatever is left of the logged-in day after calling, ringing, wrapping and breaks. Floored
+  // at zero: clock skew between an agent's browser and the server can otherwise make the parts
+  // sum to slightly more than the whole and report negative idle time.
+  const accounted =
+    callingSeconds + (ringingSeconds ?? 0) + (dispositionSeconds ?? 0) + breakSeconds;
+  const idleSeconds = Math.max(0, loggedInSeconds - accounted);
 
   return {
     agentId,
-    ringingSeconds,
     callingSeconds,
+    ringingSeconds,
     dispositionSeconds,
     breakSeconds,
     idleSeconds,
-    loginTime,
-    logoutTime,
+    loginTime: Number.isFinite(earliest) ? new Date(earliest) : null,
+    logoutTime: anyOpen || !latestClosed ? null : new Date(latestClosed),
     loggedInSeconds,
-    isEstimated: true,
+    presenceRecorded: true,
   };
 }
 
-/** "2h 14m" / "45m" / "32s" — compact duration formatting shared by every time-stats surface. */
 export function formatDuration(totalSeconds: number): string {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -147,7 +174,14 @@ export function formatISTDate(d: Date = new Date()): string {
   });
 }
 
-/** A duration as a % of the agent's logged-in day — the fill for a progress-bar row. */
-export function pctOfShift(seconds: number, stats: AgentTimeStats): number {
-  return stats.loggedInSeconds > 0 ? Math.round((seconds / stats.loggedInSeconds) * 100) : 0;
+/** A duration as a % of the agent's logged-in day — the fill for a progress-bar row. Zero when
+ * the day was not tracked, since there is no denominator to be a percentage of. */
+export function pctOfShift(seconds: number | null, stats: AgentTimeStats): number {
+  if (seconds == null || !stats.loggedInSeconds) return 0;
+  return Math.round((seconds / stats.loggedInSeconds) * 100);
+}
+
+/** Durations that may be unknown render as an em dash, never as "0m". */
+export function formatDurationOrDash(seconds: number | null): string {
+  return seconds == null ? "—" : formatDuration(seconds);
 }
