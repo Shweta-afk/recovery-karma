@@ -457,7 +457,10 @@ export function CallQueueContent({
   };
   const forwardTransfer = () => {
     if (!incomingTransfer) return;
-    toast.success(`${incomingTransfer.debtor.name} redirected to next available agent`);
+    // Says "declined", not "redirected to next available agent". Nothing is redirected: there
+    // is no provider-side transfer (see PROVIDER_CALL_CONTROL in active-call.tsx), and the
+    // dialer has no queue to hand a leg back to. Dismissing the offer is all this does.
+    toast(`Declined — ${incomingTransfer.debtor.name} was not connected to you`);
     setIncomingTransfer(null);
   };
 
@@ -1772,7 +1775,10 @@ export function CallQueueContent({
             });
           }}
           onTransfer={(lc) => {
-            toast.success(`${lc.debtor} redirected to next available agent`);
+            // Transferring a live leg is a provider-side operation this app cannot perform —
+            // see PROVIDER_CALL_CONTROL in active-call.tsx. Say so rather than claiming it
+            // reached another agent.
+            toast(`Transfer is not available yet — ${lc.debtor} is still on your line`);
           }}
           onEndLeg={(lc) => {
             dialer

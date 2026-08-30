@@ -85,17 +85,21 @@ export function GlobalCallBar() {
         {debtor.name} · {phase === "ringing" ? "Ringing…" : fmtElapsed(elapsed)}
       </span>
 
+      {/* Disabled, not removed — same reason as the call panel's controls: this never muted
+          anything. The agent is talking on their own handset and the app has no access to that
+          audio path, so the button only ever toggled a red icon. See PROVIDER_CALL_CONTROL in
+          active-call.tsx for the full note and the flag that re-enables both. */}
       {phase !== "ringing" && (
         <button
           type="button"
+          disabled
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => setActiveCall((c) => (c ? { ...c, muted: !c.muted } : null))}
-          title={muted ? "Unmute" : "Mute"}
+          title="Mute is not available — this call runs on the agent's phone, which the app cannot control"
           className={cn(
             "flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full transition-colors",
-            muted
-              ? "bg-destructive text-destructive-foreground"
-              : "bg-background/15 hover:bg-background/25",
+            "cursor-not-allowed opacity-40",
+            muted ? "bg-destructive text-destructive-foreground" : "bg-background/15",
           )}
         >
           {muted ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
