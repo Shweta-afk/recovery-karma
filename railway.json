@@ -7,7 +7,7 @@
     "startCommand": "node .output/server/index.mjs",
     "restartPolicyType": "on_failure",
     "restartPolicyMaxRetries": 5,
-    "healthcheckPath": "/",
+    "healthcheckPath": "/login",
     "healthcheckTimeout": 30
   }
 }
