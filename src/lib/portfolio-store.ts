@@ -1225,6 +1225,22 @@ export function findDebtorByLoanReference(
   return null;
 }
 
+/**
+ * debtorId -> principal, for the POS metrics on the reports.
+ *
+ * Built from the portfolio cache, so it covers exactly the accounts the viewer can see — an
+ * agent's map has their accounts, a manager's has their team's. An account missing from the
+ * map contributes 0 rather than breaking the sum, which is the right behaviour for a debtor
+ * that has since been removed from a portfolio but still has call history.
+ */
+export function posByDebtorMap(): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const p of getPortfolios()) {
+    for (const row of p.rows) map.set(row.id, row.loanAmount || 0);
+  }
+  return map;
+}
+
 export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio): Debtor {
   const extra = row.extra ?? {};
   const income = parseFloat((extra.income ?? "").replace(/[,₹\s]/g, ""));

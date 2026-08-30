@@ -234,6 +234,30 @@ function AddPhoneRow({ onAdd }: { onAdd: (phone: string) => Promise<void> }) {
   );
 }
 
+/**
+ * In-call controls that need the TELEPHONY PROVIDER to act on a live call: mute, hold, whisper,
+ * conference/merge, transfer and add-call.
+ *
+ * Every one of them was local React state and a toast — `setMuted(true)`,
+ * `toast.success("Whisper ON with ...")` — with nothing sent to the provider. TelephonyProvider
+ * (telephony/types.ts) has no method for any of them, and it cannot: with click-to-call the
+ * agent is talking on their own handset, and a web app has no access to that audio path. The
+ * call is two PSTN legs bridged inside the provider, so muting, holding or adding a third party
+ * are all provider-side conference operations.
+ *
+ * Mute was the one that mattered. An agent pressing it saw the button light up red and read
+ * "Unmute", and would reasonably believe the debtor could not hear them — while the debtor
+ * heard everything.
+ *
+ * Kept visible rather than deleted so the intent is still legible and re-enabling is one flag.
+ * Flip this to true only once the provider exposes call control AND TelephonyProvider has the
+ * methods to drive it; the buttons come back together.
+ */
+const PROVIDER_CALL_CONTROL = false;
+
+const NO_CALL_CONTROL_HINT =
+  "Not available yet — this call runs on the agent's phone, which the app cannot mute, hold or bridge. Needs telephony-provider call control.";
+
 function ActiveCallContent({
   call,
   disposition,
@@ -736,6 +760,8 @@ function ActiveCallContent({
                   variant={muted ? "default" : "outline"}
                   className={cn("gap-1 h-8", muted && "bg-destructive text-destructive-foreground")}
                   onClick={onMute}
+                  disabled={!PROVIDER_CALL_CONTROL}
+                  title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
                 >
                   {muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
                   {muted ? "Unmute" : "Mute"}
@@ -745,6 +771,8 @@ function ActiveCallContent({
                   variant={held ? "default" : "outline"}
                   className={cn("gap-1 h-8", held && "bg-amber-500/80 text-white")}
                   onClick={onHold}
+                  disabled={!PROVIDER_CALL_CONTROL}
+                  title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
                 >
                   <PauseCircle className="h-3.5 w-3.5" />
                   {held ? "Resume" : "Hold"}
@@ -766,6 +794,8 @@ function ActiveCallContent({
                         setManualDialOpen(false);
                       }
                     }}
+                    disabled={!PROVIDER_CALL_CONTROL}
+                    title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
                   >
                     {whisper ? <EarOff className="h-3.5 w-3.5" /> : <Ear className="h-3.5 w-3.5" />}
                     {whisper ? `Whisper · ${whisperTarget?.split(" ")[0]}` : "Whisper"}
@@ -822,6 +852,8 @@ function ActiveCallContent({
                         setWhisperOpen(false);
                       }
                     }}
+                    disabled={!PROVIDER_CALL_CONTROL}
+                    title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
                   >
                     <GitMerge className="h-3.5 w-3.5" />
                     {conferenced
@@ -887,6 +919,8 @@ function ActiveCallContent({
                       setTransferOpen(false);
                       setManualDialOpen(false);
                     }}
+                    disabled={!PROVIDER_CALL_CONTROL}
+                    title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
                   >
                     <PhoneForwarded className="h-3.5 w-3.5" />
                     Add Call
@@ -933,6 +967,8 @@ function ActiveCallContent({
                       setAddCallOpen(false);
                       setManualDialOpen(false);
                     }}
+                    disabled={!PROVIDER_CALL_CONTROL}
+                    title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
                   >
                     <ArrowRightLeft className="h-3.5 w-3.5" />
                     Transfer

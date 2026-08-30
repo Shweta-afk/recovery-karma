@@ -48,6 +48,12 @@ export interface QueueDebtor extends Debtor {
 
 export interface ActiveCall {
   debtor: QueueDebtor;
+  /** ISO instants for the call's own timeline, stamped by CallSessionProvider as the phase
+   * moves. They exist so ring and wrap time can be MEASURED at disposition instead of invented
+   * — see agent-time-stats.ts. Absent on a call that never left "ringing". */
+  dialStartedAt?: string;
+  answeredAt?: string;
+  endedAt?: string;
   /** How this call was placed — set at dial time, read when the disposition is written so
    * call_logs.dial_mode reflects what the agent actually did. */
   dialMode?: DialMode;

@@ -329,6 +329,54 @@ function distinctAccounts() {
   eq("distinct: repeat visit does not raise the cumulative", on11?.currentCumulative, 1);
 }
 
+/** POS metrics: distinct-set money, and the month picker. */
+function posAndPicker() {
+  const now = new Date("2026-08-22T12:00:00Z");
+  const pos = new Map([
+    ["acc-1", 100_000],
+    ["acc-2", 50_000],
+  ]);
+  const disps = [
+    // acc-1 worked three times, promised once. Its principal must count ONCE.
+    disp("2026-08-10T06:00:00Z", "no_answer", { debtorId: "acc-1" }),
+    disp("2026-08-11T06:00:00Z", "promised", { debtorId: "acc-1", ptpAmount: 9000 }),
+    disp("2026-08-12T06:00:00Z", "callback", { debtorId: "acc-1" }),
+    disp("2026-08-12T07:00:00Z", "no_answer", { debtorId: "acc-2" }),
+  ];
+  const c = compareMonths(disps, [], now, pos);
+  eq("pos: worked counts each account's principal once", c.current.posWorked, 150_000);
+  eq("pos: promised is only the account that promised", c.current.posPromised, 100_000);
+
+  // ptpAmount and posPromised answer different questions and must not track each other.
+  eq("pos: ptpAmount is the promise, not the book behind it", c.current.ptpAmount, 9000);
+
+  // Without a POS map every other metric still works and POS is simply 0.
+  const noPos = compareMonths(disps, [], now);
+  eq("pos: absent map does not break other metrics", noPos.current.calls, 4);
+  eq("pos: absent map yields zero POS", noPos.current.posWorked, 0);
+
+  // Cumulative POS unions rather than adding — acc-1 worked on 3 days is still 100k.
+  const series = dailySeries(disps, [], "posWorked", now, pos);
+  const on12 = series.find((p) => p.day === 12);
+  eq("pos: cumulative unions across days", on12?.currentCumulative, 150_000);
+
+  // Month picker: compare against an explicit earlier month.
+  const picked = compareMonths(disps, [], now, pos, "2026-06");
+  eq("picker: comparison month is honoured", picked.window.previousMonth, 6);
+  eq("picker: comparison year is honoured", picked.window.previousYear, 2026);
+  // A future or same month is nonsense to compare against and falls back to the default.
+  eq(
+    "picker: refuses to compare a month against itself",
+    compareMonths(disps, [], now, pos, "2026-08").window.previousMonth,
+    7,
+  );
+  eq(
+    "picker: refuses a future month",
+    compareMonths(disps, [], now, pos, "2026-12").window.previousMonth,
+    7,
+  );
+}
+
 istBucketing();
 windows();
 comparison();
@@ -337,6 +385,7 @@ series();
 scoping();
 empties();
 distinctAccounts();
+posAndPicker();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

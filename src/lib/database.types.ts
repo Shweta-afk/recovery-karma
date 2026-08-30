@@ -3,12 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 21 tables.
-//
-// ⚠️ `live_calls` below was added BY HAND, ahead of
-// migrations/20260830_live_calls.sql being applied to the live database — the generator can
-// only see tables that already exist. Once that migration has run, `bun run gen:types` will
-// reproduce it identically and this note can go.
+// Generated from 23 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -48,6 +43,33 @@ export interface Database {
           object_identity?: string | null;
           auth_agent_id_lang?: string | null;
           agents_select_ok?: boolean | null;
+        };
+        Relationships: [];
+      };
+      agent_status_log: {
+        Row: {
+          id: string;
+          client_id: string;
+          agent_id: string;
+          status: string;
+          started_at: string;
+          ended_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          agent_id: string;
+          status: string;
+          started_at?: string;
+          ended_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          agent_id?: string;
+          status?: string;
+          started_at?: string;
+          ended_at?: string | null;
         };
         Relationships: [];
       };
@@ -129,6 +151,8 @@ export interface Database {
           dial_mode: string | null;
           callback_date: string | null;
           callback_time: string | null;
+          ring_seconds: number | null;
+          wrap_seconds: number | null;
         };
         Insert: {
           id?: string;
@@ -162,6 +186,8 @@ export interface Database {
           dial_mode?: string | null;
           callback_date?: string | null;
           callback_time?: string | null;
+          ring_seconds?: number | null;
+          wrap_seconds?: number | null;
         };
         Update: {
           id?: string;
@@ -195,6 +221,8 @@ export interface Database {
           dial_mode?: string | null;
           callback_date?: string | null;
           callback_time?: string | null;
+          ring_seconds?: number | null;
+          wrap_seconds?: number | null;
         };
         Relationships: [];
       };

@@ -26,6 +26,8 @@ import type { DispositionRecord } from "./disposition-store";
 import type { PaymentRecord } from "./payments-store";
 
 export type TrendMetricKey =
+  | "posWorked"
+  | "posPromised"
   | "collected"
   | "calls"
   | "contacts"
@@ -51,6 +53,15 @@ export interface TrendMetrics {
    * many accounts did we actually touch", which `calls` cannot: 200 calls to 40 accounts is a
    * very different month from 200 calls to 200. See DayMetrics on why it can't be summed. */
   uniqueAccounts: number;
+  /** ₹ principal on the accounts WORKED — the book actually covered this period. A distinct-set
+   * figure like uniqueAccounts: an account worked five times counts its principal once. */
+  posWorked: number;
+  /** ₹ principal on the accounts that PROMISED — the book now sitting behind a PTP.
+   *
+   * Distinct from ptpAmount, and the pair is the point: ptpAmount is what debtors said they
+   * would pay, posPromised is how much principal those promises are attached to. A month of
+   * small promises against a large book looks identical to a healthy one on ptpAmount alone. */
+  posPromised: number;
 }
 
 /**
@@ -63,6 +74,9 @@ export interface TrendMetrics {
  */
 export interface DayMetrics extends TrendMetrics {
   accounts: Set<string>;
+  /** Accounts that promised that day. Carried as a set for the same reason `accounts` is —
+   * principal must not be double-counted when a range is summed. */
+  promisedAccounts: Set<string>;
 }
 
 export interface MetricDef {
@@ -80,6 +94,8 @@ export const TREND_METRICS: MetricDef[] = [
   { key: "ptps", label: "PTPs", currency: false },
   { key: "payments", label: "Payments", currency: false },
   { key: "uniqueAccounts", label: "Accounts", currency: false },
+  { key: "posWorked", label: "POS Worked", currency: true },
+  { key: "posPromised", label: "POS Promised", currency: true },
 ];
 
 // ─── IST day bucketing ──────────────────────────────────────────────────────────
@@ -144,10 +160,22 @@ export interface MonthWindow {
 }
 
 /** The current and previous month in IST, whatever timezone the browser is in. */
-export function monthWindow(now: Date = new Date()): MonthWindow {
+export function monthWindow(now: Date = new Date(), compareTo?: string): MonthWindow {
   const [y, m, d] = IST_DAY.format(now).split("-").map(Number);
-  const previousMonth = m === 1 ? 12 : m - 1;
-  const previousYear = m === 1 ? y - 1 : y;
+
+  // `compareTo` ("YYYY-MM") lets the caller pick any month to compare against; without it the
+  // comparison is the month immediately before, which is what this always used to do.
+  let previousMonth = m === 1 ? 12 : m - 1;
+  let previousYear = m === 1 ? y - 1 : y;
+  if (compareTo && /^\d{4}-\d{2}$/.test(compareTo)) {
+    const [cy, cm] = compareTo.split("-").map(Number);
+    // A future month, or this same month, has nothing to compare against — fall back rather
+    // than render a comparison of a month against itself.
+    if (cm >= 1 && cm <= 12 && (cy < y || (cy === y && cm < m))) {
+      previousYear = cy;
+      previousMonth = cm;
+    }
+  }
   const daysInCurrent = daysInMonth(y, m);
   const daysInPrevious = daysInMonth(previousYear, previousMonth);
   return {
@@ -175,11 +203,17 @@ function emptyMetrics(): TrendMetrics {
     collected: 0,
     payments: 0,
     uniqueAccounts: 0,
+    posWorked: 0,
+    posPromised: 0,
   };
 }
 
 function emptyDayMetrics(): DayMetrics {
-  return { ...emptyMetrics(), accounts: new Set<string>() };
+  return {
+    ...emptyMetrics(),
+    accounts: new Set<string>(),
+    promisedAccounts: new Set<string>(),
+  };
 }
 
 const NON_CONTACT = new Set(["no_answer", "voicemail"]);
@@ -194,6 +228,9 @@ const NON_CONTACT = new Set(["no_answer", "voicemail"]);
 export function bucketByDay(
   disps: DispositionRecord[],
   payments: PaymentRecord[],
+  /** debtorId -> principal, for the POS metrics. Omit and they come back 0 — callers without
+   * portfolio data get every other metric unaffected rather than a broken call. */
+  posByDebtor: Map<string, number> = new Map(),
 ): Map<string, DayMetrics> {
   const byDay = new Map<string, DayMetrics>();
   const at = (key: string): DayMetrics => {
@@ -215,6 +252,7 @@ export function bucketByDay(
     if (d.outcome === "promised") {
       m.ptps++;
       m.ptpAmount += d.ptpAmount ?? 0;
+      if (d.debtorId) m.promisedAccounts.add(d.debtorId);
     }
   }
 
@@ -231,26 +269,40 @@ export function bucketByDay(
     if (p.debtorId) m.accounts.add(p.debtorId);
   }
 
-  // Materialise the per-day distinct count now that every row has landed.
-  for (const m of byDay.values()) m.uniqueAccounts = m.accounts.size;
+  // Materialise the per-day distinct figures now that every row has landed. POS is summed
+  // over the SET, so an account worked five times contributes its principal once.
+  const pos = (ids: Set<string>) => {
+    let total = 0;
+    for (const id of ids) total += posByDebtor.get(id) ?? 0;
+    return total;
+  };
+  for (const m of byDay.values()) {
+    m.uniqueAccounts = m.accounts.size;
+    m.posWorked = pos(m.accounts);
+    m.posPromised = pos(m.promisedAccounts);
+  }
 
   return byDay;
 }
 
 function sumRange(
   byDay: Map<string, DayMetrics>,
+  posByDebtor: Map<string, number>,
   year: number,
   month: number,
   fromDay: number,
   toDay: number,
 ): TrendMetrics {
   const total = emptyMetrics();
-  // Unioned, not added — see DayMetrics.
+  // Unioned, not added — see DayMetrics. POS follows the same rule: adding each day's POS
+  // would count an account's principal once per day it was worked.
   const accounts = new Set<string>();
+  const promised = new Set<string>();
   for (let day = fromDay; day <= toDay; day++) {
     const m = byDay.get(dayKey(year, month, day));
     if (!m) continue;
     for (const id of m.accounts) accounts.add(id);
+    for (const id of m.promisedAccounts) promised.add(id);
     total.calls += m.calls;
     total.contacts += m.contacts;
     total.ptps += m.ptps;
@@ -259,6 +311,12 @@ function sumRange(
     total.payments += m.payments;
   }
   total.uniqueAccounts = accounts.size;
+  let worked = 0;
+  for (const id of accounts) worked += posByDebtor.get(id) ?? 0;
+  let promisedPos = 0;
+  for (const id of promised) promisedPos += posByDebtor.get(id) ?? 0;
+  total.posWorked = worked;
+  total.posPromised = promisedPos;
   return total;
 }
 
@@ -278,14 +336,32 @@ export function compareMonths(
   disps: DispositionRecord[],
   payments: PaymentRecord[],
   now: Date = new Date(),
+  posByDebtor: Map<string, number> = new Map(),
+  /** Which month to compare AGAINST, as "YYYY-MM". Defaults to the month before `now`.
+   * Lets a report ask "this month vs last March" instead of only ever the previous month. */
+  compareTo?: string,
 ): TrendComparison {
-  const w = monthWindow(now);
-  const byDay = bucketByDay(disps, payments);
+  const w = monthWindow(now, compareTo);
+  const byDay = bucketByDay(disps, payments, posByDebtor);
   return {
     window: w,
-    current: sumRange(byDay, w.currentYear, w.currentMonth, 1, w.asOfDay),
-    previousSamePeriod: sumRange(byDay, w.previousYear, w.previousMonth, 1, w.comparableDay),
-    previousFull: sumRange(byDay, w.previousYear, w.previousMonth, 1, w.daysInPrevious),
+    current: sumRange(byDay, posByDebtor, w.currentYear, w.currentMonth, 1, w.asOfDay),
+    previousSamePeriod: sumRange(
+      byDay,
+      posByDebtor,
+      w.previousYear,
+      w.previousMonth,
+      1,
+      w.comparableDay,
+    ),
+    previousFull: sumRange(
+      byDay,
+      posByDebtor,
+      w.previousYear,
+      w.previousMonth,
+      1,
+      w.daysInPrevious,
+    ),
   };
 }
 
@@ -325,9 +401,11 @@ export function dailySeries(
   payments: PaymentRecord[],
   metric: TrendMetricKey,
   now: Date = new Date(),
+  posByDebtor: Map<string, number> = new Map(),
+  compareTo?: string,
 ): TrendDayPoint[] {
-  const w = monthWindow(now);
-  const byDay = bucketByDay(disps, payments);
+  const w = monthWindow(now, compareTo);
+  const byDay = bucketByDay(disps, payments, posByDebtor);
   const span = Math.max(w.daysInCurrent, w.daysInPrevious);
 
   const points: TrendDayPoint[] = [];
@@ -336,7 +414,11 @@ export function dailySeries(
   // The cumulative line for a DISTINCT count has to union identities as it walks the month,
   // not add the daily figures — an account worked on three days is one account, not three.
   // Every other metric is additive and ignores these.
-  const distinct = metric === "uniqueAccounts";
+  // uniqueAccounts, posWorked and posPromised are all distinct-set figures: their cumulative
+  // line unions identities as it walks the month rather than adding the daily values, or an
+  // account worked on three days contributes its principal three times.
+  const distinct =
+    metric === "uniqueAccounts" || metric === "posWorked" || metric === "posPromised";
   const curSeen = new Set<string>();
   const prevSeen = new Set<string>();
 
@@ -352,15 +434,24 @@ export function dailySeries(
       : null;
 
     if (distinct) {
+      // Which set of identities this metric counts, and how a set becomes its value.
+      const setOf = (m: DayMetrics | undefined) =>
+        (metric === "posPromised" ? m?.promisedAccounts : m?.accounts) ?? [];
+      const valueOf = (ids: Set<string>) => {
+        if (metric === "uniqueAccounts") return ids.size;
+        let total = 0;
+        for (const id of ids) total += posByDebtor.get(id) ?? 0;
+        return total;
+      };
       if (cur !== null) {
-        for (const id of byDay.get(dayKey(w.currentYear, w.currentMonth, day))?.accounts ?? [])
+        for (const id of setOf(byDay.get(dayKey(w.currentYear, w.currentMonth, day))))
           curSeen.add(id);
-        curCum = curSeen.size;
+        curCum = valueOf(curSeen);
       }
       if (prev !== null) {
-        for (const id of byDay.get(dayKey(w.previousYear, w.previousMonth, day))?.accounts ?? [])
+        for (const id of setOf(byDay.get(dayKey(w.previousYear, w.previousMonth, day))))
           prevSeen.add(id);
-        prevCum = prevSeen.size;
+        prevCum = valueOf(prevSeen);
       }
     } else {
       if (cur !== null) curCum += cur;

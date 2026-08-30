@@ -31,7 +31,7 @@ import {
   calcStats,
   type DispositionRecord,
 } from "@/lib/disposition-store";
-import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { getPortfolios, refreshPortfolios, posByDebtorMap } from "@/lib/portfolio-store";
 import {
   getAgentAccountCounts,
   getPortfolioTotals,
@@ -50,6 +50,7 @@ import {
 import { Stat } from "@/components/reports/stat-card";
 import { AgentCallLog } from "@/components/reports/agent-call-log";
 import { DataTable, ReportSection } from "@/components/reports/data-table";
+import { AgentReportDetail } from "@/components/reports/agent-detail";
 import {
   Leaderboard,
   LEADER_METRIC_CAPTION,
@@ -116,6 +117,9 @@ function ManagerReportsPage() {
   );
 
   const [portfolioVersion, setPortfolioVersion] = useState(0);
+  // Principal per debtor, for the POS Worked / POS Promised trend metrics. Keyed on the
+  // portfolio cache version so it refreshes with the rest of the page.
+  const posByDebtor = useMemo(() => posByDebtorMap(), [portfolioVersion]);
   useEffect(() => {
     const bump = () => setPortfolioVersion((n) => n + 1);
     window.addEventListener("portfolios-updated", bump);
@@ -322,6 +326,7 @@ function ManagerReportsPage() {
         {/* ── MONTHLY TREND TAB ── */}
         <TabsContent value="trend" className="mt-4">
           <MonthlyTrendPanel
+            posByDebtor={posByDebtor}
             disps={disps}
             payments={teamPayments}
             note={
@@ -525,7 +530,21 @@ function ManagerReportsPage() {
                               colSpan={8}
                               className="border-b border-border bg-muted/10 px-4 py-3"
                             >
-                              <AgentCallLog disps={a.disps} agentName={a.name} />
+                              {/* Full per-agent report. The call log below it is kept — it
+                                  answers "what did they actually do", which the summary above
+                                  deliberately does not. */}
+                              <div className="space-y-4">
+                                <AgentReportDetail
+                                  agentId={a.agentId}
+                                  agentName={a.name}
+                                  disps={a.disps}
+                                  payments={allPayments.filter((p) => p.agentId === a.agentId)}
+                                  posByDebtor={posByDebtor}
+                                />
+                                <div className="border-t border-border pt-3">
+                                  <AgentCallLog disps={a.disps} agentName={a.name} />
+                                </div>
+                              </div>
                             </td>
                           </tr>
                         )}
