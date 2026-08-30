@@ -46,6 +46,33 @@ export interface Database {
         };
         Relationships: [];
       };
+      agent_status_log: {
+        Row: {
+          id: string;
+          client_id: string;
+          agent_id: string;
+          status: string;
+          started_at: string;
+          ended_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          agent_id: string;
+          status: string;
+          started_at?: string;
+          ended_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          agent_id?: string;
+          status?: string;
+          started_at?: string;
+          ended_at?: string | null;
+        };
+        Relationships: [];
+      };
       agents: {
         Row: {
           id: string;
@@ -102,6 +129,8 @@ export interface Database {
           promise_date: string | null;
           callback_datetime: string | null;
           duration_seconds: number | null;
+          ring_seconds: number | null;
+          wrap_seconds: number | null;
           raw_notes: string | null;
           ai_notes: string | null;
           recording_url: string | null;
@@ -135,6 +164,8 @@ export interface Database {
           promise_date?: string | null;
           callback_datetime?: string | null;
           duration_seconds?: number | null;
+          ring_seconds?: number | null;
+          wrap_seconds?: number | null;
           raw_notes?: string | null;
           ai_notes?: string | null;
           recording_url?: string | null;
@@ -168,6 +199,8 @@ export interface Database {
           promise_date?: string | null;
           callback_datetime?: string | null;
           duration_seconds?: number | null;
+          ring_seconds?: number | null;
+          wrap_seconds?: number | null;
           raw_notes?: string | null;
           ai_notes?: string | null;
           recording_url?: string | null;

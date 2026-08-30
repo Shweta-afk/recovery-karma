@@ -33,6 +33,7 @@ import {
 } from "@/lib/disposition-store";
 import {
   getAgentTimeStats,
+  formatDurationOrDash,
   formatDuration,
   formatClockTime,
   pctOfShift,
@@ -41,6 +42,11 @@ import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portf
 import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
 import { MonthlyTrendCompact } from "@/components/reports/monthly-trend";
 import { computeDrr, monthDays, monthlyCollectionTarget } from "@/lib/daily-run-rate";
+import {
+  fetchStatusIntervals,
+  todayPresenceKey,
+  type StatusInterval,
+} from "@/lib/agent-presence-store";
 import { useStorageSync } from "@/lib/storage-sync";
 
 export const Route = createFileRoute("/dashboard/")({
@@ -283,7 +289,19 @@ export function AgentDashboardContent({
       agentId ? getAgentDispositions(agentId).filter((d) => isSameDay(d.time, new Date())) : [],
     [agentId, today],
   );
-  const myTimeStats = useMemo(() => getAgentTimeStats(agentId, todayDisps), [agentId, todayDisps]);
+  // Presence intervals make break/idle/login real; without them getAgentTimeStats returns
+  // nulls, which render as "—" rather than as invented figures.
+  const [presence, setPresence] = useState<StatusInterval[]>([]);
+  useEffect(() => {
+    if (!agentId) return;
+    fetchStatusIntervals([agentId], todayPresenceKey())
+      .then(setPresence)
+      .catch(() => setPresence([]));
+  }, [agentId, todayDisps]);
+  const myTimeStats = useMemo(
+    () => getAgentTimeStats(agentId, todayDisps, todayPresenceKey(), presence),
+    [agentId, todayDisps, presence],
+  );
 
   // "custom" used to have nothing behind it — it silently showed today's numbers under the
   // chosen date's label. Harmless while only the Performance block followed the toggle;
@@ -761,10 +779,10 @@ export function AgentDashboardContent({
             <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-3 pb-2 border-b border-border">
               <span className="flex items-center gap-1">
                 <LogIn className="h-3 w-3" />
-                {formatClockTime(myTimeStats.loginTime)}
+                {myTimeStats.loginTime ? formatClockTime(myTimeStats.loginTime) : "—"}
               </span>
               <span className="text-foreground font-medium">
-                {formatDuration(myTimeStats.loggedInSeconds)} logged in
+                {formatDurationOrDash(myTimeStats.loggedInSeconds)} logged in
               </span>
               {myTimeStats.logoutTime ? (
                 <span className="flex items-center gap-1">
@@ -820,7 +838,7 @@ export function AgentDashboardContent({
                         {label}
                       </span>
                       <span className="font-medium text-foreground tabular-nums">
-                        {formatDuration(seconds)}{" "}
+                        {formatDurationOrDash(seconds)}{" "}
                         <span className="text-muted-foreground">({pct}%)</span>
                       </span>
                     </div>

@@ -63,6 +63,12 @@ export interface DispositionRecord {
   dialMode?: DialMode;
   /** Provider's id for the call, used to backfill the recording once it is published. */
   providerCallId?: string;
+  /** Seconds from dial to answer/abandon. Real, captured by the dialer — this used to be
+   * invented by a seeded RNG in agent-time-stats.ts. Undefined for calls logged before
+   * migrations/20260830_agent_time_tracking.sql. */
+  ringSeconds?: number;
+  /** Seconds from call end to disposition submit — the agent's wrap time. Same provenance. */
+  wrapSeconds?: number;
   /** Manager's QA tag for this call's tone — see CallSentiment. Absent on any call not yet
    * audited, and always absent until 20260811_call_logs_sentiment.sql has been applied. */
   sentiment?: CallSentiment;
@@ -189,6 +195,9 @@ export async function refreshDispositions(): Promise<void> {
     // Optional: present only once 20260827_case_escalations.sql has been applied.
     callback_date?: string | null;
     callback_time?: string | null;
+    // Optional: present only once 20260830_agent_time_tracking.sql has been applied.
+    ring_seconds?: number | null;
+    wrap_seconds?: number | null;
     // Optional: present only once 20260814_call_logs_ai_sentiment.sql has been applied.
     ai_transcript?: string | null;
     ai_agent_tone?: string | null;
@@ -223,6 +232,8 @@ export async function refreshDispositions(): Promise<void> {
       dialMode: (l.dial_mode as DialMode | null) ?? undefined,
       callbackDate: l.callback_date ?? undefined,
       callbackTime: l.callback_time ?? undefined,
+      ringSeconds: l.ring_seconds ?? undefined,
+      wrapSeconds: l.wrap_seconds ?? undefined,
       notes: l.raw_notes ?? "",
       ptpAmount: l.outcome === "promised" ? amount : undefined,
       ptpDate: l.outcome === "promised" ? (l.promise_date ?? undefined) : undefined,
@@ -300,7 +311,7 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   });
   if (error) throw error;
 
-  if (d.reason || d.ptpTime || d.dialMode || d.callbackDate) {
+  if (d.reason || d.ptpTime || d.dialMode || d.callbackDate || d.ringSeconds != null) {
     const { error: extraErr } = await supabase
       .from("call_logs")
       .update({
@@ -309,6 +320,8 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
         dial_mode: d.dialMode ?? null,
         callback_date: d.outcome === "callback" ? (d.callbackDate ?? null) : null,
         callback_time: d.outcome === "callback" ? (d.callbackTime ?? null) : null,
+        ring_seconds: d.ringSeconds ?? null,
+        wrap_seconds: d.wrapSeconds ?? null,
       })
       .eq("id", logId);
     if (extraErr) {
