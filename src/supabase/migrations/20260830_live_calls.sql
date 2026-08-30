@@ -69,7 +69,13 @@ CREATE POLICY live_calls_update ON live_calls FOR UPDATE TO authenticated
 -- which would abort a replay of this migration.
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  -- Guard on the publication EXISTING as well as on membership. Not every project has
+  -- `supabase_realtime` (it is created when Realtime is first enabled), and ALTER PUBLICATION
+  -- on a missing one is a hard error that would abort this whole migration — taking the table
+  -- and its policies down with it, for a feature that would still work by polling.
+  IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    RAISE NOTICE 'supabase_realtime publication not found — live_calls created, but enable Realtime for it in the Supabase dashboard (Database > Replication).';
+  ELSIF NOT EXISTS (
     SELECT 1 FROM pg_publication_tables
     WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'live_calls'
   ) THEN
