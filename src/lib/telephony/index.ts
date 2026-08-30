@@ -4,6 +4,7 @@
 import type { TelephonyProvider } from "./types";
 import { kookooProvider } from "./kookoo-provider";
 import { exotelProvider } from "./exotel-provider";
+import { skycrmProvider } from "./skycrm-provider";
 import { createSimProvider, type SimProvider } from "./sim-provider";
 
 export * from "./types";
@@ -22,6 +23,9 @@ const PROVIDERS: Record<string, () => TelephonyProvider> = {
   sim: getSimProvider,
   kookoo: () => kookooProvider,
   exotel: () => exotelProvider,
+  // SkyCRM-ACD (Intellect Info Trade) — POC adapter over their REST APIs; agents use a SIP
+  // softphone for audio until the vendor unlocks WebRTC. Unwired until credentials land.
+  skycrm: () => skycrmProvider,
 };
 
 /** The active provider. Defaults to the simulated provider until a real SIP vendor is
