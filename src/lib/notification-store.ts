@@ -45,11 +45,11 @@ export async function refreshNotifications(): Promise<void> {
   const emailById = new Map(agentRows.map((a) => [a.id, a.email]));
   const notifications: AppNotification[] = rows.map((n) => ({
     id: n.id,
-    toAgentId: emailById.get(n.to_agent_id) ?? "",
+    toAgentId: emailById.get(n.to_agent_id ?? "") ?? "",
     fromName: n.from_name,
     message: n.message,
-    createdAt: n.created_at,
-    read: n.read,
+    createdAt: n.created_at ?? "",
+    read: n.read ?? false,
   }));
 
   localStorage.setItem(KEY, JSON.stringify(notifications));

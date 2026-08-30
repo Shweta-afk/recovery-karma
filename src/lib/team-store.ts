@@ -138,7 +138,7 @@ export async function refreshTeams(): Promise<void> {
 
   const byId = new Map(agentRows.map((a) => [a.id, a]));
   const teams: Team[] = teamRows.map((t) => {
-    const manager = byId.get(t.manager_id);
+    const manager = byId.get(t.manager_id ?? "");
     const agentIds = memberRows
       .filter((m) => m.team_id === t.id)
       .map((m) => byId.get(m.agent_id)?.email)
@@ -149,7 +149,7 @@ export async function refreshTeams(): Promise<void> {
       managerId: manager?.email ?? "",
       managerName: manager?.name ?? "",
       agentIds,
-      createdAt: t.created_at,
+      createdAt: t.created_at ?? "",
     };
   });
 

@@ -56,8 +56,8 @@ export async function refreshMappingTemplates(): Promise<void> {
     lenderLabel: t.lender_label ?? t.lender,
     fingerprint: t.fingerprint,
     mapping: (t.mapping as Record<string, string>) ?? {},
-    updatedAt: t.updated_at,
-    useCount: t.use_count,
+    updatedAt: t.updated_at ?? "",
+    useCount: t.use_count ?? 0,
   }));
 
   localStorage.setItem(KEY, JSON.stringify(templates));

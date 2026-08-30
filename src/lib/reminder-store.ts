@@ -48,11 +48,11 @@ export async function refreshReminders(): Promise<void> {
   const emailById = new Map(agentRows.map((a) => [a.id, a.email]));
 
   const reminders: Reminder[] = rows.map((r) => {
-    const debtor = debtorById.get(r.debtor_id);
+    const debtor = debtorById.get(r.debtor_id ?? "");
     return {
       id: r.id,
-      agentId: emailById.get(r.agent_id) ?? "",
-      debtorId: r.debtor_id,
+      agentId: emailById.get(r.agent_id ?? "") ?? "",
+      debtorId: r.debtor_id ?? "",
       debtorName: debtor?.name ?? "",
       phone: debtor?.phone_primary ?? "",
       kind: r.kind as ReminderKind,
@@ -60,8 +60,8 @@ export async function refreshReminders(): Promise<void> {
       dueDate: r.due_date,
       dueTime: r.due_time ?? undefined,
       message: r.message ?? "",
-      createdAt: r.created_at,
-      notified: r.notified,
+      createdAt: r.created_at ?? "",
+      notified: r.notified ?? false,
     };
   });
 

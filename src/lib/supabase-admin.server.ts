@@ -10,10 +10,10 @@
 
 import { createClient } from "@supabase/supabase-js";
 // Same permissive stand-in the browser client uses — see the note on GenericSchema.
-import type { GenericSchema } from "./supabase";
+import type { Database } from "./database.types";
 import type { Role } from "./auth";
 
-let adminInstance: ReturnType<typeof createClient<GenericSchema>> | null = null;
+let adminInstance: ReturnType<typeof createClient<Database>> | null = null;
 
 export function getSupabaseAdmin() {
   if (adminInstance) return adminInstance;
@@ -31,7 +31,7 @@ export function getSupabaseAdmin() {
     );
   }
 
-  adminInstance = createClient<GenericSchema>(url, serviceRoleKey, {
+  adminInstance = createClient<Database>(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   return adminInstance;

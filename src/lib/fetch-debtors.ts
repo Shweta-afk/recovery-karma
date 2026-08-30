@@ -97,7 +97,11 @@ export async function fetchDebtorsByAgent(agentId: string): Promise<Debtor[]> {
     return [];
   }
 
-  const portfolioIds = portfolios.map((p) => p.portfolio_id);
+  // Filtered, not just mapped: portfolio_id is nullable on the join row, and a null in the
+  // `.in()` list matches nothing while making the filter harder to reason about.
+  const portfolioIds = portfolios
+    .map((p) => p.portfolio_id)
+    .filter((id): id is string => typeof id === "string");
 
   // Fetch debtors from assigned portfolios
   const { data, error } = await supabase

@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { Database } from "./database.types";
 
 /**
  * A permissive stand-in for generated Supabase types.
@@ -39,7 +40,7 @@ export interface GenericSchema {
   };
 }
 
-let supabaseInstance: ReturnType<typeof createClient<GenericSchema>> | null = null;
+let supabaseInstance: ReturnType<typeof createClient<Database>> | null = null;
 
 export function getSupabaseConfig() {
   // Server-side: read from process.env (Railway production)
@@ -72,20 +73,24 @@ export function getSupabase() {
     );
   }
 
-  supabaseInstance = createClient<GenericSchema>(supabaseUrl, supabaseAnonKey);
+  supabaseInstance = createClient<Database>(supabaseUrl, supabaseAnonKey);
   return supabaseInstance;
 }
 
+// Lazy proxy: the real client is only constructed on first property access, so importing this
+// module never throws on missing env (which would break SSR prerender and every test).
 export const supabase = new Proxy(new Object(), {
   get(_, prop) {
-    return (getSupabase() as any)[prop];
+    return (getSupabase() as unknown as Record<string | symbol, unknown>)[prop];
   },
-}) as ReturnType<typeof createClient<GenericSchema>>;
+}) as ReturnType<typeof createClient<Database>>;
 
 /** The logged-in user's own `agents` row (id + client_id) — every write to a
  * client-scoped table needs client_id to satisfy RLS, and agent_id/uploaded_by
  * style FKs need the agents.id UUID rather than the auth uid or email. */
-export async function getMyAgentRow(): Promise<{ id: string; client_id: string } | null> {
+// client_id is nullable in the schema (an agents row can exist before it is attached to a
+// client), so the caller has to handle that rather than the type quietly asserting otherwise.
+export async function getMyAgentRow(): Promise<{ id: string; client_id: string | null } | null> {
   const {
     data: { user },
   } = await supabase.auth.getUser();

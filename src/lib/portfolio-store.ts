@@ -1,5 +1,6 @@
 import type { DPDBucket, Debtor } from "./mock-debtors";
 import { supabase, getMyAgentRow } from "./supabase";
+import type { Database, Json } from "./database.types";
 import { refreshRetentionRequests } from "./retention-store";
 import { fetchAllRows } from "./fetch-all-rows";
 import { createJsonCache } from "./json-cache";
@@ -266,10 +267,10 @@ export async function refreshPortfolios(): Promise<void> {
     name: p.name,
     lender: p.lender_name ?? "",
     product: p.product_type ? (PRODUCT_ENUM_TO_LABEL[p.product_type] ?? p.product_type) : "",
-    uploadedAt: p.uploaded_at,
+    uploadedAt: p.uploaded_at ?? "",
     managerId: p.manager_id ? emailById.get(p.manager_id) : undefined,
     teamId: p.team_id ?? undefined,
-    settings: (p.settings as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
+    settings: (p.settings as unknown as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
     agentTargets: targetsByPortfolio.get(p.id) ?? {},
     replacesPortfolioId: closeInfoByPortfolio.get(p.id)?.replacesPortfolioId,
     closedAt: closeInfoByPortfolio.get(p.id)?.closedAt,
@@ -456,7 +457,9 @@ export async function createPortfolio(
     total_accounts: uploadable.length,
     manager_id: managerAgentId,
     team_id: p.teamId,
-    settings: p.settings,
+    // jsonb column: the generated Json type has no index signature, PortfolioSettings does
+    // not satisfy it structurally, and neither is wrong — this is the seam between them.
+    settings: p.settings as unknown as Json,
     replaces_portfolio_id: p.replacesPortfolioId ?? null,
   });
   if (pErr) throw pErr;
@@ -489,7 +492,7 @@ export async function createPortfolio(
   for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
     const chunk = toInsert.slice(i, i + CHUNK_SIZE).map((r) => ({
       id: r.id,
-      client_id: me?.client_id,
+      client_id: me?.client_id ?? null,
       portfolio_id: p.id,
       assigned_agent_id: assignedIdFor.get(r.id) ?? null,
       name: r.name,
@@ -577,7 +580,10 @@ export async function mergePortfolioRows(
         };
         if (row.name.trim()) update.name = row.name;
         if (row.phone.trim()) update.phone_primary = row.phone;
-        return supabase.from("debtors").update(update).eq("id", id);
+        return supabase
+          .from("debtors")
+          .update(update as Database["public"]["Tables"]["debtors"]["Update"])
+          .eq("id", id);
       }),
     );
     const failed = results.find((r) => r.error);
@@ -587,7 +593,7 @@ export async function mergePortfolioRows(
   for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
     const chunk = toInsert.slice(i, i + CHUNK_SIZE).map((r) => ({
       id: r.id,
-      client_id: me?.client_id,
+      client_id: me?.client_id ?? null,
       portfolio_id: portfolioId,
       assigned_agent_id: null,
       name: r.name,
@@ -882,7 +888,10 @@ export async function updatePortfolioMeta(
   if (patch.product !== undefined)
     update.product_type = patch.product ? (PRODUCT_LABEL_TO_ENUM[patch.product] ?? null) : null;
 
-  const { error } = await supabase.from("portfolios").update(update).eq("id", id);
+  const { error } = await supabase
+    .from("portfolios")
+    .update(update as Database["public"]["Tables"]["portfolios"]["Update"])
+    .eq("id", id);
   if (error) throw error;
   await refreshPortfolios();
 }
@@ -898,7 +907,7 @@ export async function setPortfolioAgentTargets(
   const idByEmail = new Map((agentRows ?? []).map((a) => [a.email, a.id]));
 
   const toUpsert: {
-    client_id?: string;
+    client_id?: string | null;
     portfolio_id: string;
     agent_id: string;
     target_amount: number | null;
@@ -914,7 +923,7 @@ export async function setPortfolioAgentTargets(
       continue;
     }
     toUpsert.push({
-      client_id: me?.client_id,
+      client_id: me?.client_id ?? null,
       portfolio_id: portfolioId,
       agent_id: agentId,
       target_amount: t.targetAmount ?? null,
