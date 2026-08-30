@@ -3,6 +3,7 @@ import { Layers, Users, BarChart3, UserCog } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { LiveCallsBoard } from "@/components/live-calls-board";
 
 export const Route = createFileRoute("/admin/")({
   head: () => ({
@@ -63,6 +64,20 @@ function AdminPage() {
             Configure your collections operation. Visible to managers and admins only.
           </p>
         </div>
+      </div>
+
+      {/* Every call live across the whole client — admins are not scoped to one team, and RLS
+          on live_calls already reflects that, so no filtering is needed here. */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Live Calls
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            everyone, right now · updates automatically
+          </span>
+        </div>
+        <LiveCallsBoard />
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

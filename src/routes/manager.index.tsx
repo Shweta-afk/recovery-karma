@@ -55,6 +55,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTeamAgents, FALLBACK_DAILY_TARGET, type AgentRef } from "@/lib/team-store";
 import { useActiveTeam } from "@/lib/active-team-store";
+import { LiveCallsBoard } from "@/components/live-calls-board";
 import { useAuth } from "@/lib/auth";
 import {
   getAgentDispositions,
@@ -1428,6 +1429,27 @@ function ManagerDashboardPage() {
 
         {/* ── Agent Live View ── */}
         <TabsContent value="live" className="space-y-4 mt-4">
+          {/* Calls happening RIGHT NOW across the team. Added above the per-agent queue view
+              below it, which is named "Agent Live View" but shows that agent's QUEUE from the
+              database — useful, but not live. Both are kept; only this one is real-time. */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Live Calls
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                across your team · updates automatically
+              </span>
+            </div>
+            <LiveCallsBoard />
+          </div>
+
+          <div className="border-t border-border pt-4">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Agent Queue View
+            </span>
+          </div>
+
           {agents.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
               You don't have a team yet — ask an admin to add you to a team in Admin → Teams.

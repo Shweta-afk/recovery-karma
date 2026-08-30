@@ -129,8 +129,6 @@ export interface Database {
           promise_date: string | null;
           callback_datetime: string | null;
           duration_seconds: number | null;
-          ring_seconds: number | null;
-          wrap_seconds: number | null;
           raw_notes: string | null;
           ai_notes: string | null;
           recording_url: string | null;
@@ -166,8 +164,6 @@ export interface Database {
           promise_date?: string | null;
           callback_datetime?: string | null;
           duration_seconds?: number | null;
-          ring_seconds?: number | null;
-          wrap_seconds?: number | null;
           raw_notes?: string | null;
           ai_notes?: string | null;
           recording_url?: string | null;
@@ -203,8 +199,6 @@ export interface Database {
           promise_date?: string | null;
           callback_datetime?: string | null;
           duration_seconds?: number | null;
-          ring_seconds?: number | null;
-          wrap_seconds?: number | null;
           raw_notes?: string | null;
           ai_notes?: string | null;
           recording_url?: string | null;
