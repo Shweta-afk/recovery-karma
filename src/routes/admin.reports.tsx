@@ -28,6 +28,14 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { getAgentById, useRoster, useTeams } from "@/lib/team-store";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import {
+  EMPTY_RANGE,
+  inDateRange,
+  isRangeActive,
+  describeRange,
+  type DateRange,
+} from "@/lib/date-filter";
 import {
   getDispositions,
   refreshDispositions,
@@ -146,6 +154,11 @@ function AdminReportsPage() {
   // null = "not chosen yet", so we can fall back to a metric that actually separates the
   // agents. Ranking by Collected when every agent is at zero produces a meaningless order.
   const [leaderMetric, setLeaderMetric] = useState<LeaderboardMetric | null>(null);
+  // Scopes Overview's Collected/PTP Value/Calls Logged, By Team, By Agent, Outcome Breakdown
+  // and Call Log to a date range. Recovery Rate, Compliance, Disputes, Settlements, Insights and
+  // Monthly Trend stay all-time/current-state — they're cumulative ratios or status snapshots,
+  // not a slice of the call log, so a date range doesn't change what they mean.
+  const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
   useRoster(); // triggers a background refresh so agent names stay current
 
   useEffect(() => {
@@ -209,8 +222,13 @@ function AdminReportsPage() {
     return () => window.removeEventListener("report-metrics-updated", load);
   }, []);
 
+  const rangedDisps = useMemo(
+    () => disps.filter((d) => inDateRange(d.time, dateRange)),
+    [disps, dateRange],
+  );
+
   // Global stats
-  const globalStats = useMemo(() => calcStats(disps), [disps]);
+  const globalStats = useMemo(() => calcStats(rangedDisps), [rangedDisps]);
 
   // "Active" = the dialer's definition (buildAssignedQueue): open portfolio, not already
   // settled. Computed in Postgres so it is correct regardless of what the localStorage
@@ -231,7 +249,7 @@ function AdminReportsPage() {
   const teamStats = useMemo(() => {
     const now = new Date();
     return teams.map((team) => {
-      const teamDisps = disps.filter((d) => d.teamId === team.id);
+      const teamDisps = rangedDisps.filter((d) => d.teamId === team.id);
       const teamPortfolios = portfolios.filter((p) => p.teamId === team.id);
       // Summed from the per-agent SQL aggregate rather than the cached rows, so it agrees
       // with the KPI strip and survives the portfolio cache being truncated.
@@ -240,9 +258,13 @@ function AdminReportsPage() {
         0,
       );
       // Today's time breakdown per agent — see agent-time-stats.ts for what's real (calling)
-      // vs. estimated (idle/disposition/login-logout) pending a real presence-log table.
+      // vs. estimated (idle/disposition/login-logout) pending a real presence-log table. Always
+      // "today" regardless of the Reports date range above — it isn't a slice of the call log,
+      // it's the live Time & Effort widget, so it reads from the unranged `disps`.
       const todayTimeStats = team.agentIds.map((aid) => {
-        const todayDisps = teamDisps.filter((d) => d.agentId === aid && isSameDay(d.time, now));
+        const todayDisps = disps.filter(
+          (d) => d.teamId === team.id && d.agentId === aid && isSameDay(d.time, now),
+        );
         // No presence intervals passed: this is a cross-team roll-up and presence is
         // per-agent-per-day. Break/idle come back null and are skipped below rather
         // than counted as zero.
@@ -270,14 +292,14 @@ function AdminReportsPage() {
         avgIdlePct,
       };
     });
-  }, [teams, disps, portfolios, activeCountByAgent]);
+  }, [teams, disps, rangedDisps, portfolios, activeCountByAgent]);
 
   // All agents across all teams with stats
   const agentStats = useMemo(() => {
     const allAgentIds = Array.from(new Set(teams.flatMap((t) => t.agentIds)));
     return allAgentIds
       .map((agentId) => {
-        const agentDisps = disps.filter((d) => d.agentId === agentId);
+        const agentDisps = rangedDisps.filter((d) => d.agentId === agentId);
         const ref = getAgentById(agentId);
         const team = teams.find((t) => t.agentIds.includes(agentId));
         // Straight from the SQL aggregate — see report-metrics-store.ts.
@@ -292,7 +314,7 @@ function AdminReportsPage() {
         };
       })
       .sort((a, b) => b.stats.total - a.stats.total);
-  }, [teams, disps, activeCountByAgent]);
+  }, [teams, rangedDisps, activeCountByAgent]);
 
   // ── month-over-month groupings ──────────────────────────────────────────────
   // Company-wide totals use every payment, including bank-reported paid-file rows that no
@@ -499,8 +521,16 @@ function AdminReportsPage() {
             {totals.openPortfolios} active portfolio
             {totals.openPortfolios !== 1 ? "s" : ""}
           </Badge>
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground -mt-2">
+        Collected, PTP Value, Calls Logged, By Team, By Agent, Outcome Breakdown and Call Log are
+        scoped to <span className="font-medium text-foreground">{describeRange(dateRange)}</span>.
+        Recovery Rate, Compliance, Disputes, Settlements, Insights and Monthly Trend are always
+        all-time or current-state.
+      </p>
 
       {/* Global KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
@@ -682,12 +712,12 @@ function AdminReportsPage() {
                 description="How every logged call resolved"
                 icon={BarChart2}
               >
-                {disps.length === 0 ? (
+                {rangedDisps.length === 0 ? (
                   <p className="py-6 text-center text-sm text-muted-foreground">
-                    No calls logged yet.
+                    No calls logged {isRangeActive(dateRange) ? "in this range" : "yet"}.
                   </p>
                 ) : (
-                  <OutcomeBreakdown disps={disps} />
+                  <OutcomeBreakdown disps={rangedDisps} />
                 )}
               </ReportSection>
             </div>
@@ -1132,12 +1162,12 @@ function AdminReportsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-4">
-              {disps.length === 0 ? (
+              {rangedDisps.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">
-                  No calls logged yet.
+                  No calls logged {isRangeActive(dateRange) ? "in this range" : "yet"}.
                 </p>
               ) : (
-                <OutcomeBreakdown disps={disps} />
+                <OutcomeBreakdown disps={rangedDisps} />
               )}
             </CardContent>
           </Card>
@@ -1674,7 +1704,7 @@ function AdminReportsPage() {
 
         <TabsContent value="detail" className="mt-4">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-muted-foreground">{disps.length} calls total</span>
+            <span className="text-sm text-muted-foreground">{rangedDisps.length} calls total</span>
             <button
               type="button"
               onClick={() =>
@@ -1692,7 +1722,7 @@ function AdminReportsPage() {
                     "PTP Date",
                     "Notes",
                   ],
-                  disps.map((d) => [
+                  rangedDisps.map((d) => [
                     new Date(d.time).toLocaleString("en-IN"),
                     d.debtorName,
                     d.phone,
@@ -1714,9 +1744,9 @@ function AdminReportsPage() {
           </div>
 
           <DataTable
-            rows={disps}
+            rows={rangedDisps}
             keyOf={(d) => d.id}
-            empty="No calls logged yet."
+            empty={`No calls logged ${isRangeActive(dateRange) ? "in this range" : "yet"}.`}
             maxHeight="max-h-[640px]"
             columns={[
               {

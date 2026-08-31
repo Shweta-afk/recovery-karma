@@ -22,6 +22,14 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import {
+  EMPTY_RANGE,
+  inDateRange,
+  isRangeActive,
+  describeRange,
+  type DateRange,
+} from "@/lib/date-filter";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { useTeamAgents } from "@/lib/team-store";
 import {
@@ -75,6 +83,11 @@ function ManagerReportsPage() {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   // null = "not chosen yet" — see effectiveLeaderMetric below.
   const [leaderMetric, setLeaderMetric] = useState<LeaderboardMetric | null>(null);
+  // Scopes the Overview KPIs, Leaderboard, Outcome Mix, By Agent table and Call Log to a date
+  // range — Monthly Trend and PTP Follow-ups stay unfiltered since they're inherently their own
+  // time window (this month vs last) or a current-state view (promises still open), not a slice
+  // of the call log.
+  const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
 
   useEffect(() => {
     const load = () => setDisps(activeTeam ? getTeamDispositions(activeTeam.id) : []);
@@ -144,7 +157,12 @@ function ManagerReportsPage() {
     [portfolioTotals, activeTeam?.id],
   );
 
-  const globalStats = useMemo(() => calcStats(disps), [disps]);
+  const rangedDisps = useMemo(
+    () => disps.filter((d) => inDateRange(d.time, dateRange)),
+    [disps, dateRange],
+  );
+
+  const globalStats = useMemo(() => calcStats(rangedDisps), [rangedDisps]);
 
   // The team's money, both ways it arrives: what the team's agents collected, plus what the
   // bank reported against the team's own portfolios (agent_id null — nobody collected it, but
@@ -175,7 +193,7 @@ function ManagerReportsPage() {
     () =>
       teamAgents
         .map((agent) => {
-          const agentDisps = disps.filter((d) => d.agentId === agent.id);
+          const agentDisps = rangedDisps.filter((d) => d.agentId === agent.id);
           // Straight from the SQL aggregate — see report-metrics-store.ts.
           const assigned = activeCountByAgent.get(agent.id) ?? 0;
           return {
@@ -187,7 +205,7 @@ function ManagerReportsPage() {
           };
         })
         .sort((a, b) => b.stats.total - a.stats.total),
-    [teamAgents, disps, activeCountByAgent],
+    [teamAgents, rangedDisps, activeCountByAgent],
   );
 
   const filtered = search.trim()
@@ -253,8 +271,15 @@ function ManagerReportsPage() {
             {activePortfolioCount} active portfolio
             {activePortfolioCount !== 1 ? "s" : ""}
           </Badge>
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground -mt-2">
+        Overview, Leaderboard, By Agent and Call Log are scoped to{" "}
+        <span className="font-medium text-foreground">{describeRange(dateRange)}</span>. Monthly
+        Trend and PTP Follow-ups are always all-time.
+      </p>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
@@ -382,12 +407,12 @@ function ManagerReportsPage() {
               description="How your team's calls resolved"
               icon={BarChart2}
             >
-              {disps.length === 0 ? (
+              {rangedDisps.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">
-                  No calls logged yet.
+                  No calls logged {isRangeActive(dateRange) ? "in this range" : "yet"}.
                 </p>
               ) : (
-                <OutcomeBreakdown disps={disps} />
+                <OutcomeBreakdown disps={rangedDisps} />
               )}
             </ReportSection>
           </div>
@@ -587,10 +612,12 @@ function ManagerReportsPage() {
             description="Share of calls by disposition"
             icon={BarChart2}
           >
-            {disps.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">No calls logged yet.</p>
+            {rangedDisps.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No calls logged {isRangeActive(dateRange) ? "in this range" : "yet"}.
+              </p>
             ) : (
-              <OutcomeBreakdown disps={disps} />
+              <OutcomeBreakdown disps={rangedDisps} />
             )}
           </ReportSection>
         </TabsContent>
@@ -688,7 +715,7 @@ function ManagerReportsPage() {
         {/* ── CALL LOG TAB ── */}
         <TabsContent value="detail" className="mt-4">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-muted-foreground">{disps.length} calls total</span>
+            <span className="text-sm text-muted-foreground">{rangedDisps.length} calls total</span>
             <button
               type="button"
               onClick={() =>
@@ -705,7 +732,7 @@ function ManagerReportsPage() {
                     "PTP Date",
                     "Notes",
                   ],
-                  disps.map((d) => [
+                  rangedDisps.map((d) => [
                     new Date(d.time).toLocaleString("en-IN"),
                     d.debtorName,
                     d.phone,
@@ -726,9 +753,9 @@ function ManagerReportsPage() {
           </div>
 
           <DataTable
-            rows={disps}
+            rows={rangedDisps}
             keyOf={(d) => d.id}
-            empty="No calls logged yet."
+            empty={`No calls logged ${isRangeActive(dateRange) ? "in this range" : "yet"}.`}
             maxHeight="max-h-[640px]"
             columns={[
               {

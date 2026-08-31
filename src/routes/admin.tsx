@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
-import { useAuth } from "@/lib/auth";
+import { homeRouteForRole, useAuth } from "@/lib/auth";
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -14,7 +14,7 @@ function AdminLayout() {
 
   useEffect(() => {
     if (!loading && user && user.role !== "admin") {
-      navigate({ to: "/dashboard" });
+      navigate({ to: homeRouteForRole(user.role) });
     }
   }, [user, loading, navigate]);
 
