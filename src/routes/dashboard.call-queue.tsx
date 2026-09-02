@@ -2037,12 +2037,19 @@ function QueueRow({
           w/max-w + overflow-hidden keeps a long loan reference from bleeding into the Phone
           column that sits right next to it (it isn't sticky, so nothing pushes it out of the
           way — it just gets painted over unless this column's content is clipped).
-          transform-gpu: see the matching comment on the header cell above — this is the one
-          that was actually visible in practice, on the first row's own sticky cell. */}
+          Found the real cause of the "ghosting" bug this shipped with: bg-success/5 is 5%
+          OPACITY — a sticky cell needs an opaque background to hide the columns scrolled
+          underneath it, and this one let ~95% of whatever was behind it show straight
+          through, which only ever showed up on rows with a logged outcome because that's the
+          one thing gating this branch. color-mix produces a solid (fully opaque) color that
+          looks the same but doesn't have that problem; bg-success/5 must never come back
+          here even though it's the app's normal way to tint a highlighted row elsewhere. */}
       <TableCell
         className={cn(
-          "sticky left-0 z-10 w-[190px] max-w-[190px] overflow-hidden shadow-[1px_0_0_0_var(--border)] transform-gpu",
-          loggedOutcome ? "bg-success/5" : "bg-card",
+          "sticky left-0 z-10 w-[190px] max-w-[190px] overflow-hidden shadow-[1px_0_0_0_var(--border)]",
+          loggedOutcome
+            ? "bg-[color-mix(in_oklch,var(--success)_5%,var(--card))]"
+            : "bg-card",
         )}
       >
         <button
@@ -2116,11 +2123,14 @@ function QueueRow({
           {uploadedExtra?.[col] || "—"}
         </TableCell>
       ))}
-      {/* Fixed right column — Call/WA stay put while the row scrolls sideways too. */}
+      {/* Fixed right column — Call/WA stay put while the row scrolls sideways too. Same
+          opaque-background fix as the left sticky cell above — see that comment. */}
       <TableCell
         className={cn(
-          "sticky right-0 z-10 shadow-[-1px_0_0_0_var(--border)] transform-gpu",
-          loggedOutcome ? "bg-success/5" : "bg-card",
+          "sticky right-0 z-10 shadow-[-1px_0_0_0_var(--border)]",
+          loggedOutcome
+            ? "bg-[color-mix(in_oklch,var(--success)_5%,var(--card))]"
+            : "bg-card",
         )}
       >
         <div className="flex items-center justify-end gap-1">
