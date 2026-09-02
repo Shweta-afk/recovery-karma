@@ -1368,10 +1368,15 @@ export function CallQueueContent({
           )}
         </div>
 
-        {/* Status filter pills — never wraps; scrolls horizontally instead so it always
-            stays on one line regardless of how many pills/tools are showing. */}
-        <div className="mt-3 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
-          {FILTERS.map((f) => (
+        {/* Status filter pills — never wraps; the pills scroll horizontally on their own so
+            they always stay on one line. The overflow-x-auto that does that lives on THIS
+            inner wrapper only, not on a shared ancestor of the dropdowns below — an ancestor
+            with overflow-x set forces overflow-y to "auto" too (a CSS overflow-x/y coupling
+            rule), which was silently clipping the Bucket/Disposition dropdown panels to this
+            row's height instead of letting them float over the table. */}
+        <div className="mt-3 flex items-center gap-2">
+          <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+            {FILTERS.map((f) => (
             <button
               key={f.key}
               type="button"
@@ -1395,7 +1400,8 @@ export function CallQueueContent({
                 {filterCounts[f.key]}
               </span>
             </button>
-          ))}
+            ))}
+          </div>
 
           {/* Bucket + Disposition dropdowns + search — right side */}
           <div className="ml-auto flex flex-shrink-0 items-center gap-2">
