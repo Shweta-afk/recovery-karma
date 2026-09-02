@@ -790,6 +790,29 @@ export function CallQueueContent({
     qSortDir,
   ]);
 
+  // Every raw CSV column the upload didn't map to a named field — debtorFromRow() carries the
+  // whole bag on `_uploadedExtra`. Rendered as extra columns after Reason so scrolling the
+  // (non-sticky) middle of the row surfaces "almost all" of the uploaded file, not just the
+  // handful of fields this table already has dedicated columns for. Built from allQueue (not
+  // filteredQueue) so the column set doesn't jump around as filters/search change; ordered by
+  // first appearance so it roughly tracks the source CSV's column order.
+  const extraColumns = useMemo(() => {
+    const seen = new Set<string>();
+    const cols: string[] = [];
+    for (const d of allQueue) {
+      const extra = (d as QueueDebtor & { _uploadedExtra?: Record<string, string> })
+        ._uploadedExtra;
+      if (!extra) continue;
+      for (const key of Object.keys(extra)) {
+        if (!seen.has(key)) {
+          seen.add(key);
+          cols.push(key);
+        }
+      }
+    }
+    return cols;
+  }, [allQueue]);
+
   // Narrower than QueueFilter — only the statuses filterCounts actually computes from real
   // queueStatus data. switch_off/nc/paid exist in QueueFilter for URL back-compat but were
   // never wired to real counts or filtering, so they're not offered as pills here.
@@ -1545,7 +1568,7 @@ export function CallQueueContent({
                   <TableRow>
                     {/* Debtor name — fixed left column, doesn't scroll with the rest of the
                         row's info; sortable A→Z */}
-                    <TableHead className="sticky left-0 z-20 bg-card min-w-[180px] shadow-[1px_0_0_0_var(--border)]">
+                    <TableHead className="sticky left-0 z-20 w-[190px] max-w-[190px] bg-card shadow-[1px_0_0_0_var(--border)]">
                       <QColHead
                         label="Debtor"
                         sortKey="name"
@@ -1726,6 +1749,16 @@ export function CallQueueContent({
                       Reason
                     </TableHead>
 
+                    {/* Raw CSV columns — scroll past Reason to see them; see extraColumns. */}
+                    {extraColumns.map((col) => (
+                      <TableHead
+                        key={col}
+                        className="text-muted-foreground text-xs font-medium uppercase tracking-wider whitespace-nowrap min-w-[120px]"
+                      >
+                        {col.replace(/_/g, " ")}
+                      </TableHead>
+                    ))}
+
                     {/* Reset all column filters */}
                     <TableHead className="sticky right-0 z-20 bg-card text-right shadow-[-1px_0_0_0_var(--border)]">
                       {qSortKey ||
@@ -1758,7 +1791,7 @@ export function CallQueueContent({
                   {filteredQueue.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={9}
+                        colSpan={9 + extraColumns.length}
                         className="text-center py-12 text-muted-foreground text-sm"
                       >
                         No debtors match this filter.
@@ -1773,6 +1806,7 @@ export function CallQueueContent({
                         onCall={startCall}
                         onView={setProfileDebtor}
                         loggedOutcome={loggedOutcomes[d.id]}
+                        extraColumns={extraColumns}
                       />
                     ))
                   )}
@@ -1934,13 +1968,17 @@ function QueueRow({
   onCall,
   onView,
   loggedOutcome,
+  extraColumns,
 }: {
   d: QueueDebtor;
   index: number;
   onCall: (d: QueueDebtor) => void;
   onView: (d: QueueDebtor) => void;
   loggedOutcome?: { outcome: CallOutcome; time: string };
+  extraColumns: string[];
 }) {
+  const uploadedExtra = (d as QueueDebtor & { _uploadedExtra?: Record<string, string> })
+    ._uploadedExtra;
   const b = bucketOf(d.dpd);
   const dpdCls =
     b === "X" || b === "1"
@@ -1963,26 +2001,31 @@ function QueueRow({
       )}
       style={{ animationDelay: `${Math.min(index * 25, 400)}ms` }}
     >
-      {/* Fixed left column — stays put while the rest of the row's info scrolls sideways. */}
+      {/* Fixed left column — stays put while the rest of the row's info scrolls sideways.
+          w/max-w + overflow-hidden keeps a long loan reference from bleeding into the Phone
+          column that sits right next to it (it isn't sticky, so nothing pushes it out of the
+          way — it just gets painted over unless this column's content is clipped). */}
       <TableCell
         className={cn(
-          "sticky left-0 z-10 shadow-[1px_0_0_0_var(--border)]",
+          "sticky left-0 z-10 w-[190px] max-w-[190px] overflow-hidden shadow-[1px_0_0_0_var(--border)]",
           loggedOutcome ? "bg-success/5" : "bg-card",
         )}
       >
         <button
           type="button"
           onClick={() => onView(d)}
-          className="text-left hover:underline decoration-primary/40 underline-offset-2"
+          className="block w-full text-left hover:underline decoration-primary/40 underline-offset-2"
         >
-          <div className="font-medium text-sm text-foreground">{d.name}</div>
-          <div className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
-            {d.loanReference ?? d.id}
-            {d.retained && <span className="text-violet-500 font-semibold">· Retained</span>}
+          <div className="truncate font-medium text-sm text-foreground">{d.name}</div>
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <span className="min-w-0 truncate">{d.loanReference ?? d.id}</span>
+            {d.retained && (
+              <span className="flex-shrink-0 text-violet-500 font-semibold">· Retained</span>
+            )}
             {loggedOutcome && (
               <span
                 className={cn(
-                  "inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-bold border",
+                  "inline-flex flex-shrink-0 items-center gap-0.5 rounded px-1 py-px text-[9px] font-bold border",
                   OUTCOME_META[loggedOutcome.outcome].cls,
                 )}
               >
@@ -2021,6 +2064,13 @@ function QueueRow({
       <TableCell>
         <p className="text-xs text-foreground/80 max-w-[160px] leading-snug">{d.scoreReason}</p>
       </TableCell>
+      {/* Raw CSV columns — same key set/order as the header; "—" where this debtor's own
+          upload didn't carry that column (different portfolios in one queue can differ). */}
+      {extraColumns.map((col) => (
+        <TableCell key={col} className="text-xs text-foreground/80 whitespace-nowrap">
+          {uploadedExtra?.[col] || "—"}
+        </TableCell>
+      ))}
       {/* Fixed right column — Call/WA/skip stay put while the row scrolls sideways too. */}
       <TableCell
         className={cn(

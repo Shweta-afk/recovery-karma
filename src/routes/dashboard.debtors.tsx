@@ -824,7 +824,7 @@ function DebtorCard({
             </div>
             <div>
               <div className="font-medium text-sm text-foreground leading-tight">{d.name}</div>
-              <div className="text-[11px] text-muted-foreground">{displayId(d)}</div>
+              <div className="text-[11px] text-muted-foreground">Loan ID: {displayId(d)}</div>
             </div>
           </div>
           <Badge variant="outline" className={cn("text-[10px] flex-shrink-0", bucketMeta.color)}>
