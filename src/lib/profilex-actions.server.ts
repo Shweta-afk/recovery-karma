@@ -19,13 +19,7 @@ import {
   normalisePhone,
   readProviderStatus,
 } from "./profilex/billing";
-import {
-  PROFILEX_SERVICES,
-  UAN_SOURCE_SERVICE,
-  getService,
-  priceFor,
-  type ProfilexService,
-} from "./profilex/catalogue";
+import { getService, priceFor, type DerivedFrom, type ProfilexService } from "./profilex/catalogue";
 
 // This project has no generated Supabase `Database` types, so every `.from(...)` resolves to
 // `never` and each column read is a type error (the older stores simply live with ~300 of
@@ -102,22 +96,25 @@ async function loadSettings(clientId: string): Promise<ProfilexSettings> {
   };
 }
 
-/** The debtor's UAN, from a stored mobile-to-uan trace on that same debtor. Employment lookups
- *  take a UAN rather than a phone, so this is the link that keeps them inside the
- *  "portfolio numbers only" rule — a UAN is never accepted from the browser. */
-async function storedUan(debtorId: string): Promise<string | null> {
+/**
+ * A value produced by an earlier lookup on this same debtor — a UAN from Mobile to UAN, a GSTIN
+ * from Mobile to GST. Employment and GST-contact services take these rather than a phone, so
+ * this is the link that keeps them inside the "portfolio data only" rule: the value is read from
+ * a stored trace, never accepted from the browser.
+ */
+async function derivedValue(debtorId: string, from: DerivedFrom): Promise<string | null> {
   const admin = db();
   const { data } = await admin
     .from("debtor_traces")
     .select("response")
     .eq("debtor_id", debtorId)
-    .eq("service_id", UAN_SOURCE_SERVICE)
+    .eq("service_id", from.service)
     .eq("state", "done")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const uan = ((data?.response as Row | undefined)?.data as Row | undefined)?.uan;
-  return uan ? String(uan) : null;
+  const payload = (data?.response as Row | undefined)?.data as Row | undefined;
+  return payload ? from.extract(payload) : null;
 }
 
 /** First and last four characters of an identifier — enough to compare against what the
@@ -239,9 +236,9 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       throw new Error("Insights is turned off. An admin can enable it in Settings.");
     }
 
-    // Resolve the input, still without trusting the browser for either value.
+    // Resolve the input, still without trusting the browser for any of it.
     let requestBody: Record<string, string>;
-    if (service.input === "mobile") {
+    if (service.input === "mobile" || service.input === "mobile+name") {
       const mobile = normalisePhone(debtor.phone_primary as string);
       if (!/^[6-9]\d{9}$/.test(mobile)) {
         throw new Error(
@@ -249,15 +246,30 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         );
       }
       requestBody = { mobile };
+      if (service.input === "mobile+name") {
+        // Split the stored name rather than asking for one: the provider requires firstName,
+        // and anything typed in the browser would be an input we cannot vouch for.
+        const parts = String(debtor.name ?? "")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean);
+        if (parts.length === 0) {
+          throw new Error(`${debtor.name || "This debtor"} has no name on file to look up with.`);
+        }
+        requestBody.firstName = parts[0];
+        requestBody.lastName = parts.slice(1).join(" ");
+      }
     } else {
-      const uan = await storedUan(debtor.id as string);
-      if (!uan) {
+      const from = service.derivedFrom;
+      if (!from) throw new Error(`"${service.label}" is misconfigured — no source for its input`);
+      const value = await derivedValue(debtor.id as string, from);
+      if (!value) {
         throw new Error(
-          `No UAN on file for ${debtor.name}. Run "Mobile to UAN" first — it is free when ` +
-            `nothing is found, and the employment lookups need the UAN it returns.`,
+          `No ${service.input.toUpperCase()} on file for ${debtor.name}. Run "${from.label}" ` +
+            `first — the value it returns is what this lookup needs.`,
         );
       }
-      requestBody = { uan };
+      requestBody = { [service.input]: value };
     }
 
     // Cache. A found result stays good for hit_ttl_hours, a miss for the shorter miss_ttl_hours,
@@ -465,7 +477,7 @@ export const getProfilexSettings = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
-    return { ...(await loadSettings(caller.clientId)), services: PROFILEX_SERVICES };
+    return await loadSettings(caller.clientId);
   });
 
 export const saveProfilexSettings = createServerFn({ method: "POST" })

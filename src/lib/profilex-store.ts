@@ -10,7 +10,7 @@
 // Not cached to localStorage, unlike the older stores: trace responses are large, and
 // portfolio-store already blew the ~5 MB origin quota once (see report_count_rpcs migration).
 import { supabase } from "./supabase";
-import { getService } from "./profilex/catalogue";
+import { RETIRED_SERVICE_LABELS, getService } from "./profilex/catalogue";
 
 /** A ProfileX response body. Untyped on purpose — the provider's shape differs per service and
  *  is not under our control, so readers narrow what they need rather than pretending to a schema. */
@@ -103,7 +103,7 @@ export function readPrefill(response: TraceResponse | null): {
 }
 
 export function serviceLabel(serviceId: string): string {
-  return getService(serviceId)?.label ?? serviceId;
+  return getService(serviceId)?.label ?? RETIRED_SERVICE_LABELS[serviceId] ?? serviceId;
 }
 
 /** Employment payload flattened for display — both employment services share this shape. */

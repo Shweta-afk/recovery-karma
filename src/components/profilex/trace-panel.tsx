@@ -251,7 +251,17 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
   // contents change without any prop or state this component could key a useMemo on — the
   // TRACES_UPDATED listener above is what triggers the re-render. It is a handful of rows.
   const latest = latestByService(debtorId);
-  const hasUan = !!readUan(latest.get(UAN_SOURCE_SERVICE)?.response ?? null);
+  // A service with a derived input (UAN, GSTIN) can only run once its source service has been
+  // run on this debtor. Driven off the catalogue so a new chained service needs no change here.
+  const missingSource = (service: ProfilexService): string | null => {
+    const from = service.derivedFrom;
+    if (!from) return null;
+    const source = latest.get(from.service);
+    const data = (source?.response as Record<string, unknown> | null)?.data as
+      | Record<string, unknown>
+      | undefined;
+    return data && from.extract(data) ? null : from.label;
+  };
 
   async function run(service: ProfilexService) {
     setConfirming(null);
@@ -312,7 +322,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
     <div className="space-y-4">
       {PROFILEX_SERVICES.map((service) => {
         const trace = latest.get(service.id);
-        const needsUan = service.input === "uan" && !hasUan;
+        const needsSource = missingSource(service);
         // Agents only ever see what has already been paid for.
         if (!(canRun && enabled === true) && !trace) return null;
 
@@ -327,10 +337,10 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
                 <Button
                   size="sm"
                   variant={trace ? "outline" : "default"}
-                  disabled={running !== null || needsUan}
+                  disabled={running !== null || !!needsSource}
                   onClick={() => setConfirming(service)}
                   className="flex-shrink-0 h-7 text-xs"
-                  title={needsUan ? "Run Mobile to UAN first" : service.blurb}
+                  title={needsSource ? `Run ${needsSource} first` : service.blurb}
                 >
                   {running === service.id ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -343,10 +353,10 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
               )}
             </div>
 
-            {canRun && enabled === true && (needsUan || showCost) && (
+            {canRun && enabled === true && (needsSource || showCost) && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1 mb-2">
-                {!needsUan && <IndianRupee className="h-3 w-3" />}
-                {needsUan ? "Needs a UAN — run Mobile to UAN first" : priceLine(service)}
+                {!needsSource && <IndianRupee className="h-3 w-3" />}
+                {needsSource ? `Run ${needsSource} first` : priceLine(service)}
               </p>
             )}
 
