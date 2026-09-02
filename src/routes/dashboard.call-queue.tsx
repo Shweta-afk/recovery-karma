@@ -2058,24 +2058,27 @@ function QueueRow({
           <div className="truncate text-[11px] text-muted-foreground">
             {d.loanReference ?? d.id}
           </div>
-          {(d.retained || loggedOutcome) && (
-            <div className="mt-0.5 flex items-center gap-1 text-[11px]">
-              {d.retained && (
-                <span className="text-violet-500 font-semibold">· Retained</span>
-              )}
-              {loggedOutcome && (
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-bold border",
-                    OUTCOME_META[loggedOutcome.outcome].cls,
-                  )}
-                >
-                  <Check className="h-2.5 w-2.5" />
-                  {OUTCOME_META[loggedOutcome.outcome].label} · {loggedOutcome.time}
-                </span>
-              )}
-            </div>
-          )}
+          {/* Always rendered, at a fixed height, whether or not there's a badge to show —
+              confirmed live (screen recording + manual retest across multiple debtors) that
+              rows with a badge (taller, 3 lines) vs. without (2 lines) is the actual thing
+              that triggers Chromium's sticky-cell ghosting bug here, not row position — a
+              spacer row and transform-gpu on the cell both failed to stop it, but this cell's
+              own height varying between rows is the one variable that correlated with every
+              reproduction. Reserving the same height on every row removes that variable. */}
+          <div className="mt-0.5 flex h-[15px] items-center gap-1 text-[11px]">
+            {d.retained && <span className="text-violet-500 font-semibold">· Retained</span>}
+            {loggedOutcome && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-bold border",
+                  OUTCOME_META[loggedOutcome.outcome].cls,
+                )}
+              >
+                <Check className="h-2.5 w-2.5" />
+                {OUTCOME_META[loggedOutcome.outcome].label} · {loggedOutcome.time}
+              </span>
+            )}
+          </div>
         </button>
       </TableCell>
       <TableCell className="font-mono text-xs text-foreground">{d.phone}</TableCell>
