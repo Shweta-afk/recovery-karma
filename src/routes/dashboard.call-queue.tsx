@@ -2016,26 +2016,31 @@ function QueueRow({
           className="block w-full text-left hover:underline decoration-primary/40 underline-offset-2"
         >
           <div className="truncate font-medium text-sm text-foreground">{d.name}</div>
-          {/* Wraps onto a 2nd line inside this fixed-width column rather than squeezing the
-              loan ref and an outcome badge onto one line — that forced the ID to truncate to
-              almost nothing even when there was no real overflow risk (the column's own
-              overflow-hidden already stops horizontal bleed into Phone, so wrapping here is
-              safe and reads far less cramped). */}
-          <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[11px] text-muted-foreground">
-            <span className="max-w-full truncate">{d.loanReference ?? d.id}</span>
-            {d.retained && <span className="text-violet-500 font-semibold">· Retained</span>}
-            {loggedOutcome && (
-              <span
-                className={cn(
-                  "inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-bold border",
-                  OUTCOME_META[loggedOutcome.outcome].cls,
-                )}
-              >
-                <Check className="h-2.5 w-2.5" />
-                {OUTCOME_META[loggedOutcome.outcome].label} · {loggedOutcome.time}
-              </span>
-            )}
+          {/* Each on its own block-level line — never sharing a line with the ID — so there
+              is no flex-wrap reflow for a sticky cell to get wrong. A flex row here (even with
+              wrapping) could end up transiently painting the ID and the badge on top of each
+              other for the first row in the list; stacked block lines can't. */}
+          <div className="truncate text-[11px] text-muted-foreground">
+            {d.loanReference ?? d.id}
           </div>
+          {(d.retained || loggedOutcome) && (
+            <div className="mt-0.5 flex items-center gap-1 text-[11px]">
+              {d.retained && (
+                <span className="text-violet-500 font-semibold">· Retained</span>
+              )}
+              {loggedOutcome && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-bold border",
+                    OUTCOME_META[loggedOutcome.outcome].cls,
+                  )}
+                >
+                  <Check className="h-2.5 w-2.5" />
+                  {OUTCOME_META[loggedOutcome.outcome].label} · {loggedOutcome.time}
+                </span>
+              )}
+            </div>
+          )}
         </button>
       </TableCell>
       <TableCell className="font-mono text-xs text-foreground">{d.phone}</TableCell>
