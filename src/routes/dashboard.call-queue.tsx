@@ -4,7 +4,6 @@ import {
   Phone,
   PhoneCall,
   MessageCircle,
-  SkipForward,
   Search,
   ArrowUpDown,
   ArrowUp,
@@ -2017,15 +2016,18 @@ function QueueRow({
           className="block w-full text-left hover:underline decoration-primary/40 underline-offset-2"
         >
           <div className="truncate font-medium text-sm text-foreground">{d.name}</div>
-          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <span className="min-w-0 truncate">{d.loanReference ?? d.id}</span>
-            {d.retained && (
-              <span className="flex-shrink-0 text-violet-500 font-semibold">· Retained</span>
-            )}
+          {/* Wraps onto a 2nd line inside this fixed-width column rather than squeezing the
+              loan ref and an outcome badge onto one line — that forced the ID to truncate to
+              almost nothing even when there was no real overflow risk (the column's own
+              overflow-hidden already stops horizontal bleed into Phone, so wrapping here is
+              safe and reads far less cramped). */}
+          <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[11px] text-muted-foreground">
+            <span className="max-w-full truncate">{d.loanReference ?? d.id}</span>
+            {d.retained && <span className="text-violet-500 font-semibold">· Retained</span>}
             {loggedOutcome && (
               <span
                 className={cn(
-                  "inline-flex flex-shrink-0 items-center gap-0.5 rounded px-1 py-px text-[9px] font-bold border",
+                  "inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-bold border",
                   OUTCOME_META[loggedOutcome.outcome].cls,
                 )}
               >
@@ -2093,13 +2095,6 @@ function QueueRow({
           >
             <MessageCircle className="h-3 w-3" />
             WA
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 w-7 p-0 text-muted-foreground active:scale-95"
-          >
-            <SkipForward className="h-3 w-3" />
           </Button>
         </div>
       </TableCell>

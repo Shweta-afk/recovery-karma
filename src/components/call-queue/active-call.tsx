@@ -1369,8 +1369,20 @@ function ActiveCallContent({
                       <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Loan Information
                       </div>
+                      {/* Its own row, not the shared justify-between map below — a raw debtor
+                          UUID (no loanReference mapped for this account) is long enough to
+                          wrap the label and break mid-hyphen in that narrow layout. Truncated
+                          with the full value in `title` on hover instead. */}
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="flex-shrink-0 text-muted-foreground">Loan ID</span>
+                        <span
+                          className="min-w-0 truncate font-mono text-xs text-foreground font-medium"
+                          title={debtor.loanReference ?? debtor.id}
+                        >
+                          {debtor.loanReference ?? debtor.id}
+                        </span>
+                      </div>
                       {[
-                        ["Loan ID", debtor.loanReference ?? debtor.id],
                         ["Loan Type", debtor.loanType ?? "—"],
                         ["Lender", debtor.lender ?? "—"],
                         ["Portfolio", debtor.portfolio],
@@ -1401,7 +1413,22 @@ function ActiveCallContent({
                         </div>
                         {[
                           ["DPD", `${debtor.dpd} days`],
-                          ["Bucket", bucketMeta.label + " — " + bucketMeta.description],
+                          [
+                            "Bucket",
+                            // A colored pill, not a plain "Write-Off — 180+ DPD" string — the
+                            // DPD range is dropped here since the DPD row right above it
+                            // already says it, and the label repeats the header's own bucket
+                            // badge just above this tab.
+                            <span
+                              key="bucket"
+                              className={cn(
+                                "rounded-full border px-2 py-0.5 text-xs font-medium",
+                                bucketMeta.color,
+                              )}
+                            >
+                              {bucketMeta.label}
+                            </span>,
+                          ],
                           ["Total Overdue", formatINR(debtor.totalOverdue ?? 0)],
                           ["Total Paid", formatINR(debtor.totalPaid ?? 0)],
                           [
