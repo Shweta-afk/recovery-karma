@@ -791,18 +791,29 @@ export function CallQueueContent({
 
   // Every raw CSV column the upload didn't map to a named field — debtorFromRow() carries the
   // whole bag on `_uploadedExtra`. Rendered as extra columns after Reason so scrolling the
-  // (non-sticky) middle of the row surfaces "almost all" of the uploaded file, not just the
-  // handful of fields this table already has dedicated columns for. Built from allQueue (not
+  // (non-sticky) middle of the row surfaces most of the uploaded file, not just the handful of
+  // fields this table already has dedicated columns for. Built from allQueue (not
   // filteredQueue) so the column set doesn't jump around as filters/search change; ordered by
   // first appearance so it roughly tracks the source CSV's column order.
+  //
+  // Capped — some portfolios carry 150+ unmapped columns, which used to render literally, and
+  // one (165 columns) blew the table out to ~32,900px wide. Confirmed live (screen recording)
+  // that a table that wide makes Chromium "ghost" far-off-screen cell content through the
+  // sticky Debtor/Actions columns during horizontal scroll — a real compositor bug, not just a
+  // usability problem, and will-change:transform on the sticky cells did not fix it. 25 columns
+  // keeps the table in a width range with no observed ghosting and is already far more of the
+  // upload than the table showed before this feature existed.
+  const MAX_EXTRA_COLUMNS = 25;
   const extraColumns = useMemo(() => {
     const seen = new Set<string>();
     const cols: string[] = [];
     for (const d of allQueue) {
+      if (cols.length >= MAX_EXTRA_COLUMNS) break;
       const extra = (d as QueueDebtor & { _uploadedExtra?: Record<string, string> })
         ._uploadedExtra;
       if (!extra) continue;
       for (const key of Object.keys(extra)) {
+        if (cols.length >= MAX_EXTRA_COLUMNS) break;
         if (!seen.has(key)) {
           seen.add(key);
           cols.push(key);
