@@ -1572,8 +1572,11 @@ export function CallQueueContent({
                 <TableHeader className="sticky top-0 bg-card z-10">
                   <TableRow>
                     {/* Debtor name — fixed left column, doesn't scroll with the rest of the
-                        row's info; sortable A→Z */}
-                    <TableHead className="sticky left-0 z-20 w-[190px] max-w-[190px] bg-card shadow-[1px_0_0_0_var(--border)]">
+                        row's info; sortable A→Z. will-change-transform forces this onto its
+                        own GPU layer — without it, a table this wide (~60 extra CSV columns,
+                        12,000px+) makes Chromium "ghost" content that's scrolled thousands of
+                        pixels away through the sticky cell instead of properly culling it. */}
+                    <TableHead className="sticky left-0 z-20 w-[190px] max-w-[190px] bg-card shadow-[1px_0_0_0_var(--border)] will-change-transform">
                       <QColHead
                         label="Debtor"
                         sortKey="name"
@@ -1765,7 +1768,7 @@ export function CallQueueContent({
                     ))}
 
                     {/* Reset all column filters */}
-                    <TableHead className="sticky right-0 z-20 bg-card text-right shadow-[-1px_0_0_0_var(--border)]">
+                    <TableHead className="sticky right-0 z-20 bg-card text-right shadow-[-1px_0_0_0_var(--border)] will-change-transform">
                       {qSortKey ||
                       filterOutstanding !== "all" ||
                       filterDpd !== "all" ||
@@ -2012,7 +2015,7 @@ function QueueRow({
           way — it just gets painted over unless this column's content is clipped). */}
       <TableCell
         className={cn(
-          "sticky left-0 z-10 w-[190px] max-w-[190px] overflow-hidden shadow-[1px_0_0_0_var(--border)]",
+          "sticky left-0 z-10 w-[190px] max-w-[190px] overflow-hidden shadow-[1px_0_0_0_var(--border)] will-change-transform",
           loggedOutcome ? "bg-success/5" : "bg-card",
         )}
       >
@@ -2084,10 +2087,10 @@ function QueueRow({
           {uploadedExtra?.[col] || "—"}
         </TableCell>
       ))}
-      {/* Fixed right column — Call/WA/skip stay put while the row scrolls sideways too. */}
+      {/* Fixed right column — Call/WA stay put while the row scrolls sideways too. */}
       <TableCell
         className={cn(
-          "sticky right-0 z-10 shadow-[-1px_0_0_0_var(--border)]",
+          "sticky right-0 z-10 shadow-[-1px_0_0_0_var(--border)] will-change-transform",
           loggedOutcome ? "bg-success/5" : "bg-card",
         )}
       >
