@@ -1583,11 +1583,13 @@ export function CallQueueContent({
                 <TableHeader className="sticky top-0 bg-card z-10">
                   <TableRow>
                     {/* Debtor name — fixed left column, doesn't scroll with the rest of the
-                        row's info; sortable A→Z. will-change-transform forces this onto its
-                        own GPU layer — without it, a table this wide (~60 extra CSV columns,
-                        12,000px+) makes Chromium "ghost" content that's scrolled thousands of
-                        pixels away through the sticky cell instead of properly culling it. */}
-                    <TableHead className="sticky left-0 z-20 w-[190px] max-w-[190px] bg-card shadow-[1px_0_0_0_var(--border)] will-change-transform">
+                        row's info; sortable A→Z. transform-gpu (translate3d(0,0,0)) forces its
+                        own compositing layer — confirmed live that without it, Chromium lets a
+                        non-sticky cell from elsewhere in the FIRST row (the one directly under
+                        this sticky header) paint through this cell during horizontal scroll.
+                        Only ever the first row — a sticky-header/sticky-column corner bug, not
+                        a table-width issue (reproduced at both 32,900px and 4,600px). */}
+                    <TableHead className="sticky left-0 z-20 w-[190px] max-w-[190px] bg-card shadow-[1px_0_0_0_var(--border)] transform-gpu">
                       <QColHead
                         label="Debtor"
                         sortKey="name"
@@ -1779,7 +1781,7 @@ export function CallQueueContent({
                     ))}
 
                     {/* Reset all column filters */}
-                    <TableHead className="sticky right-0 z-20 bg-card text-right shadow-[-1px_0_0_0_var(--border)] will-change-transform">
+                    <TableHead className="sticky right-0 z-20 bg-card text-right shadow-[-1px_0_0_0_var(--border)] transform-gpu">
                       {qSortKey ||
                       filterOutstanding !== "all" ||
                       filterDpd !== "all" ||
@@ -2023,10 +2025,12 @@ function QueueRow({
       {/* Fixed left column — stays put while the rest of the row's info scrolls sideways.
           w/max-w + overflow-hidden keeps a long loan reference from bleeding into the Phone
           column that sits right next to it (it isn't sticky, so nothing pushes it out of the
-          way — it just gets painted over unless this column's content is clipped). */}
+          way — it just gets painted over unless this column's content is clipped).
+          transform-gpu: see the matching comment on the header cell above — this is the one
+          that was actually visible in practice, on the first row's own sticky cell. */}
       <TableCell
         className={cn(
-          "sticky left-0 z-10 w-[190px] max-w-[190px] overflow-hidden shadow-[1px_0_0_0_var(--border)] will-change-transform",
+          "sticky left-0 z-10 w-[190px] max-w-[190px] overflow-hidden shadow-[1px_0_0_0_var(--border)] transform-gpu",
           loggedOutcome ? "bg-success/5" : "bg-card",
         )}
       >
@@ -2101,7 +2105,7 @@ function QueueRow({
       {/* Fixed right column — Call/WA stay put while the row scrolls sideways too. */}
       <TableCell
         className={cn(
-          "sticky right-0 z-10 shadow-[-1px_0_0_0_var(--border)] will-change-transform",
+          "sticky right-0 z-10 shadow-[-1px_0_0_0_var(--border)] transform-gpu",
           loggedOutcome ? "bg-success/5" : "bg-card",
         )}
       >
