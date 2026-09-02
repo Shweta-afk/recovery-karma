@@ -1809,6 +1809,17 @@ export function CallQueueContent({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {/* Zero-height spacer row, ALWAYS first. Confirmed live (screen recording +
+                      manual retest) that the row directly under a sticky thead, in a table
+                      that also has a sticky left column, is where Chromium lets a non-sticky
+                      cell elsewhere in that row paint through the sticky one during horizontal
+                      scroll — reproduced at three different table widths, survived
+                      will-change:transform and transform-gpu on the sticky cells themselves.
+                      Making that position a real (if invisible) row means whatever corner case
+                      Chromium mishandles lands here instead of on an actual debtor's row. */}
+                  <TableRow aria-hidden className="h-0 leading-none">
+                    <TableCell colSpan={9 + extraColumns.length} className="h-0 p-0 border-0" />
+                  </TableRow>
                   {filteredQueue.length === 0 ? (
                     <TableRow>
                       <TableCell
