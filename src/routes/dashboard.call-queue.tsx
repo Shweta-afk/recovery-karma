@@ -306,6 +306,8 @@ export function CallQueueContent({
   const [queueFilter, setQueueFilter] = useState<QueueFilter>(initialFilter ?? "all");
   const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
+  const [dispositionFilter, setDispositionFilter] = useState<CallOutcome | "all">("all");
+  const [dispositionDropOpen, setDispositionDropOpen] = useState(false);
   const [queueSearch, setQueueSearch] = useState("");
 
   // Queue table column sort + filters
@@ -694,6 +696,10 @@ export function CallQueueContent({
     // Bucket filter
     if (bucketFilter !== "all") rows = rows.filter((d) => bucketOf(d.dpd) === bucketFilter);
 
+    // Disposition filter — the agent's own latest logged outcome per debtor
+    if (dispositionFilter !== "all")
+      rows = rows.filter((d) => loggedOutcomes[d.id]?.outcome === dispositionFilter);
+
     // Productive / Non-Productive
     if (prodFilter === "productive")
       rows = rows.filter((d) => PRODUCTIVE_STATUSES.includes(d.queueStatus));
@@ -772,6 +778,8 @@ export function CallQueueContent({
     allQueue,
     queueFilter,
     bucketFilter,
+    dispositionFilter,
+    loggedOutcomes,
     queueSearch,
     prodFilter,
     filterStatus,
@@ -1338,15 +1346,16 @@ export function CallQueueContent({
           )}
         </div>
 
-        {/* Status filter pills */}
-        <div className="mt-3 flex flex-wrap gap-2 items-center">
+        {/* Status filter pills — never wraps; scrolls horizontally instead so it always
+            stays on one line regardless of how many pills/tools are showing. */}
+        <div className="mt-3 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
           {FILTERS.map((f) => (
             <button
               key={f.key}
               type="button"
               onClick={() => setQueueFilter(f.key)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all duration-150",
+                "inline-flex flex-shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all duration-150",
                 queueFilter === f.key
                   ? f.key === "retained"
                     ? "bg-violet-600 text-white border-violet-600"
@@ -1366,14 +1375,14 @@ export function CallQueueContent({
             </button>
           ))}
 
-          {/* Bucket dropdown + search — right side */}
-          <div className="ml-auto flex items-center gap-2">
+          {/* Bucket + Disposition dropdowns + search — right side */}
+          <div className="ml-auto flex flex-shrink-0 items-center gap-2">
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setBucketDropOpen((o) => !o)}
                 className={cn(
-                  "flex items-center gap-1.5 h-7 rounded-lg border px-2.5 text-xs transition-all",
+                  "flex items-center gap-1.5 h-7 rounded-lg border px-2.5 text-xs transition-all whitespace-nowrap",
                   bucketFilter !== "all"
                     ? "border-foreground bg-foreground text-background"
                     : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
@@ -1423,6 +1432,66 @@ export function CallQueueContent({
                 </div>
               )}
             </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setDispositionDropOpen((o) => !o)}
+                className={cn(
+                  "flex items-center gap-1.5 h-7 rounded-lg border px-2.5 text-xs transition-all whitespace-nowrap",
+                  dispositionFilter !== "all"
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+                )}
+              >
+                {dispositionFilter === "all"
+                  ? "Disposition"
+                  : OUTCOME_META[dispositionFilter].label}
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+              {dispositionDropOpen && (
+                <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-lg border border-border bg-card shadow-lg py-1 max-h-72 overflow-y-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDispositionFilter("all");
+                      setDispositionDropOpen(false);
+                    }}
+                    className={cn(
+                      "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50",
+                      dispositionFilter === "all"
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    All Dispositions
+                  </button>
+                  {(Object.keys(OUTCOME_META) as CallOutcome[]).map((code) => (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => {
+                        setDispositionFilter(code);
+                        setDispositionDropOpen(false);
+                      }}
+                      className={cn(
+                        "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between",
+                        dispositionFilter === code
+                          ? "font-medium text-foreground"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      <span>{OUTCOME_META[code].label}</span>
+                      <span className="opacity-50">
+                        {
+                          allQueue.filter((d) => loggedOutcomes[d.id]?.outcome === code)
+                            .length
+                        }
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="relative max-w-xs">
               <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
@@ -1435,7 +1504,7 @@ export function CallQueueContent({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 gap-1 text-xs"
+              className="h-7 gap-1 text-xs whitespace-nowrap"
               onClick={() =>
                 exportCSV(
                   "call-queue.csv",
@@ -1474,8 +1543,9 @@ export function CallQueueContent({
               <Table>
                 <TableHeader className="sticky top-0 bg-card z-10">
                   <TableRow>
-                    {/* Debtor name — sortable A→Z */}
-                    <TableHead>
+                    {/* Debtor name — fixed left column, doesn't scroll with the rest of the
+                        row's info; sortable A→Z */}
+                    <TableHead className="sticky left-0 z-20 bg-card min-w-[180px] shadow-[1px_0_0_0_var(--border)]">
                       <QColHead
                         label="Debtor"
                         sortKey="name"
@@ -1657,7 +1727,7 @@ export function CallQueueContent({
                     </TableHead>
 
                     {/* Reset all column filters */}
-                    <TableHead className="text-right">
+                    <TableHead className="sticky right-0 z-20 bg-card text-right shadow-[-1px_0_0_0_var(--border)]">
                       {qSortKey ||
                       filterOutstanding !== "all" ||
                       filterDpd !== "all" ||
@@ -1893,7 +1963,13 @@ function QueueRow({
       )}
       style={{ animationDelay: `${Math.min(index * 25, 400)}ms` }}
     >
-      <TableCell>
+      {/* Fixed left column — stays put while the rest of the row's info scrolls sideways. */}
+      <TableCell
+        className={cn(
+          "sticky left-0 z-10 shadow-[1px_0_0_0_var(--border)]",
+          loggedOutcome ? "bg-success/5" : "bg-card",
+        )}
+      >
         <button
           type="button"
           onClick={() => onView(d)}
@@ -1945,7 +2021,13 @@ function QueueRow({
       <TableCell>
         <p className="text-xs text-foreground/80 max-w-[160px] leading-snug">{d.scoreReason}</p>
       </TableCell>
-      <TableCell>
+      {/* Fixed right column — Call/WA/skip stay put while the row scrolls sideways too. */}
+      <TableCell
+        className={cn(
+          "sticky right-0 z-10 shadow-[-1px_0_0_0_var(--border)]",
+          loggedOutcome ? "bg-success/5" : "bg-card",
+        )}
+      >
         <div className="flex items-center justify-end gap-1">
           <Button
             size="sm"

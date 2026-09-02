@@ -1404,7 +1404,10 @@ export const BUCKET_META: Record<DPDBucket, { label: string; color: string; desc
     WriteOff: {
       label: "Write-Off",
       color: "text-muted-foreground border-border bg-muted/30",
-      description: "180+ DPD — Written off",
+      // No "— Written off" suffix here — the label already says Write-Off, and
+      // active-call.tsx's Loan Details concatenates label + description, which
+      // used to print "Write-Off — 180+ DPD — Written off".
+      description: "180+ DPD",
     },
   };
 

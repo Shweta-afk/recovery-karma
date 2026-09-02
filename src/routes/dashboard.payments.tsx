@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { EMPTY_RANGE, inDateRange, type DateRange } from "@/lib/date-filter";
 import { formatINR, bucketOf, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
@@ -129,6 +130,13 @@ function isSameMonth(iso: string, ref: Date): boolean {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 function PaymentsPage() {
+  // Agents only ever see their own collections here; managers/admins see everything. Enforced
+  // client-side against PaymentRecord.agentId, which payments-store.ts populates with the
+  // collecting agent's email (same identity used elsewhere on this page as actingAgentId).
+  const { user } = useAuth();
+  const isAgent = user?.role === "agent";
+  const selfId = user?.email ?? user?.id ?? null;
+
   const [search, setSearch] = useState("");
   const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
   const [portfolioFilter, setPortfolioFilter] = useState<string>("all");
@@ -138,6 +146,7 @@ function PaymentsPage() {
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | "all">("all");
   const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
+  const [statusDropOpen, setStatusDropOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // getDispositions() is a plain cache read, so the PTP/callback memo needs an explicit
@@ -167,15 +176,23 @@ function PaymentsPage() {
     };
   }, []);
 
+  // Role gate — everything below reads visiblePayments, never the raw payments state, so an
+  // agent can't reach another agent's collections through any KPI, breakdown, or export on
+  // this page even though the fetch itself is unscoped.
+  const visiblePayments = useMemo(
+    () => (isAgent ? payments.filter((p) => p.agentId === selfId) : payments),
+    [payments, isAgent, selfId],
+  );
+
   // Every portfolio present in the payments this user can see. Derived from the rows rather
   // than from getPortfolios() so the list can never offer an option that yields nothing.
   const portfolioOptions = useMemo(() => {
     const byId = new Map<string, string>();
-    for (const p of payments) {
+    for (const p of visiblePayments) {
       if (p.portfolioId) byId.set(p.portfolioId, p.portfolioName ?? p.portfolioId);
     }
     return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [payments]);
+  }, [visiblePayments]);
 
   // The portfolio filter SCOPES the page rather than just filtering the table: the KPI cards,
   // the DPD breakdown and the method breakdown all read `scoped`, not `payments`. Filtering
@@ -184,13 +201,13 @@ function PaymentsPage() {
   const scoped = useMemo(
     () =>
       (portfolioFilter === "all"
-        ? payments
-        : payments.filter((p) => p.portfolioId === portfolioFilter)
+        ? visiblePayments
+        : visiblePayments.filter((p) => p.portfolioId === portfolioFilter)
       )
         // Dated on when the money arrived, falling back to when the row was written for a
         // payment still pending — `receivedAt` is absent until it lands.
         .filter((p) => inDateRange(p.receivedAt ?? p.createdAt, dateRange)),
-    [payments, portfolioFilter, dateRange],
+    [visiblePayments, portfolioFilter, dateRange],
   );
 
   // Who has actually collected anything in the scoped set, with their role, so a manager's
@@ -220,10 +237,13 @@ function PaymentsPage() {
     return getDispositions()
       .filter((d) => d.outcome === wanted)
       .filter((d) => portfolioFilter === "all" || d.portfolioId === portfolioFilter)
-      .filter((d) => collectorFilter === "all" || d.agentId === collectorFilter)
+      // Doesn't go through visiblePayments (this reads dispositions, not payments) — so the
+      // agent role-gate is re-applied here directly rather than via the collector picker,
+      // which is hidden for agents anyway once collectorOptions collapses to just themselves.
+      .filter((d) => (isAgent ? d.agentId === selfId : collectorFilter === "all" || d.agentId === collectorFilter))
       .filter((d) => inDateRange(d.time, dateRange))
       .sort((a, b) => (a.time < b.time ? 1 : -1));
-  }, [activity, portfolioFilter, collectorFilter, dateRange, dispositionsTick]);
+  }, [activity, portfolioFilter, collectorFilter, dateRange, dispositionsTick, isAgent, selfId]);
 
   // Managers collect too — from their own escalation queue and by dialling on an agent's
   // behalf. Splitting the total is the whole point of the request; a blended figure hides it.
@@ -272,8 +292,9 @@ function PaymentsPage() {
   const totalMonth = scoped
     .filter((p) => p.status === "completed" && isSameMonth(p.receivedAt ?? p.createdAt, now))
     .reduce((s, p) => s + p.amount, 0);
-  const pendingCount = scoped.filter((p) => p.status === "pending").length;
-  const failedCount = scoped.filter((p) => p.status === "failed").length;
+  // Pending/Failed KPI tiles removed — every payment insert in this app hardcodes
+  // status: "completed" (disposition-store.ts, portfolio-store.ts), so those counts are
+  // always zero and were dead weight, not a real state to monitor.
 
   return (
     <div className="space-y-6">
@@ -286,8 +307,9 @@ function PaymentsPage() {
         </p>
       </div>
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 animate-in fade-in duration-400">
+      {/* KPI strip — "Collected by Managers" only makes sense once the view spans more than
+          one person, so it's hidden for an agent (always scoped to just themselves). */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 animate-in fade-in duration-400">
         {[
           {
             label: "Collected Today",
@@ -303,33 +325,23 @@ function PaymentsPage() {
             icon: TrendingUp,
             cls: "text-primary",
           },
-          {
-            // Managers collect from their own escalation queue and by dialling on an agent's
-            // behalf. This used to be folded into the same totals as agent collections, so
-            // there was no way to see it at all.
-            label: "Collected by Managers",
-            value: formatINR(collectedByRole.manager),
-            sub:
-              collectedByRole.bank > 0
-                ? `${formatINR(collectedByRole.agent)} by agents · ${formatINR(collectedByRole.bank)} bank-reported`
-                : `${formatINR(collectedByRole.agent)} by agents`,
-            icon: Users,
-            cls: "text-primary",
-          },
-          {
-            label: "Pending Verify",
-            value: pendingCount.toString(),
-            sub: "Awaiting bank confirmation",
-            icon: Clock,
-            cls: "text-warning-foreground",
-          },
-          {
-            label: "Failed",
-            value: failedCount.toString(),
-            sub: "Requires follow-up",
-            icon: AlertTriangle,
-            cls: "text-destructive",
-          },
+          ...(isAgent
+            ? []
+            : [
+                {
+                  // Managers collect from their own escalation queue and by dialling on an
+                  // agent's behalf. This used to be folded into the same totals as agent
+                  // collections, so there was no way to see it at all.
+                  label: "Collected by Managers",
+                  value: formatINR(collectedByRole.manager),
+                  sub:
+                    collectedByRole.bank > 0
+                      ? `${formatINR(collectedByRole.agent)} by agents · ${formatINR(collectedByRole.bank)} bank-reported`
+                      : `${formatINR(collectedByRole.agent)} by agents`,
+                  icon: Users,
+                  cls: "text-primary",
+                },
+              ]),
         ].map((s, i) => (
           <Card
             key={s.label}
@@ -386,31 +398,57 @@ function PaymentsPage() {
 
             <DateRangeFilter value={dateRange} onChange={setDateRange} />
 
-            {/* Status pills */}
-            <div className="flex gap-1.5 flex-wrap">
-              {(
-                [
-                  { key: "all", label: "All" },
-                  { key: "completed", label: "Confirmed" },
-                  { key: "pending", label: "Pending" },
-                  { key: "failed", label: "Failed" },
-                  { key: "refunded", label: "Refunded" },
-                ] as const
-              ).map((f) => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => setStatusFilter(f.key)}
-                  className={cn(
-                    "rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-all",
-                    statusFilter === f.key
-                      ? "bg-foreground text-background border-foreground"
-                      : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
-                  )}
-                >
-                  {f.label}
-                </button>
-              ))}
+            {/* Status filter — a dropdown like Bucket, rather than a pill per status. */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setStatusDropOpen((o) => !o)}
+                className={cn(
+                  "flex items-center gap-1.5 h-8 rounded-lg border px-2.5 text-xs transition-all",
+                  statusFilter !== "all"
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+                )}
+              >
+                {statusFilter === "all" ? "Status" : STATUS_META[statusFilter].label}
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+              {statusDropOpen && (
+                <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-lg border border-border bg-card shadow-lg py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter("all");
+                      setStatusDropOpen(false);
+                    }}
+                    className={cn(
+                      "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50",
+                      statusFilter === "all" ? "font-medium text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    All
+                  </button>
+                  {(Object.keys(STATUS_META) as PaymentStatus[]).map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        setStatusFilter(key);
+                        setStatusDropOpen(false);
+                      }}
+                      className={cn(
+                        "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between",
+                        statusFilter === key ? "font-medium text-foreground" : "text-muted-foreground",
+                      )}
+                    >
+                      <span>{STATUS_META[key].label}</span>
+                      <span className="opacity-50">
+                        {scoped.filter((p) => p.status === key).length}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Bucket dropdown */}

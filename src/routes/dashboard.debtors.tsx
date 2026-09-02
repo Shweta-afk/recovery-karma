@@ -966,6 +966,97 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
 
           {/* Overview */}
           <TabsContent value="overview" className="flex-1 overflow-y-auto px-6 py-4 space-y-5 mt-0">
+            {/* Personal — there's no separate "Personal" tab on this page (unlike the in-call
+                modal, which has one), so it sits at the top of Overview instead. Same fields,
+                same labels as the call modal's Personal tab, for consistency between the two. */}
+            <div>
+              <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">
+                Personal
+              </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="rounded-lg border border-border p-3 space-y-2">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Personal Details
+                  </div>
+                  {(
+                    [
+                      ["Full Name", d.name],
+                      ["Gender", d.gender ?? "—"],
+                      ["DOB", d.dob ?? "—"],
+                      ["Age", d.age ? `${d.age} years` : "—"],
+                      ["Language", d.language],
+                    ] as [string, string][]
+                  ).map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{k}</span>
+                      <span className="text-foreground font-medium">{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-lg border border-border p-3 space-y-2">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Contact Details
+                  </div>
+                  {[{ label: "Primary", number: d.phone }, ...(d.altPhones ?? []).map((number, i) => ({ label: `Alt ${i + 1}`, number }))].map(
+                    ({ label, number }) => (
+                      <div key={label} className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className="font-mono text-foreground font-medium">{number}</span>
+                      </div>
+                    ),
+                  )}
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Email</span>
+                    <span className="font-mono text-foreground font-medium">{d.email ?? "—"}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Last Contacted</span>
+                    <span className="font-mono text-foreground font-medium">
+                      {d.lastContacted ?? "Never"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border p-3 space-y-2">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Address
+                  </div>
+                  <p className="text-sm text-foreground">{d.address ?? "—"}</p>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">City / State</span>
+                    <span className="text-foreground">
+                      {[d.city, d.state].filter(Boolean).join(", ") || "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Pincode</span>
+                    <span className="text-foreground font-mono">{d.pincode ?? "—"}</span>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border p-3 space-y-2">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Employment
+                  </div>
+                  {(
+                    [
+                      ["Employer", d.employer ?? "—"],
+                      ["Type", d.employerType ?? "—"],
+                      ["Monthly Income", d.monthlyIncome ? formatINR(d.monthlyIncome) : "—"],
+                    ] as [string, string][]
+                  ).map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{k}</span>
+                      <span className="text-foreground font-medium">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
             <div>
               <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">
                 {isUploaded
@@ -1065,15 +1156,13 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
               <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">
                 Other Details
               </p>
+              {/* Last Contacted and Language now live in the Personal section above — not
+                  repeated here. */}
               <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 {(
-                  [
-                    ["Last Contacted", d.lastContacted ?? "—"],
-                    ["Language", d.language],
-                    ["AI Insight", d.scoreReason],
-                  ] as [string, string][]
+                  [["AI Insight", d.scoreReason]] as [string, string][]
                 ).map(([label, val]) => (
-                  <div key={label} className={label === "AI Insight" ? "col-span-2" : ""}>
+                  <div key={label} className="col-span-2">
                     <div className="text-xs text-muted-foreground">{label}</div>
                     <div className="font-medium text-foreground mt-0.5">{val}</div>
                   </div>
