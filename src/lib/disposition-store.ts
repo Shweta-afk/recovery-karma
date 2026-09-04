@@ -33,8 +33,8 @@ export interface DispositionRecord {
   portfolioId?: string;
   portfolioName?: string;
   outcome: CallOutcome;
-  /** Sub-reason for the outcome (e.g. "Switched off" for no_answer) — see OUTCOME_REASONS in
-   * active-call.tsx. Requires migrations/20260811_call_logs_outcome_reason.sql. */
+  /** Sub-reason for the outcome (e.g. "Switched Off" for no_answer) — see OUTCOME_REASONS in
+   * call-queue/types.ts. Requires migrations/20260811_call_logs_outcome_reason.sql. */
   reason?: string;
   notes: string;
   ptpAmount?: number;

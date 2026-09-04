@@ -65,6 +65,7 @@ import { useSingleCall } from "@/lib/dialer/use-single-call";
 import {
   QUEUE_FILTERS,
   OUTCOME_META,
+  OUTCOME_REASONS,
   QUEUE_STATUS_META,
   dialModeFromDialerMode,
   type DialMode,
@@ -259,15 +260,16 @@ export function CallQueueContent({
 
   // Seed loggedOutcomes from persisted dispositions
   const [loggedOutcomes, setLoggedOutcomes] = useState<
-    Record<string, { outcome: CallOutcome; time: string }>
+    Record<string, { outcome: CallOutcome; time: string; reason?: string }>
   >(() => {
     const persisted = getAgentDispositions(agentId);
-    const map: Record<string, { outcome: CallOutcome; time: string }> = {};
+    const map: Record<string, { outcome: CallOutcome; time: string; reason?: string }> = {};
     persisted.forEach((d) => {
       const t = new Date(d.time);
       map[d.debtorId] = {
         outcome: d.outcome as CallOutcome,
         time: `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")}`,
+        reason: d.reason || undefined,
       };
     });
     return map;
@@ -306,7 +308,14 @@ export function CallQueueContent({
   const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
   const [bucketDropOpen, setBucketDropOpen] = useState(false);
   const [dispositionFilter, setDispositionFilter] = useState<CallOutcome | "all">("all");
+  // Narrows within the chosen outcome (e.g. Refused → "Broken Promise to Pay"). Reset to "all"
+  // whenever the outcome itself changes, since a reason from a different outcome's list would
+  // silently match nothing.
+  const [reasonFilter, setReasonFilter] = useState<string | "all">("all");
   const [dispositionDropOpen, setDispositionDropOpen] = useState(false);
+  const [expandedDispositionOutcome, setExpandedDispositionOutcome] = useState<CallOutcome | null>(
+    null,
+  );
   const [queueSearch, setQueueSearch] = useState("");
 
   // Queue table column sort + filters
@@ -623,7 +632,11 @@ export function CallQueueContent({
       const timeStr = `${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`;
       setLoggedOutcomes((prev) => ({
         ...prev,
-        [debtor.id]: { outcome: disposition.outcome as CallOutcome, time: timeStr },
+        [debtor.id]: {
+          outcome: disposition.outcome as CallOutcome,
+          time: timeStr,
+          reason: disposition.reason || undefined,
+        },
       }));
     }
     singleCall.reset();
@@ -695,9 +708,12 @@ export function CallQueueContent({
     // Bucket filter
     if (bucketFilter !== "all") rows = rows.filter((d) => bucketOf(d.dpd) === bucketFilter);
 
-    // Disposition filter — the agent's own latest logged outcome per debtor
+    // Disposition filter — the agent's own latest logged outcome per debtor, optionally
+    // narrowed further to a specific reason within that outcome.
     if (dispositionFilter !== "all")
       rows = rows.filter((d) => loggedOutcomes[d.id]?.outcome === dispositionFilter);
+    if (reasonFilter !== "all")
+      rows = rows.filter((d) => loggedOutcomes[d.id]?.reason === reasonFilter);
 
     // Productive / Non-Productive
     if (prodFilter === "productive")
@@ -778,6 +794,7 @@ export function CallQueueContent({
     queueFilter,
     bucketFilter,
     dispositionFilter,
+    reasonFilter,
     loggedOutcomes,
     queueSearch,
     prodFilter,
@@ -1476,23 +1493,28 @@ export function CallQueueContent({
                 type="button"
                 onClick={() => setDispositionDropOpen((o) => !o)}
                 className={cn(
-                  "flex items-center gap-1.5 h-7 rounded-lg border px-2.5 text-xs transition-all whitespace-nowrap",
+                  "flex items-center gap-1.5 h-7 max-w-[160px] rounded-lg border px-2.5 text-xs transition-all",
                   dispositionFilter !== "all"
                     ? "border-foreground bg-foreground text-background"
                     : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
                 )}
               >
-                {dispositionFilter === "all"
-                  ? "Disposition"
-                  : OUTCOME_META[dispositionFilter].label}
-                <ChevronDown className="h-3 w-3 opacity-60" />
+                <span className="truncate">
+                  {dispositionFilter === "all"
+                    ? "Disposition"
+                    : reasonFilter === "all"
+                      ? OUTCOME_META[dispositionFilter].label
+                      : reasonFilter}
+                </span>
+                <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
               </button>
               {dispositionDropOpen && (
-                <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-lg border border-border bg-card shadow-lg py-1 max-h-72 overflow-y-auto">
+                <div className="absolute right-0 top-full mt-1 z-30 w-64 rounded-lg border border-border bg-card shadow-lg py-1 max-h-96 overflow-y-auto">
                   <button
                     type="button"
                     onClick={() => {
                       setDispositionFilter("all");
+                      setReasonFilter("all");
                       setDispositionDropOpen(false);
                     }}
                     className={cn(
@@ -1504,30 +1526,90 @@ export function CallQueueContent({
                   >
                     All Dispositions
                   </button>
-                  {(Object.keys(OUTCOME_META) as CallOutcome[]).map((code) => (
-                    <button
-                      key={code}
-                      type="button"
-                      onClick={() => {
-                        setDispositionFilter(code);
-                        setDispositionDropOpen(false);
-                      }}
-                      className={cn(
-                        "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between",
-                        dispositionFilter === code
-                          ? "font-medium text-foreground"
-                          : "text-muted-foreground",
-                      )}
-                    >
-                      <span>{OUTCOME_META[code].label}</span>
-                      <span className="opacity-50">
-                        {
-                          allQueue.filter((d) => loggedOutcomes[d.id]?.outcome === code)
-                            .length
-                        }
-                      </span>
-                    </button>
-                  ))}
+                  {(Object.keys(OUTCOME_META) as CallOutcome[]).map((code) => {
+                    const reasons = OUTCOME_REASONS[code] ?? [];
+                    const isExpanded = expandedDispositionOutcome === code;
+                    return (
+                      <div key={code}>
+                        <div
+                          className={cn(
+                            "flex items-center justify-between hover:bg-muted/50",
+                            dispositionFilter === code &&
+                              reasonFilter === "all" &&
+                              "bg-muted/30",
+                          )}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDispositionFilter(code);
+                              setReasonFilter("all");
+                              setDispositionDropOpen(false);
+                            }}
+                            className={cn(
+                              "flex-1 text-left px-3 py-1.5 text-xs",
+                              dispositionFilter === code
+                                ? "font-medium text-foreground"
+                                : "text-muted-foreground",
+                            )}
+                          >
+                            {OUTCOME_META[code].label}
+                          </button>
+                          <span className="text-[10px] opacity-50 pr-1">
+                            {allQueue.filter((d) => loggedOutcomes[d.id]?.outcome === code).length}
+                          </span>
+                          {reasons.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedDispositionOutcome((o) => (o === code ? null : code))
+                              }
+                              className="px-2 py-1.5 text-muted-foreground hover:text-foreground"
+                              title="Show reasons"
+                            >
+                              <ChevronDown
+                                className={cn(
+                                  "h-3 w-3 transition-transform",
+                                  isExpanded && "rotate-180",
+                                )}
+                              />
+                            </button>
+                          )}
+                        </div>
+                        {isExpanded && (
+                          <div className="border-l border-border ml-3 pl-2">
+                            {reasons.map((reason) => {
+                              const count = allQueue.filter(
+                                (d) =>
+                                  loggedOutcomes[d.id]?.outcome === code &&
+                                  loggedOutcomes[d.id]?.reason === reason,
+                              ).length;
+                              return (
+                                <button
+                                  key={reason}
+                                  type="button"
+                                  onClick={() => {
+                                    setDispositionFilter(code);
+                                    setReasonFilter(reason);
+                                    setDispositionDropOpen(false);
+                                  }}
+                                  className={cn(
+                                    "w-full text-left px-2 py-1 text-[11px] hover:bg-muted/50 flex items-center justify-between gap-2",
+                                    dispositionFilter === code && reasonFilter === reason
+                                      ? "font-medium text-foreground"
+                                      : "text-muted-foreground",
+                                  )}
+                                >
+                                  <span className="truncate">{reason}</span>
+                                  {count > 0 && <span className="opacity-50 flex-shrink-0">{count}</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

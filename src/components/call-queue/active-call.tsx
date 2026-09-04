@@ -76,6 +76,7 @@ import {
 
 import {
   OUTCOME_META,
+  OUTCOME_REASONS,
   QUEUE_STATUS_META,
   type CallOutcome,
   type DispositionForm,
@@ -107,73 +108,6 @@ import { TracePanel } from "@/components/profilex/trace-panel";
 // escalation modal. Prop-driven presentational components — the route wires them to state.
 
 // ─── Active Call Components ───────────────────────────────────────────────────
-
-// Sub-reasons offered once an agent picks an outcome — free text on the backend
-// (call_logs.outcome_reason, requires migrations/20260811_call_logs_outcome_reason.sql), this
-// list is what's actually shown, not a schema-enforced enum. Keep in sync with any new
-// CallOutcome — an outcome with no entry here just shows no reason dropdown at all.
-const OUTCOME_REASONS: Record<CallOutcome, string[]> = {
-  paid: [
-    "Full payment",
-    "Partial payment",
-    "Paid via UPI",
-    "Paid via bank transfer",
-    "Paid in cash",
-    "Paid at branch",
-  ],
-  promised: [
-    "Will pay on salary day",
-    "Will pay after selling asset",
-    "Family will arrange funds",
-    "Waiting on reimbursement",
-    "Short-term hardship, will clear soon",
-  ],
-  callback: [
-    "Busy at work",
-    "Driving / can't talk",
-    "In a meeting",
-    "Asked to call back later",
-    "Bad network, call dropped",
-    "Family member requested callback",
-  ],
-  settlement: [
-    "Wants lump-sum discount",
-    "Cannot pay full amount",
-    "Financial hardship",
-    "Job loss",
-    "Medical emergency",
-  ],
-  refused: [
-    "Disputes the debt",
-    "Claims already paid",
-    "Refuses due to harassment claim",
-    "Financial inability",
-    "Hung up / hostile",
-    "Unwilling to discuss",
-  ],
-  no_answer: [
-    "Ringing, no pickup",
-    "Switched off",
-    "Out of coverage area",
-    "Rang twice, no answer",
-    "Call got cut",
-    "Number busy",
-  ],
-  voicemail: [
-    "Left voicemail",
-    "Mailbox full",
-    "No voicemail option",
-    "Auto-attendant only, no human",
-  ],
-  dispute: [
-    "Wrong amount claimed",
-    "Says not their loan",
-    "Claims already settled",
-    "Fraud / identity theft claim",
-    "KYC mismatch",
-    "Disputes interest/charges",
-  ],
-};
 
 function fmtElapsed(s: number) {
   const m = Math.floor(s / 60)

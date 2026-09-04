@@ -125,6 +125,121 @@ export const OUTCOME_META: Record<CallOutcome, { label: string; cls: string }> =
   settlement: { label: "Settlement", cls: "bg-teal-500/8 text-teal-600/70 border-teal-400/15" },
 };
 
+// Sub-reasons offered once an agent picks an outcome — free text on the backend
+// (call_logs.outcome_reason, requires migrations/20260811_call_logs_outcome_reason.sql), this
+// list is what's actually shown, not a schema-enforced enum. Keep in sync with any new
+// CallOutcome — an outcome with no entry here just shows no reason dropdown at all. Shared
+// between the in-call disposition form (active-call.tsx) and the Call Queue Disposition
+// filter (dashboard.call-queue.tsx), which is why it lives here rather than in either.
+//
+// Sourced from the org's Call Disposition Matrix. The matrix's category headers map onto the
+// app's existing CallOutcome values rather than becoming new outcomes of their own — that
+// keeps PTP tracking / escalations / DRR, which all key off CallOutcome, working unchanged:
+//   PAID → paid · CALL BACK → callback · POSITIVE POOL–PTP → promised
+//   POSITIVE POOL–SETTLEMENT → settlement · NOT CONTACTED → no_answer
+//   RTP → refused · DISPUTE + DISPUTE–OTHER → dispute (combined; both log the same outcome)
+// "Voicemail" appears as a reason under NOT CONTACTED in the matrix, but the app also has a
+// standalone `voicemail` outcome predating this matrix — left as-is, not folded in, since
+// removing it would reclassify already-logged calls.
+export const OUTCOME_REASONS: Record<CallOutcome, string[]> = {
+  paid: ["Payment Collected Fully", "Payment Details Shared", "On-Call Online Payment", "Claim Paid"],
+  callback: [
+    "Left Message",
+    "Supervisor Follow Up",
+    "Language Barrier",
+    "No Payment Signals",
+    "Customer Is Busy",
+    "Call Back PTP",
+    "Third Party Call Back",
+    "Disconnected – Purpose of Call Shared Partially",
+    "Disconnected – Purpose of Call Shared",
+    "Call Back",
+  ],
+  promised: [
+    "Payment Details Not Shared",
+    "Payment Collected – Partially",
+    "PTP",
+    "Future PTP",
+    "Maintain Balance",
+  ],
+  settlement: [
+    "Settlement Instalment Follow Up",
+    "CIBIL Instalment Follow Up",
+    "Asset Surrender",
+    "Settlement Letter Received",
+    "CIBIL Letter Received",
+    "Settlement Letter Awaited",
+    "CIBIL Letter Awaited",
+    "Settlement Request Raised",
+    "CIBIL Request Raised",
+    "CIBIL Proposed",
+    "Settlement Proposed",
+    "Positive – CIBIL Cleanup",
+    "Positive – Foreclosure",
+    "Positive – Settlement",
+    "Already Settled",
+  ],
+  no_answer: [
+    "Switched Off",
+    "Engaged Tone",
+    "Ringing",
+    "Not Reachable (No Contact)",
+    "Busy",
+    "Waiting",
+    "Out of Coverage Area",
+    "Out of Service",
+    "Wrong Number",
+    "Not Available",
+    "Does Not Exist",
+    "Not in Use",
+    "Voicemail",
+    "Field Visit Recommended – No Contact",
+    "Branch Contact",
+    "Disconnected – No Info Shared",
+    "Redial",
+  ],
+  refused: [
+    "Broken Promise to Pay",
+    "Pay Later – Financial Reason",
+    "Pay Later – Medical Reason",
+    "Unable to Pay – Financial Reason",
+    "Unable to Pay – Medical Reason",
+    "Intentional",
+    "Field Visit Recommended – RTP",
+    "Black Customer",
+    "Black FE",
+    "CIBIL Done",
+    "Card Not Received",
+    "Card Not Used",
+    "Misselling – Annual Charges Were Not Informed",
+    "Stop Follow Up",
+    "Pay Later – Death",
+    "Death in Family",
+    "Customer's Demise",
+    "Closed",
+  ],
+  voicemail: [
+    "Left voicemail",
+    "Mailbox full",
+    "No voicemail option",
+    "Auto-attendant only, no human",
+  ],
+  dispute: [
+    "Follow Up",
+    "Sales Issue – New Connection Given",
+    "Sales Issue – Sold as Free Number",
+    "Sales Issue – Wrong Commitment",
+    "Delay in Disconnection",
+    "Sales Issue – Sold as Prepaid",
+    "Frequent Network Issue",
+    "No Usage/Low Usage",
+    "Billing Issue – IR Charges",
+    "Installation Related",
+    "Device Already Collected",
+    "Vehicle with Third Party",
+  ],
+};
+
 export const AI_STATUS_META: Record<string, { label: string; dot: string; cls: string }> = {
   in_call: { label: "In Call", dot: "bg-success animate-pulse", cls: "text-success" },
   waiting: { label: "Queued", dot: "bg-warning", cls: "text-warning-foreground" },
