@@ -33,6 +33,7 @@ export type TrendMetricKey =
   | "contacts"
   | "ptps"
   | "ptpAmount"
+  | "projectedRecovery"
   | "payments"
   | "uniqueAccounts";
 
@@ -47,6 +48,13 @@ export interface TrendMetrics {
   ptpAmount: number;
   /** ₹ from completed payments. */
   collected: number;
+  /** ptpAmount + collected — the same "Projected Recovery" figure shown on the agent
+   * dashboard's Queue card. Differentiates what's actually landed (collected) from what's
+   * still sitting in the pipeline as an open promise (ptpAmount) by showing their sum
+   * alongside both individually, rather than requiring the reader to add the two tiles
+   * themselves. Not a forecast — an open PTP that's later broken still counts here until the
+   * disposition changes, so this trends downward, not just up, as promises resolve. */
+  projectedRecovery: number;
   /** Count of completed payments. */
   payments: number;
   /** Distinct accounts (loan IDs) with activity — contacted or collected from. Answers "how
@@ -89,6 +97,7 @@ export interface MetricDef {
 export const TREND_METRICS: MetricDef[] = [
   { key: "collected", label: "Collected", currency: true },
   { key: "ptpAmount", label: "PTP Value", currency: true },
+  { key: "projectedRecovery", label: "Projected Recovery", currency: true },
   { key: "calls", label: "Calls", currency: false },
   { key: "contacts", label: "Contacts", currency: false },
   { key: "ptps", label: "PTPs", currency: false },
@@ -201,6 +210,7 @@ function emptyMetrics(): TrendMetrics {
     ptps: 0,
     ptpAmount: 0,
     collected: 0,
+    projectedRecovery: 0,
     payments: 0,
     uniqueAccounts: 0,
     posWorked: 0,
@@ -280,6 +290,7 @@ export function bucketByDay(
     m.uniqueAccounts = m.accounts.size;
     m.posWorked = pos(m.accounts);
     m.posPromised = pos(m.promisedAccounts);
+    m.projectedRecovery = m.ptpAmount + m.collected;
   }
 
   return byDay;
@@ -310,6 +321,10 @@ function sumRange(
     total.collected += m.collected;
     total.payments += m.payments;
   }
+  // Derived at the end from the two totals above, not summed per-day — mathematically
+  // identical (both addends are already additive) and avoids a second accumulator to keep in
+  // sync with ptpAmount/collected.
+  total.projectedRecovery = total.ptpAmount + total.collected;
   total.uniqueAccounts = accounts.size;
   let worked = 0;
   for (const id of accounts) worked += posByDebtor.get(id) ?? 0;

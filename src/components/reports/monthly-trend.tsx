@@ -609,8 +609,9 @@ export function MonthlyTrendPanel({
         </div>
       </div>
 
-      {/* 7 metrics since Accounts was added — a 6-wide row left one orphaned on its own line. */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-7">
+      {/* 8 metrics since Projected Recovery was added — 4 divides both 8 and (halved) 4, so
+          lg/xl stay an even 4×2/8×1 with nothing orphaned onto its own row. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
         {TREND_METRICS.map((m) => (
           <TrendStat
             key={m.key}
