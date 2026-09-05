@@ -13,6 +13,7 @@ import {
   closePortfolio,
   PRODUCT_LABEL_TO_ENUM,
   DEFAULT_PORTFOLIO_SETTINGS,
+  minPortfolioEndDate,
   type UploadedPortfolio,
   type UploadedDebtor,
   type PortfolioSettings,
@@ -81,7 +82,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn, parseCsvText } from "@/lib/utils";
 import { normHeader } from "@/lib/column-mapper";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
-import { useTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useTeamAgents, withSelf, type AgentRef } from "@/lib/team-store";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { refreshDispositions } from "@/lib/disposition-store";
 import { refreshPayments } from "@/lib/payments-store";
@@ -131,7 +132,11 @@ function ReassignDialog({
   // Scoped by the portfolio's own team, not whatever the manager currently has "active" —
   // a manager reassigning an older portfolio should still see that portfolio's actual team's
   // agents even if they've since switched their working context to a different team.
-  const agents = useTeamAgents(portfolio?.teamId);
+  const teamAgents = useTeamAgents(portfolio?.teamId);
+  const { user } = useAuth();
+  const selfId = user?.email ?? user?.id;
+  // The manager themself is assignable too, alongside the portfolio's team agents — see withSelf.
+  const agents = useMemo(() => withSelf(teamAgents, selfId), [teamAgents, selfId]);
   const [allocation, setAllocation] = useState<Record<string, string[]>>({});
   const [saving, setSaving] = useState(false);
 
@@ -222,6 +227,7 @@ function EditPortfolioDialog({
   const [name, setName] = useState("");
   const [lender, setLender] = useState("");
   const [product, setProduct] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [settings, setSettings] = useState<PortfolioSettings>(DEFAULT_PORTFOLIO_SETTINGS);
   const [targets, setTargets] = useState<Record<string, AgentTarget>>({});
   const [saving, setSaving] = useState(false);
@@ -237,6 +243,7 @@ function EditPortfolioDialog({
   const [manualPhone, setManualPhone] = useState("");
   const [manualLoanRef, setManualLoanRef] = useState("");
   const [manualAmount, setManualAmount] = useState("");
+  const [manualPrincipal, setManualPrincipal] = useState("");
   const [manualDpd, setManualDpd] = useState("");
   const [manualEmail, setManualEmail] = useState("");
   const [addingManual, setAddingManual] = useState(false);
@@ -249,6 +256,7 @@ function EditPortfolioDialog({
     setName(portfolio.name);
     setLender(portfolio.lender);
     setProduct(portfolio.product);
+    setEndDate(portfolio.endDate ?? "");
     setSettings(portfolio.settings);
     // Falls back to {} for a portfolio cached in localStorage before agentTargets existed
     setTargets(portfolio.agentTargets ?? {});
@@ -279,15 +287,29 @@ function EditPortfolioDialog({
     setTargets((prev) => ({ ...prev, [agentId]: { ...prev[agentId], ...patch } }));
   };
 
+  const minEndDate = minPortfolioEndDate(portfolio.uploadedAt);
+
   const handleSave = async () => {
     if (!name.trim() || !lender.trim()) {
       toast.error("Portfolio name and lender can't be empty");
       return;
     }
+    if (endDate && endDate < minEndDate) {
+      toast.error(
+        `A portfolio has to run at least one month — the earliest end date here is ${new Date(minEndDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`,
+      );
+      return;
+    }
     setSaving(true);
     try {
       await Promise.all([
-        updatePortfolioMeta(portfolio.id, { name, lender, product, settings }),
+        updatePortfolioMeta(portfolio.id, {
+          name,
+          lender,
+          product,
+          settings,
+          endDate: endDate || null,
+        }),
         setPortfolioAgentTargets(portfolio.id, targets),
       ]);
       toast.success("Portfolio updated");
@@ -331,8 +353,8 @@ function EditPortfolioDialog({
     setDeleting(true);
     try {
       await closePortfolio(portfolio.id);
-      toast.success(`"${portfolio.name}" archived`, {
-        description: "Hidden from Portfolio Overview — all history is kept.",
+      toast.success(`"${portfolio.name}" closed`, {
+        description: "Still listed in Portfolio Overview, tagged Closed — all history is kept.",
       });
       onArchived();
     } catch (e) {
@@ -356,6 +378,7 @@ function EditPortfolioDialog({
         name: manualName.trim(),
         phone: manualPhone.trim(),
         loanAmount: parseFloat(manualAmount.replace(/[,₹\s]/g, "")) || 0,
+        principalAmount: parseFloat(manualPrincipal.replace(/[,₹\s]/g, "")) || 0,
         dpd,
         bucket: dpd2bucket(dpd),
         email: manualEmail.trim(),
@@ -369,6 +392,7 @@ function EditPortfolioDialog({
         setManualPhone("");
         setManualLoanRef("");
         setManualAmount("");
+        setManualPrincipal("");
         setManualDpd("");
         setManualEmail("");
       } else {
@@ -431,7 +455,7 @@ function EditPortfolioDialog({
                     onChange={(e) => setLender(e.target.value)}
                   />
                 </div>
-                <div className="space-y-1.5 sm:col-span-2">
+                <div className="space-y-1.5">
                   <Label>Product Type</Label>
                   <Select value={product} onValueChange={setProduct}>
                     <SelectTrigger>
@@ -445,6 +469,21 @@ function EditPortfolioDialog({
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-end-date">End Date</Label>
+                  <Input
+                    id="edit-end-date"
+                    type="date"
+                    min={minEndDate}
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    A target only — nothing closes automatically, but past this date the portfolio's
+                    accounts stop showing in the active call queue. Must be at least one month after
+                    upload.
+                  </p>
                 </div>
               </div>
             </div>
@@ -666,6 +705,16 @@ function EditPortfolioDialog({
                       />
                     </div>
                     <div className="space-y-1">
+                      <Label className="text-xs">Principal Amount</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={manualPrincipal}
+                        onChange={(e) => setManualPrincipal(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
                       <Label className="text-xs">Days Past Due</Label>
                       <Input
                         type="number"
@@ -785,9 +834,10 @@ function EditPortfolioDialog({
               Danger Zone
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Archives {portfolio.name} — hides it from Portfolio Overview and drops its remaining
-              accounts from the active call queue. All debtor, call, and payment history is kept and
-              this is reversible; it does not permanently delete anything.
+              Closes {portfolio.name} — drops its remaining accounts from the active call queue, but
+              it stays listed in Portfolio Overview (tagged Closed) for reporting and history. All
+              debtor, call, and payment history is kept and this is reversible; it does not
+              permanently delete anything.
             </p>
             <Button
               variant="outline"
@@ -840,9 +890,9 @@ function EditPortfolioDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete "{portfolio.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
-              This archives the portfolio — it disappears from Portfolio Overview and its remaining
-              accounts stop being called, but nothing is permanently deleted. All debtor, call, and
-              payment history stays intact.
+              This closes the portfolio — its remaining accounts stop being called, but it stays
+              listed in Portfolio Overview (tagged Closed) and nothing is permanently deleted. All
+              debtor, call, and payment history stays intact.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1174,25 +1224,34 @@ function BulkPaidUploadDialog({
 
 /* ─── page ───────────────────────────────────────────────────────────────── */
 
-/** Which portfolios Portfolio Overview shows: the active team's open ones.
+/** Which portfolios Portfolio Overview shows: every one of the active team's, open or closed.
  *
  * Deliberately does NOT also require portfolios.manager_id to equal the signed-in manager.
- * That extra condition disagreed with the team picker, which counts a team's portfolios with
- * `p.teamId === t.id && !p.closedAt` alone — so the picker would advertise "3 portfolios" and
- * this page would then show fewer, or none. Worse, a portfolio assigned to a team but with
+ * That extra condition disagreed with the team picker's own count of a team's OPEN portfolios
+ * (`p.teamId === t.id && !isPortfolioEnded(p)`) — so the picker would advertise "3 portfolios"
+ * and this page would then show fewer. Worse, a portfolio assigned to a team but with
  * manager_id left unset was invisible to every manager; 7 such rows existed live on
  * 2026-08-22, including one uploaded that morning. Team membership is the real scope here —
  * RLS already limits getPortfolios() to what this user may see at all.
+ *
+ * Closed/ended portfolios used to be filtered out entirely here (same `!isPortfolioEnded`
+ * check the team picker still uses) — changed 2026-09-05 because a continuation upload closing
+ * the old portfolio made it disappear from this page even though its history is exactly what
+ * Reports and the debtor dashboard still need; toPortfolio() tags it "Closed" (STATUS_META)
+ * instead, and the status filter row below has a "Closed" pill to isolate them on demand.
  */
 function visibleToTeam(teamId: string | undefined) {
-  return (p: UploadedPortfolio) => p.teamId === teamId && !p.closedAt;
+  return (p: UploadedPortfolio) => p.teamId === teamId;
 }
 
 function PortfolioOverviewPage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
   const { activeTeam } = useActiveTeam(managerId);
-  const agents = useTeamAgents(activeTeam?.id);
+  const teamAgents = useTeamAgents(activeTeam?.id);
+  // The manager themself is assignable too, alongside their team's agents — see withSelf. Feeds
+  // the per-account transfer dropdown (AccountsTable) and the Edit Portfolio agent-targets list.
+  const agents = useMemo(() => withSelf(teamAgents, managerId), [teamAgents, managerId]);
 
   const [statusFilter, setStatusFilter] = useState<Portfolio["status"] | "all">("all");
   const [selected, setSelected] = useState<Portfolio | null>(null);
@@ -1302,7 +1361,7 @@ function PortfolioOverviewPage() {
           {/* Filter row */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex gap-1.5">
-              {(["all", "active", "stale", "completed"] as const).map((s) => (
+              {(["all", "active", "stale", "completed", "closed"] as const).map((s) => (
                 <button
                   key={s}
                   type="button"

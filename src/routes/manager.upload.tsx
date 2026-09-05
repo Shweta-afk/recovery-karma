@@ -44,8 +44,9 @@ import {
   type UploadedDebtor,
   type PortfolioSettings,
   PRODUCT_LABEL_TO_ENUM,
+  minPortfolioEndDate,
 } from "@/lib/portfolio-store";
-import { useTeamAgents } from "@/lib/team-store";
+import { useTeamAgents, withSelf } from "@/lib/team-store";
 import { useActiveTeam } from "@/lib/active-team-store";
 import {
   resolveMapping,
@@ -150,7 +151,9 @@ function PortfolioUploadPage() {
   // Which team this whole page (and the portfolio being built) belongs to — set once via the
   // "Change Team" switcher in the header (see active-team-store.ts), not re-picked per upload.
   const { activeTeam } = useActiveTeam(managerId);
-  const managerAgents = useTeamAgents(activeTeam?.id);
+  const teamAgents = useTeamAgents(activeTeam?.id);
+  // The manager themself is assignable too, alongside their team's agents — see withSelf.
+  const managerAgents = useMemo(() => withSelf(teamAgents, managerId), [teamAgents, managerId]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -168,6 +171,11 @@ function PortfolioUploadPage() {
   // "This continues portfolio X" — set, reconcileRetainedDebtors() in createPortfolio() carries
   // forward any 'sent_to_bank' retention request against that old portfolio, then closes it.
   const [replacesPortfolioId, setReplacesPortfolioId] = useState<string>("");
+  // Manager-set target end date for this cycle (see isPortfolioEnded/minPortfolioEndDate in
+  // portfolio-store.ts) — defaults to exactly the one-month minimum, editable up from there.
+  const [endDate, setEndDate] = useState<string>(() =>
+    minPortfolioEndDate(new Date().toISOString()),
+  );
   const [existingPortfolios, setExistingPortfolios] = useState<UploadedPortfolio[]>(() =>
     getPortfolios(),
   );
@@ -233,6 +241,7 @@ function PortfolioUploadPage() {
           name: get("name"),
           phone: get("phone"),
           loanAmount: parseFloat(get("loan_amount").replace(/[,₹\s]/g, "")) || 0,
+          principalAmount: parseFloat(get("principal_amount").replace(/[,₹\s]/g, "")) || 0,
           dpd,
           bucket: dpd2bucket(dpd),
           email: get("email"),
@@ -351,6 +360,11 @@ function PortfolioUploadPage() {
       toast.error("Fill portfolio name and lender");
       return;
     }
+    const uploadedAt = new Date().toISOString();
+    if (endDate && endDate < minPortfolioEndDate(uploadedAt)) {
+      toast.error("A portfolio has to run at least one month — push the end date out further");
+      return;
+    }
     if (!allocationComplete) {
       toast.error(
         "Some accounts are assigned to more than one agent — adjust the split before uploading.",
@@ -371,13 +385,14 @@ function PortfolioUploadPage() {
         name: portfolioName,
         lender: lenderName,
         product,
-        uploadedAt: new Date().toISOString(),
+        uploadedAt,
         rows: mappedRows,
         managerId,
         teamId: activeTeam?.id,
         settings,
         agentTargets: {},
         replacesPortfolioId: replacesPortfolioId || undefined,
+        endDate: endDate || undefined,
       };
       const { uploaded, skipped, carried } = await createPortfolio(
         portfolio,
@@ -555,6 +570,24 @@ function PortfolioUploadPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="end-date">
+                    End Date <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="end-date"
+                    type="date"
+                    min={minPortfolioEndDate(new Date().toISOString())}
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    disabled={step !== "meta"}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    A target for this cycle — must run at least one month. Nothing closes
+                    automatically, but past this date the portfolio's accounts stop showing in the
+                    active call queue.
+                  </p>
+                </div>
                 <div className="space-y-1.5 sm:col-span-2">
                   <Label>Continues portfolio (optional)</Label>
                   <Select
@@ -586,7 +619,12 @@ function PortfolioUploadPage() {
                   <div className="flex items-end">
                     <Button
                       className="w-full"
-                      disabled={!portfolioName || !lenderName}
+                      disabled={
+                        !portfolioName ||
+                        !lenderName ||
+                        !endDate ||
+                        endDate < minPortfolioEndDate(new Date().toISOString())
+                      }
                       onClick={() => setStep("file")}
                     >
                       Continue <ArrowRight className="h-3.5 w-3.5 ml-1" />

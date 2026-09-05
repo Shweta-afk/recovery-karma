@@ -1,0 +1,14 @@
+-- Manager-set target end date for a portfolio's current cycle. Purely a target the manager
+-- picks — nothing server-side enforces it and there is no cron in this app (see CLAUDE.md).
+-- The app treats a portfolio as "ended" once today (IST) is past end_date, the same way it
+-- already treats a manually-closed/replaced portfolio: its accounts drop out of the active call
+-- queue (buildAssignedQueue) and its Portfolio Overview badge reads "Closed" — but unlike
+-- closed_at, end_date alone never empties the portfolio's cached debtor rows, so a manager can
+-- still open it, review it, and close it out or continue it with a new upload.
+--
+-- The "at least one month" minimum this shipped with (2026-09-05) is enforced client-side only,
+-- in manager.upload.tsx and the Edit Portfolio dialog — there's no CHECK constraint here because
+-- the minimum is relative to uploaded_at, which this column has no FK-like way to reference in a
+-- simple CHECK, and a manager should still be able to shorten a cycle after the fact if the bank
+-- changes terms.
+ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS end_date DATE;

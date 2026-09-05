@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { Users, ArrowRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { getPortfolios, refreshPortfolios, type UploadedPortfolio } from "@/lib/portfolio-store";
+import {
+  getPortfolios,
+  refreshPortfolios,
+  isPortfolioEnded,
+  type UploadedPortfolio,
+} from "@/lib/portfolio-store";
 import type { Team } from "@/lib/team-store";
 
 // Shown by ManagerLayout (manager.tsx) whenever a manager owns 2+ teams and hasn't picked one
@@ -34,7 +39,9 @@ export function TeamPickerScreen({
       </div>
       <div className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
         {teams.map((t) => {
-          const openPortfolios = portfolios.filter((p) => p.teamId === t.id && !p.closedAt);
+          const openPortfolios = portfolios.filter(
+            (p) => p.teamId === t.id && !isPortfolioEnded(p),
+          );
           const totalAccounts = openPortfolios.reduce((s, p) => s + p.rows.length, 0);
           return (
             <button key={t.id} type="button" onClick={() => onPick(t.id)} className="text-left">

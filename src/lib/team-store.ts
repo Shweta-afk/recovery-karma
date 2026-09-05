@@ -44,6 +44,19 @@ export function getAgentById(id: string): AgentRef | undefined {
   return getRoster().find((a) => a.id === id);
 }
 
+/** A roster (typically a team's, from useTeamAgents) with `selfId`'s own AgentRef prepended if
+ * they aren't already in it — lets a manager be assigned debtor accounts directly, alongside
+ * their team's agents, without requiring them to be added to `team_agents` (which stays
+ * agent-only — see admin.teams.tsx's `AGENTS` picker). Used at every assignment picker (upload
+ * allocation, Reassign, per-account transfer) rather than baking this into useTeamAgents itself,
+ * since that hook is also used to build agent-only pickers (e.g. admin's "add to team"). No-op
+ * if `selfId` is missing, not on the roster, or already present in `agents`. */
+export function withSelf(agents: AgentRef[], selfId: string | undefined): AgentRef[] {
+  if (!selfId || agents.some((a) => a.id === selfId)) return agents;
+  const self = getAgentById(selfId);
+  return self ? [self, ...agents] : agents;
+}
+
 export async function refreshRoster(): Promise<void> {
   const { data, error } = await supabase
     .from("agents")

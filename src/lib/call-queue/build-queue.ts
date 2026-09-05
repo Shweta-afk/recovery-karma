@@ -1,4 +1,9 @@
-import { getPortfolios, getAgentDebtorIds, debtorFromRow } from "@/lib/portfolio-store";
+import {
+  getPortfolios,
+  getAgentDebtorIds,
+  debtorFromRow,
+  isPortfolioEnded,
+} from "@/lib/portfolio-store";
 import { getLatestDispositionByDebtor } from "@/lib/disposition-store";
 import type { CallOutcome, QueueDebtor } from "./types";
 
@@ -23,11 +28,12 @@ export function buildAssignedQueue(agentId: string): QueueDebtor[] {
   for (const { portfolioId, debtorIds } of slices) {
     const portfolio = allPortfolios.find((p) => p.id === portfolioId);
     if (!portfolio) continue;
-    // A closed portfolio's cycle is over — whoever wasn't carried forward via an approved
-    // retention request (see reconcileRetainedDebtors in portfolio-store.ts) was recalled by
-    // the bank, so it drops out of the active queue. Anyone who WAS carried forward already
-    // has their portfolio_id pointed at the new, non-closed portfolio, so they still show up.
-    if (portfolio.closedAt) continue;
+    // A closed (or past its manager-set end date — see isPortfolioEnded) portfolio's cycle is
+    // over — whoever wasn't carried forward via an approved retention request (see
+    // reconcileRetainedDebtors in portfolio-store.ts) was recalled by the bank, so it drops out
+    // of the active queue. Anyone who WAS carried forward already has their portfolio_id
+    // pointed at the new, non-ended portfolio, so they still show up.
+    if (isPortfolioEnded(portfolio)) continue;
     const idSet = new Set(debtorIds);
     for (const row of portfolio.rows) {
       if (!idSet.has(row.id)) continue;

@@ -313,6 +313,7 @@ export interface Database {
           email: string | null;
           loan_amount: number | null;
           outstanding_balance: number | null;
+          principal_amount: number | null;
           emi_amount: number | null;
           dpd: number | null;
           lender: string | null;
@@ -343,6 +344,7 @@ export interface Database {
           email?: string | null;
           loan_amount?: number | null;
           outstanding_balance?: number | null;
+          principal_amount?: number | null;
           emi_amount?: number | null;
           dpd?: number | null;
           lender?: string | null;
@@ -373,6 +375,7 @@ export interface Database {
           email?: string | null;
           loan_amount?: number | null;
           outstanding_balance?: number | null;
+          principal_amount?: number | null;
           emi_amount?: number | null;
           dpd?: number | null;
           lender?: string | null;
@@ -720,6 +723,7 @@ export interface Database {
           manager_id: string | null;
           replaces_portfolio_id: string | null;
           closed_at: string | null;
+          end_date: string | null;
         };
         Insert: {
           id?: string;
@@ -737,6 +741,7 @@ export interface Database {
           manager_id?: string | null;
           replaces_portfolio_id?: string | null;
           closed_at?: string | null;
+          end_date?: string | null;
         };
         Update: {
           id?: string;
@@ -754,6 +759,7 @@ export interface Database {
           manager_id?: string | null;
           replaces_portfolio_id?: string | null;
           closed_at?: string | null;
+          end_date?: string | null;
         };
         Relationships: [];
       };

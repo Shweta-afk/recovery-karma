@@ -5,6 +5,7 @@ import {
   removeDebtor,
   restoreDebtor,
   getRemovedDebtors,
+  isPortfolioEnded,
   type UploadedPortfolio,
   type UploadedDebtor,
   type PortfolioSettings,
@@ -81,14 +82,26 @@ export interface Portfolio {
   assignedAccounts: number;
   buckets: Record<DPDBucket, number>;
   totalOutstanding: number;
+  // Sum of each row's principalAmount — distinct from totalOutstanding, which sums loanAmount.
+  // 0 when nobody in the file has a principal figure (most files still only carry one amount).
+  totalPrincipal: number;
   recovered: number;
   /** The slice of `recovered` that arrived via a bank paid-file upload rather than an agent
    * collection. Surfaced on the Recovered KPI so an upload is visibly reflected. */
   recoveredBankReported: number;
   ptpCount: number;
   contactRate: number;
+  // Accounts carried forward from a prior cycle (debtor.retained_from_portfolio_id) that are
+  // still live in THIS portfolio — count and their combined loan amount, so a manager reviewing
+  // a continuation upload can see how much of the book is retained vs. freshly uploaded.
+  retainedAccounts: number;
+  retainedAmount: number;
   agents: string[];
-  status: "active" | "completed" | "stale";
+  // "closed" covers both a manually-closed/replaced portfolio (closedAt set) and one past its
+  // manager-set end date (see isPortfolioEnded in portfolio-store.ts) — both stop being actively
+  // worked the same way, so they share one badge here rather than a separate "overdue" state.
+  status: "active" | "completed" | "stale" | "closed";
+  endDate?: string;
 }
 
 export const BUCKET_ORDER: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
@@ -97,6 +110,7 @@ export const STATUS_META = {
   active: { label: "Partially Assigned", bg: "bg-primary/8 text-primary/80 border-primary/15" },
   completed: { label: "Fully Assigned", bg: "bg-success/8 text-success/80 border-success/15" },
   stale: { label: "Unassigned", bg: "bg-orange-500/8 text-orange-600/80 border-orange-400/15" },
+  closed: { label: "Closed", bg: "bg-muted text-muted-foreground border-border" },
 };
 
 // Display labels for PortfolioSettings.dialerMode — matches the rename in dashboard.call-queue
@@ -129,6 +143,11 @@ export function toPortfolio(u: UploadedPortfolio): Portfolio {
     { X: 0, "1": 0, "2": 0, NPA: 0, WriteOff: 0 },
   );
   const totalOutstanding = u.rows.reduce((s, r) => s + r.loanAmount, 0);
+  const totalPrincipal = u.rows.reduce((s, r) => s + r.principalAmount, 0);
+
+  const retainedRows = u.rows.filter((r) => r.retained);
+  const retainedAccounts = retainedRows.length;
+  const retainedAmount = retainedRows.reduce((s, r) => s + r.loanAmount, 0);
 
   const debtorIdsByAgent = new Map<string, string[]>();
   for (const r of u.rows) {
@@ -154,18 +173,30 @@ export function toPortfolio(u: UploadedPortfolio): Portfolio {
   const stats = calcStats(getDispositionsByPortfolio(u.id));
   const recoveredSplit = getPortfolioRecovered(u.id);
 
-  const status: Portfolio["status"] =
-    assignedAccounts === 0 ? "stale" : assignedAccounts >= u.rows.length ? "completed" : "active";
+  // A closed portfolio's rows are deliberately emptied in the cache (see refreshPortfolios in
+  // portfolio-store.ts) to protect the localStorage quota — that would read as "0 accounts,
+  // unassigned" here, so closed takes priority over the assignment-based statuses below rather
+  // than being computed from rows that no longer exist.
+  const status: Portfolio["status"] = isPortfolioEnded(u)
+    ? "closed"
+    : assignedAccounts === 0
+      ? "stale"
+      : assignedAccounts >= u.rows.length
+        ? "completed"
+        : "active";
 
   return {
     id: u.id,
     name: u.name,
     lender: u.lender,
     uploadedOn: u.uploadedAt.slice(0, 10),
-    totalAccounts: u.rows.length,
+    // Closed portfolios carry [] in `rows` (quota protection), so fall back to the DB's own
+    // total_accounts snapshot rather than reporting 0 for a portfolio that plainly has accounts.
+    totalAccounts: u.closedAt ? (u.storedTotalAccounts ?? u.rows.length) : u.rows.length,
     assignedAccounts,
     buckets,
     totalOutstanding,
+    totalPrincipal,
     // From the payments table, not stats.paidAmount — see getPortfolioRecovered. A call-logged
     // "paid" writes a payments row too, so this covers agent collections *and* bank-reported
     // paid-file uploads without double-counting either.
@@ -173,8 +204,11 @@ export function toPortfolio(u: UploadedPortfolio): Portfolio {
     recoveredBankReported: recoveredSplit.bankReported,
     ptpCount: stats.ptps,
     contactRate: stats.contactRate,
+    retainedAccounts,
+    retainedAmount,
     agents,
     status,
+    endDate: u.endDate,
   };
 }
 
@@ -412,6 +446,7 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                 </th>
                 <th className="py-2 text-left font-medium text-muted-foreground">Debtor</th>
                 <th className="py-2 text-right font-medium text-muted-foreground">Outstanding</th>
+                <th className="py-2 text-right font-medium text-muted-foreground">Principal</th>
                 <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Marked as</th>
                 <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Status</th>
                 <th className="py-2 pr-3 text-left font-medium text-muted-foreground">
@@ -431,9 +466,17 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                   </td>
                   <td className="py-2">
                     <div className="font-medium text-foreground">{r.name}</div>
-                    <div className="text-[10px] text-muted-foreground">{r.loanReference}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {r.loanReference}
+                      {r.retained && (
+                        <span className="text-violet-500"> · retained from {r.retainedFrom}</span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-2 text-right tabular-nums">{formatINR(r.loanAmount)}</td>
+                  <td className="py-2 text-right tabular-nums text-muted-foreground">
+                    {r.principalAmount > 0 ? formatINR(r.principalAmount) : "—"}
+                  </td>
                   <td className="py-2 pl-3">
                     <MarkedAsBadge outcome={markOf(r.id)} />
                   </td>
@@ -1021,6 +1064,11 @@ export function PortfolioDetail({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: "Total Outstanding", val: formatINR(p.totalOutstanding) },
+              // Only shown once the file actually carried a distinct principal figure — most
+              // still don't, and a permanent "Principal ₹0" tile would just be noise.
+              ...(p.totalPrincipal > 0
+                ? [{ label: "Total Principal", val: formatINR(p.totalPrincipal) }]
+                : []),
               {
                 label: "Recovered",
                 val: formatINR(p.recovered),
@@ -1031,6 +1079,17 @@ export function PortfolioDetail({
               },
               { label: "PTPs Secured", val: String(p.ptpCount) },
               { label: "Contact Rate", val: `${p.contactRate}%` },
+              // Only shown once this portfolio actually has carried-forward accounts — most
+              // portfolios never do, and a permanent "Retained ₹0" tile would just be noise.
+              ...(p.retainedAccounts > 0
+                ? [
+                    {
+                      label: "Retained",
+                      val: formatINR(p.retainedAmount),
+                      sub: `${p.retainedAccounts} account${p.retainedAccounts === 1 ? "" : "s"} carried forward`,
+                    },
+                  ]
+                : []),
             ].map(({ label, val, sub }) => (
               <div key={label} className="rounded-lg border border-border bg-muted/10 p-3">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">

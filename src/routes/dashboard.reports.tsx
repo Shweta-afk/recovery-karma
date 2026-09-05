@@ -259,13 +259,15 @@ function computeDaily(disps: DispositionRecord[], days: string[]): DailyRow[] {
 interface PortfolioHealthRow {
   name: string;
   total: number;
-  /** Principal on the book for these accounts. NOTE: `debtors.outstanding_balance` is written
-   * as a straight COPY of `loan_amount` at upload (three sites in portfolio-store.ts), so
-   * principal and outstanding are the same number in this system today. Shown once and
-   * labelled "Principal (POS)" rather than as two columns implying a distinction the data
-   * does not have — that would be a fabricated breakdown. Splitting them for real needs the
-   * bank's file to carry a separate outstanding column. */
+  /** POS — outstanding on the book for these accounts (debtors.outstanding_balance, a copy of
+   * loan_amount at upload — see portfolio-store.ts). Recovery % below is measured against this. */
   outstanding: number;
+  /** Sum of each account's principalAmount (migrations/20260905_debtors_principal_amount.sql)
+   * — 0 when none of these accounts came from a file that carried a separate principal column.
+   * Distinct from `outstanding` now that the two are genuinely different fields; previously this
+   * report could only show one figure under a hedged "Principal (POS)" label because they were
+   * always the same number. */
+  principal: number;
   /** ₹ collected against this portfolio inside the selected range. */
   collected: number;
   /** Distinct accounts in this portfolio worked at least once in the range — NOT call count.
@@ -291,9 +293,11 @@ function computePortfolioHealth(
     if (total === 0) continue;
     const bucketCount = { X: 0, "1": 0, "2": 0, NPA: 0, WriteOff: 0 } as Record<DPDBucket, number>;
     let outstanding = 0;
+    let principal = 0;
     for (const r of myRows) {
       bucketCount[r.bucket] = (bucketCount[r.bucket] ?? 0) + 1;
       outstanding += r.loanAmount || 0;
+      principal += r.principalAmount || 0;
     }
     const bucketPct = Object.fromEntries(
       BUCKET_ORDER.map((b) => [b, Math.round((bucketCount[b] / total) * 100)]),
@@ -309,6 +313,7 @@ function computePortfolioHealth(
       name: p.name,
       total,
       outstanding,
+      principal,
       collected,
       accountsTouched,
       bucketCount,
@@ -622,11 +627,18 @@ function ReportsPage() {
     } else if (active === "portfolio") {
       downloadCsv(
         "portfolio-health.csv",
-        ["Portfolio", "Accounts", "Outstanding (₹)", ...BUCKET_ORDER.map((b) => BUCKET_SHORT[b])],
+        [
+          "Portfolio",
+          "Accounts",
+          "Outstanding (₹)",
+          "Principal (₹)",
+          ...BUCKET_ORDER.map((b) => BUCKET_SHORT[b]),
+        ],
         portfolioRows.map((r) => [
           r.name,
           r.total,
           r.outstanding,
+          r.principal,
           ...BUCKET_ORDER.map((b) => `${r.bucketCount[b]} (${r.bucketPct[b]}%)`),
         ]),
       );
@@ -958,17 +970,19 @@ function WeeklyReport({ rows }: { rows: DailyRow[] }) {
  * portfolios of different sizes gives a number that is simply wrong. */
 function totalsRow(rows: PortfolioHealthRow[]): (string | number)[] {
   const accounts = rows.reduce((s, r) => s + r.total, 0);
-  const principal = rows.reduce((s, r) => s + r.outstanding, 0);
+  const outstanding = rows.reduce((s, r) => s + r.outstanding, 0);
+  const principal = rows.reduce((s, r) => s + r.principal, 0);
   const worked = rows.reduce((s, r) => s + r.accountsTouched, 0);
   const collected = rows.reduce((s, r) => s + r.collected, 0);
   return [
     "All portfolios",
     accounts,
-    formatINR(principal),
+    formatINR(outstanding),
+    principal ? formatINR(principal) : "\u2014",
     worked,
     `${accounts ? Math.round((worked / accounts) * 100) : 0}%`,
     formatINR(collected),
-    principal ? `${((collected / principal) * 100).toFixed(2)}%` : "\u2014",
+    outstanding ? `${((collected / outstanding) * 100).toFixed(2)}%` : "\u2014",
     ...BUCKET_ORDER.map((b) => `${rows.reduce((s, r) => s + r.bucketCount[b], 0)}`),
   ];
 }
@@ -1000,7 +1014,8 @@ function PortfolioReport({ rows }: { rows: PortfolioHealthRow[] }) {
         headers={[
           "Portfolio",
           "Accounts",
-          "Principal (POS)",
+          "Outstanding (POS)",
+          "Principal",
           "Worked",
           "Coverage",
           "Collected",
@@ -1012,11 +1027,12 @@ function PortfolioReport({ rows }: { rows: PortfolioHealthRow[] }) {
             r.name,
             r.total,
             formatINR(r.outstanding),
+            r.principal ? formatINR(r.principal) : "—",
             r.accountsTouched,
             // How much of the book was actually reached — "Accounts" alone never showed this.
             `${r.total ? Math.round((r.accountsTouched / r.total) * 100) : 0}%`,
             formatINR(r.collected),
-            // Against principal, so it is comparable across portfolios of different sizes.
+            // Against outstanding, so it is comparable across portfolios of different sizes.
             r.outstanding ? `${((r.collected / r.outstanding) * 100).toFixed(2)}%` : "\u2014",
             ...BUCKET_ORDER.map((b) => `${r.bucketCount[b]} (${r.bucketPct[b]}%)`),
           ]),
@@ -1024,9 +1040,8 @@ function PortfolioReport({ rows }: { rows: PortfolioHealthRow[] }) {
         ]}
       />
       <p className="text-[11px] text-muted-foreground">
-        Principal and outstanding are the same figure in this system \u2014 the bank file carries no
-        separate outstanding balance, so it is stored as a copy of the loan amount. Recovery % is
-        against that principal.
+        Principal reads "\u2014" for a portfolio whose upload file didn't carry a separate principal
+        column (most still don't). Recovery % is measured against Outstanding (POS).
       </p>
     </div>
   );

@@ -935,9 +935,14 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
           { label: "AI Score", value: `${d.aiScore}/10` },
           {
             label: "Principal Amount",
-            value: isUploaded
-              ? csvFields["pos"] || csvFields["Principal"] || "—"
-              : extra?.pos || "—",
+            // d.principalOutstanding is real now (migrations/20260905_debtors_principal_amount.sql)
+            // — the extra["pos"/"Principal"] lookup was a heuristic guess at an unmapped raw CSV
+            // column and stays only as a fallback for debtors uploaded before this field existed.
+            value: d.principalOutstanding
+              ? formatINR(d.principalOutstanding)
+              : isUploaded
+                ? csvFields["pos"] || csvFields["Principal"] || "—"
+                : extra?.pos || "—",
           },
         ].map(({ label, value }) => (
           <div key={label}>
@@ -998,14 +1003,15 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                     Contact Details
                   </div>
-                  {[{ label: "Primary", number: d.phone }, ...(d.altPhones ?? []).map((number, i) => ({ label: `Alt ${i + 1}`, number }))].map(
-                    ({ label, number }) => (
-                      <div key={label} className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">{label}</span>
-                        <span className="font-mono text-foreground font-medium">{number}</span>
-                      </div>
-                    ),
-                  )}
+                  {[
+                    { label: "Primary", number: d.phone },
+                    ...(d.altPhones ?? []).map((number, i) => ({ label: `Alt ${i + 1}`, number })),
+                  ].map(({ label, number }) => (
+                    <div key={label} className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className="font-mono text-foreground font-medium">{number}</span>
+                    </div>
+                  ))}
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Email</span>
                     <span className="font-mono text-foreground font-medium">{d.email ?? "—"}</span>
@@ -1159,9 +1165,7 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
               {/* Last Contacted and Language now live in the Personal section above — not
                   repeated here. */}
               <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                {(
-                  [["AI Insight", d.scoreReason]] as [string, string][]
-                ).map(([label, val]) => (
+                {([["AI Insight", d.scoreReason]] as [string, string][]).map(([label, val]) => (
                   <div key={label} className="col-span-2">
                     <div className="text-xs text-muted-foreground">{label}</div>
                     <div className="font-medium text-foreground mt-0.5">{val}</div>

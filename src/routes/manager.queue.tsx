@@ -243,13 +243,20 @@ function OverviewTab({
   );
 }
 
-/* ─── My Queue (manager's own escalations + manual dial) ──────────────────── */
+/* ─── My Queue (manager's own assigned accounts + escalations + manual dial) ─── */
 
 function MyQueueTab({
+  managerId,
+  managerName,
   startCall,
   hasActiveCall,
   teamAgentIds,
 }: {
+  /** The signed-in manager's own operational id (email) — a manager can now be assigned debtor
+   * accounts directly (see withSelf in team-store.ts), same as any agent, so their own queue
+   * belongs here too rather than only escalations/manual dial. */
+  managerId: string;
+  managerName: string;
   startCall: (debtor: QueueDebtor, escalationId: string | null, callerId?: string) => void;
   hasActiveCall: boolean;
   /** Emails of the agents this manager is responsible for; undefined for an admin, who is
@@ -319,6 +326,14 @@ function MyQueueTab({
 
   return (
     <div className="space-y-5">
+      {/* Accounts assigned directly to the manager — same queue screen an agent works */}
+      <div>
+        <div className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+          My Assigned Accounts
+        </div>
+        <CallQueueContent agentId={managerId} agentName={managerName} />
+      </div>
+
       {/* Manual dial */}
       <Card>
         <CardHeader className="pb-3 border-b border-border">
@@ -642,6 +657,8 @@ function ManagerQueuePage() {
         </TabsContent>
         <TabsContent value="my" className="mt-4">
           <MyQueueTab
+            managerId={managerId}
+            managerName={managerName}
             startCall={startCall}
             hasActiveCall={!!activeCall}
             teamAgentIds={teamAgentIds}

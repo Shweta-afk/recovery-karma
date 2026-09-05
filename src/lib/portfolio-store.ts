@@ -5,6 +5,7 @@ import { refreshRetentionRequests } from "./retention-store";
 import { fetchAllRows } from "./fetch-all-rows";
 import { createJsonCache } from "./json-cache";
 import { fetchDebtorsShared } from "./debtors-fetch";
+import { todayIstKey } from "./date-filter";
 import {
   STD_FIELDS,
   slotsFromDebtor,
@@ -36,6 +37,10 @@ export interface UploadedDebtor {
   name: string;
   phone: string;
   loanAmount: number;
+  // Original sanctioned/disbursed amount, distinct from loanAmount ("Outstanding Amount" in the
+  // upload UI, copied into debtors.outstanding_balance) — see migrations/20260905_debtors_
+  // principal_amount.sql. Optional in the source file; 0 when the bank didn't provide one.
+  principalAmount: number;
   dpd: number;
   bucket: DPDBucket;
   email: string;
@@ -116,6 +121,36 @@ export interface UploadedPortfolio {
   // Stamped on the OLD portfolio once its replacement lands. Closed portfolios' remaining
   // (non-carried) debtors drop out of buildAssignedQueue — they were recalled, not retained.
   closedAt?: string;
+  // Manager-set target end date (YYYY-MM-DD, IST) for this cycle — see isPortfolioEnded() and
+  // migrations/20260905_portfolio_end_date.sql. Purely a target; nothing stamps closedAt when
+  // it passes, so the portfolio and its rows stay intact and editable, it just stops counting
+  // as "open" wherever isPortfolioEnded() is checked (the active call queue, team picker).
+  endDate?: string;
+  // Snapshot of portfolios.total_accounts, independent of `rows` — needed because a closed
+  // portfolio's `rows` are deliberately emptied below to protect the localStorage quota, which
+  // would otherwise make a closed portfolio look like it has 0 accounts everywhere it's still
+  // shown (Portfolio Overview now lists closed portfolios — see visibleToTeam in
+  // manager.portfolio.tsx).
+  storedTotalAccounts?: number;
+}
+
+/** A portfolio counts as "ended" once its manager-set end date has passed, exactly like a
+ * manually-closed/replaced one, for every purpose that decides what's still actively worked
+ * (the call queue, team picker) — see migrations/20260905_portfolio_end_date.sql. Unlike
+ * closedAt, reaching end_date never empties the portfolio's cached rows or stamps closed_at
+ * itself, so it stays reviewable/editable until a manager actually closes or replaces it. */
+export function isPortfolioEnded(p: { closedAt?: string; endDate?: string }): boolean {
+  return !!p.closedAt || (!!p.endDate && p.endDate < todayIstKey());
+}
+
+/** A portfolio must run for at least one calendar month — the minimum a manager can pick as its
+ * end date. Deliberately not enforced in the DB (see the migration) since it's relative to
+ * uploaded_at. Native Date's month-overflow (e.g. Jan 31 -> Mar 3) only ever pushes the minimum
+ * later, never shorter, so it's safe to use as-is for a floor. */
+export function minPortfolioEndDate(startIso: string): string {
+  const d = new Date(startIso);
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  return d.toISOString().slice(0, 10);
 }
 
 /** Set once `portfolio_agent_targets` answers "no such table", so refreshPortfolios() stops
@@ -228,16 +263,38 @@ export async function refreshPortfolios(): Promise<void> {
     // ignore — alt phones are supplementary until the migration is applied
   }
 
+  // Best-effort, same reasoning: principal_amount is a newer column
+  // (migrations/20260905_debtors_principal_amount.sql) that may not exist in the live DB yet —
+  // queried separately and defaulted to 0 on failure so it never blocks portfolio sync.
+  const principalAmountById = new Map<string, number>();
+  try {
+    const { data: principalRows, error: prErr } = await fetchAllRows((from, to) =>
+      supabase.from("debtors").select("id, principal_amount").range(from, to),
+    );
+    if (!prErr && principalRows) {
+      for (const r of principalRows) {
+        principalAmountById.set(r.id as string, Number(r.principal_amount ?? 0));
+      }
+    }
+  } catch {
+    // ignore — principal amount is supplementary until the migration is applied
+  }
+
   // Best-effort, same reasoning: replaces_portfolio_id/closed_at/retained_from_portfolio_id
-  // are new columns (migrations/20260813_retention_requests.sql) that may not exist yet.
+  // are new columns (migrations/20260813_retention_requests.sql) that may not exist yet. end_date
+  // (migrations/20260905_portfolio_end_date.sql) and total_accounts ride along on the same query
+  // for the same reason, and because total_accounts is what lets a closed portfolio still show
+  // its real account count once its `rows` are emptied below.
   const closeInfoByPortfolio = new Map<
     string,
-    { replacesPortfolioId?: string; closedAt?: string }
+    { replacesPortfolioId?: string; closedAt?: string; endDate?: string; totalAccounts?: number }
   >();
   const retainedFromById = new Map<string, string>(); // debtor id -> old portfolio id
   try {
     const [{ data: cycleRows, error: cErr }, { data: retRows, error: rErr }] = await Promise.all([
-      supabase.from("portfolios").select("id, replaces_portfolio_id, closed_at"),
+      supabase
+        .from("portfolios")
+        .select("id, replaces_portfolio_id, closed_at, end_date, total_accounts"),
       fetchAllRows((from, to) =>
         supabase.from("debtors").select("id, retained_from_portfolio_id").range(from, to),
       ),
@@ -247,6 +304,8 @@ export async function refreshPortfolios(): Promise<void> {
         closeInfoByPortfolio.set(p.id as string, {
           replacesPortfolioId: (p.replaces_portfolio_id as string | null) ?? undefined,
           closedAt: (p.closed_at as string | null) ?? undefined,
+          endDate: (p.end_date as string | null) ?? undefined,
+          totalAccounts: (p.total_accounts as number | null) ?? undefined,
         });
       }
     }
@@ -274,6 +333,8 @@ export async function refreshPortfolios(): Promise<void> {
     agentTargets: targetsByPortfolio.get(p.id) ?? {},
     replacesPortfolioId: closeInfoByPortfolio.get(p.id)?.replacesPortfolioId,
     closedAt: closeInfoByPortfolio.get(p.id)?.closedAt,
+    endDate: closeInfoByPortfolio.get(p.id)?.endDate,
+    storedTotalAccounts: closeInfoByPortfolio.get(p.id)?.totalAccounts,
     // A closed cycle's debtor rows are carried as [] rather than materialised. Every consumer
     // of this cache already skips closed portfolios — buildAssignedQueue `continue`s on
     // closedAt, and the team picker, Portfolio Overview and the upload page all filter
@@ -300,6 +361,7 @@ export async function refreshPortfolios(): Promise<void> {
               name: d.name,
               phone: d.phone_primary,
               loanAmount: Number(d.loan_amount ?? 0),
+              principalAmount: principalAmountById.get(d.id) ?? 0,
               dpd: d.dpd ?? 0,
               bucket: dpd2bucket(d.dpd ?? 0),
               email: d.email ?? "",
@@ -388,6 +450,7 @@ async function reconcileRetainedDebtors(
           email: row.email || null,
           loan_amount: row.loanAmount,
           outstanding_balance: row.loanAmount,
+          principal_amount: row.principalAmount,
           dpd: row.dpd,
           status: "active",
           extra: row.extra,
@@ -461,6 +524,7 @@ export async function createPortfolio(
     // not satisfy it structurally, and neither is wrong — this is the seam between them.
     settings: p.settings as unknown as Json,
     replaces_portfolio_id: p.replacesPortfolioId ?? null,
+    end_date: p.endDate ?? null,
   });
   if (pErr) throw pErr;
 
@@ -500,6 +564,7 @@ export async function createPortfolio(
       email: r.email || null,
       loan_amount: r.loanAmount,
       outstanding_balance: r.loanAmount,
+      principal_amount: r.principalAmount,
       dpd: r.dpd,
       loan_reference: r.loanReference,
       extra: r.extra,
@@ -575,6 +640,7 @@ export async function mergePortfolioRows(
           email: row.email || null,
           loan_amount: row.loanAmount,
           outstanding_balance: row.loanAmount,
+          principal_amount: row.principalAmount,
           dpd: row.dpd,
           extra: row.extra,
         };
@@ -601,6 +667,7 @@ export async function mergePortfolioRows(
       email: r.email || null,
       loan_amount: r.loanAmount,
       outstanding_balance: r.loanAmount,
+      principal_amount: r.principalAmount,
       dpd: r.dpd,
       loan_reference: r.loanReference,
       extra: r.extra,
@@ -812,7 +879,9 @@ export async function remapPortfolioFields(
   const { data: rows, error: fetchErr } = await fetchAllRows((from, to) =>
     supabase
       .from("debtors")
-      .select("id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra")
+      .select(
+        "id, name, phone_primary, email, loan_amount, principal_amount, dpd, loan_reference, extra",
+      )
       .eq("portfolio_id", portfolioId)
       .range(from, to),
   );
@@ -829,6 +898,7 @@ export async function remapPortfolioFields(
           name: (row.name as string | null) ?? "",
           phone: (row.phone_primary as string | null) ?? "",
           loanAmount: Number(row.loan_amount ?? 0),
+          principalAmount: Number(row.principal_amount ?? 0),
           dpd: (row.dpd as number | null) ?? 0,
           email: (row.email as string | null) ?? "",
           extra: prevExtra,
@@ -847,6 +917,7 @@ export async function remapPortfolioFields(
             email: fields.email || null,
             loan_amount: fields.loanAmount,
             outstanding_balance: fields.loanAmount,
+            principal_amount: fields.principalAmount,
             dpd: fields.dpd,
             // Spread prevExtra first so any column that was never a STD_FIELD (still sitting
             // in extra from the original upload) survives the remap untouched.
@@ -873,6 +944,8 @@ export async function updatePortfolioMeta(
     name?: string;
     lender?: string;
     product?: string;
+    /** null explicitly clears the end date; undefined leaves it untouched. */
+    endDate?: string | null;
   },
 ): Promise<void> {
   const update: Record<string, unknown> = {};
@@ -887,6 +960,7 @@ export async function updatePortfolioMeta(
   if (patch.lender !== undefined) update.lender_name = patch.lender;
   if (patch.product !== undefined)
     update.product_type = patch.product ? (PRODUCT_LABEL_TO_ENUM[patch.product] ?? null) : null;
+  if (patch.endDate !== undefined) update.end_date = patch.endDate;
 
   const { error } = await supabase
     .from("portfolios")
@@ -1253,6 +1327,11 @@ export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio)
     retainedFrom: row.retainedFrom,
     email: row.email || undefined,
     loanAmount: row.loanAmount,
+    // Real data now, not the dead MOCK_DEBTORS-only field it used to be — see
+    // migrations/20260905_debtors_principal_amount.sql. 0 (unset in the source file) is passed
+    // through as-is rather than falling back to loanAmount here; active-call.tsx's display
+    // already does that fallback for a genuinely unset amount.
+    principalOutstanding: row.principalAmount || undefined,
     dpd: row.dpd,
     aiScore: Math.max(1, Math.min(10, Math.round(10 - row.dpd / 20))),
     scoreReason: `Uploaded via ${portfolio.lender}${portfolio.product ? ` · ${portfolio.product}` : ""}`,

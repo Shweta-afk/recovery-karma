@@ -226,12 +226,28 @@ export const FIELD_SPECS: FieldSpec[] = [
       "outstanding_amount",
       "due_amount",
       "balance",
-      "principal",
       "pos",
       "os_amount",
       "total_due",
       "current_balance",
       "emi_outstanding",
+    ],
+    detect: detectAmount,
+  },
+  {
+    // Distinct from loan_amount ("Outstanding Amount") — the original sanctioned/disbursed sum,
+    // which a bank file sometimes carries as its own column separate from the current balance.
+    // "principal" used to be a loan_amount alias; moved here 2026-09-05 since a column literally
+    // named "Principal" means this field, not outstanding.
+    key: "principal_amount",
+    aliases: [
+      "principal",
+      "principal_amount",
+      "sanctioned_amount",
+      "disbursed_amount",
+      "loan_principal",
+      "original_amount",
+      "principal_outstanding",
     ],
     detect: detectAmount,
   },

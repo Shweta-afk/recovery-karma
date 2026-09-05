@@ -13,6 +13,7 @@ export const STD_FIELDS = [
   { key: "name", label: "Borrower Name", required: true },
   { key: "phone", label: "Phone Number", required: true },
   { key: "loan_amount", label: "Outstanding Amount", required: false },
+  { key: "principal_amount", label: "Principal Amount", required: false },
   { key: "dpd", label: "Days Past Due", required: false },
   { key: "email", label: "Email Address", required: false },
   { key: "address", label: "Address", required: false },
@@ -42,6 +43,7 @@ interface DebtorLike {
   name: string;
   phone: string;
   loanAmount: number;
+  principalAmount: number;
   dpd: number;
   email: string;
   extra: Record<string, string>;
@@ -56,6 +58,7 @@ export function slotsFromDebtor(row: DebtorLike): StdFieldSlots {
     name: row.name,
     phone: row.phone,
     loan_amount: String(row.loanAmount),
+    principal_amount: String(row.principalAmount),
     dpd: String(row.dpd),
     email: row.email,
     address: row.extra.address ?? "",
@@ -127,6 +130,7 @@ export function debtorFieldsFromSlots(slots: StdFieldSlots): DebtorLike {
     name: slots.name.trim(),
     phone: slots.phone.trim(),
     loanAmount: parseFloat(slots.loan_amount.replace(/[,₹\s]/g, "")) || 0,
+    principalAmount: parseFloat(slots.principal_amount.replace(/[,₹\s]/g, "")) || 0,
     dpd: parseInt(slots.dpd, 10) || 0,
     email: slots.email.trim(),
     extra: {
