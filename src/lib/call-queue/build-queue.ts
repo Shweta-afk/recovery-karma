@@ -18,9 +18,34 @@ const OUTCOME_TO_QUEUE_STATUS: Partial<Record<CallOutcome, QueueDebtor["queueSta
   no_answer: "no_answer",
 };
 
-/** Build a queue from portfolios assigned to this agent; returns empty if none assigned */
-export function buildAssignedQueue(agentId: string): QueueDebtor[] {
-  const slices = getAgentDebtorIds(agentId);
+/** Merges getAgentDebtorIds() across every agent in `agentIds` into one portfolio -> debtorIds
+ * list — the same shape a single agent's call returns, so buildAssignedQueue below never needs
+ * to know whether it's building one person's queue or a manager's whole-team combined view. */
+function combinedAgentDebtorIds(
+  agentIds: string[],
+): { portfolioId: string; debtorIds: string[] }[] {
+  const byPortfolio = new Map<string, Set<string>>();
+  for (const id of agentIds) {
+    for (const { portfolioId, debtorIds } of getAgentDebtorIds(id)) {
+      const set = byPortfolio.get(portfolioId) ?? new Set<string>();
+      for (const debtorId of debtorIds) set.add(debtorId);
+      byPortfolio.set(portfolioId, set);
+    }
+  }
+  return Array.from(byPortfolio.entries(), ([portfolioId, ids]) => ({
+    portfolioId,
+    debtorIds: Array.from(ids),
+  }));
+}
+
+/** Build a queue from portfolios assigned to this agent (or, for a manager's combined "whole
+ * team" view, every agent in the given list — each row still carries its real assignedAgentId,
+ * from the debtor data itself, so who-owns-what is never lost when merging). Returns empty if
+ * nobody in the list has anything assigned. */
+export function buildAssignedQueue(agentId: string | string[]): QueueDebtor[] {
+  const slices = Array.isArray(agentId)
+    ? combinedAgentDebtorIds(agentId)
+    : getAgentDebtorIds(agentId);
   if (!slices.length) return [];
   const allPortfolios = getPortfolios();
   const latest = getLatestDispositionByDebtor();

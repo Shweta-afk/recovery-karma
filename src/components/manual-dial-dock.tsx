@@ -42,6 +42,7 @@ import { getDispositions, type DispositionRecord } from "@/lib/disposition-store
 import { OUTCOME_META } from "@/lib/call-queue/types";
 import type { QueueDebtor } from "@/lib/call-queue/types";
 import { cn } from "@/lib/utils";
+import { CopyButton } from "@/components/ui/copy-button";
 
 /** Agents and managers see their own recent manual calls; an admin sees everyone's. */
 const RECENT_LIMIT = 5;
@@ -316,7 +317,10 @@ function ManualRow({ d }: { d: DispositionRecord }) {
         <span className="shrink-0 text-[10px] text-muted-foreground">{timeLabel(d.time)}</span>
       </div>
       <div className="mt-0.5 flex items-center justify-between gap-2">
-        <span className="truncate text-[10px] text-muted-foreground">{d.phone}</span>
+        <span className="flex items-center gap-1 truncate text-[10px] text-muted-foreground">
+          {d.phone}
+          <CopyButton value={d.phone} label="Phone number" />
+        </span>
         {meta && (
           <span className={cn("shrink-0 text-[10px] font-semibold", meta.cls)}>{meta.label}</span>
         )}

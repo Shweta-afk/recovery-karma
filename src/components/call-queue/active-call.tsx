@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/dialog";
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
+import { CopyButton } from "@/components/ui/copy-button";
 import {
   Select,
   SelectContent,
@@ -621,8 +622,16 @@ function ActiveCallContent({
               <div className="font-semibold text-foreground text-base leading-tight truncate">
                 {debtor.name}
               </div>
-              <div className="text-xs text-muted-foreground truncate">
-                {debtor.loanReference ?? debtor.id} · {debtor.phone}
+              <div className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                <span className="inline-flex items-center gap-1">
+                  {debtor.loanReference ?? debtor.id}
+                  <CopyButton value={debtor.loanReference ?? debtor.id} label="Loan ID" />
+                </span>
+                ·
+                <span className="inline-flex items-center gap-1">
+                  {debtor.phone}
+                  <CopyButton value={debtor.phone} label="Phone number" />
+                </span>
                 {debtor.altPhones && debtor.altPhones.length > 0
                   ? ` · ${debtor.altPhones.length} alt number${debtor.altPhones.length === 1 ? "" : "s"}`
                   : ""}
@@ -1309,11 +1318,14 @@ function ActiveCallContent({
                           with the full value in `title` on hover instead. */}
                       <div className="flex items-center justify-between gap-3 text-sm">
                         <span className="flex-shrink-0 text-muted-foreground">Loan ID</span>
-                        <span
-                          className="min-w-0 truncate font-mono text-xs text-foreground font-medium"
-                          title={debtor.loanReference ?? debtor.id}
-                        >
-                          {debtor.loanReference ?? debtor.id}
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span
+                            className="min-w-0 truncate font-mono text-xs text-foreground font-medium"
+                            title={debtor.loanReference ?? debtor.id}
+                          >
+                            {debtor.loanReference ?? debtor.id}
+                          </span>
+                          <CopyButton value={debtor.loanReference ?? debtor.id} label="Loan ID" />
                         </span>
                       </div>
                       {[
@@ -1487,11 +1499,12 @@ function ActiveCallContent({
                         })),
                       ].map(({ label, number }) => (
                         <div key={label} className="flex items-center justify-between text-sm">
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex items-center gap-1">
                             <span className="text-muted-foreground">{label}</span>
-                            <span className="ml-2 font-mono text-foreground font-medium">
+                            <span className="ml-1 font-mono text-foreground font-medium">
                               {number}
                             </span>
+                            <CopyButton value={number} label="Phone number" />
                           </div>
                           <Button
                             type="button"

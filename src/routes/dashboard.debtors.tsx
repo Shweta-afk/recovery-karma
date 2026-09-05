@@ -39,6 +39,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { TracePanel } from "@/components/profilex/trace-panel";
 import { AssignedAgentLine } from "@/components/assigned-agent";
+import { CopyButton } from "@/components/ui/copy-button";
 import {
   getDispositions,
   refreshDispositions,
@@ -919,8 +920,17 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
           </div>
           <div className="flex-1">
             <SheetTitle className="text-base">{d.name}</SheetTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {displayId(d)} · {d.phone} · {d.language}
+            <p className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
+              <span className="inline-flex items-center gap-1">
+                {displayId(d)}
+                <CopyButton value={displayId(d)} label="Loan ID" />
+              </span>
+              ·
+              <span className="inline-flex items-center gap-1">
+                {d.phone}
+                <CopyButton value={d.phone} label="Phone number" />
+              </span>
+              · {d.language}
             </p>
             <AssignedAgentLine debtorId={d.id} />
           </div>
@@ -1009,7 +1019,10 @@ export function DebtorProfile({ d, onClose }: { d: Debtor; onClose: () => void }
                   ].map(({ label, number }) => (
                     <div key={label} className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">{label}</span>
-                      <span className="font-mono text-foreground font-medium">{number}</span>
+                      <span className="flex items-center gap-1 font-mono text-foreground font-medium">
+                        {number}
+                        <CopyButton value={number} label="Phone number" />
+                      </span>
                     </div>
                   ))}
                   <div className="flex items-center justify-between text-sm">

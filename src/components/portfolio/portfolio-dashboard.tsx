@@ -41,6 +41,7 @@ import {
 } from "@/lib/retention-store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -466,8 +467,9 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                   </td>
                   <td className="py-2">
                     <div className="font-medium text-foreground">{r.name}</div>
-                    <div className="text-[10px] text-muted-foreground">
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       {r.loanReference}
+                      <CopyButton value={r.loanReference} label="Loan ID" />
                       {r.retained && (
                         <span className="text-violet-500"> · retained from {r.retainedFrom}</span>
                       )}

@@ -388,6 +388,13 @@ export function getAgentDispositions(agentId: string): DispositionRecord[] {
   return getDispositions().filter((d) => d.agentId === agentId);
 }
 
+/** Same as getAgentDispositions, for a set of agents at once — the manager combined-queue view
+ * seeds its logged-outcomes map from this instead of one agent's dispositions. */
+export function getAgentsDispositions(agentIds: string[]): DispositionRecord[] {
+  const ids = new Set(agentIds);
+  return getDispositions().filter((d) => ids.has(d.agentId));
+}
+
 export interface PtpFollowup {
   id: string;
   debtorId: string;

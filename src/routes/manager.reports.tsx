@@ -64,6 +64,18 @@ import {
   LEADER_METRIC_CAPTION,
   type LeaderboardMetric,
 } from "@/components/reports/leaderboard";
+import { DIAL_MODE_META, UNKNOWN_DIAL_MODE_LABEL, type DialMode } from "@/lib/call-queue/types";
+
+// Fixed display order for the Dial Mode report — Productive (multi_line) and Progressive
+// (sequential) first since they're the headline comparison, then single/manual, then whatever
+// predates dial_mode tracking.
+const DIAL_MODE_ORDER: (DialMode | "unknown")[] = [
+  "multi_line",
+  "sequential",
+  "single",
+  "manual",
+  "unknown",
+];
 
 export const Route = createFileRoute("/manager/reports")({
   head: () => ({ meta: [{ title: "Reports · SamvadX Manager" }] }),
@@ -163,6 +175,27 @@ function ManagerReportsPage() {
   );
 
   const globalStats = useMemo(() => calcStats(rangedDisps), [rangedDisps]);
+
+  // How effective each dial mode has actually been — "Productive Dial" (dialerMode
+  // "predictive", stored dial_mode "multi_line") vs "Progressive Dial" (dialerMode
+  // "productive", stored "sequential") vs single/manual dials, and "Before tracking" for calls
+  // logged before dial_mode existed (20260827_call_logs_dial_mode.sql). See DIAL_MODE_META in
+  // call-queue/types.ts for why the display labels and stored values don't match each other.
+  const dialModeStats = useMemo(
+    () =>
+      DIAL_MODE_ORDER.map((mode) => {
+        const disps =
+          mode === "unknown"
+            ? rangedDisps.filter((d) => !d.dialMode)
+            : rangedDisps.filter((d) => d.dialMode === mode);
+        return {
+          mode,
+          label: mode === "unknown" ? UNKNOWN_DIAL_MODE_LABEL : DIAL_MODE_META[mode].label,
+          ...calcStats(disps),
+        };
+      }).filter((r) => r.total > 0),
+    [rangedDisps],
+  );
 
   // The team's money, both ways it arrives: what the team's agents collected, plus what the
   // bank reported against the team's own portfolios (agent_id null — nobody collected it, but
@@ -337,6 +370,7 @@ function ManagerReportsPage() {
           <TabsTrigger value="agents">By Agent</TabsTrigger>
           <TabsTrigger value="trend">Monthly Trend</TabsTrigger>
           <TabsTrigger value="outcomes">Outcome Breakdown</TabsTrigger>
+          <TabsTrigger value="dialmode">Dial Mode</TabsTrigger>
           <TabsTrigger value="followups">
             PTP Follow-ups
             {overdueFollowups.length > 0 && (
@@ -618,6 +652,131 @@ function ManagerReportsPage() {
               </p>
             ) : (
               <OutcomeBreakdown disps={rangedDisps} />
+            )}
+          </ReportSection>
+        </TabsContent>
+
+        {/* ── DIAL MODE TAB ── */}
+        <TabsContent value="dialmode" className="mt-4">
+          <ReportSection
+            title={`Dial Mode Effectiveness — ${activeTeam.name}`}
+            description="How Productive Dial (multi-line) and Progressive Dial (one at a time) compare, plus single/manual calls"
+            icon={PhoneCall}
+            action={
+              dialModeStats.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadCsv(
+                      `${activeTeam.name}-dial-mode.csv`,
+                      [
+                        "Dial Mode",
+                        "Calls",
+                        "Contact Rate %",
+                        "PTPs",
+                        "PTP Rate %",
+                        "PTP Value (₹)",
+                        "Paid",
+                        "Paid Rate %",
+                        "Collected (₹)",
+                      ],
+                      dialModeStats.map((r) => [
+                        r.label,
+                        r.total,
+                        r.contactRate,
+                        r.ptps,
+                        r.total ? Math.round((r.ptps / r.total) * 100) : 0,
+                        r.ptpAmount,
+                        r.paid,
+                        r.total ? Math.round((r.paid / r.total) * 100) : 0,
+                        r.paidAmount,
+                      ]),
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 h-7 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  Export
+                </button>
+              ) : undefined
+            }
+          >
+            {dialModeStats.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No calls logged {isRangeActive(dateRange) ? "in this range" : "yet"}.
+              </p>
+            ) : (
+              <DataTable
+                rows={dialModeStats}
+                keyOf={(r) => r.mode}
+                columns={[
+                  {
+                    key: "mode",
+                    header: "Dial Mode",
+                    render: (r) => <span className="font-medium text-foreground">{r.label}</span>,
+                  },
+                  {
+                    key: "calls",
+                    header: "Calls",
+                    numeric: true,
+                    render: (r) => r.total.toLocaleString(),
+                  },
+                  {
+                    key: "contact",
+                    header: "Contact Rate",
+                    numeric: true,
+                    render: (r) => `${r.contactRate}%`,
+                  },
+                  {
+                    key: "ptps",
+                    header: "PTPs",
+                    numeric: true,
+                    render: (r) => (
+                      <span className="text-blue-500 font-medium">
+                        {r.ptps}{" "}
+                        <span className="text-muted-foreground font-normal">
+                          ({r.total ? Math.round((r.ptps / r.total) * 100) : 0}%)
+                        </span>
+                      </span>
+                    ),
+                  },
+                  {
+                    key: "ptpValue",
+                    header: "PTP Value",
+                    numeric: true,
+                    render: (r) =>
+                      r.ptpAmount > 0 ? (
+                        <span className="text-success font-medium">{formatINR(r.ptpAmount)}</span>
+                      ) : (
+                        "—"
+                      ),
+                  },
+                  {
+                    key: "paid",
+                    header: "Paid",
+                    numeric: true,
+                    render: (r) => (
+                      <span className="font-medium">
+                        {r.paid}{" "}
+                        <span className="text-muted-foreground font-normal">
+                          ({r.total ? Math.round((r.paid / r.total) * 100) : 0}%)
+                        </span>
+                      </span>
+                    ),
+                  },
+                  {
+                    key: "collected",
+                    header: "Collected",
+                    numeric: true,
+                    render: (r) =>
+                      r.paidAmount > 0 ? (
+                        <span className="font-semibold">{formatINR(r.paidAmount)}</span>
+                      ) : (
+                        "—"
+                      ),
+                  },
+                ]}
+              />
             )}
           </ReportSection>
         </TabsContent>

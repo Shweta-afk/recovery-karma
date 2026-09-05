@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Phone,
   Users,
-  ListChecks,
   ShieldAlert,
   Hash,
   PhoneOff,
@@ -46,7 +45,6 @@ import {
   type ActiveCall,
   type DispositionForm,
 } from "@/lib/call-queue/types";
-import { buildAssignedQueue } from "@/lib/call-queue/build-queue";
 import { CallQueueContent } from "./dashboard.call-queue";
 import { DebtorProfile } from "./dashboard.debtors";
 import { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active-call";
@@ -91,7 +89,8 @@ export const Route = createFileRoute("/manager/queue")({
       { title: "Call Queue · SamvadX" },
       {
         name: "description",
-        content: "Live per-agent queues, team overview, and the manager's own escalation queue.",
+        content:
+          "Live per-agent or combined whole-team queues, and the manager's own escalation queue.",
       },
     ],
   }),
@@ -100,10 +99,16 @@ export const Route = createFileRoute("/manager/queue")({
 
 /* ─── Agent Live View (read-only) ─────────────────────────────────────────── */
 
+// Sentinel for "every team member's queue, merged" — not a real agent id, so it can never
+// collide with one and never needs resetting just because the roster changed underneath it.
+const ALL_AGENTS = "__all__";
+
 function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
-  const [selected, setSelected] = useState(agents[0]?.id ?? "");
+  const [selected, setSelected] = useState<string>(ALL_AGENTS);
   useEffect(() => {
-    if (!agents.some((a) => a.id === selected)) setSelected(agents[0]?.id ?? "");
+    if (selected !== ALL_AGENTS && !agents.some((a) => a.id === selected)) {
+      setSelected(ALL_AGENTS);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents]);
 
@@ -115,6 +120,9 @@ function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
     );
   }
 
+  const viewingAll = selected === ALL_AGENTS;
+  const selectedAgent = agents.find((a) => a.id === selected);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -124,6 +132,7 @@ function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={ALL_AGENTS}>All — whole team combined</SelectItem>
             {agents.map((a) => (
               <SelectItem key={a.id} value={a.id}>
                 {a.name}
@@ -133,112 +142,27 @@ function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
         </Select>
       </div>
       <div className="rounded-lg border border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-        {agents.find((a) => a.id === selected)?.name ?? "This agent"}&apos;s Call Queue — the same
-        screen they work, with every filter, column and panel they have. You can call any account
-        directly from here; the call, its disposition and any PTP are logged as{" "}
-        <strong>your</strong> work, not theirs.
+        {viewingAll ? (
+          <>
+            Every account assigned to your {agents.length} team member
+            {agents.length === 1 ? "" : "s"}, merged into one queue — same screen, same filters.
+            Productive/Progressive bulk dial is turned off here since accounts can span different
+            portfolios' settings; call a row directly instead. Disposition/PTP logging still credits{" "}
+            <strong>you</strong>, not whoever the account is assigned to.
+          </>
+        ) : (
+          <>
+            {selectedAgent?.name ?? "This agent"}&apos;s Call Queue — the same screen they work,
+            with every filter, column and panel they have. You can call any account directly from
+            here; the call, its disposition and any PTP are logged as <strong>your</strong> work,
+            not theirs.
+          </>
+        )}
       </div>
-      {selected && (
-        <CallQueueContent
-          agentId={selected}
-          agentName={agents.find((a) => a.id === selected)?.name}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ─── Overview (aggregate) ─────────────────────────────────────────────────── */
-
-function OverviewTab({
-  agents,
-  onViewAgent,
-}: {
-  agents: AgentRef[];
-  onViewAgent: (agentId: string, tab: string) => void;
-}) {
-  const [queues, setQueues] = useState<Record<string, QueueDebtor[]>>(() =>
-    Object.fromEntries(agents.map((a) => [a.id, buildAssignedQueue(a.id)])),
-  );
-  const reload = () =>
-    setQueues(Object.fromEntries(agents.map((a) => [a.id, buildAssignedQueue(a.id)])));
-  useEffect(() => {
-    reload();
-    window.addEventListener("assignments-updated", reload);
-    window.addEventListener("portfolios-updated", reload);
-    // The PTP / Callback / Escalated / Fresh cards above read queueStatus, which
-    // buildAssignedQueue derives from dispositions. This page loaded neither the cache nor
-    // listened for it, so those cards read zero for the manager exactly as the agent's
-    // Productive / Non-Productive split did.
-    window.addEventListener("dispositions-updated", reload);
-    refreshDispositions();
-    return () => {
-      window.removeEventListener("assignments-updated", reload);
-      window.removeEventListener("portfolios-updated", reload);
-      window.removeEventListener("dispositions-updated", reload);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents]);
-  useStorageSync(reload);
-
-  const all = Object.values(queues).flat();
-  const counts = useMemo(
-    () => ({
-      total: all.length,
-      ptp: all.filter((d) => d.queueStatus === "ptp").length,
-      callback: all.filter((d) => d.queueStatus === "callback").length,
-      escalated: all.filter((d) => d.queueStatus === "escalated").length,
-      fresh: all.filter((d) => d.queueStatus === "fresh").length,
-      no_answer: all.filter((d) => d.queueStatus === "no_answer").length,
-    }),
-    [all],
-  );
-
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {[
-          { label: "Total in Queue", value: counts.total, cls: "text-foreground" },
-          { label: "PTP", value: counts.ptp, cls: "text-blue-500" },
-          { label: "Callback", value: counts.callback, cls: "text-amber-500" },
-          { label: "Escalated", value: counts.escalated, cls: "text-destructive" },
-          { label: "Fresh", value: counts.fresh, cls: "text-success" },
-        ].map((s) => (
-          <Card key={s.label}>
-            <CardContent className="p-3.5">
-              <div className={cn("text-xl font-bold tabular-nums", s.cls)}>{s.value}</div>
-              <div className="text-[11px] font-medium text-muted-foreground mt-0.5">{s.label}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {agents.map((a) => {
-          const q = queues[a.id] ?? [];
-          const ptp = q.filter((d) => d.queueStatus === "ptp").length;
-          const esc = q.filter((d) => d.queueStatus === "escalated").length;
-          return (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => onViewAgent(a.id, "live")}
-              className="text-left rounded-xl border border-border bg-card p-4 transition-all hover:border-foreground/30 hover:shadow-sm"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-semibold text-foreground">{a.name}</span>
-                <Users className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className="text-2xl font-bold text-foreground">{q.length}</div>
-              <div className="text-[11px] text-muted-foreground mb-2">accounts in queue</div>
-              <div className="flex items-center gap-3 text-xs">
-                <span className="text-blue-500 font-medium">{ptp} PTP</span>
-                {esc > 0 && <span className="text-destructive font-medium">{esc} escalated</span>}
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      <CallQueueContent
+        agentId={viewingAll ? agents.map((a) => a.id) : selected}
+        agentName={viewingAll ? "Whole Team" : selectedAgent?.name}
+      />
     </div>
   );
 }
@@ -634,10 +558,6 @@ function ManagerQueuePage() {
             <Users className="h-3.5 w-3.5" />
             Agent Live View
           </TabsTrigger>
-          <TabsTrigger value="overview" className="gap-1.5">
-            <ListChecks className="h-3.5 w-3.5" />
-            Overview
-          </TabsTrigger>
           <TabsTrigger value="my" className="gap-1.5">
             <PhoneOff className="h-3.5 w-3.5" />
             My Queue
@@ -651,9 +571,6 @@ function ManagerQueuePage() {
 
         <TabsContent value="live" className="mt-4">
           <AgentLiveViewTab agents={agents} />
-        </TabsContent>
-        <TabsContent value="overview" className="mt-4">
-          <OverviewTab agents={agents} onViewAgent={(_agentId, t) => setTab(t)} />
         </TabsContent>
         <TabsContent value="my" className="mt-4">
           <MyQueueTab

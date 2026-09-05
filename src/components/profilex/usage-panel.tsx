@@ -7,14 +7,20 @@
 // drill-down, so the mix (cheap Mobile-to-UAN vs the pricier employment calls) needs no
 // second query.
 import { Fragment, useEffect, useState } from "react";
-import { ChevronRight, Users, TriangleAlert, IndianRupee, Search } from "lucide-react";
+import { ChevronRight, Users, TriangleAlert, IndianRupee, Search, FileDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Stat } from "@/components/reports/stat-card";
-import { ReportSection } from "@/components/reports/data-table";
+import { ReportSection, DataTable } from "@/components/reports/data-table";
 import { supabase } from "@/lib/supabase";
-import { getProfilexUsage, type UsageRow } from "@/lib/profilex-actions.server";
+import {
+  getProfilexUsage,
+  getProfilexUsageDetail,
+  type UsageRow,
+  type UsageDetailRow,
+} from "@/lib/profilex-actions.server";
 import { serviceLabel } from "@/lib/profilex-store";
+import { downloadCsv } from "@/lib/csv-export";
 
 interface UserUsage {
   agentId: string;
@@ -268,6 +274,167 @@ export function InsightsUsagePanel() {
           </div>
         )}
       </ReportSection>
+
+      <InsightsDetailLog />
     </div>
+  );
+}
+
+const RESULT_META: Record<string, { label: string; cls: string }> = {
+  "1": { label: "Found", cls: "text-success" },
+  "2": { label: "Not found", cls: "text-muted-foreground" },
+  "3": { label: "Not found", cls: "text-muted-foreground" },
+};
+
+/** Every individual lookup, not just the per-agent/per-service totals above — "where did an
+ * agent use Insights" answered with an actual debtor, not only a number. Same billing note as
+ * the rest of this panel: a "Not found" row was still paid for unless free-cache-reuse. */
+function InsightsDetailLog() {
+  const [rows, setRows] = useState<UsageDetailRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session) throw new Error("Your session expired — sign in again");
+        const res = await getProfilexUsageDetail({ data: { accessToken: session.access_token } });
+        setRows(res.rows);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not load the detail log");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return <p className="text-xs text-muted-foreground py-6">Loading detail log…</p>;
+  if (error) return <p className="text-xs text-destructive">{error}</p>;
+
+  return (
+    <ReportSection
+      title="Detail Log"
+      description="Every individual lookup this month — who ran it, and on which debtor"
+      icon={Search}
+      action={
+        rows.length > 0 ? (
+          <button
+            type="button"
+            onClick={() =>
+              downloadCsv(
+                "insights-detail-log.csv",
+                [
+                  "When",
+                  "Agent",
+                  "Agent Email",
+                  "Debtor",
+                  "Loan Reference",
+                  "Service",
+                  "Result",
+                  "Billed",
+                  "Cost (₹)",
+                ],
+                rows.map((r) => [
+                  new Date(r.created_at).toLocaleString("en-IN"),
+                  r.agent_name,
+                  r.agent_email,
+                  r.debtor_name,
+                  r.loan_reference,
+                  serviceLabel(r.service_id),
+                  r.state === "failed"
+                    ? "Failed"
+                    : (RESULT_META[r.provider_status ?? ""]?.label ?? "Unknown"),
+                  r.billable ? "Yes" : "No (cached reuse)",
+                  r.cost,
+                ]),
+              )
+            }
+            className="inline-flex items-center gap-1.5 h-7 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <FileDown className="h-3.5 w-3.5" />
+            Export
+          </button>
+        ) : undefined
+      }
+    >
+      <DataTable
+        rows={rows}
+        keyOf={(r) => r.trace_id}
+        empty="No lookups yet this month."
+        maxHeight="max-h-[500px]"
+        columns={[
+          {
+            key: "when",
+            header: "When",
+            render: (r) => (
+              <span className="whitespace-nowrap text-muted-foreground">
+                {new Date(r.created_at).toLocaleString("en-IN", {
+                  day: "numeric",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+            ),
+          },
+          {
+            key: "agent",
+            header: "Agent",
+            render: (r) => (
+              <div>
+                <div className="font-medium text-foreground">{r.agent_name}</div>
+                <div className="text-[10px] text-muted-foreground">{r.agent_email}</div>
+              </div>
+            ),
+          },
+          {
+            key: "debtor",
+            header: "Debtor",
+            render: (r) => (
+              <div>
+                <div className="font-medium text-foreground">{r.debtor_name}</div>
+                <div className="text-[10px] text-muted-foreground">{r.loan_reference || "—"}</div>
+              </div>
+            ),
+          },
+          {
+            key: "service",
+            header: "Service",
+            render: (r) => serviceLabel(r.service_id),
+          },
+          {
+            key: "result",
+            header: "Result",
+            render: (r) =>
+              r.state === "failed" ? (
+                <span className="font-medium text-destructive">Failed</span>
+              ) : (
+                <span
+                  className={cn(
+                    "font-medium",
+                    RESULT_META[r.provider_status ?? ""]?.cls ?? "text-muted-foreground",
+                  )}
+                >
+                  {RESULT_META[r.provider_status ?? ""]?.label ?? "Unknown"}
+                </span>
+              ),
+          },
+          {
+            key: "cost",
+            header: "Cost",
+            numeric: true,
+            render: (r) =>
+              r.billable ? (
+                <span className="font-medium">{money(r.cost)}</span>
+              ) : (
+                <span className="text-muted-foreground">Free (cached)</span>
+              ),
+          },
+        ]}
+      />
+    </ReportSection>
   );
 }

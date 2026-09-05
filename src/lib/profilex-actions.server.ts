@@ -9,6 +9,7 @@
 // Credentials are read from server env only; there is deliberately no VITE_ fallback, so they
 // cannot end up in a client bundle. See .env.example for the four vars.
 import { createServerFn } from "@tanstack/react-start";
+import { createClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import {
   extractPhones,
@@ -33,6 +34,24 @@ interface LooseDb {
   rpc: (fn: string, args?: Row) => Promise<{ data: unknown; error: { message: string } | null }>;
 }
 const db = (): LooseDb => getSupabaseAdmin() as unknown as LooseDb;
+
+/** A client authenticated AS THE CALLER (their own verified access token), for read-only report
+ * RPCs that must stay scoped by RLS — as opposed to `db()`, which is service_role and bypasses
+ * RLS entirely. Using `db()` for profilex_usage_by_user used to mean every manager/admin saw
+ * EVERY client's ProfileX usage, since debtor_traces_select's client_id/team scoping only ever
+ * fires under a real user's session, never under service_role. See
+ * migrations/20260905_profilex_usage_detail.sql for the full story. */
+function asCaller(accessToken: string): LooseDb {
+  const url = typeof process !== "undefined" ? process.env?.SUPABASE_URL : undefined;
+  const anonKey = typeof process !== "undefined" ? process.env?.SUPABASE_ANON_KEY : undefined;
+  if (!url || !anonKey) {
+    throw new Error("Missing SUPABASE_URL/SUPABASE_ANON_KEY (server env) for a caller-scoped read");
+  }
+  return createClient(url, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  }) as unknown as LooseDb;
+}
 
 /** One row of profilex_spend_report. Declared concretely because a server fn's return value is
  *  serialised across the wire, and an index-signature type there widens the whole result to
@@ -520,8 +539,11 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
  * monthly bill lands. Returns one row per user per service; the caller aggregates for the
  * top-level view and reuses the same rows for the drill-down.
  *
- * The RPC is SECURITY INVOKER, so debtor_traces' own policy still scopes this: an admin sees
- * their whole client, a manager only their own team.
+ * Called via asCaller(), not db() — the RPC is SECURITY INVOKER so debtor_traces' own policy
+ * scopes this (an admin sees their whole client, a manager only their own team) ONLY when it
+ * actually runs as that real, RLS-bound session. Running it through the service-role admin
+ * client used to bypass that scoping entirely (service_role has BYPASSRLS) — every manager/
+ * admin saw every client's usage. See migrations/20260905_profilex_usage_detail.sql.
  */
 export const getProfilexUsage = createServerFn({ method: "POST" })
   .inputValidator((d: { accessToken: string; since?: string }) => d)
@@ -531,9 +553,49 @@ export const getProfilexUsage = createServerFn({ method: "POST" })
     if (caller.role !== "manager" && caller.role !== "admin") {
       throw new Error("Only managers or admins can view Insights usage");
     }
-    const admin = db();
+    const asUser = asCaller(data.accessToken);
     const since = data.since ?? istMonthStart().toISOString();
-    const { data: rows, error } = await admin.rpc("profilex_usage_by_user", { p_since: since });
+    const { data: rows, error } = await asUser.rpc("profilex_usage_by_user", { p_since: since });
     if (error) throw new Error(`Could not load Insights usage (${error.message})`);
     return { since, rows: (rows as UsageRow[] | null) ?? [] };
+  });
+
+/** One row of profilex_usage_detail: a single lookup, who ran it, and which debtor it was for
+ * — the detail behind the per-agent/per-service totals above, so "where did an agent use
+ * Insights" has an actual answer instead of only a monthly aggregate. */
+export interface UsageDetailRow {
+  trace_id: string;
+  created_at: string;
+  agent_name: string;
+  agent_email: string;
+  debtor_id: string;
+  debtor_name: string;
+  loan_reference: string;
+  service_id: string;
+  provider_status: string | null;
+  billable: boolean;
+  cost: number;
+  state: string;
+}
+
+/** Same RLS-scoping requirement as getProfilexUsage above — asCaller(), never db(). */
+export const getProfilexUsageDetail = createServerFn({ method: "POST" })
+  .inputValidator(
+    (d: { accessToken: string; since?: string; limit?: number; offset?: number }) => d,
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "manager" && caller.role !== "admin") {
+      throw new Error("Only managers or admins can view Insights usage");
+    }
+    const asUser = asCaller(data.accessToken);
+    const since = data.since ?? istMonthStart().toISOString();
+    const { data: rows, error } = await asUser.rpc("profilex_usage_detail", {
+      p_since: since,
+      p_limit: data.limit ?? 200,
+      p_offset: data.offset ?? 0,
+    });
+    if (error) throw new Error(`Could not load Insights detail log (${error.message})`);
+    return { since, rows: (rows as UsageDetailRow[] | null) ?? [] };
   });

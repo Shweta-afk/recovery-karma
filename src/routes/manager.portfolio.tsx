@@ -45,7 +45,18 @@ import {
   Wand2,
   Landmark,
   Trash2,
+  BarChart2,
 } from "lucide-react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 import { toast } from "sonner";
 import { downloadCsv } from "@/lib/csv-export";
 import { saveTemplate } from "@/lib/mapping-template-store";
@@ -1244,6 +1255,106 @@ function visibleToTeam(teamId: string | undefined) {
   return (p: UploadedPortfolio) => p.teamId === teamId;
 }
 
+// A colored left-border accent per row status — the table used to be identical rows of text and
+// a small badge; this gives it the same at-a-glance color coding STATUS_META's badge already
+// carries, just visible without reading the badge text.
+const STATUS_BORDER: Record<Portfolio["status"], string> = {
+  active: "border-l-primary/50",
+  completed: "border-l-success/60",
+  stale: "border-l-orange-400/60",
+  closed: "border-l-muted-foreground/25",
+};
+
+// Same color language as the Reports charts (dashboard.reports.tsx's CHART_COLORS/
+// TOOLTIP_STYLE) — kept local rather than imported since that file doesn't export them and the
+// two pages aren't meant to be coupled.
+const RECOVERY_CHART_TOOLTIP = {
+  contentStyle: {
+    background: "oklch(0.15 0.025 258)",
+    border: "1px solid oklch(0.25 0.03 258)",
+    borderRadius: 6,
+    fontSize: 11,
+  },
+};
+
+/** Outstanding vs. Recovered per portfolio — the graph this page never had. Capped to the
+ * biggest 8 by outstanding so a manager with a long portfolio list still gets a readable chart
+ * instead of an unreadably cramped one; the table below still lists everything. */
+function PortfolioRecoveryChart({ portfolios }: { portfolios: Portfolio[] }) {
+  const data = [...portfolios]
+    .sort((a, b) => b.totalOutstanding - a.totalOutstanding)
+    .slice(0, 8)
+    .map((p) => ({
+      name: p.name.length > 16 ? `${p.name.slice(0, 15)}…` : p.name,
+      fullName: p.name,
+      outstanding: p.totalOutstanding,
+      recovered: p.recovered,
+    }));
+
+  return (
+    <Card>
+      <CardHeader className="border-b border-border py-2.5 px-4">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+          <BarChart2 className="h-3.5 w-3.5" />
+          Recovery by Portfolio
+          {portfolios.length > 8 && (
+            <span className="normal-case font-normal text-[10px] opacity-70">
+              (top 8 by outstanding)
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <ResponsiveContainer width="100%" height={Math.max(180, data.length * 34)}>
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 16, top: 4 }}>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              horizontal={false}
+              stroke="oklch(0.25 0.03 258 / 0.4)"
+            />
+            <XAxis
+              type="number"
+              tickFormatter={(v: number) => formatINR(v)}
+              tick={{ fontSize: 10 }}
+            />
+            <YAxis
+              type="category"
+              dataKey="name"
+              width={110}
+              tick={{ fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              {...RECOVERY_CHART_TOOLTIP}
+              formatter={(v: number, key: string) => [
+                formatINR(v),
+                key === "outstanding" ? "Outstanding" : "Recovered",
+              ]}
+              labelFormatter={(_, payload) =>
+                (payload?.[0]?.payload as { fullName?: string } | undefined)?.fullName ?? ""
+              }
+            />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar
+              dataKey="outstanding"
+              name="Outstanding"
+              fill="oklch(0.58 0.18 258 / 0.3)"
+              radius={[0, 3, 3, 0]}
+            />
+            <Bar
+              dataKey="recovered"
+              name="Recovered"
+              fill="oklch(0.65 0.16 152)"
+              radius={[0, 3, 3, 0]}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
 function PortfolioOverviewPage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
@@ -1332,19 +1443,27 @@ function PortfolioOverviewPage() {
         </Card>
       ) : (
         <>
-          {/* Summary stats */}
+          {/* Summary stats — a distinct accent color per card so the row reads at a glance
+              instead of four identical blue boxes. */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard
               icon={Briefcase}
               label="Total Portfolios"
               value={String(allPortfolios.length)}
               sub={`${unassigned} need assignment`}
+              accent="bg-primary"
             />
-            <StatCard icon={Users} label="Total Accounts" value={totalAccounts.toLocaleString()} />
+            <StatCard
+              icon={Users}
+              label="Total Accounts"
+              value={totalAccounts.toLocaleString()}
+              accent="bg-violet-500"
+            />
             <StatCard
               icon={IndianRupee}
               label="Total Outstanding"
               value={formatINR(totalOutstanding)}
+              accent="bg-orange-500"
             />
             <StatCard
               icon={TrendingUp}
@@ -1355,8 +1474,14 @@ function PortfolioOverviewPage() {
                   ? `${((totalRecovered / totalOutstanding) * 100).toFixed(1)}% of AUM`
                   : "—"
               }
+              accent="bg-success"
             />
           </div>
+
+          {/* Recovery by portfolio — the graph this page never had; a manager scanning ten
+              portfolios can spot the laggards in one glance instead of reading a column of
+              numbers top to bottom. */}
+          {filtered.length > 0 && <PortfolioRecoveryChart portfolios={filtered} />}
 
           {/* Filter row */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1460,7 +1585,13 @@ function PortfolioOverviewPage() {
                         p.totalOutstanding > 0 ? (p.recovered / p.totalOutstanding) * 100 : 0;
                       const sm = STATUS_META[p.status];
                       return (
-                        <tr key={p.id} className="hover:bg-muted/20 transition-colors">
+                        <tr
+                          key={p.id}
+                          className={cn(
+                            "border-l-2 hover:bg-muted/20 transition-colors",
+                            STATUS_BORDER[p.status],
+                          )}
+                        >
                           <td className="py-3 pl-4">
                             <div className="text-xs font-medium text-foreground">{p.name}</div>
                             <div className="text-[10px] text-muted-foreground">

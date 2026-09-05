@@ -114,7 +114,9 @@ import {
   saveDisposition,
   isUuid,
   getAgentDispositions,
+  getAgentsDispositions,
   getPtpFollowups,
+  getTeamPtpFollowups,
   getCaseFollowups,
   refreshDispositions,
   type DispositionRecord,
@@ -207,7 +209,9 @@ export function CallQueueContent({
   agentName: agentNameProp,
   initialFilter,
 }: {
-  agentId?: string;
+  /** A single agent's own book, or (the manager combined "whole team" view) every agent in the
+   * list merged into one queue — see buildAssignedQueue in build-queue.ts. */
+  agentId?: string | string[];
   agentName?: string;
   /** Seeds the status pill from ?filter=. Supplied by the route wrapper — this component must
    * never read route search itself, see CallQueuePage. */
@@ -219,8 +223,14 @@ export function CallQueueContent({
   const actingAgentName = user?.name ?? "Agent";
   const agentId = agentIdProp ?? actingAgentId;
   const agentName = agentNameProp ?? actingAgentName;
-  /** True on an agent's own queue; false when a manager is reading someone else's. */
-  const isSelf = agentId === actingAgentId;
+  const isCombined = Array.isArray(agentId);
+  /** True on an agent's own queue; false when a manager is reading someone else's (or the
+   * combined multi-agent view, which is never "self"). */
+  const isSelf = !isCombined && agentId === actingAgentId;
+  // Stable primitive for effect deps — agentId itself may be a fresh array reference every
+  // render (the caller mapping agents -> ids inline), which would otherwise reload/re-fire
+  // every effect below on every render instead of only when the actual membership changes.
+  const agentKey = isCombined ? agentId.slice().sort().join(",") : agentId;
 
   // Agent availability status
   const [status, setStatus] = useState<AgentStatus>("available");
@@ -246,7 +256,8 @@ export function CallQueueContent({
       window.removeEventListener("portfolios-updated", reload);
       window.removeEventListener("dispositions-updated", reload);
     };
-  }, [agentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentKey]);
 
   // Portfolio mode/name are properties of the portfolio, set by the manager at upload time.
   // An agent's queue can span multiple portfolios; show the primary (first) one they're
@@ -259,10 +270,8 @@ export function CallQueueContent({
   const portfolioName = primaryPortfolio?.name ?? "No portfolio assigned";
 
   // Seed loggedOutcomes from persisted dispositions
-  const [loggedOutcomes, setLoggedOutcomes] = useState<
-    Record<string, { outcome: CallOutcome; time: string; reason?: string }>
-  >(() => {
-    const persisted = getAgentDispositions(agentId);
+  const outcomesFor = (id: string | string[]) => {
+    const persisted = Array.isArray(id) ? getAgentsDispositions(id) : getAgentDispositions(id);
     const map: Record<string, { outcome: CallOutcome; time: string; reason?: string }> = {};
     persisted.forEach((d) => {
       const t = new Date(d.time);
@@ -273,10 +282,24 @@ export function CallQueueContent({
       };
     });
     return map;
-  });
+  };
+  const [loggedOutcomes, setLoggedOutcomes] = useState<
+    Record<string, { outcome: CallOutcome; time: string; reason?: string }>
+  >(() => outcomesFor(agentId));
+  // Re-seed when switching who's being viewed (Agent Live View swaps agentId on the same
+  // mounted instance, not a remount) — without this, switching agents left the previous
+  // agent's outcome badges showing until a call was logged for the new one.
+  useEffect(() => {
+    setLoggedOutcomes(outcomesFor(agentId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentKey]);
 
   // Recomputed whenever a call is logged (loggedOutcomes changes right after saveDisposition).
-  const ptpFollowups = useMemo(() => getPtpFollowups(agentId), [agentId, loggedOutcomes]);
+  const ptpFollowups = useMemo(
+    () => (isCombined ? getTeamPtpFollowups(agentId) : getPtpFollowups(agentId)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agentKey, loggedOutcomes],
+  );
 
   // Predictive dialer driven by the real engine + simulated provider (src/lib/dialer).
   // Legs progress through the actual call state machine; mode: "server" later moves it
@@ -647,7 +670,8 @@ export function CallQueueContent({
   // Self only: markReminderNotified() burns the reminder, so a manager glancing at this agent's
   // queue would consume their due-reminder popups and the agent would never see them.
   useEffect(() => {
-    if (!isSelf) return;
+    // Self only (never true for the combined multi-agent view — isCombined forces isSelf false).
+    if (!isSelf || isCombined) return;
     refreshReminders().then(() => {
       // IST, not UTC. Reminder due-dates are IST calendar dates, but toISOString() reports
       // the UTC day — so an agent on an early shift (before 05:30 IST) was shown YESTERDAY's
@@ -663,7 +687,8 @@ export function CallQueueContent({
         markReminderNotified(r.id).catch(() => {});
       });
     });
-  }, [agentId, isSelf]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentKey, isSelf]);
 
   // Missed-PTP escalation, step 1 of the chain (agent -> manager) — see
   // ptp-escalation-store.ts. Runs opportunistically whenever this page loads or the agent logs
@@ -672,13 +697,14 @@ export function CallQueueContent({
   useEffect(() => {
     // Self only: this WRITES escalations attributed to the agent. Left ungated, a manager
     // merely opening this agent's queue in Agent Live View would raise escalations in that
-    // agent's name without anyone acting.
-    if (!isSelf) return;
+    // agent's name without anyone acting. Never true for the combined multi-agent view.
+    if (!isSelf || isCombined) return;
     // Every dated commitment, not just PTPs — a callback the agent agreed to and never made
     // escalates on the same chain. getCaseFollowups covers both; ptpFollowups above stays
     // PTP-only because the PTP tracker UI it feeds is promise-specific.
     escalateMissedCasesToManager(agentId, getCaseFollowups(agentId)).catch(() => {});
-  }, [agentId, ptpFollowups, isSelf]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentKey, ptpFollowups, isSelf]);
 
   const filterCounts = useMemo(
     () => ({
@@ -826,8 +852,7 @@ export function CallQueueContent({
     const cols: string[] = [];
     for (const d of allQueue) {
       if (cols.length >= MAX_EXTRA_COLUMNS) break;
-      const extra = (d as QueueDebtor & { _uploadedExtra?: Record<string, string> })
-        ._uploadedExtra;
+      const extra = (d as QueueDebtor & { _uploadedExtra?: Record<string, string> })._uploadedExtra;
       if (!extra) continue;
       for (const key of Object.keys(extra)) {
         if (cols.length >= MAX_EXTRA_COLUMNS) break;
@@ -912,7 +937,7 @@ export function CallQueueContent({
         {/* ── Mode status bar ── */}
         <DialerModeBar
           portfolioMode={portfolioMode}
-          portfolioName={portfolioName}
+          portfolioName={isCombined ? "Combined team view — multiple portfolios" : portfolioName}
           dialerRunning={dialer.running}
         />
       </div>
@@ -1118,153 +1143,160 @@ export function CallQueueContent({
         <div className="flex items-center justify-between mb-3">
           <SectionLabel>Call Queue · Today</SectionLabel>
 
-          {/* Dialer controls — above the queue, not in page header */}
-          <div className="flex items-center gap-2">
-            {/* Manual Dial moved out of this page entirely — it now lives in the
+          {/* Dialer controls — above the queue, not in page header. Hidden on the manager's
+              combined "whole team" view: dialerSettings below is one portfolio's config
+              (whichever debtor happens to be first in the merged list), and applying it as a
+              bulk-dial run across accounts that may span several agents' different portfolios
+              would silently use the wrong call-mode/rechurn policy for most of them. Calling
+              a specific row still works fine either way. */}
+          {!isCombined && (
+            <div className="flex items-center gap-2">
+              {/* Manual Dial moved out of this page entirely — it now lives in the
                 always-available ManualDialDock (bottom-left, mounted at the dashboard and
                 manager layout level), so an agent can dial from anywhere instead of only
                 from here. It also gained a Loan ID field, which binds an off-queue call to
                 a real account. See src/components/manual-dial-dock.tsx. */}
 
-            {/* "Productive Dial" button — dialerMode "predictive" internally (kept as-is; only
+              {/* "Productive Dial" button — dialerMode "predictive" internally (kept as-is; only
                 the display label changed). Real engine + simulated provider via useDialerRun. */}
-            <Button
-              size="sm"
-              disabled={dialer.running && activeDialMode !== "predictive"}
-              onClick={async () => {
-                if (dialer.running) {
-                  dialer.stop();
-                  setActiveDialMode(null);
-                  return;
-                }
-                // 4b — dial the currently filtered queue, not the whole book
-                const target = filteredQueue.length ? filteredQueue : allQueue;
-                const activeFilter = FILTERS.find((f) => f.key === queueFilter);
-                // The agent pool is the concurrency ceiling: click-to-call rings an agent
-                // first, so a line cannot be opened without one free to take it.
-                const agentNumbers = await fetchDialerAgentNumbers();
-                if (!agentNumbers.length) {
-                  toast.error(
-                    "No agents with a phone number configured — set one in Admin → Users before dialing.",
+              <Button
+                size="sm"
+                disabled={dialer.running && activeDialMode !== "predictive"}
+                onClick={async () => {
+                  if (dialer.running) {
+                    dialer.stop();
+                    setActiveDialMode(null);
+                    return;
+                  }
+                  // 4b — dial the currently filtered queue, not the whole book
+                  const target = filteredQueue.length ? filteredQueue : allQueue;
+                  const activeFilter = FILTERS.find((f) => f.key === queueFilter);
+                  // The agent pool is the concurrency ceiling: click-to-call rings an agent
+                  // first, so a line cannot be opened without one free to take it.
+                  const agentNumbers = await fetchDialerAgentNumbers();
+                  if (!agentNumbers.length) {
+                    toast.error(
+                      "No agents with a phone number configured — set one in Admin → Users before dialing.",
+                    );
+                    return;
+                  }
+                  setActiveDialMode("predictive");
+                  try {
+                    await dialer.start({
+                      settings: dialerSettings,
+                      targets: target.map((d) => ({
+                        id: d.id,
+                        name: d.name,
+                        phone: d.phone,
+                        portfolioId: d.portfolioId,
+                        aiScore: d.aiScore,
+                      })),
+                      agentNumbers,
+                      callerId: manualDialCallerId,
+                    });
+                  } catch (e) {
+                    setActiveDialMode(null);
+                    toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
+                    return;
+                  }
+                  toast.success(
+                    `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
                   );
-                  return;
-                }
-                setActiveDialMode("predictive");
-                try {
-                  await dialer.start({
-                    settings: dialerSettings,
-                    targets: target.map((d) => ({
-                      id: d.id,
-                      name: d.name,
-                      phone: d.phone,
-                      portfolioId: d.portfolioId,
-                      aiScore: d.aiScore,
-                    })),
-                    agentNumbers,
-                    callerId: manualDialCallerId,
-                  });
-                } catch (e) {
-                  setActiveDialMode(null);
-                  toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
-                  return;
-                }
-                toast.success(
-                  `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
-                );
-                // AI reaches a live debtor and hands over: auto-connect if the agent is free,
-                // otherwise raise a Take / Forward notification. (Kept as a demo flourish.)
-                setTimeout(() => {
-                  const transferDebtor = target[Math.min(5, target.length - 1)];
-                  if (transferDebtor) handleAiTransfer(transferDebtor, "AI Bot");
-                }, 6000);
-              }}
-              className={cn(
-                "gap-1.5 text-sm",
-                dialer.running && activeDialMode === "predictive"
-                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  : "bg-success text-success-foreground hover:bg-success/90",
-              )}
-            >
-              {dialer.running && activeDialMode === "predictive" ? (
-                <>
-                  <Square className="h-3.5 w-3.5" />
-                  Stop Dialer
-                </>
-              ) : (
-                <>
-                  <Zap className="h-3.5 w-3.5" />
-                  Productive Dial
-                </>
-              )}
-            </Button>
+                  // AI reaches a live debtor and hands over: auto-connect if the agent is free,
+                  // otherwise raise a Take / Forward notification. (Kept as a demo flourish.)
+                  setTimeout(() => {
+                    const transferDebtor = target[Math.min(5, target.length - 1)];
+                    if (transferDebtor) handleAiTransfer(transferDebtor, "AI Bot");
+                  }, 6000);
+                }}
+                className={cn(
+                  "gap-1.5 text-sm",
+                  dialer.running && activeDialMode === "predictive"
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    : "bg-success text-success-foreground hover:bg-success/90",
+                )}
+              >
+                {dialer.running && activeDialMode === "predictive" ? (
+                  <>
+                    <Square className="h-3.5 w-3.5" />
+                    Stop Dialer
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-3.5 w-3.5" />
+                    Productive Dial
+                  </>
+                )}
+              </Button>
 
-            {/* "Progressive Dial" button — dialerMode "productive" internally (kept as-is; only
+              {/* "Progressive Dial" button — dialerMode "productive" internally (kept as-is; only
                 the display label changed). Same engine, capacity forced to one line: dial the
                 next debtor in list order, wait for it to reach a terminal state (no-answer /
                 busy / completed) or connect, then move to the next. No overdial. */}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={dialer.running && activeDialMode !== "productive"}
-              onClick={async () => {
-                if (dialer.running) {
-                  dialer.stop();
-                  setActiveDialMode(null);
-                  return;
-                }
-                const target = filteredQueue.length ? filteredQueue : allQueue;
-                const activeFilter = FILTERS.find((f) => f.key === queueFilter);
-                const agentNumbers = await fetchDialerAgentNumbers();
-                if (!agentNumbers.length) {
-                  toast.error(
-                    "No agents with a phone number configured — set one in Admin → Users before dialing.",
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={dialer.running && activeDialMode !== "productive"}
+                onClick={async () => {
+                  if (dialer.running) {
+                    dialer.stop();
+                    setActiveDialMode(null);
+                    return;
+                  }
+                  const target = filteredQueue.length ? filteredQueue : allQueue;
+                  const activeFilter = FILTERS.find((f) => f.key === queueFilter);
+                  const agentNumbers = await fetchDialerAgentNumbers();
+                  if (!agentNumbers.length) {
+                    toast.error(
+                      "No agents with a phone number configured — set one in Admin → Users before dialing.",
+                    );
+                    return;
+                  }
+                  const orderedTargets: DialTarget[] = target.map((d) => ({
+                    id: d.id,
+                    name: d.name,
+                    phone: d.phone,
+                    portfolioId: d.portfolioId,
+                    aiScore: d.aiScore,
+                    // CSV alt_phones plus any an agent added by hand (Debtor Profile → Add Phone)
+                    // — planProductiveBatch works through these after the primary number.
+                    altPhones: d.altPhones,
+                  }));
+                  setActiveDialMode("productive");
+                  setProductiveTargets(orderedTargets);
+                  try {
+                    await dialer.start({
+                      settings: { ...dialerSettings, dialerMode: "productive" },
+                      targets: orderedTargets,
+                      agentNumbers,
+                      callerId: manualDialCallerId,
+                    });
+                  } catch (e) {
+                    setActiveDialMode(null);
+                    setProductiveTargets([]);
+                    toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
+                    return;
+                  }
+                  toast.success(
+                    `Progressive calling ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}, one at a time`,
                   );
-                  return;
-                }
-                const orderedTargets: DialTarget[] = target.map((d) => ({
-                  id: d.id,
-                  name: d.name,
-                  phone: d.phone,
-                  portfolioId: d.portfolioId,
-                  aiScore: d.aiScore,
-                  // CSV alt_phones plus any an agent added by hand (Debtor Profile → Add Phone)
-                  // — planProductiveBatch works through these after the primary number.
-                  altPhones: d.altPhones,
-                }));
-                setActiveDialMode("productive");
-                setProductiveTargets(orderedTargets);
-                try {
-                  await dialer.start({
-                    settings: { ...dialerSettings, dialerMode: "productive" },
-                    targets: orderedTargets,
-                    agentNumbers,
-                    callerId: manualDialCallerId,
-                  });
-                } catch (e) {
-                  setActiveDialMode(null);
-                  setProductiveTargets([]);
-                  toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
-                  return;
-                }
-                toast.success(
-                  `Progressive calling ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}, one at a time`,
-                );
-              }}
-              className="gap-1.5 text-sm"
-            >
-              {dialer.running && activeDialMode === "productive" ? (
-                <>
-                  <Square className="h-3.5 w-3.5" />
-                  Stop Dialer
-                </>
-              ) : (
-                <>
-                  <ListOrdered className="h-3.5 w-3.5" />
-                  Progressive Dial
-                </>
-              )}
-            </Button>
-          </div>
+                }}
+                className="gap-1.5 text-sm"
+              >
+                {dialer.running && activeDialMode === "productive" ? (
+                  <>
+                    <Square className="h-3.5 w-3.5" />
+                    Stop Dialer
+                  </>
+                ) : (
+                  <>
+                    <ListOrdered className="h-3.5 w-3.5" />
+                    Progressive Dial
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* ── Retained debtors — collapsible ── */}
@@ -1405,29 +1437,29 @@ export function CallQueueContent({
         <div className="mt-3 flex items-center gap-2">
           <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1">
             {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setQueueFilter(f.key)}
-              className={cn(
-                "inline-flex flex-shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all duration-150",
-                queueFilter === f.key
-                  ? f.key === "retained"
-                    ? "bg-violet-600 text-white border-violet-600"
-                    : "bg-foreground text-background border-foreground"
-                  : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
-              )}
-            >
-              {f.label}
-              <span
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setQueueFilter(f.key)}
                 className={cn(
-                  "rounded-full px-1.5 py-0 text-[10px] font-bold",
-                  queueFilter === f.key ? "bg-white/20" : "bg-muted text-muted-foreground",
+                  "inline-flex flex-shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all duration-150",
+                  queueFilter === f.key
+                    ? f.key === "retained"
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "bg-foreground text-background border-foreground"
+                    : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
                 )}
               >
-                {filterCounts[f.key]}
-              </span>
-            </button>
+                {f.label}
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-0 text-[10px] font-bold",
+                    queueFilter === f.key ? "bg-white/20" : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {filterCounts[f.key]}
+                </span>
+              </button>
             ))}
           </div>
 
@@ -1534,9 +1566,7 @@ export function CallQueueContent({
                         <div
                           className={cn(
                             "flex items-center justify-between hover:bg-muted/50",
-                            dispositionFilter === code &&
-                              reasonFilter === "all" &&
-                              "bg-muted/30",
+                            dispositionFilter === code && reasonFilter === "all" && "bg-muted/30",
                           )}
                         >
                           <button
@@ -1601,7 +1631,9 @@ export function CallQueueContent({
                                   )}
                                 >
                                   <span className="truncate">{reason}</span>
-                                  {count > 0 && <span className="opacity-50 flex-shrink-0">{count}</span>}
+                                  {count > 0 && (
+                                    <span className="opacity-50 flex-shrink-0">{count}</span>
+                                  )}
                                 </button>
                               );
                             })}
@@ -2129,9 +2161,7 @@ function QueueRow({
       <TableCell
         className={cn(
           "sticky left-0 z-10 w-[190px] max-w-[190px] overflow-hidden shadow-[1px_0_0_0_var(--border)]",
-          loggedOutcome
-            ? "bg-[color-mix(in_oklch,var(--success)_5%,var(--card))]"
-            : "bg-card",
+          loggedOutcome ? "bg-[color-mix(in_oklch,var(--success)_5%,var(--card))]" : "bg-card",
         )}
       >
         <button
@@ -2210,9 +2240,7 @@ function QueueRow({
       <TableCell
         className={cn(
           "sticky right-0 z-10 shadow-[-1px_0_0_0_var(--border)]",
-          loggedOutcome
-            ? "bg-[color-mix(in_oklch,var(--success)_5%,var(--card))]"
-            : "bg-card",
+          loggedOutcome ? "bg-[color-mix(in_oklch,var(--success)_5%,var(--card))]" : "bg-card",
         )}
       >
         <div className="flex items-center justify-end gap-1">

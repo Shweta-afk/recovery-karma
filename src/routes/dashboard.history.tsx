@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -43,6 +44,8 @@ import { useAuth } from "@/lib/auth";
 import { DIAL_MODE_META, UNKNOWN_DIAL_MODE_LABEL, type DialMode } from "@/lib/call-queue/types";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { EMPTY_RANGE, inDateRange, isRangeActive, type DateRange } from "@/lib/date-filter";
+import { useActiveTeam } from "@/lib/active-team-store";
+import { useTeamAgents, useRoster, withSelf } from "@/lib/team-store";
 
 export const Route = createFileRoute("/dashboard/history")({
   head: () => ({
@@ -232,27 +235,37 @@ function ActivityHistoryPage() {
   const { user } = useAuth();
   const myId = user?.email ?? user?.id ?? "";
 
+  // A manager/admin can view any agent they're responsible for, not just their own calls — the
+  // underlying cache already has team-wide data (RLS scopes it for Call Audit), this page just
+  // used to hard-filter to "me" for everyone. Agents get no picker: viewingAgentId stays myId.
+  const { activeTeam } = useActiveTeam(myId);
+  const teamAgents = useTeamAgents(user?.role === "manager" ? activeTeam?.id : undefined);
+  const orgRoster = useRoster(user?.role === "admin");
+  const pickerAgents =
+    user?.role === "admin" ? orgRoster : user?.role === "manager" ? withSelf(teamAgents, myId) : [];
+  const [viewingAgentId, setViewingAgentId] = useState(myId);
+
   // Render the cached dispositions immediately, then refresh from call_logs. The store
   // broadcasts `dispositions-updated` after each write, so a call dispositioned elsewhere
-  // in the app shows up here without a reload. Filtered to the viewer's own calls — RLS
-  // already scopes call_logs, but a manager's fetch also includes their team's calls (for
-  // Call Audit), so this page still needs its own filter to stay "my history" for everyone,
-  // agent and manager alike.
-  const [disps, setDisps] = useState<DispositionRecord[]>(() => getAgentDispositions(myId));
+  // in the app shows up here without a reload. Filtered to whichever agent is being viewed —
+  // "myself" by default, or another team member a manager/admin picked above.
+  const [disps, setDisps] = useState<DispositionRecord[]>(() =>
+    getAgentDispositions(viewingAgentId),
+  );
   useEffect(() => {
-    const load = () => setDisps(getAgentDispositions(myId));
+    const load = () => setDisps(getAgentDispositions(viewingAgentId));
     window.addEventListener("dispositions-updated", load);
     refreshDispositions()
       .then(() => {
         load();
         // Recordings are published after the call is logged, so ask the provider for any
         // that were still missing. Failures are non-fatal — history renders regardless.
-        return backfillRecordings(getAgentDispositions(myId));
+        return backfillRecordings(getAgentDispositions(viewingAgentId));
       })
       .catch((e) => console.warn("[history] recording backfill skipped:", e))
       .finally(load);
     return () => window.removeEventListener("dispositions-updated", load);
-  }, [myId]);
+  }, [viewingAgentId]);
 
   const events = useMemo(() => toActivityEvents(disps), [disps]);
 
@@ -356,10 +369,29 @@ function ActivityHistoryPage() {
             Every contact across calls, IVR, SMS and WhatsApp — inbound and outbound.
           </p>
         </div>
-        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={exportCSV}>
-          <FileDown className="h-3.5 w-3.5" />
-          Export ({filtered.length})
-        </Button>
+        <div className="flex items-center gap-2">
+          {pickerAgents.length > 0 && (
+            <Select value={viewingAgentId} onValueChange={setViewingAgentId}>
+              <SelectTrigger className="h-8 w-48 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={myId}>My history</SelectItem>
+                {pickerAgents
+                  .filter((a) => a.id !== myId)
+                  .map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={exportCSV}>
+            <FileDown className="h-3.5 w-3.5" />
+            Export ({filtered.length})
+          </Button>
+        </div>
       </div>
 
       {/* Channel summary chips */}
@@ -563,8 +595,9 @@ function ActivityHistoryPage() {
                         </TableCell>
                         <TableCell>
                           <div className="font-medium text-sm text-foreground">{e.debtorName}</div>
-                          <div className="text-[11px] text-muted-foreground">
+                          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
                             {e.loanId} · {e.contact}
+                            <CopyButton value={e.contact} label="Phone number" />
                           </div>
                         </TableCell>
                         <TableCell>
