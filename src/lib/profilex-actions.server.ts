@@ -2,9 +2,11 @@
 //
 // Every paid request funnels through runProfilexTrace(), which enforces, in order: the caller
 // is a manager/admin, the number being looked up belongs to a debtor in their own client's
-// portfolio, a cached result isn't already on hand, and the monthly budget isn't spent. None of
-// those can be enforced in the browser, and ProfileX has no balance API to fall back on — the
-// `debtor_traces` ledger this writes is the only record that spend happened.
+// portfolio, a cached result isn't already on hand, and — for a manager — their own prepaid
+// Insights wallet has enough left (migrations/20260907_profilex_manager_wallets.sql; admins
+// aren't wallet-gated). None of those can be enforced in the browser, and ProfileX has no
+// balance API to fall back on — the `debtor_traces` ledger this writes is the only record that
+// spend happened.
 //
 // Credentials are read from server env only; there is deliberately no VITE_ fallback, so they
 // cannot end up in a client bundle. See .env.example for the four vars.
@@ -314,19 +316,26 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       }
     }
 
-    // Budget. Summed in SQL (see profilex_month_spend) so a truncated page of rows can't
-    // under-report spend and wave a call through past the cap.
-    if (settings.monthly_budget > 0) {
-      const { data: spent, error: spendErr } = await admin.rpc("profilex_month_spend", {
-        p_client_id: caller.clientId,
-        p_since: istMonthStart().toISOString(),
-      });
-      if (spendErr) throw new Error(`Could not check the Insights budget (${spendErr.message})`);
-      const spend = Number(spent ?? 0);
-      if (spend >= settings.monthly_budget) {
+    // Wallet. Managers spend from their own prepaid balance (migrations/20260907_profilex_
+    // manager_wallets.sql) — replaces the old org-wide monthly_budget check. Admins are not
+    // wallet-gated: they're the ones who fund every manager's wallet, so there is nothing to
+    // check against. Pre-checked against the WORST-CASE price for this service — the real
+    // provider status, and so the real cost, isn't known until after the call below, and
+    // letting a lookup start only to fail on charging afterward would mean it already spent
+    // real money with the provider with nothing to show for it in the manager's own balance.
+    if (caller.role === "manager") {
+      const { data: wallet, error: walletErr } = await admin
+        .from("profilex_wallets")
+        .select("balance")
+        .eq("manager_id", caller.agentId)
+        .maybeSingle();
+      if (walletErr) throw new Error(`Could not check your Insights wallet (${walletErr.message})`);
+      const balance = Number(wallet?.balance ?? 0);
+      const worstCase = priceFor(service, null, settings.rate_card);
+      if (balance < worstCase) {
         throw new Error(
-          `This month's Insights budget is spent — ₹${spend.toFixed(2)} of ` +
-            `₹${settings.monthly_budget.toFixed(2)}. An admin can raise it in Settings.`,
+          `Your Insights wallet has ₹${balance.toFixed(2)} left — this lookup can cost up to ` +
+            `₹${worstCase.toFixed(2)}. Ask an admin to top it up in Settings.`,
         );
       }
     }
@@ -418,6 +427,19 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       .select()
       .single();
 
+    // Charge the manager's wallet for what was actually billed — real cost, not the worst-case
+    // figure the pre-flight check above used. Best-effort: the lookup already happened and was
+    // paid for with the real provider by this point, so a failure recording the charge should
+    // not fail the whole request — debtor_traces.cost stays the authoritative billing record
+    // (see profilex_spend_report) even if this manager's wallet display drifts until reconciled.
+    if (billable && cost > 0 && caller.role === "manager" && caller.agentId) {
+      const { error: chargeErr } = await admin.rpc("profilex_wallet_charge", {
+        p_manager_id: caller.agentId,
+        p_amount: cost,
+      });
+      if (chargeErr) console.error("[profilex] wallet charge failed:", chargeErr.message);
+    }
+
     if (httpStatus !== 200) {
       // Spell out that this is a FAULT, not a "no record found". A real not-found comes back
       // HTTP 200 with provider status 2 and IS charged; a non-200 means the request never
@@ -504,7 +526,6 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
     (d: {
       accessToken: string;
       enabled: boolean;
-      monthlyBudget: number;
       hitTtlHours: number;
       missTtlHours: number;
       rateCard: Record<string, Record<string, number>>;
@@ -513,7 +534,7 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
-    // Admin only: the budget cap is worthless if the people spending against it can raise it.
+    // Admin only: worthless as a control if the people spending against it could change it.
     if (caller.role !== "admin") throw new Error("Only admins can change Insights settings");
 
     const admin = db();
@@ -521,7 +542,6 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
       {
         client_id: caller.clientId,
         enabled: data.enabled,
-        monthly_budget: data.monthlyBudget,
         hit_ttl_hours: data.hitTtlHours,
         miss_ttl_hours: data.missTtlHours,
         rate_card: data.rateCard,
@@ -531,6 +551,113 @@ export const saveProfilexSettings = createServerFn({ method: "POST" })
       { onConflict: "client_id" },
     );
     if (error) throw new Error(`Could not save Insights settings (${error.message})`);
+    return { ok: true };
+  });
+
+/** A manager's own Insights wallet balance — what the Trace tab shows them before they run a
+ * lookup. Admins get null (they aren't wallet-gated — see runProfilexTrace). */
+export const getMyWallet = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "manager") return { balance: null };
+    const admin = db();
+    const { data: wallet, error } = await admin
+      .from("profilex_wallets")
+      .select("balance")
+      .eq("manager_id", caller.agentId)
+      .maybeSingle();
+    if (error) throw new Error(`Could not load your Insights wallet (${error.message})`);
+    return { balance: Number(wallet?.balance ?? 0) };
+  });
+
+/** One row of getManagerWallets: a manager and their current Insights wallet balance. */
+export interface ManagerWalletRow {
+  manager_id: string;
+  name: string;
+  email: string;
+  balance: number;
+  updated_at: string | null;
+}
+
+/** Every manager in the admin's client, with their wallet balance (0 for one that's never been
+ * funded — no profilex_wallets row exists until the first top-up). Admin only. */
+export const getManagerWallets = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "admin") throw new Error("Only admins can view manager wallets");
+    const admin = db();
+    const [{ data: managers, error: mErr }, { data: wallets, error: wErr }] = await Promise.all([
+      admin
+        .from("agents")
+        .select("id, name, email")
+        .eq("client_id", caller.clientId)
+        .eq("role", "manager"),
+      admin
+        .from("profilex_wallets")
+        .select("manager_id, balance, updated_at")
+        .eq("client_id", caller.clientId),
+    ]);
+    if (mErr) throw new Error(`Could not load managers (${mErr.message})`);
+    if (wErr) throw new Error(`Could not load wallets (${wErr.message})`);
+    const balanceByManager = new Map(
+      ((wallets ?? []) as { manager_id: string; balance: number; updated_at: string }[]).map(
+        (w) => [w.manager_id, w],
+      ),
+    );
+    const rows: ManagerWalletRow[] = (
+      (managers ?? []) as { id: string; name: string; email: string }[]
+    )
+      .map((m) => ({
+        manager_id: m.id,
+        name: m.name,
+        email: m.email,
+        balance: Number(balanceByManager.get(m.id)?.balance ?? 0),
+        updated_at: balanceByManager.get(m.id)?.updated_at ?? null,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { rows };
+  });
+
+/** Sets one manager's Insights wallet to an exact ₹ figure — a top-up is just setting it to
+ * current + however much the admin wants to add, computed in the UI before calling this.
+ * Admin only, same reasoning as saveProfilexSettings: worthless as a spend control otherwise. */
+export const setManagerWallet = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; managerId: string; balance: number }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "admin") throw new Error("Only admins can set a manager's wallet");
+    if (data.balance < 0) throw new Error("A wallet balance can't be negative");
+
+    const admin = db();
+    // Confirm the manager is actually this admin's own, not an id from another client passed by
+    // a tampered request — client_id on the wallet row must come from a verified lookup, never
+    // trusted from the browser.
+    const { data: manager, error: mErr } = await admin
+      .from("agents")
+      .select("id, client_id, role")
+      .eq("id", data.managerId)
+      .maybeSingle();
+    if (mErr) throw new Error(`Could not verify that manager (${mErr.message})`);
+    if (!manager || manager.client_id !== caller.clientId || manager.role !== "manager") {
+      throw new Error("That manager was not found in your organisation");
+    }
+
+    const { error } = await admin.from("profilex_wallets").upsert(
+      {
+        manager_id: data.managerId,
+        client_id: caller.clientId,
+        balance: data.balance,
+        updated_at: new Date().toISOString(),
+        updated_by: caller.agentId ?? null,
+      },
+      { onConflict: "manager_id" },
+    );
+    if (error) throw new Error(`Could not update the wallet (${error.message})`);
     return { ok: true };
   });
 

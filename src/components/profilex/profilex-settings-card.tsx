@@ -20,7 +20,6 @@ export function ProfilexSettingsCard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [enabled, setEnabled] = useState(false);
-  const [monthlyBudget, setMonthlyBudget] = useState(0);
   const [hitTtlHours, setHitTtlHours] = useState(720);
   const [missTtlHours, setMissTtlHours] = useState(168);
   const [rateCard, setRateCard] = useState<RateCard>({});
@@ -34,7 +33,6 @@ export function ProfilexSettingsCard() {
         if (!session) return;
         const s = await getProfilexSettings({ data: { accessToken: session.access_token } });
         setEnabled(s.enabled);
-        setMonthlyBudget(s.monthly_budget);
         setHitTtlHours(s.hit_ttl_hours);
         setMissTtlHours(s.miss_ttl_hours);
         setRateCard((s.rate_card as RateCard) ?? {});
@@ -66,7 +64,6 @@ export function ProfilexSettingsCard() {
         data: {
           accessToken: session.access_token,
           enabled,
-          monthlyBudget,
           hitTtlHours,
           missTtlHours,
           rateCard,
@@ -113,23 +110,6 @@ export function ProfilexSettingsCard() {
             </div>
 
             <Separator />
-
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-medium text-foreground">Monthly budget (₹)</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Blocks further lookups once the calendar month's spend reaches this. 0 means no
-                  cap.
-                </p>
-              </div>
-              <Input
-                type="number"
-                min={0}
-                value={monthlyBudget}
-                onChange={(e) => setMonthlyBudget(+e.target.value)}
-                className="w-28 h-8 text-xs text-right"
-              />
-            </div>
 
             <div className="flex items-center justify-between gap-4">
               <div>

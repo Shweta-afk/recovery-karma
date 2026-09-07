@@ -16,12 +16,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Search, IndianRupee, ChevronRight } from "lucide-react";
+import { Loader2, Search, IndianRupee, ChevronRight, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
-import { getProfilexSettings, runProfilexTrace } from "@/lib/profilex-actions.server";
+import { getProfilexSettings, getMyWallet, runProfilexTrace } from "@/lib/profilex-actions.server";
 import {
   PROFILEX_SERVICES,
   UAN_SOURCE_SERVICE,
@@ -225,8 +225,27 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
   // hidden: showing a manager a button that can only throw "lookups are turned off" reads as a
   // broken feature rather than an unconfigured one.
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  // A manager's own prepaid balance — the thing that actually gates their lookups now (see
+  // runProfilexTrace's wallet check). Null for anyone but a manager (admins aren't wallet-gated).
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const isManager = user?.role === "manager";
 
   const rerender = useCallback(() => bump((n) => n + 1), []);
+
+  const loadWallet = useCallback(async () => {
+    if (!isManager) return;
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) return;
+      const w = await getMyWallet({ data: { accessToken: session.access_token } });
+      setWalletBalance(w.balance);
+    } catch {
+      // Non-fatal — the Run button's own error message is the real signal if the wallet is
+      // actually empty; this banner is a convenience, not the enforcement.
+    }
+  }, [isManager]);
 
   useEffect(() => {
     if (!canRun) return;
@@ -239,7 +258,8 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
       )
       .then((s) => setEnabled(s.enabled))
       .catch(() => setEnabled(false));
-  }, [canRun]);
+    loadWallet();
+  }, [canRun, loadWallet]);
 
   useEffect(() => {
     refreshTraces(debtorId).catch((e) => setLoadError(e.message));
@@ -276,6 +296,8 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
         data: { accessToken: session.access_token, debtorId, serviceId: service.id },
       });
       if (result.trace) mergeTrace(result.trace);
+      // A cached hit cost nothing — no wallet change, no need to re-fetch.
+      if (!result.cached && result.cost > 0) loadWallet();
       toast.success(
         result.cached
           ? `${service.label}: served from an earlier lookup`
@@ -300,7 +322,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
         <Search className="h-8 w-8 text-muted-foreground/40" />
         <p className="text-sm font-medium text-foreground">Insights is not switched on</p>
         <p className="text-xs text-muted-foreground max-w-xs">
-          An admin can enable Insights and set a monthly budget under Settings.
+          An admin can enable Insights and fund your wallet under Settings.
         </p>
       </div>
     );
@@ -320,6 +342,28 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
 
   return (
     <div className="space-y-4">
+      {isManager && enabled === true && walletBalance !== null && (
+        <div
+          className={cn(
+            "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs",
+            walletBalance <= 0
+              ? "border-destructive/30 bg-destructive/5 text-destructive"
+              : "border-border bg-muted/20 text-foreground",
+          )}
+        >
+          <span className="flex items-center gap-1.5 font-medium">
+            <Wallet className="h-3.5 w-3.5" />
+            Insights wallet
+          </span>
+          <span className="font-semibold">
+            ₹{walletBalance.toFixed(2)}
+            {walletBalance <= 0 && (
+              <span className="ml-1.5 font-normal">— ask an admin to top up</span>
+            )}
+          </span>
+        </div>
+      )}
+
       {PROFILEX_SERVICES.map((service) => {
         const trace = latest.get(service.id);
         const needsSource = missingSource(service);
