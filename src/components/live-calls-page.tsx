@@ -24,19 +24,20 @@ export function LiveCallsPageBody({ scopeLabel }: { scopeLabel: string }) {
         </p>
       </div>
 
-      {/* Honest about what this screen is. Whisper/barge/merge were asked for and don't exist
-          here on purpose — with the current telephony integration (Exotel click-to-call) the
-          two legs are bridged inside the provider, not in this app, so there is nothing in the
-          browser that could tap into, whisper into or merge a call in progress. A real version
-          of that needs a different integration (WebRTC/SIP with provider-side conference
-          control) that has not been started — see docs/LIVE_CALLS_SCOPE.md. */}
+      {/* Listen/Whisper/Merge buttons exist on each card below, disabled — see
+          CALL_CONTROL_ACTIONS in live-calls-board.tsx. With the CURRENT telephony integration
+          (Exotel click-to-call) each call's two legs are bridged inside the provider, not in
+          this app, so nothing here can actually tap into, whisper into or merge a call yet.
+          Decision 2026-09-07: the org is moving off Exotel and evaluating a new vendor
+          specifically to make this possible, so the controls stay visible as a placeholder
+          rather than being removed again — see docs/LIVE_CALLS_SCOPE.md. */}
       <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>
-          This is a <strong className="text-foreground">monitoring</strong> view, not a call control
-          panel — there's no listen-in, whisper or merge here. The current telephony setup bridges
-          each call directly between the agent and the debtor, so nothing in this app can join a
-          call already in progress.
+          This is a <strong className="text-foreground">monitoring</strong> view today — Listen,
+          Whisper and Merge are shown on each call below but not active yet. The current telephony
+          setup can&apos;t support them; they&apos;ll switch on once the org moves to a new
+          telephony vendor with call-control support.
         </span>
       </div>
 

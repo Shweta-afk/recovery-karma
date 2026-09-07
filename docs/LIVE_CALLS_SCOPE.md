@@ -136,6 +136,17 @@ provider that the account supports conference/call-control APIs.** This is the s
 predictive dialing — the real version needs the WebRTC/SIP onboarding that has not been
 started.
 
+### Update 2026-09-07 — Exotel is being replaced; controls are back as placeholders
+
+The org has decided to move off Exotel entirely (voice/click-to-call, not just the WhatsApp path
+ruled out earlier — see the WhatsApp decision note in CLAUDE.md) and is evaluating a new
+telephony vendor. Listen/Whisper/Merge buttons are back on the Live Calls board
+(`live-calls-board.tsx`, `CALL_CONTROL_ACTIONS`) — **disabled, not wired to anything** — as an
+intentional placeholder for whichever vendor is chosen next, rather than being built fake or
+left off entirely. The reasoning above (why they can't work today) still holds for Exotel; it
+does not hold in general, which is the whole point of switching vendors. Do not enable them
+until a real provider API exists to call.
+
 ---
 
 ## Phases

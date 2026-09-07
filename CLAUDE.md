@@ -279,6 +279,25 @@ code — always go through this.
 
 **Tata SmartFlo was evaluated, went live briefly, then was fully removed on 2026-08-06** ("nothing we did was working and aligning with our goals" — user's call). If you see "Tata" or "SmartFlo" referenced anywhere outside this note, it's stale.
 
+### ⚠️ Decision (2026-09-07): moving off Exotel for voice too — vendor not chosen yet
+
+**Direction set, nothing executed.** The user has said the org is done with Exotel's
+click-to-call and will bring in a new telephony vendor — this is broader than the 2026-09-05
+WhatsApp decision above, which was scoped to messaging and explicitly left voice alone. This
+one covers voice/click-to-call itself.
+
+**Exotel is still the live production provider right now** — `TELEPHONY_PROVIDER` is unchanged,
+every real call still goes through `exotel-provider.ts`, and nothing in this note is a
+migration in progress. No new vendor has been named yet; don't assume KooKoo, WebRTC/SIP, or
+anything else is the successor without being told.
+
+What this DID change: the Live Calls board (`live-calls-board.tsx`,
+`docs/LIVE_CALLS_SCOPE.md`) got Listen/Whisper/Merge buttons back, **deliberately disabled and
+not wired to anything** — a placeholder for whichever vendor lands next, per the user's explicit
+instruction not to omit them again. Do not wire them up against Exotel; that wall (legs bridged
+inside the provider, no conference API) is exactly why they were removed once already. Wire
+them only once a real vendor with call-control support is chosen and integrated.
+
 ### The dialer's architectural ceiling — read before touching predictive/productive dialing
 
 Click-to-call (what Exotel, KooKoo, and Tata all offer) **rings the agent's phone first**,
@@ -372,6 +391,19 @@ written from Exotel's overview docs, not a tested integration), and WhatsApp sen
 each template in `WA_TEMPLATES` is registered and Meta-approved. So "wired" is not the same as
 "delivering" — but it is no longer true that nothing leaves the building, and the Messages page
 no longer claims otherwise.
+
+### ⚠️ Decision (2026-09-05): do NOT pursue Exotel as the WhatsApp path — Tata and SkyCRM are also off the table
+
+The `sendWhatsApp` code above still physically exists and is described accurately, but **the
+user has decided against completing the Exotel WhatsApp Business API route** (WABA connection +
+Meta template approval). **Tata SmartFlo and SkyCRM are equally not being considered** for
+WhatsApp. A different way to connect WhatsApp will be found later — nothing chosen yet.
+
+**Until the user names a new direction, do not propose or default to Exotel/Tata/SkyCRM again
+when asked about WhatsApp integration** — surface this decision instead and ask what they'd
+like to explore. This is a product-direction decision, not a code change: Exotel's *voice*
+calling (click-to-call, the production telephony provider) is unaffected and keeps working
+exactly as documented above — this note is scoped to WhatsApp only.
 
 ---
 

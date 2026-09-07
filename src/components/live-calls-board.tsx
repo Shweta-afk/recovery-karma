@@ -9,7 +9,7 @@
  * team's, an admin the whole client. Nothing here filters by role.
  */
 import { useCallback, useEffect, useState } from "react";
-import { PhoneCall, RadioTower, AlertTriangle } from "lucide-react";
+import { PhoneCall, RadioTower, AlertTriangle, Headphones, Ear, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { DIAL_MODE_META, type DialMode } from "@/lib/call-queue/types";
@@ -84,6 +84,22 @@ export function LiveCallsBoard({ className }: { className?: string }) {
   );
 }
 
+/**
+ * Listen-in / Whisper / Merge — deliberately inert placeholders, not hidden and not wired to
+ * anything. Decision 2026-09-07: the org is moving off Exotel (click-to-call) and evaluating a
+ * new telephony vendor specifically so this becomes possible — with the CURRENT integration,
+ * each call's two legs are bridged inside the provider, not in this app, so there is no API
+ * here to call. See docs/LIVE_CALLS_SCOPE.md's "Explicitly OUT of scope" section for the fuller
+ * history (these controls existed once before, did nothing, and were removed for exactly that
+ * reason) and its 2026-09-07 update. Keep these buttons in place, disabled, rather than
+ * removing them again — the next vendor is expected to make them real.
+ */
+const CALL_CONTROL_ACTIONS = [
+  { icon: Headphones, label: "Listen" },
+  { icon: Ear, label: "Whisper" },
+  { icon: Users, label: "Merge" },
+] as const;
+
 function LiveCallCard({ call }: { call: LiveCall }) {
   const mode = call.dialMode ? DIAL_MODE_META[call.dialMode as DialMode] : null;
   // While it's still ringing, nobody has actually spoken to the debtor yet — showing their name
@@ -154,6 +170,26 @@ function LiveCallCard({ call }: { call: LiveCall }) {
           from {liveCallStartLabel(call.startedAt)}
         </span>
       </div>
+
+      {/* Listen / Whisper / Merge — disabled on purpose, see CALL_CONTROL_ACTIONS above. Only
+          offered once connected: whispering into a call that hasn't picked up yet, or one whose
+          heartbeat has gone stale, makes no sense either way. */}
+      {connected && !call.stale && (
+        <div className="mt-2 flex items-center gap-1.5 border-t border-border pt-2">
+          {CALL_CONTROL_ACTIONS.map(({ icon: Icon, label }) => (
+            <button
+              key={label}
+              type="button"
+              disabled
+              title={`${label} — coming with the next telephony vendor's call-control API, not available on the current integration`}
+              className="inline-flex cursor-not-allowed items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground/50"
+            >
+              <Icon className="h-3 w-3" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {call.stale && (
         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5">
