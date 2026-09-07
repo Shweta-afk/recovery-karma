@@ -86,6 +86,11 @@ export function LiveCallsBoard({ className }: { className?: string }) {
 
 function LiveCallCard({ call }: { call: LiveCall }) {
   const mode = call.dialMode ? DIAL_MODE_META[call.dialMode as DialMode] : null;
+  // While it's still ringing, nobody has actually spoken to the debtor yet — showing their name
+  // and number for a call that might go unanswered is more identity exposure than the moment
+  // needs. Revealed the instant the leg reports connected, same signal the "Connected" badge
+  // below already switches on.
+  const connected = call.phase !== "ringing";
   return (
     <div
       className={cn(
@@ -110,14 +115,23 @@ function LiveCallCard({ call }: { call: LiveCall }) {
         </span>
       </div>
 
-      <div className="mt-2 flex items-center gap-1.5 text-sm text-foreground">
-        <PhoneCall className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{call.debtorName}</span>
-      </div>
-      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-        {call.loanReference ? `${call.loanReference} · ` : ""}
-        {call.phone || "—"}
-      </div>
+      {connected ? (
+        <>
+          <div className="mt-2 flex items-center gap-1.5 text-sm text-foreground">
+            <PhoneCall className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{call.debtorName}</span>
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            {call.loanReference ? `${call.loanReference} · ` : ""}
+            {call.phone || "—"}
+          </div>
+        </>
+      ) : (
+        <div className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground italic">
+          <PhoneCall className="h-3.5 w-3.5 shrink-0 animate-pulse" />
+          Dialing — who answers shows up here once connected
+        </div>
+      )}
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <Badge

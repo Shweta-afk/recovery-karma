@@ -15,6 +15,7 @@ import {
   AudioLines,
   FolderOpen,
   Timer,
+  RadioTower,
 } from "lucide-react";
 import {
   Sidebar,
@@ -42,6 +43,7 @@ const agentItems = [
 const managerItems = [
   { title: "Dashboard", url: "/manager", icon: BarChart3 },
   { title: "Call Queue", url: "/manager/queue", icon: PhoneCall },
+  { title: "Live Calls", url: "/manager/live-calls", icon: RadioTower },
   { title: "Call History", url: "/dashboard/history", icon: History },
   { title: "Team Activity", url: "/manager/activity", icon: Timer },
   { title: "Portfolio Overview", url: "/manager/portfolio", icon: FolderOpen },
@@ -60,6 +62,7 @@ const managerItems = [
 
 const adminItems = [
   { title: "Overview", url: "/admin", icon: LayoutDashboard },
+  { title: "Live Calls", url: "/admin/live-calls", icon: RadioTower },
   { title: "Users", url: "/admin/users", icon: UserCog },
   { title: "Teams", url: "/admin/teams", icon: Users },
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Phone,
@@ -1148,6 +1148,7 @@ function ReportsTab({ agents }: { agents: AgentComputedStat[] }) {
 /* ─── page ───────────────────────────────────────────────────────────────── */
 
 function ManagerDashboardPage() {
+  const navigate = useNavigate();
   const [tick, setTick] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
@@ -1433,13 +1434,23 @@ function ManagerDashboardPage() {
               below it, which is named "Agent Live View" but shows that agent's QUEUE from the
               database — useful, but not live. Both are kept; only this one is real-time. */}
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Live Calls
-              </span>
-              <span className="text-[11px] text-muted-foreground">
-                across your team · updates automatically
-              </span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Live Calls
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  across your team · updates automatically
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => navigate({ to: "/manager/live-calls" })}
+              >
+                Open full page
+              </Button>
             </div>
             <LiveCallsBoard />
           </div>

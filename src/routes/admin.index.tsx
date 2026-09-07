@@ -69,13 +69,23 @@ function AdminPage() {
       {/* Every call live across the whole client — admins are not scoped to one team, and RLS
           on live_calls already reflects that, so no filtering is needed here. */}
       <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Live Calls
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            everyone, right now · updates automatically
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Live Calls
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              everyone, right now · updates automatically
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => navigate({ to: "/admin/live-calls" })}
+          >
+            Open full page
+          </Button>
         </div>
         <LiveCallsBoard />
       </div>

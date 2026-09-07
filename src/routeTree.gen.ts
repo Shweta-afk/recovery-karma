@@ -22,6 +22,7 @@ import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
 import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
 import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
+import { Route as ManagerLiveCallsRouteImport } from './routes/manager.live-calls'
 import { Route as ManagerAuditRouteImport } from './routes/manager.audit'
 import { Route as ManagerActivityRouteImport } from './routes/manager.activity'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard.settings'
@@ -36,6 +37,7 @@ import { Route as AdminTeamsRouteImport } from './routes/admin.teams'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
+import { Route as AdminLiveCallsRouteImport } from './routes/admin.live-calls'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -100,6 +102,11 @@ const ManagerQueueRoute = ManagerQueueRouteImport.update({
 const ManagerPortfolioRoute = ManagerPortfolioRouteImport.update({
   id: '/portfolio',
   path: '/portfolio',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerLiveCallsRoute = ManagerLiveCallsRouteImport.update({
+  id: '/live-calls',
+  path: '/live-calls',
   getParentRoute: () => ManagerRoute,
 } as any)
 const ManagerAuditRoute = ManagerAuditRouteImport.update({
@@ -172,6 +179,11 @@ const AdminPortfolioRoute = AdminPortfolioRouteImport.update({
   path: '/portfolio',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminLiveCallsRoute = AdminLiveCallsRouteImport.update({
+  id: '/live-calls',
+  path: '/live-calls',
+  getParentRoute: () => AdminRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -180,6 +192,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
   '/setup': typeof SetupRoute
+  '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -194,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/manager/activity': typeof ManagerActivityRoute
   '/manager/audit': typeof ManagerAuditRoute
+  '/manager/live-calls': typeof ManagerLiveCallsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
@@ -206,6 +220,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -220,6 +235,7 @@ export interface FileRoutesByTo {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/manager/activity': typeof ManagerActivityRoute
   '/manager/audit': typeof ManagerAuditRoute
+  '/manager/live-calls': typeof ManagerLiveCallsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
@@ -236,6 +252,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
   '/setup': typeof SetupRoute
+  '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -250,6 +267,7 @@ export interface FileRoutesById {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/manager/activity': typeof ManagerActivityRoute
   '/manager/audit': typeof ManagerAuditRoute
+  '/manager/live-calls': typeof ManagerLiveCallsRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
@@ -267,6 +285,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/setup'
+    | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
     | '/admin/settings'
@@ -281,6 +300,7 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/manager/activity'
     | '/manager/audit'
+    | '/manager/live-calls'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
@@ -293,6 +313,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/setup'
+    | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
     | '/admin/settings'
@@ -307,6 +328,7 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/manager/activity'
     | '/manager/audit'
+    | '/manager/live-calls'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
@@ -322,6 +344,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/setup'
+    | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
     | '/admin/settings'
@@ -336,6 +359,7 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/manager/activity'
     | '/manager/audit'
+    | '/manager/live-calls'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
@@ -447,6 +471,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ManagerPortfolioRouteImport
       parentRoute: typeof ManagerRoute
     }
+    '/manager/live-calls': {
+      id: '/manager/live-calls'
+      path: '/live-calls'
+      fullPath: '/manager/live-calls'
+      preLoaderRoute: typeof ManagerLiveCallsRouteImport
+      parentRoute: typeof ManagerRoute
+    }
     '/manager/audit': {
       id: '/manager/audit'
       path: '/audit'
@@ -545,10 +576,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPortfolioRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/live-calls': {
+      id: '/admin/live-calls'
+      path: '/live-calls'
+      fullPath: '/admin/live-calls'
+      preLoaderRoute: typeof AdminLiveCallsRouteImport
+      parentRoute: typeof AdminRoute
+    }
   }
 }
 
 interface AdminRouteChildren {
+  AdminLiveCallsRoute: typeof AdminLiveCallsRoute
   AdminPortfolioRoute: typeof AdminPortfolioRoute
   AdminReportsRoute: typeof AdminReportsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
@@ -558,6 +597,7 @@ interface AdminRouteChildren {
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminLiveCallsRoute: AdminLiveCallsRoute,
   AdminPortfolioRoute: AdminPortfolioRoute,
   AdminReportsRoute: AdminReportsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
@@ -597,6 +637,7 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
 interface ManagerRouteChildren {
   ManagerActivityRoute: typeof ManagerActivityRoute
   ManagerAuditRoute: typeof ManagerAuditRoute
+  ManagerLiveCallsRoute: typeof ManagerLiveCallsRoute
   ManagerPortfolioRoute: typeof ManagerPortfolioRoute
   ManagerQueueRoute: typeof ManagerQueueRoute
   ManagerReportsRoute: typeof ManagerReportsRoute
@@ -607,6 +648,7 @@ interface ManagerRouteChildren {
 const ManagerRouteChildren: ManagerRouteChildren = {
   ManagerActivityRoute: ManagerActivityRoute,
   ManagerAuditRoute: ManagerAuditRoute,
+  ManagerLiveCallsRoute: ManagerLiveCallsRoute,
   ManagerPortfolioRoute: ManagerPortfolioRoute,
   ManagerQueueRoute: ManagerQueueRoute,
   ManagerReportsRoute: ManagerReportsRoute,
