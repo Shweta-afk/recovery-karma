@@ -37,6 +37,11 @@ export interface Debtor {
   scoreReason: string;
   lastContacted: string | null;
   portfolio: string;
+  // The owning UploadedPortfolio's id — set by debtorFromRow() (portfolio-store.ts). Needed for
+  // anything that has to name a real portfolio row, not just its display name (e.g. requesting
+  // retention). QueueDebtor (call-queue/types.ts) also carries this same value under the same
+  // name; both exist because QueueDebtor predates this being on the base Debtor type.
+  portfolioId?: string;
   language: string;
   // The agent this account is booked to, as their account email (debtors.assigned_agent_id
   // resolved through the roster) — undefined when nobody is assigned. Carried on the debtor so
@@ -1410,6 +1415,13 @@ export const BUCKET_META: Record<DPDBucket, { label: string; color: string; desc
       description: "180+ DPD",
     },
   };
+
+// d.id is a real (opaque) row identifier; _loanReference (set by debtorFromRow() in
+// portfolio-store.ts, present for uploaded portfolios) is the human-readable loan/account ID
+// from the source CSV — prefer that for display/search/export.
+export function displayId(d: Debtor): string {
+  return (d as Debtor & { _loanReference?: string })._loanReference ?? d.id;
+}
 
 export function formatINR(n: number): string {
   // Indian numbering: 12,34,567

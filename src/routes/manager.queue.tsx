@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -46,7 +47,7 @@ import {
   type DispositionForm,
 } from "@/lib/call-queue/types";
 import { CallQueueContent } from "./dashboard.call-queue";
-import { DebtorProfile } from "./dashboard.debtors";
+import { DebtorProfile } from "@/components/debtor-profile";
 import { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active-call";
 import {
   DialerModeBar,
@@ -381,7 +382,24 @@ function MyQueueTab({
           )}
         </CardContent>
       </Card>
-      {profileDebtor && <DebtorProfile d={profileDebtor} onClose={() => setProfileDebtor(null)} />}
+      {/* Wrapped in a Sheet — this used to render bare inline with no slide-over chrome at all,
+          a third, visually distinct debtor-profile look on top of the two the Debtors page and
+          Call Queue already had before they were unified into one shared component. */}
+      <Sheet
+        open={!!profileDebtor}
+        onOpenChange={(open) => {
+          if (!open) setProfileDebtor(null);
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="w-full max-w-2xl p-0 overflow-hidden flex flex-col sm:max-w-2xl"
+        >
+          {profileDebtor && (
+            <DebtorProfile d={profileDebtor} onClose={() => setProfileDebtor(null)} />
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

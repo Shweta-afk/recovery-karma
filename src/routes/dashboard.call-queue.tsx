@@ -90,9 +90,9 @@ import {
   ActiveCallModal,
   SectionLabel,
   PTPTracker,
-  DebtorProfileSheet,
   EscalationModal,
 } from "@/components/call-queue/active-call";
+import { DebtorProfile } from "@/components/debtor-profile";
 // Re-export so existing importers of this route file (e.g. manager.queue.tsx) keep working —
 // these live in proper shared modules now, not in this route file.
 export { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active-call";
@@ -2099,7 +2099,13 @@ export function CallQueueContent({
           side="right"
           className="w-full max-w-2xl p-0 overflow-hidden flex flex-col sm:max-w-2xl"
         >
-          {profileDebtor && <DebtorProfileSheet debtor={profileDebtor} onCall={startCall} />}
+          {profileDebtor && (
+            <DebtorProfile
+              d={profileDebtor}
+              onClose={() => setProfileDebtor(null)}
+              onCall={(d) => startCall(d as QueueDebtor)}
+            />
+          )}
         </SheetContent>
       </Sheet>
     </div>

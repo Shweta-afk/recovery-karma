@@ -1337,6 +1337,7 @@ export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio)
     scoreReason: `Uploaded via ${portfolio.lender}${portfolio.product ? ` · ${portfolio.product}` : ""}`,
     lastContacted: "—",
     portfolio: portfolio.name,
+    portfolioId: portfolio.id,
     language: extra.language || "English",
     assignedAgentId: row.assignedAgentId,
     dob: extra.dob || undefined,
