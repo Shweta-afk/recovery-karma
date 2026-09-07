@@ -242,6 +242,8 @@ function PortfolioUploadPage() {
           phone: get("phone"),
           loanAmount: parseFloat(get("loan_amount").replace(/[,₹\s]/g, "")) || 0,
           principalAmount: parseFloat(get("principal_amount").replace(/[,₹\s]/g, "")) || 0,
+          emiAmount: parseFloat(get("emi_amount").replace(/[,₹\s]/g, "")) || 0,
+          productCode: get("product_code"),
           dpd,
           bucket: dpd2bucket(dpd),
           email: get("email"),

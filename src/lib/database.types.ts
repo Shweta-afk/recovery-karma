@@ -315,6 +315,7 @@ export interface Database {
           outstanding_balance: number | null;
           principal_amount: number | null;
           emi_amount: number | null;
+          product_code: string | null;
           dpd: number | null;
           lender: string | null;
           product_type: string | null;
@@ -346,6 +347,7 @@ export interface Database {
           outstanding_balance?: number | null;
           principal_amount?: number | null;
           emi_amount?: number | null;
+          product_code?: string | null;
           dpd?: number | null;
           lender?: string | null;
           product_type?: string | null;
@@ -377,6 +379,7 @@ export interface Database {
           outstanding_balance?: number | null;
           principal_amount?: number | null;
           emi_amount?: number | null;
+          product_code?: string | null;
           dpd?: number | null;
           lender?: string | null;
           product_type?: string | null;

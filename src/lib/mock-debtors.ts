@@ -59,6 +59,9 @@ export interface Debtor {
   // Loan details
   lender?: string;
   loanType?: string;
+  // Per-debtor product identifier from the bank's own file (debtors.product_code) — distinct
+  // from loanType/portfolio.product, which is one label set for the whole portfolio at upload.
+  productCode?: string;
   loanId?: string;
   disbursedOn?: string;
   tenure?: number; // months

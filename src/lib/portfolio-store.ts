@@ -41,6 +41,12 @@ export interface UploadedDebtor {
   // upload UI, copied into debtors.outstanding_balance) — see migrations/20260905_debtors_
   // principal_amount.sql. Optional in the source file; 0 when the bank didn't provide one.
   principalAmount: number;
+  // Monthly instalment — see migrations/20260908_debtors_emi_product_code.sql. 0 when unset.
+  emiAmount: number;
+  // Per-debtor product identifier from the bank's own file, distinct from the portfolio-wide
+  // Product Type picker (PRODUCT_LABEL_TO_ENUM) which applies one label to every row. "" when
+  // the file has no such column.
+  productCode: string;
   dpd: number;
   bucket: DPDBucket;
   email: string;
@@ -263,21 +269,29 @@ export async function refreshPortfolios(): Promise<void> {
     // ignore — alt phones are supplementary until the migration is applied
   }
 
-  // Best-effort, same reasoning: principal_amount is a newer column
-  // (migrations/20260905_debtors_principal_amount.sql) that may not exist in the live DB yet —
-  // queried separately and defaulted to 0 on failure so it never blocks portfolio sync.
+  // Best-effort, same reasoning: principal_amount/emi_amount/product_code are newer columns
+  // (migrations/20260905_debtors_principal_amount.sql, 20260908_debtors_emi_product_code.sql)
+  // that may not exist in the live DB yet — queried together, separately from the main select,
+  // and defaulted to 0/"" on failure so a missing migration never blocks portfolio sync.
   const principalAmountById = new Map<string, number>();
+  const emiAmountById = new Map<string, number>();
+  const productCodeById = new Map<string, string>();
   try {
     const { data: principalRows, error: prErr } = await fetchAllRows((from, to) =>
-      supabase.from("debtors").select("id, principal_amount").range(from, to),
+      supabase
+        .from("debtors")
+        .select("id, principal_amount, emi_amount, product_code")
+        .range(from, to),
     );
     if (!prErr && principalRows) {
       for (const r of principalRows) {
         principalAmountById.set(r.id as string, Number(r.principal_amount ?? 0));
+        emiAmountById.set(r.id as string, Number(r.emi_amount ?? 0));
+        productCodeById.set(r.id as string, (r.product_code as string | null) ?? "");
       }
     }
   } catch {
-    // ignore — principal amount is supplementary until the migration is applied
+    // ignore — these fields are supplementary until the migration is applied
   }
 
   // Best-effort, same reasoning: replaces_portfolio_id/closed_at/retained_from_portfolio_id
@@ -362,6 +376,8 @@ export async function refreshPortfolios(): Promise<void> {
               phone: d.phone_primary,
               loanAmount: Number(d.loan_amount ?? 0),
               principalAmount: principalAmountById.get(d.id) ?? 0,
+              emiAmount: emiAmountById.get(d.id) ?? 0,
+              productCode: productCodeById.get(d.id) ?? "",
               dpd: d.dpd ?? 0,
               bucket: dpd2bucket(d.dpd ?? 0),
               email: d.email ?? "",
@@ -451,6 +467,8 @@ async function reconcileRetainedDebtors(
           loan_amount: row.loanAmount,
           outstanding_balance: row.loanAmount,
           principal_amount: row.principalAmount,
+          emi_amount: row.emiAmount,
+          product_code: row.productCode || null,
           dpd: row.dpd,
           status: "active",
           extra: row.extra,
@@ -565,6 +583,8 @@ export async function createPortfolio(
       loan_amount: r.loanAmount,
       outstanding_balance: r.loanAmount,
       principal_amount: r.principalAmount,
+      emi_amount: r.emiAmount,
+      product_code: r.productCode || null,
       dpd: r.dpd,
       loan_reference: r.loanReference,
       extra: r.extra,
@@ -641,6 +661,8 @@ export async function mergePortfolioRows(
           loan_amount: row.loanAmount,
           outstanding_balance: row.loanAmount,
           principal_amount: row.principalAmount,
+          emi_amount: row.emiAmount,
+          product_code: row.productCode || null,
           dpd: row.dpd,
           extra: row.extra,
         };
@@ -668,6 +690,8 @@ export async function mergePortfolioRows(
       loan_amount: r.loanAmount,
       outstanding_balance: r.loanAmount,
       principal_amount: r.principalAmount,
+      emi_amount: r.emiAmount,
+      product_code: r.productCode || null,
       dpd: r.dpd,
       loan_reference: r.loanReference,
       extra: r.extra,
@@ -880,7 +904,7 @@ export async function remapPortfolioFields(
     supabase
       .from("debtors")
       .select(
-        "id, name, phone_primary, email, loan_amount, principal_amount, dpd, loan_reference, extra",
+        "id, name, phone_primary, email, loan_amount, principal_amount, emi_amount, product_code, dpd, loan_reference, extra",
       )
       .eq("portfolio_id", portfolioId)
       .range(from, to),
@@ -899,6 +923,8 @@ export async function remapPortfolioFields(
           phone: (row.phone_primary as string | null) ?? "",
           loanAmount: Number(row.loan_amount ?? 0),
           principalAmount: Number(row.principal_amount ?? 0),
+          emiAmount: Number(row.emi_amount ?? 0),
+          productCode: (row.product_code as string | null) ?? "",
           dpd: (row.dpd as number | null) ?? 0,
           email: (row.email as string | null) ?? "",
           extra: prevExtra,
@@ -918,6 +944,8 @@ export async function remapPortfolioFields(
             loan_amount: fields.loanAmount,
             outstanding_balance: fields.loanAmount,
             principal_amount: fields.principalAmount,
+            emi_amount: fields.emiAmount,
+            product_code: fields.productCode || null,
             dpd: fields.dpd,
             // Spread prevExtra first so any column that was never a STD_FIELD (still sitting
             // in extra from the original upload) survives the remap untouched.
@@ -1332,6 +1360,9 @@ export function debtorFromRow(row: UploadedDebtor, portfolio: UploadedPortfolio)
     // through as-is rather than falling back to loanAmount here; active-call.tsx's display
     // already does that fallback for a genuinely unset amount.
     principalOutstanding: row.principalAmount || undefined,
+    // Same treatment — real data via migrations/20260908_debtors_emi_product_code.sql.
+    emiAmount: row.emiAmount || undefined,
+    productCode: row.productCode || undefined,
     dpd: row.dpd,
     aiScore: Math.max(1, Math.min(10, Math.round(10 - row.dpd / 20))),
     scoreReason: `Uploaded via ${portfolio.lender}${portfolio.product ? ` · ${portfolio.product}` : ""}`,

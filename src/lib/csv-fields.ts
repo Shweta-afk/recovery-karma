@@ -14,6 +14,8 @@ export const STD_FIELDS = [
   { key: "phone", label: "Phone Number", required: true },
   { key: "loan_amount", label: "Outstanding Amount", required: false },
   { key: "principal_amount", label: "Principal Amount", required: false },
+  { key: "emi_amount", label: "EMI Amount", required: false },
+  { key: "product_code", label: "Product Code", required: false },
   { key: "dpd", label: "Days Past Due", required: false },
   { key: "email", label: "Email Address", required: false },
   { key: "address", label: "Address", required: false },
@@ -44,12 +46,14 @@ interface DebtorLike {
   phone: string;
   loanAmount: number;
   principalAmount: number;
+  emiAmount: number;
+  productCode: string;
   dpd: number;
   email: string;
   extra: Record<string, string>;
 }
 
-/** Reads a debtor row's current values back into the same 12 "slots" the upload wizard's
+/** Reads a debtor row's current values back into the same 15 "slots" the upload wizard's
  * mapping grid offers — used by the portfolio field-remap tool to fix a wrong original
  * mapping on data that's already imported, without needing the source CSV again. */
 export function slotsFromDebtor(row: DebtorLike): StdFieldSlots {
@@ -59,6 +63,8 @@ export function slotsFromDebtor(row: DebtorLike): StdFieldSlots {
     phone: row.phone,
     loan_amount: String(row.loanAmount),
     principal_amount: String(row.principalAmount),
+    emi_amount: String(row.emiAmount),
+    product_code: row.productCode,
     dpd: String(row.dpd),
     email: row.email,
     address: row.extra.address ?? "",
@@ -131,6 +137,8 @@ export function debtorFieldsFromSlots(slots: StdFieldSlots): DebtorLike {
     phone: slots.phone.trim(),
     loanAmount: parseFloat(slots.loan_amount.replace(/[,₹\s]/g, "")) || 0,
     principalAmount: parseFloat(slots.principal_amount.replace(/[,₹\s]/g, "")) || 0,
+    emiAmount: parseFloat(slots.emi_amount.replace(/[,₹\s]/g, "")) || 0,
+    productCode: slots.product_code.trim(),
     dpd: parseInt(slots.dpd, 10) || 0,
     email: slots.email.trim(),
     extra: {

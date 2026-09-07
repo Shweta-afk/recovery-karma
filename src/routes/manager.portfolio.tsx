@@ -255,6 +255,8 @@ function EditPortfolioDialog({
   const [manualLoanRef, setManualLoanRef] = useState("");
   const [manualAmount, setManualAmount] = useState("");
   const [manualPrincipal, setManualPrincipal] = useState("");
+  const [manualEmi, setManualEmi] = useState("");
+  const [manualProductCode, setManualProductCode] = useState("");
   const [manualDpd, setManualDpd] = useState("");
   const [manualEmail, setManualEmail] = useState("");
   const [addingManual, setAddingManual] = useState(false);
@@ -390,6 +392,8 @@ function EditPortfolioDialog({
         phone: manualPhone.trim(),
         loanAmount: parseFloat(manualAmount.replace(/[,₹\s]/g, "")) || 0,
         principalAmount: parseFloat(manualPrincipal.replace(/[,₹\s]/g, "")) || 0,
+        emiAmount: parseFloat(manualEmi.replace(/[,₹\s]/g, "")) || 0,
+        productCode: manualProductCode.trim(),
         dpd,
         bucket: dpd2bucket(dpd),
         email: manualEmail.trim(),
@@ -404,6 +408,8 @@ function EditPortfolioDialog({
         setManualLoanRef("");
         setManualAmount("");
         setManualPrincipal("");
+        setManualEmi("");
+        setManualProductCode("");
         setManualDpd("");
         setManualEmail("");
       } else {
@@ -722,6 +728,24 @@ function EditPortfolioDialog({
                         min={0}
                         value={manualPrincipal}
                         onChange={(e) => setManualPrincipal(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">EMI Amount</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={manualEmi}
+                        onChange={(e) => setManualEmi(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Product Code</Label>
+                      <Input
+                        value={manualProductCode}
+                        onChange={(e) => setManualProductCode(e.target.value)}
                         className="h-8 text-xs"
                       />
                     </div>

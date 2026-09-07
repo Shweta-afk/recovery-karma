@@ -252,6 +252,36 @@ export const FIELD_SPECS: FieldSpec[] = [
     detect: detectAmount,
   },
   {
+    key: "emi_amount",
+    aliases: [
+      "emi_amount",
+      "emi",
+      "emi_amt",
+      "monthly_emi",
+      "installment_amount",
+      "installment",
+      "monthly_installment",
+    ],
+    detect: detectAmount,
+  },
+  {
+    // Per-debtor product identifier from the bank's own file — distinct from the portfolio-wide
+    // Product Type picker in the upload wizard (PRODUCT_LABEL_TO_ENUM), which applies one label
+    // to every row. A file that mixes products (e.g. several card variants in one credit-card
+    // book) can carry its own per-row code here instead of losing that distinction.
+    key: "product_code",
+    aliases: [
+      "product_code",
+      "product",
+      "product_type",
+      "loan_type",
+      "scheme_code",
+      "product_id",
+      "card_type",
+      "scheme",
+    ],
+  },
+  {
     key: "dpd",
     aliases: [
       "dpd",
