@@ -87,8 +87,10 @@ import { InsightsUsagePanel } from "@/components/profilex/usage-panel";
 import { DataTable, ReportSection } from "@/components/reports/data-table";
 import {
   Leaderboard,
+  TeamLeaderboard,
   LEADER_METRIC_CAPTION,
   type LeaderboardMetric,
+  type TeamLeaderboardEntry,
 } from "@/components/reports/leaderboard";
 
 export const Route = createFileRoute("/admin/reports")({
@@ -476,6 +478,24 @@ function AdminReportsPage() {
     [agentStats],
   );
 
+  // Team-level standings for the Team Leaderboard — same teamStats already powering the plain
+  // "Team Standings" table below, just reshaped, plus each team's own slice of
+  // leaderboardEntries for the member drill-down under its card.
+  const teamLeaderboardEntries: TeamLeaderboardEntry[] = useMemo(
+    () =>
+      teamStats.map(({ team, stats }) => ({
+        teamId: team.id,
+        teamName: team.name,
+        managerName: team.managerName,
+        collected: stats.paidAmount,
+        calls: stats.total,
+        ptps: stats.ptps,
+        contactRate: stats.contactRate,
+        members: leaderboardEntries.filter((e) => e.teamName === team.name),
+      })),
+    [teamStats, leaderboardEntries],
+  );
+
   // Collections is the metric the business is judged on, so prefer it — but only once
   // someone has actually collected something. Until then fall back to calls, which does
   // separate the agents. Any explicit click wins over this.
@@ -612,6 +632,14 @@ function AdminReportsPage() {
 
         {/* ── OVERVIEW TAB (leaderboard + at-a-glance boxes) ── */}
         <TabsContent value="overview" className="mt-4 space-y-4">
+          <ReportSection
+            title="Team Leaderboard"
+            description="Which team is leading, and who on it is carrying the number"
+            icon={Users}
+          >
+            <TeamLeaderboard teams={teamLeaderboardEntries} />
+          </ReportSection>
+
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <ReportSection
               title="Agent Leaderboard"

@@ -73,7 +73,7 @@ import {
   calcStats,
   type CallOutcome,
 } from "@/lib/disposition-store";
-import { getPortfolioRecovered } from "@/lib/payments-store";
+import { getPortfolioRecovered, getPayments } from "@/lib/payments-store";
 
 export interface Portfolio {
   id: string;
@@ -107,6 +107,17 @@ export interface Portfolio {
 }
 
 export const BUCKET_ORDER: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
+
+// Solid bar-fill classes matching each bucket's own semantic color in BUCKET_META (text-only
+// there, since it's used on a badge/label) — literal strings, not built with template
+// interpolation, so Tailwind's static scanner actually picks them up.
+const BUCKET_BAR_FILL: Record<DPDBucket, string> = {
+  X: "bg-success",
+  "1": "bg-primary",
+  "2": "bg-warning",
+  NPA: "bg-destructive",
+  WriteOff: "bg-muted-foreground/60",
+};
 
 export const STATUS_META = {
   active: { label: "Partially Assigned", bg: "bg-primary/8 text-primary/80 border-primary/15" },
@@ -1090,6 +1101,36 @@ export function PortfolioDetail({
   }, [p.id, needsClosedRows]);
   const accountRows = needsClosedRows ? (closedRows ?? []) : (raw?.rows ?? []);
 
+  // Who collected how much on this portfolio, and against their own target on it
+  // (raw.agentTargets, keyed by email — same identity payments-store already uses for
+  // PaymentRecord.agentId). Bank-reported payments (agentId null) have no collector and no
+  // target to compare against, so they're kept separate rather than attributed to nobody.
+  const agentCollections = (() => {
+    const completed = getPayments().filter(
+      (pay) => pay.portfolioId === p.id && pay.status === "completed",
+    );
+    const byAgent = new Map<string, { name: string; amount: number }>();
+    let bankReported = 0;
+    for (const pay of completed) {
+      if (!pay.agentId) {
+        bankReported += pay.amount;
+        continue;
+      }
+      const entry = byAgent.get(pay.agentId) ?? { name: pay.agentName, amount: 0 };
+      entry.amount += pay.amount;
+      byAgent.set(pay.agentId, entry);
+    }
+    const rows = Array.from(byAgent.entries())
+      .map(([email, v]) => ({
+        email,
+        name: v.name,
+        amount: v.amount,
+        target: raw?.agentTargets[email]?.targetAmount,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+    return { rows, bankReported };
+  })();
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background animate-in fade-in duration-150">
       <div className="flex-1 overflow-y-auto">
@@ -1151,14 +1192,25 @@ export function PortfolioDetail({
         </div>
 
         <div className="mx-auto max-w-5xl p-5 space-y-5">
-          {/* KPI row */}
+          {/* KPI row — big numbers with a colored edge, not a wall of same-size text */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { label: "Total Outstanding", val: formatINR(p.totalOutstanding) },
+              {
+                label: "Total Outstanding",
+                val: formatINR(p.totalOutstanding),
+                sub: `across ${p.totalAccounts} account${p.totalAccounts === 1 ? "" : "s"}`,
+                bar: "border-l-primary",
+              },
               // Only shown once the file actually carried a distinct principal figure — most
               // still don't, and a permanent "Principal ₹0" tile would just be noise.
               ...(p.totalPrincipal > 0
-                ? [{ label: "Total Principal", val: formatINR(p.totalPrincipal) }]
+                ? [
+                    {
+                      label: "Total Principal",
+                      val: formatINR(p.totalPrincipal),
+                      bar: "border-l-violet-500",
+                    },
+                  ]
                 : []),
               {
                 label: "Recovered",
@@ -1167,9 +1219,10 @@ export function PortfolioDetail({
                   p.recoveredBankReported > 0
                     ? `${recoveryPct}% of total · ${formatINR(p.recoveredBankReported)} via bank file`
                     : `${recoveryPct}% of total`,
+                bar: "border-l-success",
               },
-              { label: "PTPs Secured", val: String(p.ptpCount) },
-              { label: "Contact Rate", val: `${p.contactRate}%` },
+              { label: "PTPs Secured", val: String(p.ptpCount), bar: "border-l-warning" },
+              { label: "Contact Rate", val: `${p.contactRate}%`, bar: "border-l-violet-500" },
               // Only shown once this portfolio actually has carried-forward accounts — most
               // portfolios never do, and a permanent "Retained ₹0" tile would just be noise.
               ...(p.retainedAccounts > 0
@@ -1178,80 +1231,220 @@ export function PortfolioDetail({
                       label: "Retained",
                       val: formatINR(p.retainedAmount),
                       sub: `${p.retainedAccounts} account${p.retainedAccounts === 1 ? "" : "s"} carried forward`,
+                      bar: "border-l-violet-500",
                     },
                   ]
                 : []),
-            ].map(({ label, val, sub }) => (
-              <div key={label} className="rounded-lg border border-border bg-muted/10 p-3">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
+            ].map(({ label, val, sub, bar }) => (
+              <div
+                key={label}
+                className={cn(
+                  "relative overflow-hidden rounded-lg border border-border border-l-[3px] bg-card px-3.5 py-3 shadow-sm",
+                  bar,
+                )}
+              >
+                <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
                   {label}
                 </div>
-                <div className="text-base font-semibold text-foreground">{val}</div>
-                {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
+                <div className="text-2xl font-extrabold tabular-nums leading-tight tracking-tight text-foreground">
+                  {val}
+                </div>
+                {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
               </div>
             ))}
           </div>
 
-          {/* Recovery progress */}
-          <div>
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-muted-foreground">Recovery progress</span>
-              <span className="font-medium text-foreground">{recoveryPct}%</span>
+          {/* Recovery / assignment meters — labelled scale + the raw numbers underneath, not
+              just a bare percentage on a thin bar. */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+              <div className="mb-2.5 flex items-baseline justify-between">
+                <span className="text-xs font-semibold text-foreground">Recovery progress</span>
+                <span className="text-xl font-extrabold tabular-nums text-foreground">
+                  {recoveryPct}%
+                </span>
+              </div>
+              <Progress value={parseFloat(recoveryPct)} className="h-2.5" />
+              <div className="mt-1 flex justify-between text-[9.5px] tabular-nums text-muted-foreground">
+                {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+                  <span key={f}>{formatINR(Math.round(p.totalOutstanding * f))}</span>
+                ))}
+              </div>
+              <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
+                <span>
+                  Recovered <b className="text-foreground">{formatINR(p.recovered)}</b>
+                </span>
+                <span>
+                  Remaining{" "}
+                  <b className="text-foreground">
+                    {formatINR(Math.max(0, p.totalOutstanding - p.recovered))}
+                  </b>
+                </span>
+              </div>
             </div>
-            <Progress value={parseFloat(recoveryPct)} className="h-2" />
-          </div>
 
-          {/* Assignment progress */}
-          <div>
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-muted-foreground">Accounts assigned</span>
-              <span className="font-medium text-foreground">
-                {p.assignedAccounts} / {p.totalAccounts}
-              </span>
+            <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+              <div className="mb-2.5 flex items-baseline justify-between">
+                <span className="text-xs font-semibold text-foreground">Accounts assigned</span>
+                <span
+                  className={cn(
+                    "text-xl font-extrabold tabular-nums",
+                    assignPct < 50 ? "text-orange-500" : "text-success",
+                  )}
+                >
+                  {assignPct}%
+                </span>
+              </div>
+              <Progress
+                value={assignPct}
+                className="h-2.5"
+                indicatorClassName={assignPct < 50 ? "bg-orange-500/70" : undefined}
+              />
+              <div className="mt-1 flex justify-between text-[9.5px] tabular-nums text-muted-foreground">
+                {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+                  <span key={f}>{Math.round(p.totalAccounts * f)}</span>
+                ))}
+              </div>
+              <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
+                <span>
+                  Assigned <b className="text-foreground">{p.assignedAccounts}</b>
+                </span>
+                <span>
+                  Unassigned{" "}
+                  <b className="text-foreground">{p.totalAccounts - p.assignedAccounts}</b>
+                </span>
+              </div>
             </div>
-            <Progress
-              value={assignPct}
-              className="h-2"
-              indicatorClassName={assignPct < 50 ? "bg-orange-500/70" : undefined}
-            />
           </div>
 
           {/* Call activity & AI performance */}
           <CallActivitySection portfolioId={p.id} dialerMode={raw?.settings.dialerMode} />
 
-          {/* Bucket breakdown */}
-          <div>
-            <div className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
-              Bucket breakdown
-            </div>
-            <div className="space-y-2">
+          {/* Bucket breakdown — each bucket in its own semantic color (BUCKET_META), not one
+              flat bar color for all five, with a shared scale under the tallest bar. */}
+          <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+            <div className="text-xs font-semibold text-foreground mb-3">Bucket breakdown</div>
+            <div className="space-y-2.5">
               {BUCKET_ORDER.filter((b) => p.buckets[b] > 0).map((b) => {
                 const meta = BUCKET_META[b];
                 const pct = Math.round((p.buckets[b] / p.totalAccounts) * 100);
                 return (
-                  <div key={b} className="flex items-center gap-3">
+                  <div key={b} className="grid grid-cols-[86px_1fr_50px] items-center gap-2.5">
                     <span
                       className={cn(
-                        "text-[10px] font-medium w-20 flex-shrink-0",
+                        "text-[11px] font-semibold",
                         meta.color.split(" ").find((c) => c.startsWith("text-")),
                       )}
                     >
                       {meta.label}
                     </span>
-                    <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div className="h-3.5 rounded-md bg-muted overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-primary/50"
-                        style={{ width: `${pct}%` }}
+                        className={cn("h-full min-w-[3px] rounded-md", BUCKET_BAR_FILL[b])}
+                        style={{ width: `${Math.max(pct, 0.5)}%` }}
                       />
                     </div>
-                    <span className="text-[10px] text-muted-foreground w-16 text-right flex-shrink-0">
-                      {p.buckets[b]} ({pct}%)
+                    <span className="text-[11px] font-bold tabular-nums text-right text-foreground">
+                      {p.buckets[b]}
                     </span>
                   </div>
                 );
               })}
             </div>
+            <div className="mt-2 grid grid-cols-[86px_1fr_50px] gap-2.5 border-t border-dashed border-border pt-1.5">
+              <div />
+              <div className="flex justify-between text-[9.5px] tabular-nums text-muted-foreground">
+                {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+                  <span key={f}>{Math.round(p.totalAccounts * f)}</span>
+                ))}
+              </div>
+              <div />
+            </div>
           </div>
+
+          {/* Collections by agent — who actually collected how much on this portfolio, and how
+              that compares to their monthly target on it (portfolio_agent_targets). */}
+          {agentCollections.rows.length > 0 || agentCollections.bankReported > 0 ? (
+            <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+              <div className="mb-3 flex items-baseline justify-between">
+                <div className="text-xs font-semibold text-foreground">Collections by Agent</div>
+                <span className="text-[11px] text-muted-foreground">
+                  vs. this cycle&apos;s monthly target
+                </span>
+              </div>
+              <div className="space-y-2.5">
+                {agentCollections.rows.map((r) => {
+                  const targetPct = r.target ? Math.round((r.amount / r.target) * 100) : null;
+                  return (
+                    <div key={r.email} className="flex items-center gap-2.5">
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[9px] font-bold text-primary/80">
+                        {r.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-[12.5px] font-semibold text-foreground">
+                            {r.name}
+                          </span>
+                          <span className="shrink-0 text-[13.5px] font-bold tabular-nums text-foreground">
+                            {formatINR(r.amount)}
+                          </span>
+                        </div>
+                        <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={cn(
+                              "h-full rounded-full",
+                              targetPct === null
+                                ? "bg-primary/50"
+                                : targetPct >= 100
+                                  ? "bg-success"
+                                  : targetPct >= 60
+                                    ? "bg-warning"
+                                    : "bg-destructive",
+                            )}
+                            style={{ width: `${Math.min(100, targetPct ?? 60)}%` }}
+                          />
+                        </div>
+                      </div>
+                      {targetPct !== null && (
+                        <span
+                          className={cn(
+                            "shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold",
+                            targetPct >= 100
+                              ? "border-success/40 bg-success/10 text-success"
+                              : targetPct >= 60
+                                ? "border-warning/40 bg-warning/15 text-warning-foreground"
+                                : "border-destructive/35 bg-destructive/10 text-destructive",
+                          )}
+                        >
+                          {targetPct}% of {formatINR(r.target ?? 0)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                {agentCollections.bankReported > 0 && (
+                  <div className="flex items-center gap-2.5 border-t border-dashed border-border pt-2.5">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-[11px]">
+                      🏦
+                    </div>
+                    <div className="min-w-0 flex-1 text-[12px] text-muted-foreground">
+                      Bank-reported (paid file, no collector)
+                    </div>
+                    <span className="shrink-0 text-[13px] font-bold tabular-nums text-muted-foreground">
+                      {formatINR(agentCollections.bankReported)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="mt-3 flex justify-between border-t border-border pt-2.5 text-[12px] font-semibold">
+                <span className="text-muted-foreground">Total recovered on this portfolio</span>
+                <span className="tabular-nums text-foreground">{formatINR(p.recovered)}</span>
+              </div>
+            </div>
+          ) : null}
 
           {/* Assigned agents */}
           {p.agents.length > 0 ? (
