@@ -87,6 +87,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // could either miss a real eviction or false-positive on one.
   const sessionNonceRef = useRef<string | null>(null);
 
+  // True for the duration of an explicit login() call. signInWithPassword() fires its own
+  // SIGNED_IN event through onAuthStateChange below, which would otherwise race login()'s own
+  // fetchAgentProfile call — and since that event-driven path is NOT forced, it can win the
+  // race with a stale/cached session_nonce and clobber sessionNonceRef with the wrong value
+  // right as the Realtime event for login()'s own nonce rotation arrives, causing this tab to
+  // wrongly conclude it was signed out elsewhere. login() already handles the full sign-in
+  // end-to-end, so the event handler has nothing useful to add while this is true.
+  const loggingInRef = useRef(false);
+
   async function fetchAgentProfile(
     authUserId: string,
     forceRefresh = false,
@@ -199,6 +208,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         handledInitial = true;
         return;
       }
+      if (loggingInRef.current) return;
       void resolveSession(session);
     });
 
@@ -252,9 +262,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   ): Promise<{ error: string | null; user: AuthUser | null }> => {
     setLoading(true);
     setSignedOutReason(null);
+    loggingInRef.current = true;
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setLoading(false);
+      loggingInRef.current = false;
       return { error: error.message, user: null };
     }
     // Revoke every other session for this account and rotate session_nonce BEFORE reading the
@@ -280,6 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: "Signed in, but could not load your profile — please retry.", user: null };
     } finally {
       setLoading(false);
+      loggingInRef.current = false;
     }
   };
 
