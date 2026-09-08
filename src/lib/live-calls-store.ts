@@ -180,10 +180,18 @@ export async function fetchLiveCalls(): Promise<LiveCall[]> {
  * the payload has no agent name, and a re-fetch is a single cheap indexed query.
  *
  * Returns an unsubscribe function.
+ *
+ * The channel name is unique per call, not a fixed "live-calls" — the dashboard's embedded
+ * LiveCallsBoard and the full Live Calls page can both have one of these open at once (a
+ * client-side route change from one to the other doesn't guarantee the old one's cleanup runs
+ * before the new one's effect), and Supabase's realtime client reuses a channel object by name.
+ * A second `.on()` on a channel that already called `.subscribe()` throws
+ * "cannot add postgres_changes callbacks ... after subscribe()" — exactly what happened here
+ * with a shared name. Every subscriber gets its own channel instead.
  */
 export function subscribeLiveCalls(onChange: () => void): () => void {
   const channel = supabase
-    .channel("live-calls")
+    .channel(`live-calls-${crypto.randomUUID()}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "live_calls" }, onChange)
     .subscribe();
   return () => {
