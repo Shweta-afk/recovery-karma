@@ -85,8 +85,10 @@ export function Leaderboard({
   limit?: number;
   showTeam?: boolean;
 }) {
+  // Every agent, not just the ones with activity — a zero-activity agent is exactly the
+  // information an admin/manager needs from this view, not something to hide. They just sort
+  // to the bottom naturally once ranked by whichever metric is active.
   const ranked = [...entries]
-    .filter((e) => e.calls > 0 || e.collected > 0 || e.ptps > 0)
     .sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
     .slice(0, limit);
 
@@ -94,9 +96,7 @@ export function Leaderboard({
     return (
       <div className="rounded-lg border border-border bg-card/40 py-10 text-center">
         <Trophy className="mx-auto h-7 w-7 text-muted-foreground mb-2" />
-        <p className="text-sm text-muted-foreground">
-          No agent activity yet — the leaderboard fills in as calls get logged.
-        </p>
+        <p className="text-sm text-muted-foreground">No agents to show yet.</p>
       </div>
     );
   }
@@ -254,18 +254,15 @@ export function TeamLeaderboard({
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const ranked = [...teams]
-    .filter((t) => t.calls > 0 || t.collected > 0)
-    .sort((a, b) => b.collected - a.collected)
-    .slice(0, limit);
+  // Every team, not just the active ones — see the same reasoning on Leaderboard above; an
+  // idle team is exactly what an admin needs to notice here, not something to hide.
+  const ranked = [...teams].sort((a, b) => b.collected - a.collected).slice(0, limit);
 
   if (ranked.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-card/40 py-10 text-center">
         <Trophy className="mx-auto h-7 w-7 text-muted-foreground mb-2" />
-        <p className="text-sm text-muted-foreground">
-          No team activity yet — standings fill in as calls get logged.
-        </p>
+        <p className="text-sm text-muted-foreground">No teams to show yet.</p>
       </div>
     );
   }
