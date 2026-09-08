@@ -321,7 +321,19 @@ function DebtorStatusBadge({ status }: { status?: string }) {
   );
 }
 
-function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: AgentRef[] }) {
+function AccountsTable({
+  rows,
+  agents,
+  readOnly = false,
+}: {
+  rows: UploadedDebtor[];
+  agents: AgentRef[];
+  // A closed portfolio's accounts are a historical record, not something to keep editing —
+  // transferring/removing accounts out of a superseded cycle, or re-editing who worked them,
+  // reads as live portfolio management on data that's already over. Drops the checkboxes, the
+  // "Assigned to" dropdown and the remove button in favour of plain read-only cells.
+  readOnly?: boolean;
+}) {
   const [transferringId, setTransferringId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<UploadedDebtor | null>(null);
@@ -412,7 +424,9 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
           <ArrowLeftRight className="h-3.5 w-3.5" />
-          Accounts · transfer individually or select several
+          {readOnly
+            ? "Accounts · read-only historical record"
+            : "Accounts · transfer individually or select several"}
         </div>
         <Select value={markedFilter} onValueChange={setMarkedFilter}>
           <SelectTrigger className="h-7 w-52 text-xs">
@@ -432,7 +446,7 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
               ))}
           </SelectContent>
         </Select>
-        {selected.size > 0 && (
+        {!readOnly && selected.size > 0 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] text-muted-foreground">{selected.size} selected</span>
             <Select value={bulkAgent} onValueChange={setBulkAgent}>
@@ -465,10 +479,12 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-card z-10">
               <tr className="border-b border-border">
-                <th className="py-2 pl-3 w-8">
-                  <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
-                </th>
-                <th className="py-2 text-left font-medium text-muted-foreground">Debtor</th>
+                {!readOnly && (
+                  <th className="py-2 pl-3 w-8">
+                    <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
+                  </th>
+                )}
+                <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Debtor</th>
                 <th className="py-2 text-right font-medium text-muted-foreground">Outstanding</th>
                 <th className="py-2 text-right font-medium text-muted-foreground">Principal</th>
                 <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Marked as</th>
@@ -476,19 +492,21 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                 <th className="py-2 pr-3 text-left font-medium text-muted-foreground">
                   Assigned to
                 </th>
-                <th className="py-2 pr-3 w-8" />
+                {!readOnly && <th className="py-2 pr-3 w-8" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {visibleRows.map((r) => (
                 <tr key={r.id} className={selected.has(r.id) ? "bg-primary/5" : undefined}>
-                  <td className="py-2 pl-3">
-                    <Checkbox
-                      checked={selected.has(r.id)}
-                      onCheckedChange={() => toggleRow(r.id)}
-                    />
-                  </td>
-                  <td className="py-2">
+                  {!readOnly && (
+                    <td className="py-2 pl-3">
+                      <Checkbox
+                        checked={selected.has(r.id)}
+                        onCheckedChange={() => toggleRow(r.id)}
+                      />
+                    </td>
+                  )}
+                  <td className={readOnly ? "py-2 pl-3" : "py-2"}>
                     <div className="font-medium text-foreground">{r.name}</div>
                     <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       {r.loanReference}
@@ -509,46 +527,54 @@ function AccountsTable({ rows, agents }: { rows: UploadedDebtor[]; agents: Agent
                     <DebtorStatusBadge status={r.status} />
                   </td>
                   <td className="py-2 pr-3">
-                    <Select
-                      value={r.assignedAgentId ?? UNASSIGNED}
-                      disabled={transferringId === r.id}
-                      onValueChange={(v) => handleTransfer(r.id, v)}
-                    >
-                      <SelectTrigger className="h-7 w-40 text-xs">
-                        {transferringId === r.id ? (
-                          <span className="flex items-center gap-1.5 text-muted-foreground">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            Saving…
-                          </span>
+                    {readOnly ? (
+                      <span className="text-muted-foreground">
+                        {agents.find((a) => a.id === r.assignedAgentId)?.name ?? "Unassigned"}
+                      </span>
+                    ) : (
+                      <Select
+                        value={r.assignedAgentId ?? UNASSIGNED}
+                        disabled={transferringId === r.id}
+                        onValueChange={(v) => handleTransfer(r.id, v)}
+                      >
+                        <SelectTrigger className="h-7 w-40 text-xs">
+                          {transferringId === r.id ? (
+                            <span className="flex items-center gap-1.5 text-muted-foreground">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Saving…
+                            </span>
+                          ) : (
+                            <SelectValue />
+                          )}
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
+                          {agents.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </td>
+                  {!readOnly && (
+                    <td className="py-2 pr-3 text-right">
+                      <button
+                        type="button"
+                        title="Remove account"
+                        disabled={removingId === r.id}
+                        onClick={() => setConfirmRemove(r)}
+                        className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+                      >
+                        {removingId === r.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
                         ) : (
-                          <SelectValue />
+                          <Trash2 className="h-3.5 w-3.5" />
                         )}
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-                        {agents.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </td>
-                  <td className="py-2 pr-3 text-right">
-                    <button
-                      type="button"
-                      title="Remove account"
-                      disabled={removingId === r.id}
-                      onClick={() => setConfirmRemove(r)}
-                      className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-                    >
-                      {removingId === r.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  </td>
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -1278,7 +1304,10 @@ export function PortfolioDetail({
               Loading this closed portfolio's accounts…
             </p>
           ) : (
-            raw && agents.length > 0 && <AccountsTable rows={accountRows} agents={agents} />
+            raw &&
+            agents.length > 0 && (
+              <AccountsTable rows={accountRows} agents={agents} readOnly={p.status === "closed"} />
+            )
           )}
 
           {/* Removed accounts */}
