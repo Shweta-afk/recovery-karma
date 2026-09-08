@@ -56,8 +56,21 @@ function elapsedLabel(startedAt: string): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-export function LiveCallsBoard({ className }: { className?: string }) {
-  const { calls, loading } = useLiveCalls();
+export function LiveCallsBoard({
+  className,
+  filterAgentName,
+}: {
+  className?: string;
+  // Case-insensitive substring match on agentName — the full Live Calls page's search box
+  // (see live-calls-page.tsx). Left undefined for the smaller dashboard-embedded widget, which
+  // has no search of its own and still shows everyone.
+  filterAgentName?: string;
+}) {
+  const { calls: allCalls, loading } = useLiveCalls();
+  const needle = filterAgentName?.trim().toLowerCase();
+  const calls = needle
+    ? allCalls.filter((c) => c.agentName.toLowerCase().includes(needle))
+    : allCalls;
 
   if (loading) {
     return <p className="py-8 text-center text-sm text-muted-foreground">Loading live calls…</p>;
@@ -67,7 +80,11 @@ export function LiveCallsBoard({ className }: { className?: string }) {
     return (
       <div className="rounded-xl border border-dashed border-border py-10 text-center">
         <RadioTower className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">No calls in progress right now.</p>
+        <p className="text-sm text-muted-foreground">
+          {needle
+            ? `No calls in progress for an agent matching "${filterAgentName}".`
+            : "No calls in progress right now."}
+        </p>
         <p className="mt-1 text-[11px] text-muted-foreground/70">
           This updates by itself as agents start and end calls.
         </p>
