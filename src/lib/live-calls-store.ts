@@ -153,29 +153,25 @@ function toLiveCall(
 }
 
 /**
- * Any call whose heartbeat has gone silent this long isn't just shown "stale" (STALE_AFTER_MS,
- * 60s — generous on purpose for a throttled backgrounded tab), it gets closed out outright. A
- * tab that's been silent for a quarter of an hour isn't backgrounded, it's gone — crashed,
- * closed, lost network. Confirmed live 2026-09-08: four calls sitting in the board showing
- * "4378m" / "8655m" of ringing (days old) because nothing ever stamped their ended_at.
- */
-const GHOST_AFTER_MS = 15 * 60_000;
-
-/**
  * Opportunistic, client-side, no cron — same pattern ptp-escalation-store's missed-commitment
  * checks use. Runs on every fetchLiveCalls() call (i.e. whenever any Live Calls board loads or
  * refreshes), so a ghost row left behind by a crashed tab gets its ended_at stamped instead of
- * accumulating in the live view forever with only a "may already have ended" badge. Fire-and-
- * forget from the caller's point of view: best-effort, and a failed cleanup just means the row
- * is still there to retry next time.
+ * accumulating in the live view forever with only a "may already have ended" badge — confirmed
+ * live 2026-09-08: four calls sitting in the board showing "4378m" / "8655m" of ringing (days
+ * old) because nothing ever stamped their ended_at. A tab silent for 15+ minutes (see
+ * cleanup_ghost_live_calls's threshold) isn't backgrounded, it's gone.
+ *
+ * Goes through a SECURITY DEFINER RPC (migrations/20260908_cleanup_ghost_live_calls.sql) rather
+ * than a plain client-side UPDATE — live_calls_update's RLS policy only lets an agent update
+ * their OWN rows, so whichever manager/admin has the board open could never close out another
+ * agent's ghost call directly; a straight `.update()` here silently touched zero rows.
+ *
+ * Fire-and-forget from the caller's point of view: best-effort, and a failed cleanup just means
+ * the row is still there to retry next time.
  */
 async function cleanupGhostLiveCalls(): Promise<void> {
   try {
-    await supabase
-      .from("live_calls")
-      .update({ ended_at: new Date().toISOString() })
-      .is("ended_at", null)
-      .lt("last_seen_at", new Date(Date.now() - GHOST_AFTER_MS).toISOString());
+    await supabase.rpc("cleanup_ghost_live_calls");
   } catch {
     // best-effort — see comment above
   }
