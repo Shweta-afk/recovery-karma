@@ -23,7 +23,7 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { login, user } = useAuth();
+  const { login, user, signedOutReason } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -132,6 +132,13 @@ function LoginPage() {
                     </button>
                   </div>
                 </div>
+
+                {signedOutReason && !error && (
+                  <Alert className="py-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription className="text-sm">{signedOutReason}</AlertDescription>
+                  </Alert>
+                )}
 
                 {error && (
                   <Alert variant="destructive" className="py-2">

@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 23 tables.
+// Generated from 24 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -87,6 +87,7 @@ export interface Database {
           agent_phone: string | null;
           provider_agent_id: string | null;
           agent_code: string | null;
+          session_nonce: string | null;
         };
         Insert: {
           id?: string;
@@ -101,6 +102,7 @@ export interface Database {
           agent_phone?: string | null;
           provider_agent_id?: string | null;
           agent_code?: string | null;
+          session_nonce?: string | null;
         };
         Update: {
           id?: string;
@@ -115,6 +117,7 @@ export interface Database {
           agent_phone?: string | null;
           provider_agent_id?: string | null;
           agent_code?: string | null;
+          session_nonce?: string | null;
         };
         Relationships: [];
       };
@@ -313,9 +316,7 @@ export interface Database {
           email: string | null;
           loan_amount: number | null;
           outstanding_balance: number | null;
-          principal_amount: number | null;
           emi_amount: number | null;
-          product_code: string | null;
           dpd: number | null;
           lender: string | null;
           product_type: string | null;
@@ -333,6 +334,8 @@ export interface Database {
           extra: Json | null;
           alt_phones: string[];
           retained_from_portfolio_id: string | null;
+          principal_amount: number | null;
+          product_code: string | null;
         };
         Insert: {
           id?: string;
@@ -345,9 +348,7 @@ export interface Database {
           email?: string | null;
           loan_amount?: number | null;
           outstanding_balance?: number | null;
-          principal_amount?: number | null;
           emi_amount?: number | null;
-          product_code?: string | null;
           dpd?: number | null;
           lender?: string | null;
           product_type?: string | null;
@@ -365,6 +366,8 @@ export interface Database {
           extra?: Json | null;
           alt_phones?: string[];
           retained_from_portfolio_id?: string | null;
+          principal_amount?: number | null;
+          product_code?: string | null;
         };
         Update: {
           id?: string;
@@ -377,9 +380,7 @@ export interface Database {
           email?: string | null;
           loan_amount?: number | null;
           outstanding_balance?: number | null;
-          principal_amount?: number | null;
           emi_amount?: number | null;
-          product_code?: string | null;
           dpd?: number | null;
           lender?: string | null;
           product_type?: string | null;
@@ -397,6 +398,8 @@ export interface Database {
           extra?: Json | null;
           alt_phones?: string[];
           retained_from_portfolio_id?: string | null;
+          principal_amount?: number | null;
+          product_code?: string | null;
         };
         Relationships: [];
       };
@@ -794,6 +797,30 @@ export interface Database {
           hit_ttl_hours?: number;
           miss_ttl_hours?: number;
           rate_card?: Json;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [];
+      };
+      profilex_wallets: {
+        Row: {
+          manager_id: string;
+          client_id: string;
+          balance: number;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          manager_id: string;
+          client_id: string;
+          balance?: number;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          manager_id?: string;
+          client_id?: string;
+          balance?: number;
           updated_at?: string;
           updated_by?: string | null;
         };

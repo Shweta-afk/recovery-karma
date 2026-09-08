@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import { supabase } from "./supabase";
+import { enforceSingleSession } from "./session-actions.server";
 
 export type Role = "agent" | "manager" | "admin";
 
@@ -39,6 +40,9 @@ interface AuthCtx {
     password: string,
   ) => Promise<{ error: string | null; user: AuthUser | null }>;
   logout: () => Promise<void>;
+  /** Set when this tab was force-signed-out because the account logged in on another device.
+   *  login.tsx reads it to show a one-time banner; login() clears it on the next attempt. */
+  signedOutReason: string | null;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -74,6 +78,14 @@ function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [signedOutReason, setSignedOutReason] = useState<string | null>(null);
+
+  // The session_nonce this tab believes is current. Compared against Realtime updates on the
+  // agents row to detect "a newer login happened elsewhere" — see
+  // 20260908_single_active_session.sql. Cache is skipped for this field on purpose (unlike the
+  // rest of the profile): it must reflect the DB's current value, not a stale one, or a tab
+  // could either miss a real eviction or false-positive on one.
+  const sessionNonceRef = useRef<string | null>(null);
 
   async function fetchAgentProfile(
     authUserId: string,
@@ -99,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       Promise.resolve(
         supabase
           .from("agents")
-          .select("name, email, role, agent_phone")
+          .select("name, email, role, agent_phone, session_nonce")
           .eq("auth_user_id", authUserId)
           .single(),
       ),
@@ -107,6 +119,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
 
     if (error || !data) return null;
+
+    sessionNonceRef.current = (data.session_nonce as string | null) ?? null;
 
     const profile: AuthUser = {
       id: authUserId,
@@ -118,6 +132,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     localStorage.setItem(cacheKey, JSON.stringify({ profile, at: Date.now() }));
     return profile;
+  }
+
+  /** Best-effort local sign-out triggered by a Realtime event, not a user click — the
+   *  underlying refresh token was already revoked server-side by whichever device logged in
+   *  next, so this is just clearing this tab's own state; AppShell's existing
+   *  `user === null -> navigate("/login")` effect does the actual redirect. */
+  async function forceSignOutLocally(reason: string) {
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch (err) {
+      console.error("[auth] signOut during forced eviction failed (continuing anyway):", err);
+    }
+    setSignedOutReason(reason);
+    setUser(null);
   }
 
   useEffect(() => {
@@ -180,15 +208,65 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // One account, one device: listen for this agent's session_nonce changing to a value this
+  // tab didn't itself just set — that means a newer login happened elsewhere, so this tab signs
+  // itself out immediately rather than waiting for its access token to expire naturally. See
+  // 20260908_single_active_session.sql. Channel name is unique per subscription (not a fixed
+  // string) for the same reason live-calls-store.ts's is — a shared channel name across
+  // multiple mounted subscribers throws once the first one calls .subscribe().
+  useEffect(() => {
+    if (!user) return;
+    const authUserId = user.id;
+    const channel = supabase
+      .channel(`agent-session-${crypto.randomUUID()}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "agents",
+          filter: `auth_user_id=eq.${authUserId}`,
+        },
+        (payload) => {
+          const newNonce = (payload.new as { session_nonce: string | null }).session_nonce ?? null;
+          if (newNonce !== sessionNonceRef.current) {
+            void forceSignOutLocally(
+              "You were signed out because this account was signed in on another device.",
+            );
+          }
+        },
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+    // Deliberately keyed on the id alone — a profile refresh (e.g. the 2-minute cache expiry)
+    // produces a new `user` object with the same id, and resubscribing the channel on every
+    // one of those would be pure churn for no behavior change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const login = async (
     email: string,
     password: string,
   ): Promise<{ error: string | null; user: AuthUser | null }> => {
     setLoading(true);
+    setSignedOutReason(null);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setLoading(false);
       return { error: error.message, user: null };
+    }
+    // Revoke every other session for this account and rotate session_nonce BEFORE reading the
+    // profile back below, so that read picks up the fresh nonce rather than the stale one —
+    // see enforceSingleSession. Best-effort: a failure here shouldn't block this device's own
+    // sign-in, only degrade the single-device guarantee for this one login.
+    if (data.session?.access_token) {
+      try {
+        await enforceSingleSession({ data: { accessToken: data.session.access_token } });
+      } catch (err) {
+        console.error("[auth] enforceSingleSession failed (continuing sign-in anyway):", err);
+      }
     }
     // Fetch profile immediately so caller gets the role for redirect. Force a fresh fetch —
     // trusting the cache here is how a role promotion made after the last login silently
@@ -206,11 +284,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
+    sessionNonceRef.current = null;
     await supabase.auth.signOut();
     setUser(null);
   };
 
-  return <Ctx.Provider value={{ user, loading, login, logout }}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={{ user, loading, login, logout, signedOutReason }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export function useAuth() {
