@@ -484,7 +484,14 @@ function AccountsTable({
                     <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
                   </th>
                 )}
-                <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Debtor</th>
+                <th
+                  className={cn(
+                    "py-2 text-left font-medium text-muted-foreground",
+                    readOnly && "pl-3",
+                  )}
+                >
+                  Debtor
+                </th>
                 <th className="py-2 text-right font-medium text-muted-foreground">Outstanding</th>
                 <th className="py-2 text-right font-medium text-muted-foreground">Principal</th>
                 <th className="py-2 pl-3 text-left font-medium text-muted-foreground">Marked as</th>
