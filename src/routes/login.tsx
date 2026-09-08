@@ -79,9 +79,6 @@ function LoginPage() {
 
         <div className="space-y-0.5">
           <p className="text-xs text-white/40">© 2026 SamvadX Technologies Pvt. Ltd.</p>
-          <p className="text-xs italic text-white/40">
-            Powered by Axiotta Technologies Private Limited
-          </p>
         </div>
       </div>
 
