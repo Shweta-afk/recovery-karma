@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   transferDebtor,
   transferDebtors,
@@ -6,6 +6,7 @@ import {
   restoreDebtor,
   getRemovedDebtors,
   isPortfolioEnded,
+  fetchPortfolioRows,
   type UploadedPortfolio,
   type UploadedDebtor,
   type PortfolioSettings,
@@ -136,34 +137,52 @@ export function formatINR(n: number) {
 // Real assignment + recovery stats for a portfolio, computed from each debtor's
 // assigned_agent_id (folded into portfolio-store.ts) + dispositions
 export function toPortfolio(u: UploadedPortfolio): Portfolio {
-  const buckets = u.rows.reduce<Record<DPDBucket, number>>(
-    (acc, r) => {
-      acc[r.bucket] = (acc[r.bucket] ?? 0) + 1;
-      return acc;
-    },
-    { X: 0, "1": 0, "2": 0, NPA: 0, WriteOff: 0 },
-  );
-  const totalOutstanding = u.rows.reduce((s, r) => s + r.loanAmount, 0);
-  const totalPrincipal = u.rows.reduce((s, r) => s + r.principalAmount, 0);
+  // A closed portfolio's `rows` are deliberately emptied in the cache (localStorage quota —
+  // see refreshPortfolios in portfolio-store.ts), which would read every row-derived stat below
+  // as zero. portfolio_debtor_aggregates() (migrations/20260908_portfolio_debtor_aggregates.sql)
+  // computes the same numbers straight from the DB instead, so a closed portfolio's dashboard
+  // still shows its real last-known state rather than an empty one. Falls back to the rows-based
+  // computation when the aggregate hasn't loaded yet (migration not applied, or still fetching).
+  const agg = u.rows.length === 0 ? u.closedAggregate : undefined;
+
+  const buckets = agg
+    ? agg.buckets
+    : u.rows.reduce<Record<DPDBucket, number>>(
+        (acc, r) => {
+          acc[r.bucket] = (acc[r.bucket] ?? 0) + 1;
+          return acc;
+        },
+        { X: 0, "1": 0, "2": 0, NPA: 0, WriteOff: 0 },
+      );
+  const totalOutstanding = agg
+    ? agg.totalOutstanding
+    : u.rows.reduce((s, r) => s + r.loanAmount, 0);
+  const totalPrincipal = agg
+    ? agg.totalPrincipal
+    : u.rows.reduce((s, r) => s + r.principalAmount, 0);
 
   const retainedRows = u.rows.filter((r) => r.retained);
-  const retainedAccounts = retainedRows.length;
-  const retainedAmount = retainedRows.reduce((s, r) => s + r.loanAmount, 0);
+  const retainedAccounts = agg ? agg.retainedAccounts : retainedRows.length;
+  const retainedAmount = agg
+    ? agg.retainedAmount
+    : retainedRows.reduce((s, r) => s + r.loanAmount, 0);
 
-  const debtorIdsByAgent = new Map<string, string[]>();
-  for (const r of u.rows) {
-    if (!r.assignedAgentId) continue;
-    const arr = debtorIdsByAgent.get(r.assignedAgentId) ?? [];
-    arr.push(r.id);
-    debtorIdsByAgent.set(r.assignedAgentId, arr);
+  let assignedAccounts: number;
+  let agents: string[];
+  if (agg) {
+    assignedAccounts = agg.assignedAccounts;
+    agents = agg.agentEmails.map((email) => getAgentById(email)?.name ?? email);
+  } else {
+    const debtorIdsByAgent = new Map<string, string[]>();
+    for (const r of u.rows) {
+      if (!r.assignedAgentId) continue;
+      const arr = debtorIdsByAgent.get(r.assignedAgentId) ?? [];
+      arr.push(r.id);
+      debtorIdsByAgent.set(r.assignedAgentId, arr);
+    }
+    assignedAccounts = Array.from(debtorIdsByAgent.values()).reduce((s, ids) => s + ids.length, 0);
+    agents = Array.from(debtorIdsByAgent.keys()).map((email) => getAgentById(email)?.name ?? email);
   }
-  const assignedAccounts = Array.from(debtorIdsByAgent.values()).reduce(
-    (s, ids) => s + ids.length,
-    0,
-  );
-  const agents = Array.from(debtorIdsByAgent.keys()).map(
-    (email) => getAgentById(email)?.name ?? email,
-  );
 
   // Group by portfolio rather than walking each assigned agent's dispositions. The per-agent
   // walk kept a call only when the caller IS the debtor's currently-assigned agent, so it
@@ -193,7 +212,11 @@ export function toPortfolio(u: UploadedPortfolio): Portfolio {
     uploadedOn: u.uploadedAt.slice(0, 10),
     // Closed portfolios carry [] in `rows` (quota protection), so fall back to the DB's own
     // total_accounts snapshot rather than reporting 0 for a portfolio that plainly has accounts.
-    totalAccounts: u.closedAt ? (u.storedTotalAccounts ?? u.rows.length) : u.rows.length,
+    totalAccounts: agg
+      ? agg.totalAccounts
+      : u.closedAt
+        ? (u.storedTotalAccounts ?? u.rows.length)
+        : u.rows.length,
     assignedAccounts,
     buckets,
     totalOutstanding,
@@ -997,6 +1020,7 @@ export function PortfolioDetail({
   onReassign,
   onEdit,
   onUploadPaid,
+  replacedByName,
 }: {
   p: Portfolio;
   raw: UploadedPortfolio | null;
@@ -1005,11 +1029,33 @@ export function PortfolioDetail({
   onReassign?: () => void;
   onEdit?: () => void;
   onUploadPaid?: () => void;
+  // Name of the portfolio that superseded this one (its `replaces_portfolio_id` points back at
+  // `p.id`) — the caller looks this up across the full portfolio list, since a single closed
+  // portfolio's own record has no forward pointer to its successor. Only meaningful once closed.
+  replacedByName?: string;
 }) {
   const recoveryPct =
     p.totalOutstanding > 0 ? ((p.recovered / p.totalOutstanding) * 100).toFixed(1) : "0.0";
   const assignPct =
     p.totalAccounts > 0 ? Math.round((p.assignedAccounts / p.totalAccounts) * 100) : 0;
+
+  // A closed portfolio's `raw.rows` is deliberately [] (localStorage quota — see the `rows:`
+  // comment in refreshPortfolios). The account-level table still needs real rows to show
+  // anything, so fetch them on demand for just this one portfolio, kept in local state only —
+  // never written to the shared cache, so none of the quota risk that emptied them returns.
+  const [closedRows, setClosedRows] = useState<UploadedDebtor[] | null>(null);
+  const [closedRowsLoading, setClosedRowsLoading] = useState(false);
+  const needsClosedRows = p.status === "closed" && (raw?.rows.length ?? 0) === 0;
+  useEffect(() => {
+    setClosedRows(null);
+    if (!needsClosedRows) return;
+    setClosedRowsLoading(true);
+    fetchPortfolioRows(p.id)
+      .then(setClosedRows)
+      .catch(() => setClosedRows([]))
+      .finally(() => setClosedRowsLoading(false));
+  }, [p.id, needsClosedRows]);
+  const accountRows = needsClosedRows ? (closedRows ?? []) : (raw?.rows ?? []);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background animate-in fade-in duration-150">
@@ -1030,6 +1076,16 @@ export function PortfolioDetail({
             </div>
             <div className="text-xs text-muted-foreground">
               {p.lender} · {p.id} · Uploaded {p.uploadedOn}
+              {p.status === "closed" && (
+                <>
+                  {raw?.closedAt
+                    ? ` · Closed ${raw.closedAt.slice(0, 10)}`
+                    : p.endDate
+                      ? ` · End date ${p.endDate} passed`
+                      : ""}
+                  {replacedByName && ` · continues as "${replacedByName}"`}
+                </>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -1215,8 +1271,15 @@ export function PortfolioDetail({
             </div>
           )}
 
-          {/* Per-account transfer */}
-          {raw && agents.length > 0 && <AccountsTable rows={raw.rows} agents={agents} />}
+          {/* Per-account transfer. For a closed portfolio, `accountRows` is fetched on demand
+              (see the effect above) since `raw.rows` is deliberately empty in the cache. */}
+          {closedRowsLoading ? (
+            <p className="py-6 text-center text-xs text-muted-foreground">
+              Loading this closed portfolio's accounts…
+            </p>
+          ) : (
+            raw && agents.length > 0 && <AccountsTable rows={accountRows} agents={agents} />
+          )}
 
           {/* Removed accounts */}
           <RemovedAccountsPanel portfolioId={p.id} />

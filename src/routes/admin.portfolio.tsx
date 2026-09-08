@@ -317,6 +317,7 @@ function PortfolioAssignmentPage() {
           raw={viewing}
           agents={[]}
           onClose={() => setViewing(null)}
+          replacedByName={portfolios.find((x) => x.replacesPortfolioId === viewing.id)?.name}
         />
       )}
     </div>

@@ -138,6 +138,26 @@ export interface UploadedPortfolio {
   // shown (Portfolio Overview now lists closed portfolios — see visibleToTeam in
   // manager.portfolio.tsx).
   storedTotalAccounts?: number;
+  // Populated from the portfolio_debtor_aggregates() SQL rollup (migrations/
+  // 20260908_portfolio_debtor_aggregates.sql) — a closed portfolio's `rows` are emptied above,
+  // so totalOutstanding/totalPrincipal/buckets/assignedAccounts computed from `rows` in
+  // toPortfolio() would all read zero without this. Fetched for every portfolio, not just
+  // closed ones, so toPortfolio() has one source to prefer once a portfolio's rows go empty at
+  // any point in its life, not just at the moment this was added.
+  closedAggregate?: PortfolioClosedAggregate;
+}
+
+export interface PortfolioClosedAggregate {
+  totalAccounts: number;
+  totalOutstanding: number;
+  totalPrincipal: number;
+  assignedAccounts: number;
+  // Agent emails (mapped from agents.id via emailById, same identity every other assigned-agent
+  // field in this file uses) — never raw agent uuids, so callers never need a second lookup.
+  agentEmails: string[];
+  retainedAccounts: number;
+  retainedAmount: number;
+  buckets: Record<DPDBucket, number>;
 }
 
 /** A portfolio counts as "ended" once its manager-set end date has passed, exactly like a
@@ -335,6 +355,41 @@ export async function refreshPortfolios(): Promise<void> {
   }
   const portfolioNameById = new Map(portfolioRows.map((p) => [p.id as string, p.name as string]));
 
+  // Best-effort, same reasoning: portfolio_debtor_aggregates() is a newer RPC
+  // (migrations/20260908_portfolio_debtor_aggregates.sql) that may not exist in the live DB yet.
+  // A single grouped query over every debtor's numeric columns (no `extra`, no name/phone) —
+  // cheap even at full debtor-table scale, unlike materialising every closed portfolio's rows
+  // (see the comment on `rows` below).
+  const aggregateByPortfolio = new Map<string, PortfolioClosedAggregate>();
+  try {
+    const { data: aggRows, error: aggErr } = await supabase.rpc("portfolio_debtor_aggregates");
+    if (!aggErr && aggRows) {
+      for (const r of aggRows as Record<string, unknown>[]) {
+        const portfolioId = r.portfolio_id as string | null;
+        if (!portfolioId) continue;
+        const agentIds = (r.agent_ids as string[] | null) ?? [];
+        aggregateByPortfolio.set(portfolioId, {
+          totalAccounts: Number(r.total_accounts ?? 0),
+          totalOutstanding: Number(r.total_outstanding ?? 0),
+          totalPrincipal: Number(r.total_principal ?? 0),
+          assignedAccounts: Number(r.assigned_accounts ?? 0),
+          agentEmails: agentIds.map((id) => emailById.get(id)).filter((e): e is string => !!e),
+          retainedAccounts: Number(r.retained_accounts ?? 0),
+          retainedAmount: Number(r.retained_amount ?? 0),
+          buckets: {
+            X: Number(r.bucket_x ?? 0),
+            "1": Number(r.bucket_1 ?? 0),
+            "2": Number(r.bucket_2 ?? 0),
+            NPA: Number(r.bucket_npa ?? 0),
+            WriteOff: Number(r.bucket_writeoff ?? 0),
+          },
+        });
+      }
+    }
+  } catch {
+    // ignore — the aggregate rollup is supplementary until the migration is applied
+  }
+
   const portfolios: UploadedPortfolio[] = portfolioRows.map((p) => ({
     id: p.id,
     name: p.name,
@@ -349,6 +404,7 @@ export async function refreshPortfolios(): Promise<void> {
     closedAt: closeInfoByPortfolio.get(p.id)?.closedAt,
     endDate: closeInfoByPortfolio.get(p.id)?.endDate,
     storedTotalAccounts: closeInfoByPortfolio.get(p.id)?.totalAccounts,
+    closedAggregate: aggregateByPortfolio.get(p.id),
     // A closed cycle's debtor rows are carried as [] rather than materialised. Every consumer
     // of this cache already skips closed portfolios — buildAssignedQueue `continue`s on
     // closedAt, and the team picker, Portfolio Overview and the upload page all filter
@@ -1241,6 +1297,72 @@ export async function getRemovedDebtors(portfolioId: string): Promise<RemovedDeb
     phone: (d.phone_primary as string | null) ?? "",
     loanReference: (d.loan_reference as string | null) ?? "",
   }));
+}
+
+/** On-demand, single-portfolio row fetch for the Accounts table on a CLOSED portfolio's detail
+ * view — `rows` for a closed portfolio are deliberately [] in the shared cache (localStorage
+ * quota, see the `rows:` comment above in refreshPortfolios), but the debtor rows themselves are
+ * still sitting in the DB under their original portfolio_id (only accounts an active retention
+ * request actually carried forward move away — reconcileRetainedDebtors). Scoped to one
+ * portfolio and kept in local component state, never written to the cache/localStorage, so this
+ * carries none of the quota risk that made closed portfolios' rows get emptied in the first
+ * place — see PortfolioDetail in portfolio-dashboard.tsx. */
+export async function fetchPortfolioRows(portfolioId: string): Promise<UploadedDebtor[]> {
+  const [{ data: rows, error }, { data: agentRows }] = await Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("debtors")
+        .select(
+          "id, loan_reference, name, phone_primary, email, loan_amount, principal_amount, dpd, assigned_agent_id, status, retained_from_portfolio_id",
+        )
+        .eq("portfolio_id", portfolioId)
+        .neq("status", "removed")
+        .range(from, to),
+    ),
+    supabase.from("agents").select("id, email"),
+  ]);
+  if (error) throw error;
+
+  const emailById = new Map((agentRows ?? []).map((a) => [a.id, a.email]));
+  const oldPortfolioIds = new Set(
+    (rows ?? [])
+      .map((d) => d.retained_from_portfolio_id as string | null)
+      .filter((id): id is string => !!id),
+  );
+  const oldPortfolioNameById = new Map<string, string>();
+  if (oldPortfolioIds.size) {
+    const { data: oldPortfolios } = await supabase
+      .from("portfolios")
+      .select("id, name")
+      .in("id", Array.from(oldPortfolioIds));
+    for (const p of oldPortfolios ?? []) oldPortfolioNameById.set(p.id as string, p.name as string);
+  }
+
+  return (rows ?? []).map((d) => {
+    const dpd = (d.dpd as number | null) ?? 0;
+    const retainedFromId = d.retained_from_portfolio_id as string | null;
+    return {
+      id: d.id as string,
+      loanReference: (d.loan_reference as string | null) ?? (d.id as string),
+      name: (d.name as string | null) ?? "",
+      phone: (d.phone_primary as string | null) ?? "",
+      loanAmount: Number(d.loan_amount ?? 0),
+      principalAmount: Number(d.principal_amount ?? 0),
+      emiAmount: 0,
+      productCode: "",
+      dpd,
+      bucket: dpd2bucket(dpd),
+      email: (d.email as string | null) ?? "",
+      assignedAgentId: d.assigned_agent_id
+        ? emailById.get(d.assigned_agent_id as string)
+        : undefined,
+      status: (d.status as string | null) ?? undefined,
+      extra: {},
+      altPhones: [],
+      retained: !!retainedFromId,
+      retainedFrom: retainedFromId ? oldPortfolioNameById.get(retainedFromId) : undefined,
+    };
+  });
 }
 
 /** Returns all debtor IDs assigned to a specific agent across all portfolios — derived

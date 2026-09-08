@@ -1742,6 +1742,7 @@ function PortfolioOverviewPage() {
           raw={rawPortfolios.find((r) => r.id === selected.id) ?? null}
           agents={agents}
           onClose={() => setSelected(null)}
+          replacedByName={rawPortfolios.find((x) => x.replacesPortfolioId === selected.id)?.name}
           onReassign={() => {
             openReassign(selected);
             setSelected(null);
