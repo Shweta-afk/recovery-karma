@@ -36,18 +36,14 @@ const STATUS_BADGE: Record<
   rejected: { label: "Rejected", variant: "destructive" },
 };
 
-function slugify(name: string) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 63);
-}
-
 function SuperadminCompaniesPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<CompanyRow[]>([]);
+  // Deliberately never auto-suggested (e.g. slugified from the company name) — the subdomain
+  // is decided by calling the company and asking what they want, not guessed by the app.
+  // Left blank means "approve without a subdomain yet"; approveCompany already treats an
+  // empty/omitted subdomain as "leave it unset for now".
   const [subdomainDrafts, setSubdomainDrafts] = useState<Record<string, string>>({});
   const [actingId, setActingId] = useState<string | null>(null);
 
@@ -60,16 +56,6 @@ function SuperadminCompaniesPage() {
       if (!session) throw new Error("Your session expired — sign in again");
       const res = await getCompanies({ data: { accessToken: session.access_token } });
       setRows(res.rows);
-      // Pre-fill a suggested slug for any pending company that doesn't have a draft yet.
-      setSubdomainDrafts((prev) => {
-        const next = { ...prev };
-        for (const r of res.rows) {
-          if (r.status === "pending" && next[r.id] === undefined) {
-            next[r.id] = slugify(r.companyName);
-          }
-        }
-        return next;
-      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not load companies");
     } finally {
