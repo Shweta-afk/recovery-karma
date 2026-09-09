@@ -345,7 +345,7 @@ export const getCompanyUsers = createServerFn({ method: "POST" })
     const [{ data: client, error: clErr }, { data: users, error: uErr }] = await Promise.all([
       admin
         .from("clients")
-        .select("id, company_name, status, subdomain")
+        .select("id, company_name, status, subdomain, max_agents, max_managers")
         .eq("id", data.clientId)
         .maybeSingle(),
       admin
@@ -369,10 +369,17 @@ export const getCompanyUsers = createServerFn({ method: "POST" })
       .map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, isActive: u.is_active }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    const agentCount = rows.filter((r) => r.role === "agent").length;
+    const managerCount = rows.filter((r) => r.role === "manager").length;
+
     return {
       companyName: client.company_name as string,
       status: client.status as "pending" | "approved" | "rejected",
       subdomain: client.subdomain as string | null,
+      maxAgents: client.max_agents as number | null,
+      maxManagers: client.max_managers as number | null,
+      agentCount,
+      managerCount,
       rows,
     };
   });
@@ -416,6 +423,39 @@ export const updateCompanyUserRole = createServerFn({ method: "POST" })
       .eq("id", data.userId);
     if (updateErr) throw new Error(`Could not update role (${updateErr.message})`);
 
+    return { ok: true };
+  });
+
+/** Sets (or clears, by passing null) how many managers and agents a company's admin may invite
+ *  — enforced in user-admin-actions.server.ts's inviteUser. Passing null for either means
+ *  unlimited; that's also every company's starting state (20260909_company_seat_limits.sql),
+ *  so an existing company like Axiotta is never retroactively capped by this migration —
+ *  only companies a superadmin explicitly sets a number for are restricted. */
+export const setCompanyLimits = createServerFn({ method: "POST" })
+  .inputValidator(
+    (d: {
+      accessToken: string;
+      clientId: string;
+      maxAgents: number | null;
+      maxManagers: number | null;
+    }) => d,
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    if (data.maxAgents !== null && data.maxAgents < 0) {
+      throw new Error("Manager/agent limits can't be negative");
+    }
+    if (data.maxManagers !== null && data.maxManagers < 0) {
+      throw new Error("Manager/agent limits can't be negative");
+    }
+
+    const admin = db();
+    const { error } = await admin
+      .from("clients")
+      .update({ max_agents: data.maxAgents, max_managers: data.maxManagers })
+      .eq("id", data.clientId);
+    if (error) throw new Error(`Could not update seat limits (${error.message})`);
     return { ok: true };
   });
 

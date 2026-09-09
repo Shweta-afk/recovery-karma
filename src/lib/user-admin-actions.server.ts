@@ -44,6 +44,38 @@ export const inviteUser = createServerFn({ method: "POST" })
     }
 
     const admin = getSupabaseAdmin();
+
+    // Seat limit check (20260909_company_seat_limits.sql) — superadmin-set, NULL means
+    // unlimited. Only agent/manager invites are capped; admin invites are not.
+    if (data.role === "agent" || data.role === "manager") {
+      const [{ data: clientRow, error: clientErr }, { count: currentCount, error: countErr }] =
+        await Promise.all([
+          admin
+            .from("clients")
+            .select("max_agents, max_managers")
+            .eq("id", caller.clientId)
+            .maybeSingle(),
+          admin
+            .from("agents")
+            .select("id", { count: "exact", head: true })
+            .eq("client_id", caller.clientId)
+            .eq("role", data.role),
+        ]);
+      if (clientErr) {
+        return { ok: false as const, error: `Could not verify seat limits (${clientErr.message})` };
+      }
+      if (countErr) {
+        return { ok: false as const, error: `Could not verify seat limits (${countErr.message})` };
+      }
+      const limit = data.role === "agent" ? clientRow?.max_agents : clientRow?.max_managers;
+      if (limit !== null && limit !== undefined && (currentCount ?? 0) >= limit) {
+        return {
+          ok: false as const,
+          error: `Your company's ${data.role} limit (${limit}) has been reached — contact SamvadX support to raise it.`,
+        };
+      }
+    }
+
     const temporaryPassword = generatePassword();
 
     const { data: authData, error: authErr } = await admin.auth.admin.createUser({

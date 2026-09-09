@@ -239,6 +239,8 @@ export interface Database {
           verified_at: string | null;
           verified_by: string | null;
           subdomain: string | null;
+          max_agents: number | null;
+          max_managers: number | null;
         };
         Insert: {
           id?: string;
@@ -249,6 +251,8 @@ export interface Database {
           verified_at?: string | null;
           verified_by?: string | null;
           subdomain?: string | null;
+          max_agents?: number | null;
+          max_managers?: number | null;
         };
         Update: {
           id?: string;
@@ -259,6 +263,8 @@ export interface Database {
           verified_at?: string | null;
           verified_by?: string | null;
           subdomain?: string | null;
+          max_agents?: number | null;
+          max_managers?: number | null;
         };
         Relationships: [];
       };

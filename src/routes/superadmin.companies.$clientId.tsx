@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Users, Loader2, Wallet, ShieldCheck, Check, X, Save } from "lucide-react";
+import { ArrowLeft, Users, Loader2, Wallet, ShieldCheck, Check, X, Save, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
   approveCompany,
   rejectCompany,
   setCompanySubdomain,
+  setCompanyLimits,
   type CompanyUserRow,
   type WalletLedgerRow,
 } from "@/lib/superadmin-actions.server";
@@ -62,6 +63,13 @@ function SuperadminCompanyDetailPage() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [savingSubdomain, setSavingSubdomain] = useState(false);
+  const [maxAgents, setMaxAgents] = useState<number | null>(null);
+  const [maxManagers, setMaxManagers] = useState<number | null>(null);
+  const [maxAgentsDraft, setMaxAgentsDraft] = useState("");
+  const [maxManagersDraft, setMaxManagersDraft] = useState("");
+  const [agentCount, setAgentCount] = useState(0);
+  const [managerCount, setManagerCount] = useState(0);
+  const [savingLimits, setSavingLimits] = useState(false);
 
   const load = async () => {
     try {
@@ -77,6 +85,12 @@ function SuperadminCompanyDetailPage() {
       setStatus(usersRes.status);
       setSubdomain(usersRes.subdomain);
       setSubdomainDraft(usersRes.subdomain ?? "");
+      setMaxAgents(usersRes.maxAgents);
+      setMaxManagers(usersRes.maxManagers);
+      setMaxAgentsDraft(usersRes.maxAgents === null ? "" : String(usersRes.maxAgents));
+      setMaxManagersDraft(usersRes.maxManagers === null ? "" : String(usersRes.maxManagers));
+      setAgentCount(usersRes.agentCount);
+      setManagerCount(usersRes.managerCount);
       setUsers(usersRes.rows);
       setLedger(ledgerRes.rows);
     } catch (e) {
@@ -143,6 +157,43 @@ function SuperadminCompanyDetailPage() {
       toast.error(e instanceof Error ? e.message : "Could not update the subdomain");
     } finally {
       setSavingSubdomain(false);
+    }
+  };
+
+  const handleSaveLimits = async () => {
+    const parsed = (raw: string): number | null => {
+      const trimmed = raw.trim();
+      if (trimmed === "") return null;
+      const n = Number(trimmed);
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : NaN;
+    };
+    const nextMaxAgents = parsed(maxAgentsDraft);
+    const nextMaxManagers = parsed(maxManagersDraft);
+    if (Number.isNaN(nextMaxAgents) || Number.isNaN(nextMaxManagers)) {
+      toast.error("Enter a non-negative number, or leave blank for unlimited");
+      return;
+    }
+    setSavingLimits(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      await setCompanyLimits({
+        data: {
+          accessToken: session.access_token,
+          clientId,
+          maxAgents: nextMaxAgents,
+          maxManagers: nextMaxManagers,
+        },
+      });
+      setMaxAgents(nextMaxAgents);
+      setMaxManagers(nextMaxManagers);
+      toast.success("Seat limits updated");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update seat limits");
+    } finally {
+      setSavingLimits(false);
     }
   };
 
@@ -252,6 +303,65 @@ function SuperadminCompanyDetailPage() {
               onClick={handleSaveSubdomain}
             >
               {savingSubdomain ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Save className="h-3 w-3" />
+              )}
+              Save
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b border-border pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Lock className="h-4 w-4 text-primary" />
+            Seat limits
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            How many managers and agents this company's admin may invite. Leave blank for unlimited
+            — that's the default for every company until you set a number here.
+          </p>
+        </CardHeader>
+        <CardContent className="pt-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Managers</span>
+              <Input
+                type="number"
+                min={0}
+                value={maxManagersDraft}
+                onChange={(e) => setMaxManagersDraft(e.target.value)}
+                placeholder="Unlimited"
+                className="h-8 w-24 text-xs"
+              />
+              <span className="text-[11px] text-muted-foreground">
+                ({managerCount} in use{maxManagers !== null ? ` of ${maxManagers}` : ""})
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Agents</span>
+              <Input
+                type="number"
+                min={0}
+                value={maxAgentsDraft}
+                onChange={(e) => setMaxAgentsDraft(e.target.value)}
+                placeholder="Unlimited"
+                className="h-8 w-24 text-xs"
+              />
+              <span className="text-[11px] text-muted-foreground">
+                ({agentCount} in use{maxAgents !== null ? ` of ${maxAgents}` : ""})
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1 text-xs"
+              disabled={savingLimits}
+              onClick={handleSaveLimits}
+            >
+              {savingLimits ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <Save className="h-3 w-3" />
