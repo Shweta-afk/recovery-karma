@@ -160,6 +160,9 @@ export interface CompanyRow {
   walletBalance: number;
   status: "pending" | "approved" | "rejected";
   subdomain: string | null;
+  /** Every admin's email at this company — who to actually contact/vet before approving.
+   *  Almost always exactly one, since a company has only its founding admin at signup. */
+  adminEmails: string[];
 }
 
 /** Every company, with role counts and its ProfileX company-wallet balance — the "see users of
@@ -177,7 +180,7 @@ export const getCompanies = createServerFn({ method: "POST" })
       { data: wallets, error: wErr },
     ] = await Promise.all([
       admin.from("clients").select("id, company_name, plan, created_at, status, subdomain"),
-      admin.from("agents").select("client_id, role"),
+      admin.from("agents").select("client_id, role, email"),
       admin.from("profilex_company_wallets").select("client_id, balance"),
     ]);
     if (cErr) throw new Error(`Could not load companies (${cErr.message})`);
@@ -185,10 +188,16 @@ export const getCompanies = createServerFn({ method: "POST" })
     if (wErr) throw new Error(`Could not load wallets (${wErr.message})`);
 
     const roleCounts = new Map<string, { admin: number; manager: number; agent: number }>();
-    for (const a of (agents ?? []) as { client_id: string; role: string }[]) {
+    const adminEmailsByClient = new Map<string, string[]>();
+    for (const a of (agents ?? []) as { client_id: string; role: string; email: string }[]) {
       const counts = roleCounts.get(a.client_id) ?? { admin: 0, manager: 0, agent: 0 };
-      if (a.role === "admin") counts.admin++;
-      else if (a.role === "manager") counts.manager++;
+      if (a.role === "admin") {
+        counts.admin++;
+        adminEmailsByClient.set(a.client_id, [
+          ...(adminEmailsByClient.get(a.client_id) ?? []),
+          a.email,
+        ]);
+      } else if (a.role === "manager") counts.manager++;
       else counts.agent++;
       roleCounts.set(a.client_id, counts);
     }
@@ -222,6 +231,7 @@ export const getCompanies = createServerFn({ method: "POST" })
           walletBalance: balanceByClient.get(c.id) ?? 0,
           status: c.status,
           subdomain: c.subdomain,
+          adminEmails: adminEmailsByClient.get(c.id) ?? [],
         };
       })
       // Pending companies first — that's the queue a superadmin actually needs to work through.

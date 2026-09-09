@@ -144,6 +144,9 @@ function SuperadminCompaniesPage() {
                   <div className="text-xs font-medium text-foreground truncate">
                     {row.companyName}
                   </div>
+                  <div className="text-[10px] text-muted-foreground truncate">
+                    {row.adminEmails.length > 0 ? row.adminEmails.join(", ") : "No admin yet"}
+                  </div>
                   <div className="text-[10px] text-muted-foreground">
                     Created {new Date(row.createdAt).toLocaleString()}
                   </div>
