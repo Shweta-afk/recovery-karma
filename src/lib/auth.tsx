@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import { supabase } from "./supabase";
-import { enforceSingleSession } from "./session-actions.server";
+import { enforceSingleSession, verifySubdomainAccess } from "./session-actions.server";
 
 export type Role = "agent" | "manager" | "admin" | "superadmin";
 
@@ -330,6 +330,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       loggingInRef.current = false;
       return { error: error.message, user: null };
+    }
+    // Company-subdomain scoping (20260909_subdomain_login_scoping — see
+    // session-actions.server.ts's verifySubdomainAccess): if this hostname is a company's
+    // assigned subdomain, only that company's own users may sign in here at all. Checked
+    // BEFORE enforceSingleSession/profile fetch and, unlike those, is NOT best-effort — a
+    // rejection here signs the browser back out immediately rather than letting the wrong
+    // company's user proceed.
+    if (data.session?.access_token) {
+      try {
+        const subdomainCheck = await verifySubdomainAccess({
+          data: { accessToken: data.session.access_token, hostname: window.location.hostname },
+        });
+        if (!subdomainCheck.ok) {
+          await supabase.auth.signOut();
+          setLoading(false);
+          loggingInRef.current = false;
+          return { error: subdomainCheck.error, user: null };
+        }
+      } catch (err) {
+        // Fail OPEN here too (matches verifySubdomainAccess's own DB-lookup failure mode) —
+        // a network blip talking to this check must not turn into every login failing.
+        console.error("[auth] verifySubdomainAccess failed (continuing sign-in anyway):", err);
+      }
     }
     // Revoke every other session for this account and rotate session_nonce BEFORE reading the
     // profile back below, so that read picks up the fresh nonce rather than the stale one —
