@@ -84,7 +84,7 @@ export interface ServiceSpendRow {
   spend: number;
 }
 
-interface ProfilexSettings {
+export interface ProfilexSettings {
   enabled: boolean;
   monthly_budget: number;
   hit_ttl_hours: number;
@@ -100,7 +100,7 @@ const FALLBACK_SETTINGS: ProfilexSettings = {
   rate_card: {},
 };
 
-async function loadSettings(clientId: string): Promise<ProfilexSettings> {
+export async function loadSettings(clientId: string): Promise<ProfilexSettings> {
   const admin = db();
   const { data } = await admin
     .from("profilex_settings")
@@ -513,45 +513,16 @@ export const getProfilexSpend = createServerFn({ method: "POST" })
     };
   });
 
+/** Read-only for a company admin — they can see their current Insights configuration (whether
+ * it's on, the rate card, the TTLs) but can no longer change it; see the note on
+ * superadmin-actions.server.ts's saveCompanyProfilexSettings for why that moved to
+ * superadmin-only. */
 export const getProfilexSettings = createServerFn({ method: "POST" })
   .inputValidator((d: { accessToken: string }) => d)
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
     return await loadSettings(caller.clientId);
-  });
-
-export const saveProfilexSettings = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: {
-      accessToken: string;
-      enabled: boolean;
-      hitTtlHours: number;
-      missTtlHours: number;
-      rateCard: Record<string, Record<string, number>>;
-    }) => d,
-  )
-  .handler(async ({ data }) => {
-    const caller = await verifyCaller(data.accessToken);
-    if (!caller) throw new Error("Not authenticated");
-    // Admin only: worthless as a control if the people spending against it could change it.
-    if (caller.role !== "admin") throw new Error("Only admins can change Insights settings");
-
-    const admin = db();
-    const { error } = await admin.from("profilex_settings").upsert(
-      {
-        client_id: caller.clientId,
-        enabled: data.enabled,
-        hit_ttl_hours: data.hitTtlHours,
-        miss_ttl_hours: data.missTtlHours,
-        rate_card: data.rateCard,
-        updated_at: new Date().toISOString(),
-        updated_by: caller.agentId ?? null,
-      },
-      { onConflict: "client_id" },
-    );
-    if (error) throw new Error(`Could not save Insights settings (${error.message})`);
-    return { ok: true };
   });
 
 /** A manager's own Insights wallet balance — what the Trace tab shows them before they run a

@@ -24,6 +24,7 @@ import {
   type CompanyUserRow,
   type WalletLedgerRow,
 } from "@/lib/superadmin-actions.server";
+import { CompanyInsightsSettingsCard } from "@/components/profilex/company-insights-settings-card";
 
 type EditableRole = "agent" | "manager" | "admin";
 type CompanyStatus = "pending" | "approved" | "rejected";
@@ -260,6 +261,8 @@ function SuperadminCompanyDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      <CompanyInsightsSettingsCard clientId={clientId} />
 
       <Card>
         <CardHeader className="border-b border-border pb-3">

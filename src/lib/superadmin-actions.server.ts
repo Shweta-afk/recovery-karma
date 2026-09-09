@@ -7,6 +7,7 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
+import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 
 function db() {
   return getSupabaseAdmin();
@@ -624,4 +625,56 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
     }));
 
     return { rows: result };
+  });
+
+/** One company's Insights configuration (enable toggle, cache TTLs, rate card) — superadmin
+ * read, paired with saveCompanyProfilexSettings below for the write. Reuses profilex-actions.
+ * server.ts's loadSettings so the shape/fallback defaults never drift between the two. */
+export const getCompanyProfilexSettings = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; clientId: string }) => d)
+  .handler(async ({ data }): Promise<ProfilexSettings> => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    return await loadSettings(data.clientId);
+  });
+
+/** Sets one company's Insights pricing/config. Moved here from profilex-actions.server.ts's
+ * old saveProfilexSettings (which let a company admin edit their own rate card) because the
+ * rate card is what SamvadX actually gets billed against by ProfileX/Neokred — a company admin
+ * changing it was really editing SamvadX's own cost basis, not just their own spend. Company
+ * admins now see this read-only (getProfilexSettings) and can only manage their managers'
+ * wallets, not the pricing those wallets spend against. */
+export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
+  .inputValidator(
+    (d: {
+      accessToken: string;
+      clientId: string;
+      enabled: boolean;
+      hitTtlHours: number;
+      missTtlHours: number;
+      rateCard: Record<string, Record<string, number>>;
+    }) => d,
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+
+    const admin = db();
+    const { error } = await admin.from("profilex_settings").upsert(
+      {
+        client_id: data.clientId,
+        enabled: data.enabled,
+        hit_ttl_hours: data.hitTtlHours,
+        miss_ttl_hours: data.missTtlHours,
+        rate_card: data.rateCard,
+        updated_at: new Date().toISOString(),
+        // profilex_settings.updated_by references agents(id), not superadmins(id) — a
+        // superadmin has no agents row to attribute this to, so leave it null rather than
+        // writing an id the FK would reject.
+        updated_by: null,
+      },
+      { onConflict: "client_id" },
+    );
+    if (error) throw new Error(`Could not save Insights settings (${error.message})`);
+    return { ok: true };
   });
