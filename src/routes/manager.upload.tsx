@@ -44,7 +44,6 @@ import {
   type UploadedDebtor,
   type PortfolioSettings,
   PRODUCT_LABEL_TO_ENUM,
-  minPortfolioEndDate,
 } from "@/lib/portfolio-store";
 import { useTeamAgents, withSelf } from "@/lib/team-store";
 import { useActiveTeam } from "@/lib/active-team-store";
@@ -171,11 +170,9 @@ function PortfolioUploadPage() {
   // "This continues portfolio X" — set, reconcileRetainedDebtors() in createPortfolio() carries
   // forward any 'sent_to_bank' retention request against that old portfolio, then closes it.
   const [replacesPortfolioId, setReplacesPortfolioId] = useState<string>("");
-  // Manager-set target end date for this cycle (see isPortfolioEnded/minPortfolioEndDate in
-  // portfolio-store.ts) — defaults to exactly the one-month minimum, editable up from there.
-  const [endDate, setEndDate] = useState<string>(() =>
-    minPortfolioEndDate(new Date().toISOString()),
-  );
+  // Manager-set target end date for this cycle (see isPortfolioEnded in portfolio-store.ts) —
+  // no default; the manager picks whatever date makes sense for this cycle.
+  const [endDate, setEndDate] = useState<string>("");
   const [existingPortfolios, setExistingPortfolios] = useState<UploadedPortfolio[]>(() =>
     getPortfolios(),
   );
@@ -363,10 +360,6 @@ function PortfolioUploadPage() {
       return;
     }
     const uploadedAt = new Date().toISOString();
-    if (endDate && endDate < minPortfolioEndDate(uploadedAt)) {
-      toast.error("A portfolio has to run at least one month — push the end date out further");
-      return;
-    }
     if (!allocationComplete) {
       toast.error(
         "Some accounts are assigned to more than one agent — adjust the split before uploading.",
@@ -440,6 +433,15 @@ function PortfolioUploadPage() {
   };
 
   const unmappedRequired = REQUIRED_STD_FIELDS.filter((f) => !mapping[f.key]);
+
+  // loan_amount is nullable in the DB (see csv-fields.ts), so a wrong/missing mapping never
+  // blocks the upload the way a missing required field does — it just silently inserts every
+  // row at ₹0. That already happened once in production (a whole portfolio uploaded with no
+  // loan amounts, discovered only weeks later when its Outstanding KPI read ₹0). Surfacing it
+  // here, before upload, catches both failure modes: the column left unmapped, and the column
+  // mapped to something that doesn't actually parse as a number.
+  const zeroLoanAmountWarning =
+    rawRows.length > 0 && (!mapping.loan_amount || mappedRows.every((r) => r.loanAmount === 0));
 
   return (
     <div className="space-y-6">
@@ -579,15 +581,13 @@ function PortfolioUploadPage() {
                   <Input
                     id="end-date"
                     type="date"
-                    min={minPortfolioEndDate(new Date().toISOString())}
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
                     disabled={step !== "meta"}
                   />
                   <p className="text-[11px] text-muted-foreground">
-                    A target for this cycle — must run at least one month. Nothing closes
-                    automatically, but past this date the portfolio's accounts stop showing in the
-                    active call queue.
+                    A target for this cycle. Nothing closes automatically, but past this date the
+                    portfolio's accounts stop showing in the active call queue.
                   </p>
                 </div>
                 <div className="space-y-1.5 sm:col-span-2">
@@ -621,12 +621,7 @@ function PortfolioUploadPage() {
                   <div className="flex items-end">
                     <Button
                       className="w-full"
-                      disabled={
-                        !portfolioName ||
-                        !lenderName ||
-                        !endDate ||
-                        endDate < minPortfolioEndDate(new Date().toISOString())
-                      }
+                      disabled={!portfolioName || !lenderName || !endDate}
                       onClick={() => setStep("file")}
                     >
                       Continue <ArrowRight className="h-3.5 w-3.5 ml-1" />
@@ -833,6 +828,19 @@ function PortfolioUploadPage() {
                     </p>
                   )}
 
+                  {zeroLoanAmountWarning && (
+                    <p className="mt-3 text-xs text-destructive flex items-start gap-1">
+                      <span className="font-semibold flex-shrink-0">Warning:</span>
+                      <span>
+                        {mapping.loan_amount
+                          ? `Every row's Outstanding Amount is coming through as ₹0 — "${mapping.loan_amount}" probably isn't the right column.`
+                          : "Outstanding Amount isn't mapped — every account will upload with ₹0 owed."}{" "}
+                        Double-check the mapping before continuing; this has silently uploaded a
+                        portfolio with no loan amounts before.
+                      </span>
+                    </p>
+                  )}
+
                   {step === "map" && (
                     <Button className="mt-4 w-full" onClick={() => setStep("settings")}>
                       Continue to Settings <ArrowRight className="h-3.5 w-3.5 ml-1" />
@@ -1030,6 +1038,13 @@ function PortfolioUploadPage() {
                         ))}
                         {rowIssues.length > 10 && <li>…and {rowIssues.length - 10} more</li>}
                       </ul>
+                    </div>
+                  )}
+
+                  {zeroLoanAmountWarning && (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                      Every account here is about to upload with ₹0 Outstanding Amount — go back to
+                      Map Columns and check the mapping before uploading.
                     </div>
                   )}
 

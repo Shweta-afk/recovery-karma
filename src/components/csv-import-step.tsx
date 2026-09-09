@@ -144,6 +144,11 @@ export function CsvImportStep({
   );
 
   const unmappedRequired = REQUIRED_STD_FIELDS.filter((f) => !mapping[f.key]);
+  // loan_amount is nullable, so a wrong/missing mapping never blocks the import — it just
+  // silently writes every row at ₹0 (see the same check in manager.upload.tsx, added after
+  // exactly this happened to a real portfolio).
+  const zeroLoanAmountWarning =
+    rawRows.length > 0 && (!mapping.loan_amount || mappedRows.every((r) => r.loanAmount === 0));
   const hasFile = rawHeaders.length > 0;
   // Not gated on unmappedRequired/rowIssues — those are shown as warnings below, but a row
   // missing name/phone just gets skipped at import time (reported back), not blocked here.
@@ -356,6 +361,18 @@ export function CsvImportStep({
               <span className="font-semibold">Not mapped:</span>{" "}
               {unmappedRequired.map((f) => f.label).join(", ")} — rows missing these will be
               skipped, everything else still goes through.
+            </p>
+          )}
+
+          {zeroLoanAmountWarning && (
+            <p className="text-xs text-destructive flex items-start gap-1">
+              <span className="font-semibold flex-shrink-0">Warning:</span>
+              <span>
+                {mapping.loan_amount
+                  ? `Every row's Outstanding Amount is coming through as ₹0 — "${mapping.loan_amount}" probably isn't the right column.`
+                  : "Outstanding Amount isn't mapped — every account will import with ₹0 owed."}{" "}
+                Double-check the mapping before continuing.
+              </span>
             </p>
           )}
 

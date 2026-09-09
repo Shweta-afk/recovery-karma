@@ -13,7 +13,6 @@ import {
   closePortfolio,
   PRODUCT_LABEL_TO_ENUM,
   DEFAULT_PORTFOLIO_SETTINGS,
-  minPortfolioEndDate,
   type UploadedPortfolio,
   type UploadedDebtor,
   type PortfolioSettings,
@@ -300,17 +299,9 @@ function EditPortfolioDialog({
     setTargets((prev) => ({ ...prev, [agentId]: { ...prev[agentId], ...patch } }));
   };
 
-  const minEndDate = minPortfolioEndDate(portfolio.uploadedAt);
-
   const handleSave = async () => {
     if (!name.trim() || !lender.trim()) {
       toast.error("Portfolio name and lender can't be empty");
-      return;
-    }
-    if (endDate && endDate < minEndDate) {
-      toast.error(
-        `A portfolio has to run at least one month — the earliest end date here is ${new Date(minEndDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`,
-      );
       return;
     }
     setSaving(true);
@@ -492,14 +483,12 @@ function EditPortfolioDialog({
                   <Input
                     id="edit-end-date"
                     type="date"
-                    min={minEndDate}
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
                   />
                   <p className="text-[10px] text-muted-foreground">
                     A target only — nothing closes automatically, but past this date the portfolio's
-                    accounts stop showing in the active call queue. Must be at least one month after
-                    upload.
+                    accounts stop showing in the active call queue.
                   </p>
                 </div>
               </div>
@@ -886,7 +875,7 @@ function EditPortfolioDialog({
               ) : (
                 <Trash2 className="h-3.5 w-3.5" />
               )}
-              Delete Portfolio
+              Close Portfolio
             </Button>
           </div>
 
@@ -923,7 +912,7 @@ function EditPortfolioDialog({
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete "{portfolio.name}"?</AlertDialogTitle>
+            <AlertDialogTitle>Close "{portfolio.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
               This closes the portfolio — its remaining accounts stop being called, but it stays
               listed in Portfolio Overview (tagged Closed) and nothing is permanently deleted. All
@@ -932,7 +921,7 @@ function EditPortfolioDialog({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Yes, delete portfolio</AlertDialogAction>
+            <AlertDialogAction onClick={handleDelete}>Yes, close portfolio</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

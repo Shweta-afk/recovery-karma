@@ -169,16 +169,6 @@ export function isPortfolioEnded(p: { closedAt?: string; endDate?: string }): bo
   return !!p.closedAt || (!!p.endDate && p.endDate < todayIstKey());
 }
 
-/** A portfolio must run for at least one calendar month — the minimum a manager can pick as its
- * end date. Deliberately not enforced in the DB (see the migration) since it's relative to
- * uploaded_at. Native Date's month-overflow (e.g. Jan 31 -> Mar 3) only ever pushes the minimum
- * later, never shorter, so it's safe to use as-is for a floor. */
-export function minPortfolioEndDate(startIso: string): string {
-  const d = new Date(startIso);
-  d.setUTCMonth(d.getUTCMonth() + 1);
-  return d.toISOString().slice(0, 10);
-}
-
 /** Set once `portfolio_agent_targets` answers "no such table", so refreshPortfolios() stops
  * re-querying it for the rest of the session. Per-tab and deliberately not persisted — a
  * reload after the migration is applied picks the table up again. */
