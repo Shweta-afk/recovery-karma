@@ -138,6 +138,32 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate({ to: "/login" });
   };
 
+  // A superadmin has no client_id, so companyStatus is always undefined for them — the gate
+  // below only ever applies to agent/manager/admin. A missing companyStatus on an ordinary
+  // user (a profile cached before this feature existed) fails OPEN rather than locking
+  // everyone out on deploy day; the 2-minute profile cache TTL picks up the real value shortly.
+  if (user.companyStatus && user.companyStatus !== "approved") {
+    return (
+      <div className="flex min-h-screen w-full flex-col items-center justify-center gap-4 bg-background p-8 text-center">
+        <span className="text-4xl">{user.companyStatus === "rejected" ? "🚫" : "⏳"}</span>
+        <h2 className="text-lg font-semibold text-foreground">
+          {user.companyStatus === "rejected"
+            ? "This company was not approved"
+            : "Awaiting verification"}
+        </h2>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          {user.companyStatus === "rejected"
+            ? "SamvadX did not approve this company's signup. Contact support if you believe this is a mistake."
+            : "A SamvadX superadmin needs to verify your company before you can sign in. You'll be able to get in as soon as that's done — no action needed from you right now."}
+        </p>
+        <Button variant="outline" size="sm" onClick={handleLogout}>
+          <LogOut className="h-4 w-4" />
+          Logout
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">

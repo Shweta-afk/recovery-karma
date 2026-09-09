@@ -157,6 +157,8 @@ export interface CompanyRow {
   managerCount: number;
   agentCount: number;
   walletBalance: number;
+  status: "pending" | "approved" | "rejected";
+  subdomain: string | null;
 }
 
 /** Every company, with role counts and its ProfileX company-wallet balance — the "see users of
@@ -173,7 +175,7 @@ export const getCompanies = createServerFn({ method: "POST" })
       { data: agents, error: aErr },
       { data: wallets, error: wErr },
     ] = await Promise.all([
-      admin.from("clients").select("id, company_name, plan, created_at"),
+      admin.from("clients").select("id, company_name, plan, created_at, status, subdomain"),
       admin.from("agents").select("client_id, role"),
       admin.from("profilex_company_wallets").select("client_id, balance"),
     ]);
@@ -197,7 +199,14 @@ export const getCompanies = createServerFn({ method: "POST" })
     );
 
     const rows: CompanyRow[] = (
-      (clients ?? []) as { id: string; company_name: string; plan: string; created_at: string }[]
+      (clients ?? []) as {
+        id: string;
+        company_name: string;
+        plan: string;
+        created_at: string;
+        status: "pending" | "approved" | "rejected";
+        subdomain: string | null;
+      }[]
     )
       .map((c) => {
         const counts = roleCounts.get(c.id) ?? { admin: 0, manager: 0, agent: 0 };
@@ -210,11 +219,100 @@ export const getCompanies = createServerFn({ method: "POST" })
           managerCount: counts.manager,
           agentCount: counts.agent,
           walletBalance: balanceByClient.get(c.id) ?? 0,
+          status: c.status,
+          subdomain: c.subdomain,
         };
       })
-      .sort((a, b) => a.companyName.localeCompare(b.companyName));
+      // Pending companies first — that's the queue a superadmin actually needs to work through.
+      .sort((a, b) => {
+        if (a.status === "pending" && b.status !== "pending") return -1;
+        if (b.status === "pending" && a.status !== "pending") return 1;
+        return a.companyName.localeCompare(b.companyName);
+      });
 
     return { rows };
+  });
+
+const SUBDOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** Approves a pending company, optionally assigning its subdomain slug in the same step (the
+ *  DNS/Railway domain itself is provisioned outside the app — this just records the slug once
+ *  the superadmin has picked one). Until this runs, every user at the company sees the
+ *  "awaiting verification" gate (auth.tsx / app-shell.tsx) instead of the app. */
+export const approveCompany = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; clientId: string; subdomain?: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+
+    const subdomain = data.subdomain?.trim().toLowerCase() || null;
+    if (subdomain && !SUBDOMAIN_RE.test(subdomain)) {
+      throw new Error("Subdomain must be lowercase letters, numbers and hyphens only");
+    }
+
+    const admin = db();
+    const patch: {
+      status: "approved";
+      verified_at: string;
+      verified_by: string;
+      subdomain?: string;
+    } = {
+      status: "approved",
+      verified_at: new Date().toISOString(),
+      verified_by: caller.superadminId,
+    };
+    if (subdomain) patch.subdomain = subdomain;
+
+    const { error } = await admin.from("clients").update(patch).eq("id", data.clientId);
+    if (error) {
+      if (/duplicate key|already exists/i.test(error.message)) {
+        throw new Error("That subdomain is already taken by another company");
+      }
+      throw new Error(`Could not approve the company (${error.message})`);
+    }
+    return { ok: true };
+  });
+
+/** Rejects a pending company — status only, nothing is deleted (the auth account and client
+ *  row survive so a superadmin can revisit the decision later). */
+export const rejectCompany = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; clientId: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const admin = db();
+    const { error } = await admin
+      .from("clients")
+      .update({
+        status: "rejected",
+        verified_at: new Date().toISOString(),
+        verified_by: caller.superadminId,
+      })
+      .eq("id", data.clientId);
+    if (error) throw new Error(`Could not reject the company (${error.message})`);
+    return { ok: true };
+  });
+
+/** Sets (or changes) an already-approved company's subdomain slug on its own, separate from
+ *  the approve step above. */
+export const setCompanySubdomain = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; clientId: string; subdomain: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const subdomain = data.subdomain.trim().toLowerCase();
+    if (!SUBDOMAIN_RE.test(subdomain)) {
+      throw new Error("Subdomain must be lowercase letters, numbers and hyphens only");
+    }
+    const admin = db();
+    const { error } = await admin.from("clients").update({ subdomain }).eq("id", data.clientId);
+    if (error) {
+      if (/duplicate key|already exists/i.test(error.message)) {
+        throw new Error("That subdomain is already taken by another company");
+      }
+      throw new Error(`Could not update the subdomain (${error.message})`);
+    }
+    return { ok: true };
   });
 
 export interface CompanyUserRow {
@@ -234,7 +332,11 @@ export const getCompanyUsers = createServerFn({ method: "POST" })
     const admin = db();
 
     const [{ data: client, error: clErr }, { data: users, error: uErr }] = await Promise.all([
-      admin.from("clients").select("id, company_name").eq("id", data.clientId).maybeSingle(),
+      admin
+        .from("clients")
+        .select("id, company_name, status, subdomain")
+        .eq("id", data.clientId)
+        .maybeSingle(),
       admin
         .from("agents")
         .select("id, name, email, role, is_active")
@@ -256,7 +358,12 @@ export const getCompanyUsers = createServerFn({ method: "POST" })
       .map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, isActive: u.is_active }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    return { companyName: client.company_name as string, rows };
+    return {
+      companyName: client.company_name as string,
+      status: client.status as "pending" | "approved" | "rejected",
+      subdomain: client.subdomain as string | null,
+      rows,
+    };
   });
 
 /** Changes one company user's role — the superadmin equivalent of admin.users.tsx's

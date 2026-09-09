@@ -1,9 +1,11 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Users, Loader2, Wallet } from "lucide-react";
+import { ArrowLeft, Users, Loader2, Wallet, ShieldCheck, Check, X, Save } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -16,11 +18,24 @@ import {
   getCompanyUsers,
   getWalletLedger,
   updateCompanyUserRole,
+  approveCompany,
+  rejectCompany,
+  setCompanySubdomain,
   type CompanyUserRow,
   type WalletLedgerRow,
 } from "@/lib/superadmin-actions.server";
 
 type EditableRole = "agent" | "manager" | "admin";
+type CompanyStatus = "pending" | "approved" | "rejected";
+
+const STATUS_BADGE: Record<
+  CompanyStatus,
+  { label: string; variant: "secondary" | "destructive" | "outline" }
+> = {
+  pending: { label: "Pending", variant: "outline" },
+  approved: { label: "Approved", variant: "secondary" },
+  rejected: { label: "Rejected", variant: "destructive" },
+};
 
 export const Route = createFileRoute("/superadmin/companies/$clientId")({
   head: () => ({ meta: [{ title: "Company · SamvadX Platform" }] }),
@@ -38,31 +53,97 @@ function SuperadminCompanyDetailPage() {
   const { clientId } = useParams({ from: "/superadmin/companies/$clientId" });
   const [loading, setLoading] = useState(true);
   const [companyName, setCompanyName] = useState("");
+  const [status, setStatus] = useState<CompanyStatus>("approved");
+  const [subdomain, setSubdomain] = useState<string | null>(null);
+  const [subdomainDraft, setSubdomainDraft] = useState("");
   const [users, setUsers] = useState<CompanyUserRow[]>([]);
   const [ledger, setLedger] = useState<WalletLedgerRow[]>([]);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [savingSubdomain, setSavingSubdomain] = useState(false);
+
+  const load = async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      const [usersRes, ledgerRes] = await Promise.all([
+        getCompanyUsers({ data: { accessToken: session.access_token, clientId } }),
+        getWalletLedger({ data: { accessToken: session.access_token, clientId, limit: 100 } }),
+      ]);
+      setCompanyName(usersRes.companyName);
+      setStatus(usersRes.status);
+      setSubdomain(usersRes.subdomain);
+      setSubdomainDraft(usersRes.subdomain ?? "");
+      setUsers(usersRes.rows);
+      setLedger(ledgerRes.rows);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not load this company");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    (async () => {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session) throw new Error("Your session expired — sign in again");
-        const [usersRes, ledgerRes] = await Promise.all([
-          getCompanyUsers({ data: { accessToken: session.access_token, clientId } }),
-          getWalletLedger({ data: { accessToken: session.access_token, clientId, limit: 100 } }),
-        ]);
-        setCompanyName(usersRes.companyName);
-        setUsers(usersRes.rows);
-        setLedger(ledgerRes.rows);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not load this company");
-      } finally {
-        setLoading(false);
-      }
-    })();
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
+
+  const handleApprove = async () => {
+    setVerifying(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      await approveCompany({
+        data: { accessToken: session.access_token, clientId, subdomain: subdomainDraft },
+      });
+      toast.success(`${companyName} approved`);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not approve this company");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleReject = async () => {
+    setVerifying(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      await rejectCompany({ data: { accessToken: session.access_token, clientId } });
+      toast.success(`${companyName} rejected`);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not reject this company");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleSaveSubdomain = async () => {
+    setSavingSubdomain(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      await setCompanySubdomain({
+        data: { accessToken: session.access_token, clientId, subdomain: subdomainDraft },
+      });
+      setSubdomain(subdomainDraft.trim().toLowerCase());
+      toast.success("Subdomain updated");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update the subdomain");
+    } finally {
+      setSavingSubdomain(false);
+    }
+  };
 
   const handleRoleChange = async (user: CompanyUserRow, role: EditableRole) => {
     if (role === user.role) return;
@@ -107,9 +188,78 @@ function SuperadminCompanyDetailPage() {
         </Link>
         <div className="mt-1 flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{companyName}</h1>
-          <Badge variant="secondary">Superadmin</Badge>
+          <Badge variant={STATUS_BADGE[status].variant}>{STATUS_BADGE[status].label}</Badge>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="border-b border-border pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-primary" />
+            Verification &amp; subdomain
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4 space-y-3">
+          {status === "pending" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" className="gap-1.5" disabled={verifying} onClick={handleApprove}>
+                {verifying ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Check className="h-3.5 w-3.5" />
+                )}
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 border-destructive/40 text-destructive hover:text-destructive"
+                disabled={verifying}
+                onClick={handleReject}
+              >
+                <X className="h-3.5 w-3.5" />
+                Reject
+              </Button>
+            </div>
+          )}
+          {status === "rejected" && (
+            <Button size="sm" className="gap-1.5" disabled={verifying} onClick={handleApprove}>
+              {verifying ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+              Approve anyway
+            </Button>
+          )}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Subdomain</span>
+            <Input
+              value={subdomainDraft}
+              onChange={(e) => setSubdomainDraft(e.target.value)}
+              placeholder="acme"
+              className="h-8 w-40 text-xs"
+            />
+            <span className="text-[11px] text-muted-foreground">.samvadx.com</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1 text-xs"
+              disabled={
+                savingSubdomain || subdomainDraft.trim().toLowerCase() === (subdomain ?? "")
+              }
+              onClick={handleSaveSubdomain}
+            >
+              {savingSubdomain ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Save className="h-3 w-3" />
+              )}
+              Save
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="border-b border-border pb-3">

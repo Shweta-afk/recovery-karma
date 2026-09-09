@@ -33,6 +33,10 @@ export interface AuthUser {
   email: string;
   role: Role;
   agentPhone: string | null; // Phone/extension registered with the telephony provider
+  /** The company's verification status (20260909_company_verification_and_subdomain.sql).
+   *  Undefined for a superadmin, who has no client_id. AppShell shows a "pending" gate screen
+   *  instead of the app for anything other than "approved". */
+  companyStatus?: "pending" | "approved" | "rejected";
 }
 
 interface AuthCtx {
@@ -158,7 +162,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         Promise.resolve(
           supabase
             .from("agents")
-            .select("name, email, role, agent_phone, session_nonce")
+            // Embeds the agent's own client row via the client_id FK — one query gets both the
+            // profile and the company's verification status (20260909_company_verification_and_
+            // subdomain.sql), which the "pending" gate screen below needs on every login.
+            .select("name, email, role, agent_phone, session_nonce, clients(status)")
             .eq("auth_user_id", authUserId)
             .maybeSingle(),
         ),
@@ -180,12 +187,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     sessionNonceRef.current = (data.session_nonce as string | null) ?? null;
 
+    // Embedded FK selects come back as an object for a to-one relationship, but supabase-js
+    // types it defensively as possibly-array — narrow either shape down to one row.
+    const embeddedClient = data.clients as { status?: string } | { status?: string }[] | null;
+    const clientStatus = Array.isArray(embeddedClient) ? embeddedClient[0] : embeddedClient;
+
     const profile: AuthUser = {
       id: authUserId,
       name: data.name,
       email: data.email,
       role: data.role as Role,
       agentPhone: data.agent_phone as string | null,
+      companyStatus: clientStatus?.status as AuthUser["companyStatus"],
     };
 
     localStorage.setItem(cacheKey, JSON.stringify({ profile, at: Date.now() }));

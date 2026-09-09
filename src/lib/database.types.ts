@@ -235,18 +235,30 @@ export interface Database {
           company_name: string;
           plan: string | null;
           created_at: string | null;
+          status: string;
+          verified_at: string | null;
+          verified_by: string | null;
+          subdomain: string | null;
         };
         Insert: {
           id?: string;
           company_name: string;
           plan?: string | null;
           created_at?: string | null;
+          status?: string;
+          verified_at?: string | null;
+          verified_by?: string | null;
+          subdomain?: string | null;
         };
         Update: {
           id?: string;
           company_name?: string;
           plan?: string | null;
           created_at?: string | null;
+          status?: string;
+          verified_at?: string | null;
+          verified_by?: string | null;
+          subdomain?: string | null;
         };
         Relationships: [];
       };
