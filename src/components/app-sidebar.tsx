@@ -16,6 +16,9 @@ import {
   FolderOpen,
   Timer,
   RadioTower,
+  Building2,
+  Wallet,
+  Sparkles,
 } from "lucide-react";
 import {
   Sidebar,
@@ -70,11 +73,19 @@ const adminItems = [
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];
 
+const superadminItems = [
+  { title: "Companies", url: "/superadmin", icon: Building2 },
+  { title: "Insights Wallet", url: "/superadmin/wallet", icon: Wallet },
+  { title: "Insights Activity", url: "/superadmin/insights", icon: Sparkles },
+];
+
 export function AppSidebar({ role }: { role: Role }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const isActive = (url: string) =>
-    url === "/manager" || url === "/admin" ? pathname === url : pathname.startsWith(url);
+    url === "/manager" || url === "/admin" || url === "/superadmin"
+      ? pathname === url
+      : pathname.startsWith(url);
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -141,6 +152,27 @@ export function AppSidebar({ role }: { role: Role }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 {adminItems.map((item) => (
+                  <SidebarMenuItem key={item.url}>
+                    <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                      <Link to={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {/* Superadmin — spans every company, so it gets none of the client-scoped groups above */}
+        {role === "superadmin" && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Platform</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {superadminItems.map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
                       <Link to={item.url}>

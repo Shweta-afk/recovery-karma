@@ -3,7 +3,7 @@
 // gated by their own balance, which only ever moves via a top-up here or a charge when they run
 // a lookup (see runProfilexTrace in profilex-actions.server.ts). Never auto-resets.
 import { useEffect, useState } from "react";
-import { Wallet, Save, Loader2 } from "lucide-react";
+import { Wallet, PlusCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,15 +12,78 @@ import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabase";
 import {
   getManagerWallets,
-  setManagerWallet,
+  getCompanyWallet,
+  allocateToManager,
   type ManagerWalletRow,
 } from "@/lib/profilex-actions.server";
+
+/** Standalone, prominent display of this company's own Insights budget — what a superadmin
+ *  allocated to this company (see profilex_company_wallets / getCompanyWallet), as opposed to
+ *  any one manager's balance below. Its own admin-only RLS SELECT policy
+ *  (profilex_company_wallets_select) means this number is real even before the admin has
+ *  topped up a single manager. */
+export function CompanyWalletCard() {
+  const [loading, setLoading] = useState(true);
+  const [balance, setBalance] = useState<number | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session) throw new Error("Your session expired — sign in again");
+        const res = await getCompanyWallet({ data: { accessToken: session.access_token } });
+        setBalance(res.balance);
+        setUpdatedAt(res.updatedAt ?? null);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not load your company's wallet");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  return (
+    <Card>
+      <CardHeader className="border-b border-border pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Wallet className="h-4 w-4 text-primary" />
+          Your Insights Budget
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Funded by SamvadX from the platform's ProfileX account. Hand it out to your managers below
+          — you can never allocate more than what's shown here.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-4">
+        {loading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-4">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+          </div>
+        ) : (
+          <>
+            <div className="text-2xl font-semibold text-foreground">
+              ₹{(balance ?? 0).toFixed(2)}
+            </div>
+            {updatedAt && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Last updated {new Date(updatedAt).toLocaleString()}
+              </p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export function ManagerWalletsCard() {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<ManagerWalletRow[]>([]);
-  // Uncommitted edits, keyed by manager_id — a row's input shows this while being edited,
-  // falling back to the loaded balance once there's nothing pending for it.
+  const [companyBalance, setCompanyBalance] = useState<number | null>(null);
+  // Uncommitted top-up amounts, keyed by manager_id — cleared once a top-up is applied.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
 
@@ -31,8 +94,12 @@ export function ManagerWalletsCard() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session) throw new Error("Your session expired — sign in again");
-      const res = await getManagerWallets({ data: { accessToken: session.access_token } });
-      setRows(res.rows);
+      const [walletsRes, companyRes] = await Promise.all([
+        getManagerWallets({ data: { accessToken: session.access_token } }),
+        getCompanyWallet({ data: { accessToken: session.access_token } }),
+      ]);
+      setRows(walletsRes.rows);
+      setCompanyBalance(companyRes.balance);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not load manager wallets");
     } finally {
@@ -44,11 +111,11 @@ export function ManagerWalletsCard() {
     load();
   }, []);
 
-  const handleSave = async (row: ManagerWalletRow) => {
+  const handleTopUp = async (row: ManagerWalletRow) => {
     const raw = drafts[row.manager_id];
-    const balance = raw === undefined ? row.balance : Number(raw);
-    if (Number.isNaN(balance) || balance < 0) {
-      toast.error("Enter a valid, non-negative amount");
+    const amount = Number(raw);
+    if (!raw || Number.isNaN(amount) || amount <= 0) {
+      toast.error("Enter a positive amount to add");
       return;
     }
     setSavingId(row.manager_id);
@@ -57,22 +124,23 @@ export function ManagerWalletsCard() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session) throw new Error("Your session expired — sign in again");
-      await setManagerWallet({
-        data: { accessToken: session.access_token, managerId: row.manager_id, balance },
+      const res = await allocateToManager({
+        data: { accessToken: session.access_token, managerId: row.manager_id, amount },
       });
       setRows((prev) =>
         prev.map((r) =>
           r.manager_id === row.manager_id
-            ? { ...r, balance, updated_at: new Date().toISOString() }
+            ? { ...r, balance: res.balance, updated_at: new Date().toISOString() }
             : r,
         ),
       );
+      setCompanyBalance((prev) => (prev === null ? prev : prev - amount));
       setDrafts((prev) => {
         const next = { ...prev };
         delete next[row.manager_id];
         return next;
       });
-      toast.success(`${row.name}'s Insights wallet set to ₹${balance.toFixed(2)}`);
+      toast.success(`Added ₹${amount.toFixed(2)} to ${row.name}'s Insights wallet`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not update the wallet");
     } finally {
@@ -88,9 +156,9 @@ export function ManagerWalletsCard() {
           Manager Wallets
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Each manager spends Insights lookups from their own prepaid balance — set or top it up
-          here. It never resets automatically; once it hits ₹0 that manager can't run more lookups
-          until you add more.
+          Each manager spends Insights lookups from their own prepaid balance — top it up here,
+          drawn from your Insights Budget above. It never resets automatically; once it hits ₹0 that
+          manager can't run more lookups until you add more.
         </p>
       </CardHeader>
       <CardContent className="pt-4">
@@ -105,8 +173,8 @@ export function ManagerWalletsCard() {
         ) : (
           <div className="space-y-2">
             {rows.map((row) => {
-              const draft = drafts[row.manager_id];
-              const dirty = draft !== undefined && Number(draft) !== row.balance;
+              const draft = drafts[row.manager_id] ?? "";
+              const canTopUp = draft !== "" && Number(draft) > 0;
               return (
                 <div
                   key={row.manager_id}
@@ -117,6 +185,9 @@ export function ManagerWalletsCard() {
                     <div className="text-[10px] text-muted-foreground truncate">{row.email}</div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-xs text-muted-foreground">
+                      Balance ₹{row.balance.toFixed(2)}
+                    </span>
                     {row.balance <= 0 && (
                       <Badge
                         variant="outline"
@@ -125,12 +196,13 @@ export function ManagerWalletsCard() {
                         Empty
                       </Badge>
                     )}
-                    <span className="text-xs text-muted-foreground">₹</span>
+                    <span className="text-xs text-muted-foreground">+ ₹</span>
                     <Input
                       type="number"
                       min={0}
                       step="0.5"
-                      value={draft ?? row.balance}
+                      placeholder="0"
+                      value={draft}
                       onChange={(e) =>
                         setDrafts((prev) => ({ ...prev, [row.manager_id]: e.target.value }))
                       }
@@ -138,17 +210,17 @@ export function ManagerWalletsCard() {
                     />
                     <Button
                       size="sm"
-                      variant={dirty ? "default" : "outline"}
+                      variant={canTopUp ? "default" : "outline"}
                       className="h-8 gap-1 text-xs flex-shrink-0"
-                      disabled={!dirty || savingId === row.manager_id}
-                      onClick={() => handleSave(row)}
+                      disabled={!canTopUp || savingId === row.manager_id}
+                      onClick={() => handleTopUp(row)}
                     >
                       {savingId === row.manager_id ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        <Save className="h-3 w-3" />
+                        <PlusCircle className="h-3 w-3" />
                       )}
-                      Save
+                      Top up
                     </Button>
                   </div>
                 </div>

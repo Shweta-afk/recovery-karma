@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { getOrgSettings, saveOrgSettings, type OrgSettings } from "@/lib/org-settings-store";
 import { getMyClient, updateCompanyName } from "@/lib/client-store";
 import { ProfilexSettingsCard } from "@/components/profilex/profilex-settings-card";
-import { ManagerWalletsCard } from "@/components/profilex/wallets-card";
+import { CompanyWalletCard, ManagerWalletsCard } from "@/components/profilex/wallets-card";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({ meta: [{ title: "Settings · SamvadX Admin" }] }),
@@ -219,6 +219,7 @@ function AdminSettingsPage() {
       </SectionCard>
 
       <ProfilexSettingsCard />
+      <CompanyWalletCard />
       <ManagerWalletsCard />
 
       <SectionCard

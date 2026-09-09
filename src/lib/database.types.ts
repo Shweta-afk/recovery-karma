@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 24 tables.
+// Generated from 28 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -769,6 +769,48 @@ export interface Database {
         };
         Relationships: [];
       };
+      profilex_company_wallets: {
+        Row: {
+          client_id: string;
+          balance: number;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          client_id: string;
+          balance?: number;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          client_id?: string;
+          balance?: number;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [];
+      };
+      profilex_master_wallet: {
+        Row: {
+          id: string;
+          balance: number;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          balance?: number;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          balance?: number;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [];
+      };
       profilex_settings: {
         Row: {
           client_id: string;
@@ -799,6 +841,39 @@ export interface Database {
           rate_card?: Json;
           updated_at?: string;
           updated_by?: string | null;
+        };
+        Relationships: [];
+      };
+      profilex_wallet_ledger: {
+        Row: {
+          id: string;
+          scope: string;
+          client_id: string | null;
+          manager_id: string | null;
+          amount: number;
+          note: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          scope: string;
+          client_id?: string | null;
+          manager_id?: string | null;
+          amount: number;
+          note?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          scope?: string;
+          client_id?: string | null;
+          manager_id?: string | null;
+          amount?: number;
+          note?: string | null;
+          created_by?: string | null;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -970,6 +1045,30 @@ export interface Database {
           agent_notes?: string | null;
           status?: string | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      superadmins: {
+        Row: {
+          id: string;
+          auth_user_id: string | null;
+          name: string;
+          email: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          auth_user_id?: string | null;
+          name: string;
+          email: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          auth_user_id?: string | null;
+          name?: string;
+          email?: string;
+          created_at?: string;
         };
         Relationships: [];
       };

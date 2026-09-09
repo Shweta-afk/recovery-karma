@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef, type ReactNode 
 import { supabase } from "./supabase";
 import { enforceSingleSession } from "./session-actions.server";
 
-export type Role = "agent" | "manager" | "admin";
+export type Role = "agent" | "manager" | "admin" | "superadmin";
 
 /**
  * Where a role's "home" is - the single source of truth for it.
@@ -17,7 +17,10 @@ export type Role = "agent" | "manager" | "admin";
  * Every "go home" affordance must route through this. Adding a role, or moving a landing page,
  * should mean editing one function.
  */
-export function homeRouteForRole(role: Role | undefined): "/dashboard" | "/manager" | "/admin" {
+export function homeRouteForRole(
+  role: Role | undefined,
+): "/dashboard" | "/manager" | "/admin" | "/superadmin" {
+  if (role === "superadmin") return "/superadmin";
   if (role === "admin") return "/admin";
   if (role === "manager") return "/manager";
   return "/dashboard";
@@ -75,6 +78,37 @@ function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   ]);
 }
 
+/** superadmins has no RLS policy at all (see 20260909_superadmin_and_wallets.sql) — the anon/
+ *  authenticated client can never read it, by construction. The only way to resolve one is a
+ *  server action using the service-role client, so this is a genuinely separate path from the
+ *  agents lookup above, not just a different table name in the same query shape. */
+async function fetchSuperadminProfile(authUserId: string): Promise<AuthUser | null> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) return null;
+  try {
+    // Dynamically imported so server-only code never ships in the eager client bundle — same
+    // convention as setup.tsx's createCompany call.
+    const { resolveSuperadmin } = await import("./superadmin-actions.server");
+    const result = await withTimeout(
+      resolveSuperadmin({ data: { accessToken: session.access_token } }),
+      "superadmin lookup",
+    );
+    if (!result.superadmin) return null;
+    return {
+      id: authUserId,
+      name: result.superadmin.name,
+      email: result.superadmin.email,
+      role: "superadmin",
+      agentPhone: null,
+    };
+  } catch (err) {
+    console.error("[auth] fetchSuperadminProfile failed:", err);
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -114,18 +148,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Fetch from Supabase. Wrapped in Promise.resolve(): the query builder is thenable but
-    // not a real Promise, and withTimeout's generic needs one to infer the result type.
-    const { data, error } = await withTimeout(
-      Promise.resolve(
-        supabase
-          .from("agents")
-          .select("name, email, role, agent_phone, session_nonce")
-          .eq("auth_user_id", authUserId)
-          .single(),
+    // Run both lookups in parallel rather than falling back sequentially — most logins are NOT
+    // a superadmin, and sequencing "try agents, then try superadmins" would add a full round
+    // trip's worth of latency to that common case. Wrapped in Promise.resolve(): the query
+    // builder is thenable but not a real Promise, and withTimeout's generic needs one to infer
+    // the result type.
+    const [{ data, error }, superadmin] = await Promise.all([
+      withTimeout(
+        Promise.resolve(
+          supabase
+            .from("agents")
+            .select("name, email, role, agent_phone, session_nonce")
+            .eq("auth_user_id", authUserId)
+            .maybeSingle(),
+        ),
+        "agents lookup",
       ),
-      "agents lookup",
-    );
+      fetchSuperadminProfile(authUserId),
+    ]);
+
+    // Superadmin takes precedence when an account is BOTH a superadmin and a company-level
+    // agent/manager/admin (e.g. a platform owner who also has a seat in one company) — they
+    // should always land in the superadmin console on login, never in whichever company they
+    // happen to also hold an agents row in.
+    if (superadmin) {
+      localStorage.setItem(cacheKey, JSON.stringify({ profile: superadmin, at: Date.now() }));
+      return superadmin;
+    }
 
     if (error || !data) return null;
 

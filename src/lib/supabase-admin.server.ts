@@ -81,3 +81,46 @@ export async function verifyCaller(accessToken: string): Promise<VerifiedCaller 
     role: data.role,
   };
 }
+
+export interface VerifiedSuperadmin {
+  authUserId: string;
+  superadminId: string;
+  name: string;
+  email: string;
+}
+
+/**
+ * The chokepoint every superadmin-only server action must call before doing anything —
+ * mirrors verifyCaller() above, but against `superadmins` instead of `agents`. superadmins has
+ * no RLS policy at all (20260909_superadmin_and_wallets.sql), so the service-role client is the
+ * only thing that can ever read it. Returns null if the token is invalid/expired or the caller
+ * has no superadmins row (fail closed — a valid agents-table login must never fall through to
+ * superadmin access).
+ */
+export async function verifySuperadminCaller(
+  accessToken: string,
+): Promise<VerifiedSuperadmin | null> {
+  const admin = getSupabaseAdmin();
+  const {
+    data: { user },
+    error: userErr,
+  } = await admin.auth.getUser(accessToken);
+  if (userErr || !user) return null;
+
+  const { data, error } = (await admin
+    .from("superadmins")
+    .select("id, name, email")
+    .eq("auth_user_id", user.id)
+    .single()) as {
+    data: { id: string; name: string; email: string } | null;
+    error: unknown;
+  };
+  if (error || !data) return null;
+
+  return {
+    authUserId: user.id,
+    superadminId: data.id,
+    name: data.name,
+    email: data.email,
+  };
+}

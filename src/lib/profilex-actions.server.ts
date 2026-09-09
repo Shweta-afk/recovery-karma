@@ -622,20 +622,39 @@ export const getManagerWallets = createServerFn({ method: "POST" })
     return { rows };
   });
 
-/** Sets one manager's Insights wallet to an exact ₹ figure — a top-up is just setting it to
- * current + however much the admin wants to add, computed in the UI before calling this.
- * Admin only, same reasoning as saveProfilexSettings: worthless as a spend control otherwise. */
-export const setManagerWallet = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; managerId: string; balance: number }) => d)
+/** This company's own ProfileX budget — the ceiling on what its admin can hand out to managers
+ * (see 20260909_superadmin_and_wallets.sql: it can only ever grow via a superadmin allocation).
+ * Admin only. */
+export const getCompanyWallet = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string }) => d)
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
-    if (caller.role !== "admin") throw new Error("Only admins can set a manager's wallet");
-    if (data.balance < 0) throw new Error("A wallet balance can't be negative");
+    if (caller.role !== "admin") return { balance: null };
+    const admin = db();
+    const { data: wallet, error } = await admin
+      .from("profilex_company_wallets")
+      .select("balance, updated_at")
+      .eq("client_id", caller.clientId)
+      .maybeSingle();
+    if (error) throw new Error(`Could not load your company's Insights budget (${error.message})`);
+    return { balance: Number(wallet?.balance ?? 0), updatedAt: wallet?.updated_at ?? null };
+  });
+
+/** Tops up one manager's Insights wallet by `amount`, drawn from this company's own wallet — an
+ * admin can never hand out more than their company was allocated by the superadmin. Replaces
+ * the old setManagerWallet, which upserted any balance with no ceiling at all. Admin only. */
+export const allocateToManager = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; managerId: string; amount: number }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "admin") throw new Error("Only admins can top up a manager's wallet");
+    if (!(data.amount > 0)) throw new Error("Enter a positive amount to add");
 
     const admin = db();
     // Confirm the manager is actually this admin's own, not an id from another client passed by
-    // a tampered request — client_id on the wallet row must come from a verified lookup, never
+    // a tampered request — client_id passed to the RPC must come from a verified lookup, never
     // trusted from the browser.
     const { data: manager, error: mErr } = await admin
       .from("agents")
@@ -647,18 +666,20 @@ export const setManagerWallet = createServerFn({ method: "POST" })
       throw new Error("That manager was not found in your organisation");
     }
 
-    const { error } = await admin.from("profilex_wallets").upsert(
-      {
-        manager_id: data.managerId,
-        client_id: caller.clientId,
-        balance: data.balance,
-        updated_at: new Date().toISOString(),
-        updated_by: caller.agentId ?? null,
-      },
-      { onConflict: "manager_id" },
-    );
-    if (error) throw new Error(`Could not update the wallet (${error.message})`);
-    return { ok: true };
+    const { data: newBalance, error } = await admin.rpc("profilex_company_allocate", {
+      p_client_id: caller.clientId,
+      p_manager_id: data.managerId,
+      p_amount: data.amount,
+      p_admin_id: caller.agentId,
+      p_note: null,
+    });
+    if (error) {
+      if (/insufficient/i.test(error.message)) {
+        throw new Error("Your company's Insights budget doesn't have enough left for that top-up.");
+      }
+      throw new Error(`Could not update the wallet (${error.message})`);
+    }
+    return { balance: Number(newBalance) };
   });
 
 /**

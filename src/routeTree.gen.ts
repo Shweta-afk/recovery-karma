@@ -9,15 +9,20 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SuperadminSetupRouteImport } from './routes/superadmin-setup'
+import { Route as SuperadminRouteImport } from './routes/superadmin'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ManagerRouteImport } from './routes/manager'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
 import { Route as ManagerIndexRouteImport } from './routes/manager.index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as SuperadminWalletRouteImport } from './routes/superadmin.wallet'
+import { Route as SuperadminInsightsRouteImport } from './routes/superadmin.insights'
 import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
 import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
 import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
@@ -38,7 +43,18 @@ import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
 import { Route as AdminLiveCallsRouteImport } from './routes/admin.live-calls'
+import { Route as SuperadminCompaniesClientIdRouteImport } from './routes/superadmin.companies.$clientId'
 
+const SuperadminSetupRoute = SuperadminSetupRouteImport.update({
+  id: '/superadmin-setup',
+  path: '/superadmin-setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuperadminRoute = SuperadminRouteImport.update({
+  id: '/superadmin',
+  path: '/superadmin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
@@ -69,6 +85,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SuperadminIndexRoute = SuperadminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SuperadminRoute,
+} as any)
 const ManagerIndexRoute = ManagerIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -83,6 +104,16 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AdminRoute,
+} as any)
+const SuperadminWalletRoute = SuperadminWalletRouteImport.update({
+  id: '/wallet',
+  path: '/wallet',
+  getParentRoute: () => SuperadminRoute,
+} as any)
+const SuperadminInsightsRoute = SuperadminInsightsRouteImport.update({
+  id: '/insights',
+  path: '/insights',
+  getParentRoute: () => SuperadminRoute,
 } as any)
 const ManagerUploadRoute = ManagerUploadRouteImport.update({
   id: '/upload',
@@ -184,6 +215,12 @@ const AdminLiveCallsRoute = AdminLiveCallsRouteImport.update({
   path: '/live-calls',
   getParentRoute: () => AdminRoute,
 } as any)
+const SuperadminCompaniesClientIdRoute =
+  SuperadminCompaniesClientIdRouteImport.update({
+    id: '/companies/$clientId',
+    path: '/companies/$clientId',
+    getParentRoute: () => SuperadminRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -192,6 +229,8 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
   '/setup': typeof SetupRoute
+  '/superadmin': typeof SuperadminRouteWithChildren
+  '/superadmin-setup': typeof SuperadminSetupRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -212,14 +251,19 @@ export interface FileRoutesByFullPath {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/superadmin/insights': typeof SuperadminInsightsRoute
+  '/superadmin/wallet': typeof SuperadminWalletRoute
   '/admin/': typeof AdminIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/manager/': typeof ManagerIndexRoute
+  '/superadmin/': typeof SuperadminIndexRoute
+  '/superadmin/companies/$clientId': typeof SuperadminCompaniesClientIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/superadmin-setup': typeof SuperadminSetupRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -240,9 +284,13 @@ export interface FileRoutesByTo {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/superadmin/insights': typeof SuperadminInsightsRoute
+  '/superadmin/wallet': typeof SuperadminWalletRoute
   '/admin': typeof AdminIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/manager': typeof ManagerIndexRoute
+  '/superadmin': typeof SuperadminIndexRoute
+  '/superadmin/companies/$clientId': typeof SuperadminCompaniesClientIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -252,6 +300,8 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
   '/setup': typeof SetupRoute
+  '/superadmin': typeof SuperadminRouteWithChildren
+  '/superadmin-setup': typeof SuperadminSetupRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -272,9 +322,13 @@ export interface FileRoutesById {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/superadmin/insights': typeof SuperadminInsightsRoute
+  '/superadmin/wallet': typeof SuperadminWalletRoute
   '/admin/': typeof AdminIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/manager/': typeof ManagerIndexRoute
+  '/superadmin/': typeof SuperadminIndexRoute
+  '/superadmin/companies/$clientId': typeof SuperadminCompaniesClientIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -285,6 +339,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/setup'
+    | '/superadmin'
+    | '/superadmin-setup'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -305,14 +361,19 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/superadmin/insights'
+    | '/superadmin/wallet'
     | '/admin/'
     | '/dashboard/'
     | '/manager/'
+    | '/superadmin/'
+    | '/superadmin/companies/$clientId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
     | '/setup'
+    | '/superadmin-setup'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -333,9 +394,13 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/superadmin/insights'
+    | '/superadmin/wallet'
     | '/admin'
     | '/dashboard'
     | '/manager'
+    | '/superadmin'
+    | '/superadmin/companies/$clientId'
   id:
     | '__root__'
     | '/'
@@ -344,6 +409,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/setup'
+    | '/superadmin'
+    | '/superadmin-setup'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -364,9 +431,13 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/superadmin/insights'
+    | '/superadmin/wallet'
     | '/admin/'
     | '/dashboard/'
     | '/manager/'
+    | '/superadmin/'
+    | '/superadmin/companies/$clientId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -376,10 +447,26 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ManagerRoute: typeof ManagerRouteWithChildren
   SetupRoute: typeof SetupRoute
+  SuperadminRoute: typeof SuperadminRouteWithChildren
+  SuperadminSetupRoute: typeof SuperadminSetupRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/superadmin-setup': {
+      id: '/superadmin-setup'
+      path: '/superadmin-setup'
+      fullPath: '/superadmin-setup'
+      preLoaderRoute: typeof SuperadminSetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/superadmin': {
+      id: '/superadmin'
+      path: '/superadmin'
+      fullPath: '/superadmin'
+      preLoaderRoute: typeof SuperadminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/setup': {
       id: '/setup'
       path: '/setup'
@@ -422,6 +509,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/superadmin/': {
+      id: '/superadmin/'
+      path: '/'
+      fullPath: '/superadmin/'
+      preLoaderRoute: typeof SuperadminIndexRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
     '/manager/': {
       id: '/manager/'
       path: '/'
@@ -442,6 +536,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
+    }
+    '/superadmin/wallet': {
+      id: '/superadmin/wallet'
+      path: '/wallet'
+      fullPath: '/superadmin/wallet'
+      preLoaderRoute: typeof SuperadminWalletRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
+    '/superadmin/insights': {
+      id: '/superadmin/insights'
+      path: '/insights'
+      fullPath: '/superadmin/insights'
+      preLoaderRoute: typeof SuperadminInsightsRouteImport
+      parentRoute: typeof SuperadminRoute
     }
     '/manager/upload': {
       id: '/manager/upload'
@@ -583,6 +691,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminLiveCallsRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/superadmin/companies/$clientId': {
+      id: '/superadmin/companies/$clientId'
+      path: '/companies/$clientId'
+      fullPath: '/superadmin/companies/$clientId'
+      preLoaderRoute: typeof SuperadminCompaniesClientIdRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
   }
 }
 
@@ -659,6 +774,24 @@ const ManagerRouteChildren: ManagerRouteChildren = {
 const ManagerRouteWithChildren =
   ManagerRoute._addFileChildren(ManagerRouteChildren)
 
+interface SuperadminRouteChildren {
+  SuperadminInsightsRoute: typeof SuperadminInsightsRoute
+  SuperadminWalletRoute: typeof SuperadminWalletRoute
+  SuperadminIndexRoute: typeof SuperadminIndexRoute
+  SuperadminCompaniesClientIdRoute: typeof SuperadminCompaniesClientIdRoute
+}
+
+const SuperadminRouteChildren: SuperadminRouteChildren = {
+  SuperadminInsightsRoute: SuperadminInsightsRoute,
+  SuperadminWalletRoute: SuperadminWalletRoute,
+  SuperadminIndexRoute: SuperadminIndexRoute,
+  SuperadminCompaniesClientIdRoute: SuperadminCompaniesClientIdRoute,
+}
+
+const SuperadminRouteWithChildren = SuperadminRoute._addFileChildren(
+  SuperadminRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
@@ -666,6 +799,8 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ManagerRoute: ManagerRouteWithChildren,
   SetupRoute: SetupRoute,
+  SuperadminRoute: SuperadminRouteWithChildren,
+  SuperadminSetupRoute: SuperadminSetupRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
