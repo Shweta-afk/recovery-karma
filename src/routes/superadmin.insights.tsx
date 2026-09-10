@@ -22,6 +22,15 @@ function stateBadge(row: InsightsActivityRow) {
   return { label: "Not found", variant: "secondary" as const };
 }
 
+interface CompanySummary {
+  companyName: string;
+  lookups: number;
+  found: number;
+  failed: number;
+  companyCost: number;
+  realCost: number;
+}
+
 function SuperadminInsightsPage() {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<InsightsActivityRow[]>([]);
@@ -44,6 +53,28 @@ function SuperadminInsightsPage() {
   }, []);
 
   const totalSpend = rows.reduce((sum, r) => sum + r.cost, 0);
+  const totalRealCost = rows.reduce((sum, r) => sum + r.realCost, 0);
+  const totalDelta = totalRealCost - totalSpend;
+
+  const byCompany = new Map<string, CompanySummary>();
+  for (const r of rows) {
+    const name = r.companyName ?? "Unassigned";
+    const entry = byCompany.get(name) ?? {
+      companyName: name,
+      lookups: 0,
+      found: 0,
+      failed: 0,
+      companyCost: 0,
+      realCost: 0,
+    };
+    entry.lookups += 1;
+    if (r.state === "failed") entry.failed += 1;
+    else if (r.providerStatus === "1") entry.found += 1;
+    entry.companyCost += r.cost;
+    entry.realCost += r.realCost;
+    byCompany.set(name, entry);
+  }
+  const companySummaries = [...byCompany.values()].sort((a, b) => b.realCost - a.realCost);
 
   return (
     <div className="space-y-6">
@@ -56,9 +87,88 @@ function SuperadminInsightsPage() {
         </div>
         <p className="text-sm text-muted-foreground">
           Every ProfileX skip-tracing lookup across every company — who ran it, on which debtor, and
-          what it cost. Most recent 200 shown.
+          two costs side by side: what that company's own wallet was charged (its rate card) versus
+          what ProfileX actually charged (their real published price). Most recent 200 shown.
         </p>
       </div>
+
+      {!loading && companySummaries.length > 0 && (
+        <Card>
+          <CardHeader className="border-b border-border pb-3">
+            <CardTitle className="text-sm font-semibold">
+              Company-charged vs. actual ProfileX cost
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              A non-zero delta means that company's rate card is priced differently from what
+              ProfileX really bills for the same lookups.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-muted-foreground">
+                    <th className="py-2 pr-4 font-medium">Company</th>
+                    <th className="py-2 pr-4 font-medium text-right">Lookups</th>
+                    <th className="py-2 pr-4 font-medium text-right">Found</th>
+                    <th className="py-2 pr-4 font-medium text-right">Failed</th>
+                    <th className="py-2 pr-4 font-medium text-right">Company charged</th>
+                    <th className="py-2 pr-4 font-medium text-right">Actual ProfileX cost</th>
+                    <th className="py-2 pr-4 font-medium text-right">Delta</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {companySummaries.map((c) => {
+                    const delta = c.realCost - c.companyCost;
+                    return (
+                      <tr key={c.companyName} className="border-b border-border last:border-0">
+                        <td className="py-2 pr-4 text-foreground font-medium">{c.companyName}</td>
+                        <td className="py-2 pr-4 text-right">{c.lookups}</td>
+                        <td className="py-2 pr-4 text-right">{c.found}</td>
+                        <td className="py-2 pr-4 text-right">{c.failed}</td>
+                        <td className="py-2 pr-4 text-right">₹{c.companyCost.toFixed(2)}</td>
+                        <td className="py-2 pr-4 text-right">₹{c.realCost.toFixed(2)}</td>
+                        <td
+                          className={`py-2 pr-4 text-right font-medium ${
+                            delta === 0
+                              ? "text-muted-foreground"
+                              : delta > 0
+                                ? "text-destructive"
+                                : "text-emerald-600"
+                          }`}
+                        >
+                          {delta > 0 ? "+" : ""}₹{delta.toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="text-left font-semibold text-foreground">
+                    <td className="py-2 pr-4">Total</td>
+                    <td className="py-2 pr-4 text-right">{rows.length}</td>
+                    <td className="py-2 pr-4 text-right" />
+                    <td className="py-2 pr-4 text-right" />
+                    <td className="py-2 pr-4 text-right">₹{totalSpend.toFixed(2)}</td>
+                    <td className="py-2 pr-4 text-right">₹{totalRealCost.toFixed(2)}</td>
+                    <td
+                      className={`py-2 pr-4 text-right ${
+                        totalDelta === 0
+                          ? "text-muted-foreground"
+                          : totalDelta > 0
+                            ? "text-destructive"
+                            : "text-emerald-600"
+                      }`}
+                    >
+                      {totalDelta > 0 ? "+" : ""}₹{totalDelta.toFixed(2)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="border-b border-border pb-3">
@@ -91,12 +201,15 @@ function SuperadminInsightsPage() {
                     <th className="py-2 pr-4 font-medium">Manager</th>
                     <th className="py-2 pr-4 font-medium">Service</th>
                     <th className="py-2 pr-4 font-medium">Result</th>
-                    <th className="py-2 pr-4 font-medium text-right">Cost</th>
+                    <th className="py-2 pr-4 font-medium text-right">Company charged</th>
+                    <th className="py-2 pr-4 font-medium text-right">Actual ProfileX cost</th>
+                    <th className="py-2 pr-4 font-medium text-right">Delta</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row) => {
                     const badge = stateBadge(row);
+                    const delta = row.realCost - row.cost;
                     return (
                       <tr key={row.id} className="border-b border-border last:border-0">
                         <td className="py-2 pr-4 text-muted-foreground">
@@ -114,6 +227,20 @@ function SuperadminInsightsPage() {
                         </td>
                         <td className="py-2 pr-4 text-right font-medium text-foreground">
                           {row.billable ? `₹${row.cost.toFixed(2)}` : "—"}
+                        </td>
+                        <td className="py-2 pr-4 text-right font-medium text-foreground">
+                          {row.billable ? `₹${row.realCost.toFixed(2)}` : "—"}
+                        </td>
+                        <td
+                          className={`py-2 pr-4 text-right ${
+                            !row.billable || delta === 0
+                              ? "text-muted-foreground"
+                              : delta > 0
+                                ? "text-destructive"
+                                : "text-emerald-600"
+                          }`}
+                        >
+                          {row.billable ? `${delta > 0 ? "+" : ""}₹${delta.toFixed(2)}` : "—"}
                         </td>
                       </tr>
                     );

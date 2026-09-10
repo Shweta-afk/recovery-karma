@@ -440,6 +440,24 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       if (chargeErr) console.error("[profilex] wallet charge failed:", chargeErr.message);
     }
 
+    // Deduct the REAL ProfileX price (catalogue.ts's defaultPrices, ignoring this client's own
+    // rate_card override) from the superadmin's actual-balance wallet — the true remaining
+    // balance with ProfileX/Neokred, tracked separately from what this company's own wallet was
+    // just charged above. The two amounts can differ whenever a rate_card override exists, which
+    // is the entire reason both wallets exist (20260910_profilex_actual_wallet.sql). Best-effort:
+    // the real ProfileX call already happened and was already paid for by this point, so a
+    // failure here must not fail the request.
+    if (billable) {
+      const realCost = priceFor(service, providerStatus, null);
+      if (realCost > 0) {
+        const { error: actualErr } = await admin.rpc("profilex_actual_wallet_charge", {
+          p_amount: realCost,
+          p_client_id: caller.clientId,
+        });
+        if (actualErr) console.error("[profilex] actual wallet charge failed:", actualErr.message);
+      }
+    }
+
     if (httpStatus !== 200) {
       // Spell out that this is a FAULT, not a "no record found". A real not-found comes back
       // HTTP 200 with provider status 2 and IS charged; a non-200 means the request never

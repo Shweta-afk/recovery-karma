@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 28 tables.
+// Generated from 29 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -784,6 +784,30 @@ export interface Database {
           replaces_portfolio_id?: string | null;
           closed_at?: string | null;
           end_date?: string | null;
+        };
+        Relationships: [];
+      };
+      profilex_actual_wallet: {
+        Row: {
+          id: string;
+          balance: number;
+          low_balance_threshold: number;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          balance?: number;
+          low_balance_threshold?: number;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          balance?: number;
+          low_balance_threshold?: number;
+          updated_at?: string;
+          updated_by?: string | null;
         };
         Relationships: [];
       };

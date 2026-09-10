@@ -8,6 +8,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
+import { getService, priceFor } from "./profilex/catalogue";
 
 function db() {
   return getSupabaseAdmin();
@@ -493,6 +494,66 @@ export const topUpMasterWallet = createServerFn({ method: "POST" })
     return { balance: Number(newBalance) };
   });
 
+/** The other wallet: the true remaining balance with ProfileX/Neokred, separate from the master
+ *  wallet above. See 20260910_profilex_actual_wallet.sql for why the two are kept apart — the
+ *  master wallet is an allocation pool a superadmin can put any figure into, while this one is
+ *  debited automatically, in real time, by the real ProfileX price on every billable lookup
+ *  across every company (profilex-actions.server.ts's runProfilexTrace). Only a manual top-up
+ *  ever increases it. */
+export const getActualWallet = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const admin = db();
+    const { data: wallet, error } = await admin
+      .from("profilex_actual_wallet")
+      .select("balance, low_balance_threshold, updated_at")
+      .eq("id", "main")
+      .maybeSingle();
+    if (error) throw new Error(`Could not load the actual wallet (${error.message})`);
+    return {
+      balance: Number(wallet?.balance ?? 0),
+      lowBalanceThreshold: Number(wallet?.low_balance_threshold ?? 500),
+      updatedAt: wallet?.updated_at ?? null,
+    };
+  });
+
+/** Records real money the superadmin actually paid ProfileX/Neokred into the actual wallet —
+ *  distinct from topUpMasterWallet, which only affects the internal allocation pool. */
+export const topUpActualWallet = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; amount: number; note?: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    if (!(data.amount > 0)) throw new Error("Top-up amount must be positive");
+    const admin = db();
+    const { data: newBalance, error } = await admin.rpc("profilex_actual_topup", {
+      p_amount: data.amount,
+      p_superadmin_id: caller.superadminId,
+      p_note: data.note ?? null,
+    });
+    if (error) throw new Error(`Top-up failed (${error.message})`);
+    return { balance: Number(newBalance) };
+  });
+
+/** The ₹ level below which the superadmin wallet UI shows a low-balance alert. Editable so 500
+ *  is a default, not a hardcoded floor. */
+export const setActualWalletThreshold = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; threshold: number }) => d)
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    if (!(data.threshold >= 0)) throw new Error("Threshold must be zero or more");
+    const admin = db();
+    const { error } = await admin
+      .from("profilex_actual_wallet")
+      .update({ low_balance_threshold: data.threshold, updated_by: caller.superadminId })
+      .eq("id", "main");
+    if (error) throw new Error(`Could not update the threshold (${error.message})`);
+    return { ok: true as const };
+  });
+
 /** Moves a slice of the master wallet into one company's wallet — the budget that company
  *  admin can then hand out to their own managers. */
 export const allocateToCompany = createServerFn({ method: "POST" })
@@ -604,6 +665,11 @@ export interface InsightsActivityRow {
   providerStatus: string | null;
   billable: boolean;
   cost: number;
+  /** What ProfileX actually charged, per catalogue.ts's defaultPrices (their published price),
+   *  ignoring this company's own rate_card override. Differs from `cost` whenever a superadmin
+   *  has set that company's rate_card away from the real ProfileX price — see
+   *  20260910_profilex_actual_wallet.sql. */
+  realCost: number;
   createdAt: string;
 }
 
@@ -662,18 +728,26 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
       ((agents ?? []) as { id: string; name: string }[]).map((a) => [a.id, a.name]),
     );
 
-    const result: InsightsActivityRow[] = rows.map((r) => ({
-      id: r.id,
-      clientId: r.client_id,
-      companyName: companyNameById.get(r.client_id) ?? null,
-      managerName: r.requested_by ? (agentNameById.get(r.requested_by) ?? null) : null,
-      serviceId: r.service_id,
-      state: r.state,
-      providerStatus: r.provider_status,
-      billable: r.billable,
-      cost: Number(r.cost),
-      createdAt: r.created_at,
-    }));
+    const result: InsightsActivityRow[] = rows.map((r) => {
+      const service = getService(r.service_id);
+      // No entry (a retired service_id, e.g. mobile-to-prefill-ext) means no known real price —
+      // fall back to the stored cost rather than silently showing ₹0 real cost.
+      const realCost =
+        r.billable && service ? priceFor(service, r.provider_status, null) : Number(r.cost);
+      return {
+        id: r.id,
+        clientId: r.client_id,
+        companyName: companyNameById.get(r.client_id) ?? null,
+        managerName: r.requested_by ? (agentNameById.get(r.requested_by) ?? null) : null,
+        serviceId: r.service_id,
+        state: r.state,
+        providerStatus: r.provider_status,
+        billable: r.billable,
+        cost: Number(r.cost),
+        realCost,
+        createdAt: r.created_at,
+      };
+    });
 
     return { rows: result };
   });

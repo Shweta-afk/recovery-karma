@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Wallet, PlusCircle, Send, Loader2 } from "lucide-react";
+import { Wallet, PlusCircle, Send, Loader2, AlertTriangle, Landmark } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,9 @@ import {
   topUpMasterWallet,
   allocateToCompany,
   getCompanies,
+  getActualWallet,
+  topUpActualWallet,
+  setActualWalletThreshold,
   type CompanyRow,
 } from "@/lib/superadmin-actions.server";
 
@@ -30,6 +33,16 @@ function SuperadminWalletPage() {
   const [allocDrafts, setAllocDrafts] = useState<Record<string, string>>({});
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
 
+  // The actual wallet: the true remaining balance with ProfileX/Neokred (see
+  // 20260910_profilex_actual_wallet.sql). Kept in separate state from the master wallet above —
+  // the two numbers are allowed to diverge, that divergence is the point.
+  const [actualBalance, setActualBalance] = useState(0);
+  const [actualThreshold, setActualThreshold] = useState(500);
+  const [actualTopUpAmount, setActualTopUpAmount] = useState("");
+  const [actualToppingUp, setActualToppingUp] = useState(false);
+  const [thresholdDraft, setThresholdDraft] = useState("");
+  const [savingThreshold, setSavingThreshold] = useState(false);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -37,18 +50,71 @@ function SuperadminWalletPage() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session) throw new Error("Your session expired — sign in again");
-      const [walletRes, companiesRes] = await Promise.all([
+      const [walletRes, companiesRes, actualRes] = await Promise.all([
         getMasterWallet({ data: { accessToken: session.access_token } }),
         getCompanies({ data: { accessToken: session.access_token } }),
+        getActualWallet({ data: { accessToken: session.access_token } }),
       ]);
       setMasterBalance(walletRes.balance);
       setCompanies(companiesRes.rows);
+      setActualBalance(actualRes.balance);
+      setActualThreshold(actualRes.lowBalanceThreshold);
+      setThresholdDraft(String(actualRes.lowBalanceThreshold));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not load the wallet");
     } finally {
       setLoading(false);
     }
   };
+
+  const handleActualTopUp = async () => {
+    const amount = Number(actualTopUpAmount);
+    if (!actualTopUpAmount || Number.isNaN(amount) || amount <= 0) {
+      toast.error("Enter a positive amount");
+      return;
+    }
+    setActualToppingUp(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      const res = await topUpActualWallet({
+        data: { accessToken: session.access_token, amount },
+      });
+      setActualBalance(res.balance);
+      setActualTopUpAmount("");
+      toast.success(`Recorded ₹${amount.toFixed(2)} paid to ProfileX/Neokred`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Top-up failed");
+    } finally {
+      setActualToppingUp(false);
+    }
+  };
+
+  const handleSaveThreshold = async () => {
+    const threshold = Number(thresholdDraft);
+    if (thresholdDraft === "" || Number.isNaN(threshold) || threshold < 0) {
+      toast.error("Enter a valid alert threshold");
+      return;
+    }
+    setSavingThreshold(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      await setActualWalletThreshold({ data: { accessToken: session.access_token, threshold } });
+      setActualThreshold(threshold);
+      toast.success(`Low-balance alert set at ₹${threshold.toFixed(2)}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save the threshold");
+    } finally {
+      setSavingThreshold(false);
+    }
+  };
+
+  const isLow = !loading && actualBalance <= actualThreshold;
 
   useEffect(() => {
     load();
@@ -120,11 +186,115 @@ function SuperadminWalletPage() {
           <Badge variant="secondary">Superadmin</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          The one real ProfileX/Neokred account every company bills through. Top it up with what you
-          actually paid ProfileX, then allocate slices of it to each company as their own Insights
-          budget.
+          Two separate numbers on purpose: the <strong>actual wallet</strong> is the true balance
+          left with ProfileX/Neokred, debited automatically by the real price on every lookup. The{" "}
+          <strong>master wallet</strong> below it is just your internal allocation pool — top it up
+          with any figure and hand slices of it to companies as their Insights budget.
         </p>
       </div>
+
+      {isLow && (
+        <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/10 px-4 py-3">
+          <AlertTriangle className="h-5 w-5 flex-shrink-0 text-destructive mt-0.5" />
+          <div className="text-sm">
+            <p className="font-semibold text-destructive">
+              Actual ProfileX balance is low: ₹{actualBalance.toFixed(2)}
+            </p>
+            <p className="text-destructive/90 mt-0.5">
+              This is at or below your ₹{actualThreshold.toFixed(2)} alert threshold. Recharge your
+              real ProfileX/Neokred account, then record what you paid in the "Actual wallet" card
+              below.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <Card className={isLow ? "border-destructive" : undefined}>
+        <CardHeader className="border-b border-border pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Landmark className="h-4 w-4 text-primary" />
+            Actual wallet
+            <Badge variant="outline" className="text-[10px] font-normal">
+              real ProfileX balance
+            </Badge>
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            What's really left with ProfileX/Neokred. Only a top-up here should ever increase it —
+            every billable lookup, from every company, debits it automatically at ProfileX's real
+            price.
+          </p>
+        </CardHeader>
+        <CardContent className="pt-4 space-y-4">
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-4">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+            </div>
+          ) : (
+            <>
+              <div
+                className={`text-2xl font-semibold ${isLow ? "text-destructive" : "text-foreground"}`}
+              >
+                ₹{actualBalance.toFixed(2)}
+              </div>
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="flex items-end gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="actualTopUpAmount" className="text-xs">
+                      Record a real ProfileX top-up (₹)
+                    </Label>
+                    <Input
+                      id="actualTopUpAmount"
+                      type="number"
+                      min={0}
+                      step="0.5"
+                      value={actualTopUpAmount}
+                      onChange={(e) => setActualTopUpAmount(e.target.value)}
+                      className="w-48 h-9 text-sm"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={actualToppingUp}
+                    onClick={handleActualTopUp}
+                  >
+                    {actualToppingUp ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <PlusCircle className="h-3.5 w-3.5" />
+                    )}
+                    Record top-up
+                  </Button>
+                </div>
+                <div className="flex items-end gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="thresholdDraft" className="text-xs">
+                      Alert me below (₹)
+                    </Label>
+                    <Input
+                      id="thresholdDraft"
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={thresholdDraft}
+                      onChange={(e) => setThresholdDraft(e.target.value)}
+                      className="w-32 h-9 text-sm"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={savingThreshold}
+                    onClick={handleSaveThreshold}
+                  >
+                    {savingThreshold ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="border-b border-border pb-3">
