@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Building2, Loader2, ShieldCheck, Check, X } from "lucide-react";
+import { Building2, Loader2, ShieldCheck, Check, X, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -108,6 +108,16 @@ function SuperadminCompaniesPage() {
   };
 
   const pending = rows.filter((r) => r.status === "pending");
+
+  // Which company names appear more than once — see the warning rendered on each such row
+  // below. Two rows can legitimately share a name (nothing in the schema stops it), and
+  // picking the wrong one by name alone is exactly how a subdomain once ended up on an empty
+  // duplicate "Axiotta Technologies" instead of the real company.
+  const nameCounts = new Map<string, number>();
+  for (const r of rows) nameCounts.set(r.companyName, (nameCounts.get(r.companyName) ?? 0) + 1);
+  const duplicateNames = new Set(
+    [...nameCounts.entries()].filter(([, count]) => count > 1).map(([name]) => name),
+  );
 
   return (
     <div className="space-y-6">
@@ -226,13 +236,29 @@ function SuperadminCompaniesPage() {
                 <tbody>
                   {rows.map((r) => {
                     const badge = STATUS_BADGE[r.status];
+                    const isDuplicateName = duplicateNames.has(r.companyName);
                     return (
                       <tr
                         key={r.id}
                         className="cursor-pointer border-b border-border last:border-0 hover:bg-accent/50"
                         onClick={() => navigate({ to: `/superadmin/companies/${r.id}` })}
                       >
-                        <td className="py-2.5 pr-4 font-medium text-foreground">{r.companyName}</td>
+                        <td className="py-2.5 pr-4 font-medium text-foreground">
+                          {r.companyName}
+                          {/* Two companies can share a name — this is exactly what let a
+                              subdomain get set on the wrong "Axiotta Technologies" row once
+                              already. Surface the id + creation date whenever a name collides
+                              so that mistake can't happen silently again. */}
+                          {isDuplicateName && (
+                            <div className="mt-0.5 flex items-center gap-1 text-[10px] font-normal text-amber-600">
+                              <AlertTriangle className="h-3 w-3" />
+                              <span className="font-mono">{r.id.slice(0, 8)}</span>
+                              <span className="text-muted-foreground">
+                                · created {new Date(r.createdAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                          )}
+                        </td>
                         <td className="py-2.5 pr-4">
                           <Badge variant={badge.variant} className="text-[10px]">
                             {badge.label}

@@ -345,7 +345,7 @@ export const getCompanyUsers = createServerFn({ method: "POST" })
     const [{ data: client, error: clErr }, { data: users, error: uErr }] = await Promise.all([
       admin
         .from("clients")
-        .select("id, company_name, status, subdomain, max_agents, max_managers")
+        .select("id, company_name, status, subdomain, max_agents, max_managers, created_at")
         .eq("id", data.clientId)
         .maybeSingle(),
       admin
@@ -380,6 +380,7 @@ export const getCompanyUsers = createServerFn({ method: "POST" })
       maxManagers: client.max_managers as number | null,
       agentCount,
       managerCount,
+      createdAt: client.created_at as string,
       rows,
     };
   });

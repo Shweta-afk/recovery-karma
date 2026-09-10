@@ -70,6 +70,7 @@ function SuperadminCompanyDetailPage() {
   const [agentCount, setAgentCount] = useState(0);
   const [managerCount, setManagerCount] = useState(0);
   const [savingLimits, setSavingLimits] = useState(false);
+  const [createdAt, setCreatedAt] = useState("");
 
   const load = async () => {
     try {
@@ -91,6 +92,7 @@ function SuperadminCompanyDetailPage() {
       setMaxManagersDraft(usersRes.maxManagers === null ? "" : String(usersRes.maxManagers));
       setAgentCount(usersRes.agentCount);
       setManagerCount(usersRes.managerCount);
+      setCreatedAt(usersRes.createdAt);
       setUsers(usersRes.rows);
       setLedger(ledgerRes.rows);
     } catch (e) {
@@ -242,6 +244,12 @@ function SuperadminCompanyDetailPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{companyName}</h1>
           <Badge variant={STATUS_BADGE[status].variant}>{STATUS_BADGE[status].label}</Badge>
         </div>
+        {/* Company names can collide (two rows both "Axiotta Technologies" is what let a
+            subdomain get set on the wrong one) — the id + creation date here are the only
+            unambiguous confirmation of which row you're actually editing on this page. */}
+        <p className="mt-0.5 text-[11px] text-muted-foreground font-mono">
+          {clientId.slice(0, 8)} · created {new Date(createdAt).toLocaleString()}
+        </p>
       </div>
 
       <Card>
