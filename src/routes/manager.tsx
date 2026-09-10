@@ -45,11 +45,18 @@ function ManagerLayout() {
     );
   }
 
+  // Picking a team is scoped to the manager's operational pages (queue, portfolio, audit,
+  // etc.) — dialing isn't team-scoped, so a manager on a fresh browser (no team saved to
+  // localStorage yet, see active-team-store.ts) shouldn't lose Manual Dial while they pick.
   if (user.role === "manager" && teams.length > 1 && !activeTeam) {
     return (
-      <AppShell>
-        <TeamPickerScreen teams={teams} managerName={user.name} onPick={setActiveTeam} />
-      </AppShell>
+      <CallSessionProvider>
+        <AppShell>
+          <TeamPickerScreen teams={teams} managerName={user.name} onPick={setActiveTeam} />
+        </AppShell>
+        <GlobalCallBar />
+        <ManualDialDock />
+      </CallSessionProvider>
     );
   }
 
