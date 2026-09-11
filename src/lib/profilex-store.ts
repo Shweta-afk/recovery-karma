@@ -75,6 +75,32 @@ export async function refreshTraces(debtorId: string): Promise<void> {
   window.dispatchEvent(new CustomEvent(TRACES_UPDATED, { detail: { debtorId } }));
 }
 
+/** Calls refreshTraces() only once a Supabase session actually exists, retrying on every
+ * auth-state change. A component mounting before the client's own session restore finishes
+ * would otherwise fire this query unauthenticated, hit Postgres as `anon` (zero grants on
+ * `debtor_traces`) and surface "permission denied for table debtor_traces" even though the
+ * viewer is genuinely signed in. Returns an unsubscribe for the caller's effect cleanup. */
+export function refreshTracesWhenAuthed(
+  debtorId: string,
+  onError?: (message: string) => void,
+): () => void {
+  let cancelled = false;
+  const tryLoad = () => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (cancelled || !session) return;
+      refreshTraces(debtorId).catch((e) => onError?.(e.message));
+    });
+  };
+  tryLoad();
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange(() => tryLoad());
+  return () => {
+    cancelled = true;
+    subscription.unsubscribe();
+  };
+}
+
 /** Merge a single trace returned by the server action, so the panel updates without a refetch. */
 export function mergeTrace(row: Record<string, unknown>): void {
   const rec = toRecord(row);

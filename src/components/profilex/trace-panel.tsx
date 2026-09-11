@@ -34,7 +34,7 @@ import {
   readEmployment,
   readPrefill,
   readUan,
-  refreshTraces,
+  refreshTracesWhenAuthed,
   type TraceRecord,
 } from "@/lib/profilex-store";
 
@@ -262,9 +262,12 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
   }, [canRun, loadWallet]);
 
   useEffect(() => {
-    refreshTraces(debtorId).catch((e) => setLoadError(e.message));
+    const stop = refreshTracesWhenAuthed(debtorId, setLoadError);
     window.addEventListener(TRACES_UPDATED, rerender);
-    return () => window.removeEventListener(TRACES_UPDATED, rerender);
+    return () => {
+      stop();
+      window.removeEventListener(TRACES_UPDATED, rerender);
+    };
   }, [debtorId, rerender]);
 
   // Recomputed every render rather than memoised: the store is a module-level cache, so its

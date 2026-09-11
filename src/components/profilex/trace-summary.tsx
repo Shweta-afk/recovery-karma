@@ -14,7 +14,7 @@ import {
   readEmployment,
   readPrefill,
   readUan,
-  refreshTraces,
+  refreshTracesWhenAuthed,
 } from "@/lib/profilex-store";
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -43,9 +43,12 @@ export function TraceSummary({
   useEffect(() => {
     // A failure here is silent by design: this is a supplementary panel beside a live call, and
     // an error toast mid-call over missing trace data would be noise the agent can't act on.
-    refreshTraces(debtorId).catch(() => {});
+    const stop = refreshTracesWhenAuthed(debtorId);
     window.addEventListener(TRACES_UPDATED, rerender);
-    return () => window.removeEventListener(TRACES_UPDATED, rerender);
+    return () => {
+      stop();
+      window.removeEventListener(TRACES_UPDATED, rerender);
+    };
   }, [debtorId, rerender]);
 
   const latest = latestByService(debtorId);
