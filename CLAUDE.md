@@ -349,7 +349,8 @@ manual sentiment tag — never overwrites it.
 **ProfileX skip tracing IS real, and it costs money per call.** Shown to users as **Insights**
 (the vendor name is deliberately absent from the UI). Manager/admin-triggered from the Insights tab
 on a debtor profile. The services are data, not code: `src/lib/profilex/catalogue.ts` — as of
-2026-09-17: Skip Tracing (VRE Skip Tracing V2), Mobile→UAN, Employment Latest/History, Phone to
+2026-09-17: Skip Tracing (the ₹46 "VRE Skip Tracing" card — `/exp/vre-skip-tracing`, NOT "VRE
+Skip Tracing V2" at ₹15, which was wired by mistake for a day and replaced before it ever ran), Mobile→UAN, Employment Latest/History, Phone to
 Prefill, Mobile→GST, GST→Contact.
 
 **Each company only gets the services a superadmin puts on its plan** —
@@ -381,8 +382,8 @@ Unlike every other integration here:
   headers are a rate limit, *not* a credit balance — don't confuse the two.
 - **Chained inputs (UAN, GSTIN) come from stored traces, never the browser.** Employment takes a
   UAN, GST→Contact a GSTIN; each declares `derivedFrom.sources` — the standalone service first,
-  then the Skip Tracing bundle, which nests the same blocks (`vreMobileToUan`, `vreMobileToGst`).
-  So a paid skip trace also unlocks those lookups. The phone and name are read from the debtor row
+  then any bundle that nests the same block. Skip Tracing carries `vreMobileToUan`, so a paid skip
+  trace unlocks the employment lookups. It has **no** GST block, so it does not unlock GST→Contact. The phone and name are read from the debtor row
   server-side; that is what keeps every lookup to data already in a portfolio.
 
 Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the

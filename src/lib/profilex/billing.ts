@@ -64,10 +64,10 @@ export function extractPhones(node: unknown, found = new Set<string>()): Set<str
         const candidates = Array.isArray(v) ? v : [v];
         for (const c of candidates) {
           if (typeof c !== "string" && typeof c !== "number") continue;
-          const digits = String(c).replace(/\D/g, "");
-          // Accept a bare 10-digit number or one carrying the 91 country code; anything else is
-          // an id, a score or a landline we can't dial.
-          const ten = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+          // Same rule as normalisePhone, so what the writeback adds and what it de-duplicates
+          // against the debtor's existing numbers can never disagree. Anything that is not then a
+          // 10-digit mobile is an id, a score or a landline we can't dial.
+          const ten = normalisePhone(String(c));
           if (/^[6-9]\d{9}$/.test(ten)) found.add(ten);
         }
       }
@@ -79,5 +79,9 @@ export function extractPhones(node: unknown, found = new Set<string>()): Set<str
 
 export function normalisePhone(raw: string | null | undefined): string {
   const digits = String(raw ?? "").replace(/\D/g, "");
-  return digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+  if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+  // Domestic format with the trunk prefix — the provider returns alternate numbers like
+  // "09632065320", which read as 11 digits and were silently dropped from the writeback.
+  if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+  return digits;
 }

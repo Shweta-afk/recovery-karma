@@ -208,8 +208,16 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                     {unreachable.map((s) => s.label).join(", ")}{" "}
                     {unreachable.length === 1 ? "needs" : "need"} an input nothing else on this plan
                     provides. Also tick{" "}
-                    {[...new Set(unreachable.map((s) => s.derivedFrom!.label))].join(" or ")} (or
-                    Skip Tracing), or {unreachable.length === 1 ? "it" : "they"} can never run.
+                    {[
+                      ...new Set(
+                        unreachable.flatMap((s) =>
+                          s.derivedFrom!.sources.map(
+                            (src) => getService(src.service)?.label ?? src.service,
+                          ),
+                        ),
+                      ),
+                    ].join(" or ")}
+                    , or {unreachable.length === 1 ? "it" : "they"} can never run.
                   </span>
                 </p>
               )}

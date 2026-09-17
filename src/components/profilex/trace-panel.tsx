@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Loader2, Search, IndianRupee, ChevronRight, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { normalisePhone } from "@/lib/profilex/billing";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
@@ -214,18 +215,50 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
     | undefined;
 
   if (trace.serviceId === SKIP_TRACING_SERVICE) {
-    // The bundle nests each standalone service's payload under its own key, in the same shape,
-    // so its summary is the standalone summaries read off those blocks. Everything else it
-    // returned is under "Show all fields" below.
-    const empBlock = data?.vreEmploymentLatest;
+    // The bundle nests each source's payload under its own key. The headline facts are pulled
+    // from those blocks here; everything else it returned is under "Show all fields" below.
+    const block = (key: string) => data?.[key] as Record<string, unknown> | undefined;
+    const empBlock = block("vreEmploymentLatest");
     const emp = empBlock ? readEmployment({ data: empBlock }) : null;
-    const uanBlock = data?.vreMobileToUan as Record<string, unknown> | undefined;
+    const pan = block("vrePanAdvance");
+    const father = block("vrePanToFathersName");
+    const upi = block("vreMultipleUpiCheck")?.upi_id;
+
+    // Alternate numbers come from two sources in this bundle — its own alternate-phone lookup
+    // and the prefill block — so merge and de-duplicate rather than show one and hide the other.
+    const prefill = block("vrePhoneToPrefill") as
+      | { alternatePhone?: { phoneNumber?: string }[]; email?: { email?: string }[] }
+      | undefined;
+    const phones = [
+      ...((block("getAlternatePhoneNumber")?.alternate_phones as string[] | undefined) ?? []),
+      ...(prefill?.alternatePhone ?? []).map((p) => p.phoneNumber ?? ""),
+    ]
+      // Same normalisation as the writeback, so the panel lists exactly the numbers it adds.
+      .map((p) => normalisePhone(p))
+      .filter((p) => /^[6-9]\d{9}$/.test(p));
+    const emails = (prefill?.email ?? []).map((e) => e.email).filter(Boolean) as string[];
+    const addresses = ((block("getAlternateAddress")?.addresses as unknown[] | undefined) ?? [])
+      .length;
+
     return (
       <>
         {emp?.employer && <Row label="Employer" value={emp.employer} />}
-        {uanBlock?.uan ? <Row label="UAN" value={String(uanBlock.uan)} /> : null}
-        <ContactRows block={data?.vrePhoneToPrefill} />
-        <GstRows block={data?.vreMobileToGst} />
+        {block("vreMobileToUan")?.uan ? (
+          <Row label="UAN" value={String(block("vreMobileToUan")!.uan)} />
+        ) : null}
+        {pan?.pan ? <Row label="PAN" value={String(pan.pan)} /> : null}
+        {father?.father_name ? (
+          <Row label="Father's name" value={String(father.father_name)} />
+        ) : null}
+        <Row
+          label="Alternate numbers"
+          value={phones.length ? [...new Set(phones)].join(", ") : "—"}
+        />
+        <Row label="Emails" value={emails.length ? emails.join(", ") : "—"} />
+        <Row label="Addresses on file" value={addresses || "—"} />
+        {Array.isArray(upi) && upi.length > 0 ? (
+          <Row label="UPI IDs" value={(upi as string[]).join(", ")} />
+        ) : null}
       </>
     );
   }

@@ -169,40 +169,47 @@ describe("normaliseBaseUrl", () => {
   });
 });
 
-describe("skip tracing (VRE Skip Tracing V2)", () => {
+describe("skip tracing (VRE Skip Tracing, the ₹46 card)", () => {
   const skip = getService(SKIP_TRACING_SERVICE)!;
 
-  test("is catalogued with no service-id, because sending one is rejected", () => {
-    // Verified live: any service-id on this path returns HTTP 500 "Invalid service url".
-    expect(skip).toBeDefined();
-    expect(skip.serviceId).toBeUndefined();
+  test("is the v1 endpoint, not V2 or the X / + GST / + Locate variants", () => {
+    expect(skip.path).toBe("/core-svc/api/v2/exp/vre-skip-tracing");
     expect(skip.input).toBe("mobile+firstName");
   });
 
-  test("an unpriced not-found is recorded at the known price, never ₹0", () => {
-    expect(priceFor(skip, "1")).toBe(15);
-    expect(priceFor(skip, "2")).toBe(15);
-    expect(priceFor(skip, null)).toBe(15);
+  test("is catalogued with no service-id, because sending one is rejected", () => {
+    // Verified live: the skip-tracing paths return HTTP 500 "Invalid service url" for any
+    // service-id, and reach input validation without one.
+    expect(skip.serviceId).toBeUndefined();
   });
 
-  // Mirrors the real V2 response: each standalone service's payload nested under its own key.
+  test("an unpriced not-found is recorded at the known ₹46, never ₹0", () => {
+    expect(priceFor(skip, "1")).toBe(46);
+    expect(priceFor(skip, "2")).toBe(46);
+    expect(priceFor(skip, null)).toBe(46);
+  });
+
+  // Mirrors the real v1 response: each source's payload nested under its own key. Note there is
+  // no vreMobileToGst block in this bundle.
   const bundle = {
     status: "1",
-    vreMobileToUan: { status: "1", uan: "100938918944" },
-    vreMobileToGst: { status: "1", result: [{ gstin: "29AAMCC4504G1ZN", legal_name: "X LTD" }] },
-    vrePhoneToPrefill: { alternatePhone: [{ serialNo: 1, phoneNumber: "9663594134" }] },
+    vreMobileToUan: { status: "1", uan: "101629726934" },
+    getAlternatePhoneNumber: { status: "1", alternate_phones: ["+918660820296"] },
+    vrePhoneToPrefill: { alternatePhone: [{ serialNo: 1, phoneNumber: "09632065320" }] },
   };
 
   test("its UAN unlocks the employment lookups without paying for Mobile to UAN", () => {
-    const from = getService("employment-history")!.derivedFrom!;
-    const viaBundle = from.sources.find((s) => s.service === SKIP_TRACING_SERVICE);
-    expect(viaBundle?.extract(bundle)).toBe("100938918944");
+    for (const id of ["employment-latest", "employment-history"]) {
+      const via = getService(id)!.derivedFrom!.sources.find(
+        (s) => s.service === SKIP_TRACING_SERVICE,
+      );
+      expect(via?.extract(bundle)).toBe("101629726934");
+    }
   });
 
-  test("its GSTIN unlocks GST to Contact", () => {
-    const from = getService("gst-to-contact")!.derivedFrom!;
-    const viaBundle = from.sources.find((s) => s.service === SKIP_TRACING_SERVICE);
-    expect(viaBundle?.extract(bundle)).toBe("29AAMCC4504G1ZN");
+  test("it does NOT claim to unlock GST to Contact — this bundle has no GST block", () => {
+    const sources = getService("gst-to-contact")!.derivedFrom!.sources.map((s) => s.service);
+    expect(sources).not.toContain(SKIP_TRACING_SERVICE);
   });
 
   test("the standalone service is still tried first", () => {
@@ -212,13 +219,15 @@ describe("skip tracing (VRE Skip Tracing V2)", () => {
   });
 
   test("a bundle with a block missing yields nothing rather than throwing", () => {
-    const from = getService("gst-to-contact")!.derivedFrom!;
-    const viaBundle = from.sources.find((s) => s.service === SKIP_TRACING_SERVICE)!;
-    expect(viaBundle.extract({ status: "1" })).toBeNull();
+    const via = getService("employment-latest")!.derivedFrom!.sources.find(
+      (s) => s.service === SKIP_TRACING_SERVICE,
+    )!;
+    expect(via.extract({ status: "1" })).toBeNull();
   });
 
-  test("its alternate numbers reach the writeback", () => {
-    expect([...extractPhones(bundle)]).toContain("9663594134");
+  test("both of its alternate-number sources reach the writeback", () => {
+    // getAlternatePhoneNumber holds a plain string array; vrePhoneToPrefill holds objects.
+    expect([...extractPhones(bundle)].sort()).toEqual(["8660820296", "9632065320"]);
   });
 });
 
@@ -265,5 +274,21 @@ describe("LEGACY_SERVICE_IDS", () => {
 
   test("every legacy id is still a real catalogue service", () => {
     for (const id of LEGACY_SERVICE_IDS) expect(ALL_SERVICE_IDS).toContain(id);
+  });
+});
+
+describe("the trunk-0 domestic format", () => {
+  test("normalisePhone strips a leading 0 from an 11-digit number", () => {
+    expect(normalisePhone("09632065320")).toBe("9632065320");
+  });
+
+  test("extractPhones keeps it, as the provider returns it in vrePhoneToPrefill", () => {
+    expect([...extractPhones({ alternatePhone: [{ phoneNumber: "09632065320" }] })]).toEqual([
+      "9632065320",
+    ]);
+  });
+
+  test("an 11-digit number that does not start with 0 is still rejected", () => {
+    expect([...extractPhones({ phone: "19632065320" })]).toEqual([]);
   });
 });

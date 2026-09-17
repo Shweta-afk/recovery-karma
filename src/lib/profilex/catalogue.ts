@@ -55,8 +55,8 @@ const readGstin = (d: Record<string, unknown>) => {
   return first?.gstin ? String(first.gstin) : null;
 };
 
-/** A sub-block of the Skip Tracing V2 bundle, which nests each standalone service's payload
- *  under its own key (vreMobileToUan, vreMobileToGst, ...) in the same shape. */
+/** A sub-block of the Skip Tracing bundle, which nests each standalone service's payload under
+ *  its own key (vreMobileToUan, vrePhoneToPrefill, ...) in the same shape. */
 const inBundle =
   (key: string, read: (d: Record<string, unknown>) => string | null) =>
   (d: Record<string, unknown>) => {
@@ -64,7 +64,7 @@ const inBundle =
     return block && typeof block === "object" ? read(block as Record<string, unknown>) : null;
   };
 
-export const SKIP_TRACING_SERVICE = "skip-tracing-v2";
+export const SKIP_TRACING_SERVICE = "skip-tracing";
 
 const UAN_FROM_MOBILE: DerivedFrom = {
   label: "Mobile to UAN",
@@ -74,31 +74,32 @@ const UAN_FROM_MOBILE: DerivedFrom = {
   ],
 };
 
+// No bundle source: the Skip Tracing we use (VRE Skip Tracing) carries no GST block. Only the
+// separate "+ GST" variant does — add it here if that is ever the one wired.
 const GSTIN_FROM_MOBILE: DerivedFrom = {
   label: "Mobile to GST",
-  sources: [
-    { service: "mobile-to-gst", extract: readGstin },
-    { service: SKIP_TRACING_SERVICE, extract: inBundle("vreMobileToGst", readGstin) },
-  ],
+  sources: [{ service: "mobile-to-gst", extract: readGstin }],
 };
 
 export const PROFILEX_SERVICES: ProfilexService[] = [
   {
     id: SKIP_TRACING_SERVICE,
+    // The console card "VRE Skip Tracing" (₹46), described as "based on mobile and first name".
+    // NOT "VRE Skip Tracing V2" (₹15, a smaller bundle), nor the X / + GST / + Locate variants.
     label: "Skip Tracing",
-    path: "/core-svc/api/v2/vre/exp/skip-tracing-v2",
+    path: "/core-svc/api/v2/exp/vre-skip-tracing",
     // Deliberately no serviceId — see the field's comment. Verified 2026-09-17: without the
     // header an empty request reaches input validation ("Missing required input fields: mobile,
-    // firstName"); with any service-id it is rejected as "Invalid service url".
+    // firstName"); the skip-tracing paths reject any service-id as "Invalid service url".
     input: "mobile+firstName",
-    // The console lists ₹15 for status 1 only. An unpriced status resolves to the highest known
-    // price (see priceFor), so a not-found is recorded at ₹15 until the real figure is known —
+    // The console lists ₹46 for status 1 only. An unpriced status resolves to the highest known
+    // price (see priceFor), so a not-found is recorded at ₹46 until the real figure is known —
     // over-recording rather than under.
-    defaultPrices: { "1": 15 },
+    defaultPrices: { "1": 46 },
     blurb:
-      "One lookup, several sources: alternate numbers, emails and addresses, UAN and current " +
-      "employer, and GST registrations. Its UAN and GSTIN also unlock the employment and GST " +
-      "contact lookups without paying for them separately.",
+      "The broadest single lookup: alternate numbers and addresses, emails, PAN and father's " +
+      "name, UAN and current employer, UPI IDs and LPG connection. Its UAN also unlocks the " +
+      "employment lookups without paying for Mobile to UAN separately.",
   },
   {
     id: "mobile-to-uan",
