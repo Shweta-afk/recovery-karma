@@ -2,6 +2,7 @@
 // it lands in, and which numbers it surfaced. Getting any of these wrong either under-reports
 // spend (so the budget cap never bites) or writes junk into a debtor's dialable numbers.
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   extractPhones,
   normaliseBaseUrl,
@@ -10,7 +11,13 @@ import {
   normalisePhone,
   readProviderStatus,
 } from "../src/lib/profilex/billing";
-import { getService, priceFor } from "../src/lib/profilex/catalogue";
+import {
+  ALL_SERVICE_IDS,
+  LEGACY_SERVICE_IDS,
+  SKIP_TRACING_SERVICE,
+  getService,
+  priceFor,
+} from "../src/lib/profilex/catalogue";
 
 describe("priceFor", () => {
   const employment = getService("employment-latest")!;
@@ -159,5 +166,104 @@ describe("normaliseBaseUrl", () => {
 
   test("leaves a genuinely different host alone, for mock servers", () => {
     expect(normaliseBaseUrl("http://localhost:9999")).toBe("http://localhost:9999");
+  });
+});
+
+describe("skip tracing (VRE Skip Tracing V2)", () => {
+  const skip = getService(SKIP_TRACING_SERVICE)!;
+
+  test("is catalogued with no service-id, because sending one is rejected", () => {
+    // Verified live: any service-id on this path returns HTTP 500 "Invalid service url".
+    expect(skip).toBeDefined();
+    expect(skip.serviceId).toBeUndefined();
+    expect(skip.input).toBe("mobile+firstName");
+  });
+
+  test("an unpriced not-found is recorded at the known price, never ₹0", () => {
+    expect(priceFor(skip, "1")).toBe(15);
+    expect(priceFor(skip, "2")).toBe(15);
+    expect(priceFor(skip, null)).toBe(15);
+  });
+
+  // Mirrors the real V2 response: each standalone service's payload nested under its own key.
+  const bundle = {
+    status: "1",
+    vreMobileToUan: { status: "1", uan: "100938918944" },
+    vreMobileToGst: { status: "1", result: [{ gstin: "29AAMCC4504G1ZN", legal_name: "X LTD" }] },
+    vrePhoneToPrefill: { alternatePhone: [{ serialNo: 1, phoneNumber: "9663594134" }] },
+  };
+
+  test("its UAN unlocks the employment lookups without paying for Mobile to UAN", () => {
+    const from = getService("employment-history")!.derivedFrom!;
+    const viaBundle = from.sources.find((s) => s.service === SKIP_TRACING_SERVICE);
+    expect(viaBundle?.extract(bundle)).toBe("100938918944");
+  });
+
+  test("its GSTIN unlocks GST to Contact", () => {
+    const from = getService("gst-to-contact")!.derivedFrom!;
+    const viaBundle = from.sources.find((s) => s.service === SKIP_TRACING_SERVICE);
+    expect(viaBundle?.extract(bundle)).toBe("29AAMCC4504G1ZN");
+  });
+
+  test("the standalone service is still tried first", () => {
+    const from = getService("employment-latest")!.derivedFrom!;
+    expect(from.sources[0].service).toBe("mobile-to-uan");
+    expect(from.sources[0].extract({ uan: "101751597636" })).toBe("101751597636");
+  });
+
+  test("a bundle with a block missing yields nothing rather than throwing", () => {
+    const from = getService("gst-to-contact")!.derivedFrom!;
+    const viaBundle = from.sources.find((s) => s.service === SKIP_TRACING_SERVICE)!;
+    expect(viaBundle.extract({ status: "1" })).toBeNull();
+  });
+
+  test("its alternate numbers reach the writeback", () => {
+    expect([...extractPhones(bundle)]).toContain("9663594134");
+  });
+});
+
+describe("extractPhones — plain lists under a phone key", () => {
+  test("captures numbers held in a string array, the shape the other skip-trace bundles use", () => {
+    const body = {
+      getAlternatePhoneNumber: { alternate_phones: ["+918660820296", "+919632065320"] },
+    };
+    expect([...extractPhones(body)].sort()).toEqual(["8660820296", "9632065320"]);
+  });
+
+  test("still drops non-dialable entries inside such a list", () => {
+    expect([...extractPhones({ phones: ["12345", "", null, "9632065320"] })]).toEqual([
+      "9632065320",
+    ]);
+  });
+});
+
+describe("ALL_SERVICE_IDS", () => {
+  test("covers the whole catalogue, including skip tracing", () => {
+    expect(ALL_SERVICE_IDS).toContain(SKIP_TRACING_SERVICE);
+    expect(new Set(ALL_SERVICE_IDS).size).toBe(ALL_SERVICE_IDS.length);
+  });
+});
+
+describe("LEGACY_SERVICE_IDS", () => {
+  test("matches the migration's backfill exactly, so both sides of the migration agree", () => {
+    // loadSettings falls back to this list when enabled_services does not exist yet. If it ever
+    // drifts from what the migration backfills, a company's plan would silently change the
+    // moment the migration is applied.
+    const sql = readFileSync(
+      "src/supabase/migrations/20260917_profilex_enabled_services.sql",
+      "utf8",
+    );
+    const arrayBody = sql.match(/SET enabled_services = ARRAY\[([\s\S]*?)\]/)?.[1] ?? "";
+    const backfilled = [...arrayBody.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(backfilled.length).toBeGreaterThan(0);
+    expect([...backfilled].sort()).toEqual([...LEGACY_SERVICE_IDS].sort());
+  });
+
+  test("never includes skip tracing — existing companies are opted in explicitly", () => {
+    expect(LEGACY_SERVICE_IDS).not.toContain(SKIP_TRACING_SERVICE);
+  });
+
+  test("every legacy id is still a real catalogue service", () => {
+    for (const id of LEGACY_SERVICE_IDS) expect(ALL_SERVICE_IDS).toContain(id);
   });
 });

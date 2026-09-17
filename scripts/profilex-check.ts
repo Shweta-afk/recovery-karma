@@ -90,7 +90,7 @@ if (LIVE && !failed) {
         "client-user-id": clientId,
         "secret-key": process.env.PROFILEX_SECRET_KEY!,
         "access-key": process.env.PROFILEX_ACCESS_KEY!,
-        "service-id": service.serviceId,
+        ...(service.serviceId ? { "service-id": service.serviceId } : {}),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ mobile: PROBE_MOBILE }),

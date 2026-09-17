@@ -346,10 +346,29 @@ classifies agent/debtor/overall tone. Requires
 the `AiSentimentPanel` in `manager.audit.tsx`. It's a _suggestion_ alongside the manager's own
 manual sentiment tag — never overwrites it.
 
-**ProfileX skip tracing IS real, and it costs money per call.** Manager/admin-triggered from the
-Trace tab on a debtor profile. Four VRE services are wired (`src/lib/profilex/catalogue.ts`):
-Mobile→UAN, Mobile→Prefill Ext, Employment Latest, Employment History. Three things make this
-unlike every other integration here:
+**ProfileX skip tracing IS real, and it costs money per call.** Shown to users as **Insights**
+(the vendor name is deliberately absent from the UI). Manager/admin-triggered from the Insights tab
+on a debtor profile. The services are data, not code: `src/lib/profilex/catalogue.ts` — as of
+2026-09-17: Skip Tracing (VRE Skip Tracing V2), Mobile→UAN, Employment Latest/History, Phone to
+Prefill, Mobile→GST, GST→Contact.
+
+**Each company only gets the services a superadmin puts on its plan** —
+`profilex_settings.enabled_services`, set per company on the superadmin company page, and enforced
+in `runProfilexTrace` (not just by hiding buttons). It is an allow-list: empty means none, never
+"all", so a newly catalogued (possibly pricier) service reaches no tenant until opted in.
+`loadSettings` falls back to `LEGACY_SERVICE_IDS` if the column is missing, so code deployed ahead
+of `migrations/20260917_profilex_enabled_services.sql` does not switch Insights off everywhere; a
+test keeps that constant identical to the migration's backfill.
+
+⚠️ **Some endpoints must be called WITHOUT a `service-id` header** (the skip-tracing bundles).
+Sending any service-id to them returns HTTP 500 `Invalid service url`. `serviceId` is optional in
+the catalogue for this reason — omit it where the provider's docs do.
+
+⚠️ **`client-user-id` is the console's _Client_ Hash ID, not the User Hash ID beside it** (env
+`PROFILEX_CLIENT_HASH_ID`). The wrong one returns `You Dont Have UAT Access!!!`, which is also
+what a genuinely unentitled service returns — so that message alone does not tell you which.
+
+Unlike every other integration here:
 
 - **A "not found" is still billed.** ProfileX's rule is HTTP 200 + status `1` (found) → billed,
   HTTP 200 + status `2`/`3` (not found) → **also billed**, HTTP 500 → not billed. Prices are per
@@ -360,10 +379,11 @@ unlike every other integration here:
 - **There is no balance or usage endpoint.** `debtor_traces` is the only record that spend
   happened; it is what gets reconciled against Neokred's invoice. The `x-ratelimit-*` response
   headers are a rate limit, *not* a credit balance — don't confuse the two.
-- **The employment endpoints take a UAN, not a phone.** The only route from a portfolio number to
-  employment data is `phone_primary → Mobile→UAN → uan → Employment`. That chain is what enforces
-  "portfolio numbers only": the phone is read from the debtor's row server-side and the UAN from a
-  stored trace on that same debtor — neither is ever accepted from the browser.
+- **Chained inputs (UAN, GSTIN) come from stored traces, never the browser.** Employment takes a
+  UAN, GST→Contact a GSTIN; each declares `derivedFrom.sources` — the standalone service first,
+  then the Skip Tracing bundle, which nests the same blocks (`vreMobileToUan`, `vreMobileToGst`).
+  So a paid skip trace also unlocks those lookups. The phone and name are read from the debtor row
+  server-side; that is what keeps every lookup to data already in a portfolio.
 
 Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the
 `profilex_settings` table, **not** `org-settings-store.ts`, which is localStorage-only and so
@@ -513,7 +533,7 @@ promise_date" as promises would start counting callbacks.
 | `dashboard/payments`                                                   | ✅ Real `payments`/`settlement_requests` via `payments-store.ts`                                                            |
 | `dashboard/messages`                                                   | 🟡 Real `messages` table, but Send has no gateway behind it (see above)                                                     |
 | `dashboard/reports`                                                    | ✅ Real. **Was wrongly listed here as an unwired placeholder until 2026-08-27** — it has been reading real dispositions/payments/portfolios for a while, and the page says so on screen. Seven reports incl. Time & Effort (see the estimated-time warning below) |
-| Debtor profile → Trace tab (`components/profilex/`)                    | ✅ Real ProfileX lookups; manager/admin run them, agents read-only. Needs `PROFILEX_*` env + the admin toggle |
+| Debtor profile → Insights tab (`components/profilex/`)                    | ✅ Real ProfileX lookups; manager/admin run them, agents read-only. Needs `PROFILEX_*` env + the admin toggle |
 | `manager/portfolio` (Portfolio Overview)                               | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown                                      |
 | `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity` | ✅ Real                                                                                                                     |
 | `admin/portfolio` (Portfolio Assignment)                               | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only                                     |

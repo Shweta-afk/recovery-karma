@@ -24,6 +24,7 @@ export function ProfilexSettingsCard() {
   const [hitTtlHours, setHitTtlHours] = useState(720);
   const [missTtlHours, setMissTtlHours] = useState(168);
   const [rateCard, setRateCard] = useState<RateCard>({});
+  const [enabledServices, setEnabledServices] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -37,6 +38,7 @@ export function ProfilexSettingsCard() {
         setHitTtlHours(s.hit_ttl_hours);
         setMissTtlHours(s.miss_ttl_hours);
         setRateCard((s.rate_card as RateCard) ?? {});
+        setEnabledServices(s.enabled_services ?? []);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not load Insights settings");
       } finally {
@@ -105,13 +107,18 @@ export function ProfilexSettingsCard() {
             <Separator />
 
             <div>
-              <p className="text-xs font-medium text-foreground mb-1">Rate card (₹ per lookup)</p>
+              <p className="text-xs font-medium text-foreground mb-1">Your plan (₹ per lookup)</p>
               <p className="text-[11px] text-muted-foreground mb-3">
-                What SamvadX charges you for each lookup, matching the provider's own contract with
-                SamvadX.
+                The lookups your company can use and what SamvadX charges for each. Contact SamvadX
+                support to add lookups to your plan.
               </p>
+              {enabledServices.length === 0 && (
+                <p className="text-[11px] text-muted-foreground italic">
+                  No lookups are on your plan yet.
+                </p>
+              )}
               <div className="space-y-2">
-                {PROFILEX_SERVICES.map((s) => (
+                {PROFILEX_SERVICES.filter((s) => enabledServices.includes(s.id)).map((s) => (
                   <div key={s.id} className="flex items-center justify-between gap-3">
                     <span className="text-xs text-foreground truncate">{s.label}</span>
                     <div className="flex items-center gap-3 flex-shrink-0">

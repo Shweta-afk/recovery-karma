@@ -3,7 +3,7 @@
 // editing SamvadX's own cost basis with the provider, which is why this moved off the company
 // admin entirely (see the comment on saveCompanyProfilexSettings in superadmin-actions.server.ts).
 import { useEffect, useState } from "react";
-import { Search, Save, Loader2 } from "lucide-react";
+import { Search, Save, Loader2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase";
 import {
   getCompanyProfilexSettings,
   saveCompanyProfilexSettings,
 } from "@/lib/superadmin-actions.server";
-import { PROFILEX_SERVICES } from "@/lib/profilex/catalogue";
+import { ALL_SERVICE_IDS, PROFILEX_SERVICES, getService } from "@/lib/profilex/catalogue";
 
 type RateCard = Record<string, Record<string, number>>;
 
@@ -27,6 +28,8 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
   const [hitTtlHours, setHitTtlHours] = useState(720);
   const [missTtlHours, setMissTtlHours] = useState(168);
   const [rateCard, setRateCard] = useState<RateCard>({});
+  // The company's plan: which services it may use. Enforced server-side in runProfilexTrace.
+  const [enabledServices, setEnabledServices] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -43,6 +46,7 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
         setHitTtlHours(s.hit_ttl_hours);
         setMissTtlHours(s.miss_ttl_hours);
         setRateCard((s.rate_card as RateCard) ?? {});
+        setEnabledServices(s.enabled_services ?? []);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not load Insights settings");
       } finally {
@@ -50,6 +54,16 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
       }
     })();
   }, [clientId]);
+
+  const toggleService = (id: string, on: boolean) =>
+    setEnabledServices((prev) => (on ? [...new Set([...prev, id])] : prev.filter((x) => x !== id)));
+
+  // A chained service (Employment, GST to Contact) can only ever run if something on the plan
+  // can supply its input. Flag the combination rather than silently selling a dead button.
+  const unreachable = PROFILEX_SERVICES.filter((s) => {
+    if (!enabledServices.includes(s.id) || !s.derivedFrom) return false;
+    return !s.derivedFrom.sources.some((src) => enabledServices.includes(src.service));
+  });
 
   const priceOf = (serviceId: string, status: string, fallback: number) =>
     rateCard[serviceId]?.[status] ?? fallback;
@@ -75,6 +89,7 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
           hitTtlHours,
           missTtlHours,
           rateCard,
+          enabledServices,
         },
       });
       toast.success("Insights settings saved");
@@ -152,15 +167,71 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
             <Separator />
 
             <div>
-              <p className="text-xs font-medium text-foreground mb-1">Rate card (₹ per lookup)</p>
+              <div className="flex items-center justify-between gap-3 mb-1">
+                <p className="text-xs font-medium text-foreground">
+                  Lookups on this company's plan
+                </p>
+                <div className="flex gap-2 text-[11px]">
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
+                    onClick={() => setEnabledServices([...ALL_SERVICE_IDS])}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:underline"
+                    onClick={() => setEnabledServices([])}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
               <p className="text-[11px] text-muted-foreground mb-3">
-                What this company is charged per lookup. Keep these matching the provider's contract
-                with SamvadX — every spend figure in this company's Reports is calculated from them.
+                Ticked lookups are the only ones this company's managers can see and run — the
+                server refuses anything else. Prices are what the company is charged per lookup;
+                keep them matching the provider's contract, since this company's Reports are
+                calculated from them.
               </p>
+
+              {enabled && enabledServices.length === 0 && (
+                <p className="mb-3 flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                  <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+                  Insights is on but no lookups are ticked — this company will see an empty plan.
+                </p>
+              )}
+              {unreachable.length > 0 && (
+                <p className="mb-3 flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                  <TriangleAlert className="h-3.5 w-3.5 shrink-0 mt-px" />
+                  <span>
+                    {unreachable.map((s) => s.label).join(", ")}{" "}
+                    {unreachable.length === 1 ? "needs" : "need"} an input nothing else on this plan
+                    provides. Also tick{" "}
+                    {[...new Set(unreachable.map((s) => s.derivedFrom!.label))].join(" or ")} (or
+                    Skip Tracing), or {unreachable.length === 1 ? "it" : "they"} can never run.
+                  </span>
+                </p>
+              )}
+
               <div className="space-y-2">
                 {PROFILEX_SERVICES.map((s) => (
                   <div key={s.id} className="flex items-center justify-between gap-3">
-                    <span className="text-xs text-foreground truncate">{s.label}</span>
+                    <label className="flex items-center gap-2 min-w-0 cursor-pointer">
+                      <Checkbox
+                        checked={enabledServices.includes(s.id)}
+                        onCheckedChange={(v) => toggleService(s.id, v === true)}
+                      />
+                      <span
+                        className={`text-xs truncate ${
+                          enabledServices.includes(s.id)
+                            ? "text-foreground"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {s.label}
+                      </span>
+                    </label>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {Object.keys(s.defaultPrices).map((status) => (
                         <div key={status} className="flex items-center gap-1">

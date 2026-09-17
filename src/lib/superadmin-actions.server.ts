@@ -8,7 +8,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
-import { getService, priceFor } from "./profilex/catalogue";
+import { ALL_SERVICE_IDS, getService, priceFor } from "./profilex/catalogue";
 
 function db() {
   return getSupabaseAdmin();
@@ -778,11 +778,22 @@ export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
       hitTtlHours: number;
       missTtlHours: number;
       rateCard: Record<string, Record<string, number>>;
+      /** Which catalogue services this company may use — the per-company plan. */
+      enabledServices: string[];
     }) => d,
   )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
+
+    // Only real catalogue ids are stored. A stale or mistyped id would sit in the allow-list
+    // doing nothing, and a service renamed later would silently lose its grant — refuse it
+    // loudly instead. De-duplicated so the stored array stays a clean set.
+    const unknown = data.enabledServices.filter((id) => !ALL_SERVICE_IDS.includes(id));
+    if (unknown.length) {
+      throw new Error(`Unknown Insights service(s): ${unknown.join(", ")}`);
+    }
+    const enabledServices = [...new Set(data.enabledServices)];
 
     const admin = db();
     const { error } = await admin.from("profilex_settings").upsert(
@@ -792,6 +803,7 @@ export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
         hit_ttl_hours: data.hitTtlHours,
         miss_ttl_hours: data.missTtlHours,
         rate_card: data.rateCard,
+        enabled_services: enabledServices,
         updated_at: new Date().toISOString(),
         // profilex_settings.updated_by references agents(id), not superadmins(id) — a
         // superadmin has no agents row to attribute this to, so leave it null rather than

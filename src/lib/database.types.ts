@@ -861,6 +861,7 @@ export interface Database {
           hit_ttl_hours: number;
           miss_ttl_hours: number;
           rate_card: Json;
+          enabled_services: string[];
           updated_at: string;
           updated_by: string | null;
         };
@@ -871,6 +872,7 @@ export interface Database {
           hit_ttl_hours?: number;
           miss_ttl_hours?: number;
           rate_card: Json;
+          enabled_services?: string[];
           updated_at?: string;
           updated_by?: string | null;
         };
@@ -881,6 +883,7 @@ export interface Database {
           hit_ttl_hours?: number;
           miss_ttl_hours?: number;
           rate_card?: Json;
+          enabled_services?: string[];
           updated_at?: string;
           updated_by?: string | null;
         };

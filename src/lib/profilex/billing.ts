@@ -57,12 +57,19 @@ export function extractPhones(node: unknown, found = new Set<string>()): Set<str
   }
   if (typeof node === "object") {
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      if (/phone|mobile|contact/i.test(k) && (typeof v === "string" || typeof v === "number")) {
-        const digits = String(v).replace(/\D/g, "");
-        // Accept a bare 10-digit number or one carrying the 91 country code; anything else is
-        // an id, a score or a landline we can't dial.
-        const ten = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
-        if (/^[6-9]\d{9}$/.test(ten)) found.add(ten);
+      if (/phone|mobile|contact/i.test(k)) {
+        // A phone-ish key can hold one number or a plain list of them — the skip-tracing bundles
+        // return `alternate_phones: ["+918660820296"]`, which the recursion below never sees as
+        // phone data because array items carry no key of their own.
+        const candidates = Array.isArray(v) ? v : [v];
+        for (const c of candidates) {
+          if (typeof c !== "string" && typeof c !== "number") continue;
+          const digits = String(c).replace(/\D/g, "");
+          // Accept a bare 10-digit number or one carrying the 91 country code; anything else is
+          // an id, a score or a landline we can't dial.
+          const ten = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+          if (/^[6-9]\d{9}$/.test(ten)) found.add(ten);
+        }
       }
       if (v && typeof v === "object") extractPhones(v, found);
     }

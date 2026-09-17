@@ -11,18 +11,20 @@
  *  comes from the debtor's own `phone_primary`, `mobile+name` adds their stored name, and a
  *  derived input (`uan`, `gstin`) is read from an earlier trace on that same debtor. That is
  *  what keeps every lookup rooted in data already in the portfolio. */
-export type ProfilexInput = "mobile" | "mobile+name" | "uan" | "gstin";
+export type ProfilexInput = "mobile" | "mobile+name" | "mobile+firstName" | "uan" | "gstin";
 
 /** How a derived input is obtained: which service supplies it, and how to read it back out of
  *  that service's stored response. Declaring it here rather than branching in the server action
  *  means adding a new chained service is a catalogue entry, not new code. */
 export interface DerivedFrom {
-  /** Catalogue id of the service that produces this value. */
-  service: string;
-  /** Shown to a manager when the prerequisite has not been run yet. */
+  /** The standalone service that produces this value — named to a manager when nothing on
+   *  file can supply it yet. */
   label: string;
-  /** Pull the value out of that service's `response.data`. Returns null when absent. */
-  extract: (data: Record<string, unknown>) => string | null;
+  /** Every stored trace that can supply the value, tried in order. More than one because a
+   *  bundle (Skip Tracing V2) returns the same blocks as the standalone services: a manager who
+   *  already paid for the bundle should not have to pay again for Mobile to UAN to unlock
+   *  Employment History. */
+  sources: { service: string; extract: (data: Record<string, unknown>) => string | null }[];
 }
 
 export interface ProfilexService {
@@ -31,8 +33,10 @@ export interface ProfilexService {
   label: string;
   /** Path appended to PROFILEX_BASE_URL. */
   path: string;
-  /** The per-service `service-id` request header ProfileX routes on. */
-  serviceId: string;
+  /** The per-service `service-id` request header ProfileX routes on. OMIT it for services the
+   *  provider's docs call without one (the skip-tracing bundles): sending any service-id to
+   *  those — even a well-formed one — returns HTTP 500 "Invalid service url". */
+  serviceId?: string;
   input: ProfilexInput;
   /** Required for `uan`/`gstin` inputs; omitted for the ones that start from the phone. */
   derivedFrom?: DerivedFrom;
@@ -43,23 +47,59 @@ export interface ProfilexService {
   blurb: string;
 }
 
+const readUan = (d: Record<string, unknown>) => (d?.uan ? String(d.uan) : null);
+
+// `result` is a list of GSTINs for the number; the first is the one to resolve contacts for.
+const readGstin = (d: Record<string, unknown>) => {
+  const first = (d?.result as { gstin?: string }[] | undefined)?.[0];
+  return first?.gstin ? String(first.gstin) : null;
+};
+
+/** A sub-block of the Skip Tracing V2 bundle, which nests each standalone service's payload
+ *  under its own key (vreMobileToUan, vreMobileToGst, ...) in the same shape. */
+const inBundle =
+  (key: string, read: (d: Record<string, unknown>) => string | null) =>
+  (d: Record<string, unknown>) => {
+    const block = d?.[key];
+    return block && typeof block === "object" ? read(block as Record<string, unknown>) : null;
+  };
+
+export const SKIP_TRACING_SERVICE = "skip-tracing-v2";
+
 const UAN_FROM_MOBILE: DerivedFrom = {
-  service: "mobile-to-uan",
   label: "Mobile to UAN",
-  extract: (d) => (d.uan ? String(d.uan) : null),
+  sources: [
+    { service: "mobile-to-uan", extract: readUan },
+    { service: SKIP_TRACING_SERVICE, extract: inBundle("vreMobileToUan", readUan) },
+  ],
 };
 
 const GSTIN_FROM_MOBILE: DerivedFrom = {
-  service: "mobile-to-gst",
   label: "Mobile to GST",
-  // `result` is a list of GSTINs for the number; the first is the one to resolve contacts for.
-  extract: (d) => {
-    const first = (d.result as { gstin?: string }[] | undefined)?.[0];
-    return first?.gstin ? String(first.gstin) : null;
-  },
+  sources: [
+    { service: "mobile-to-gst", extract: readGstin },
+    { service: SKIP_TRACING_SERVICE, extract: inBundle("vreMobileToGst", readGstin) },
+  ],
 };
 
 export const PROFILEX_SERVICES: ProfilexService[] = [
+  {
+    id: SKIP_TRACING_SERVICE,
+    label: "Skip Tracing",
+    path: "/core-svc/api/v2/vre/exp/skip-tracing-v2",
+    // Deliberately no serviceId — see the field's comment. Verified 2026-09-17: without the
+    // header an empty request reaches input validation ("Missing required input fields: mobile,
+    // firstName"); with any service-id it is rejected as "Invalid service url".
+    input: "mobile+firstName",
+    // The console lists ₹15 for status 1 only. An unpriced status resolves to the highest known
+    // price (see priceFor), so a not-found is recorded at ₹15 until the real figure is known —
+    // over-recording rather than under.
+    defaultPrices: { "1": 15 },
+    blurb:
+      "One lookup, several sources: alternate numbers, emails and addresses, UAN and current " +
+      "employer, and GST registrations. Its UAN and GSTIN also unlock the employment and GST " +
+      "contact lookups without paying for them separately.",
+  },
   {
     id: "mobile-to-uan",
     label: "Mobile to UAN",
@@ -142,6 +182,24 @@ export function getService(id: string): ProfilexService | undefined {
 
 /** The service whose UAN the employment lookups depend on. */
 export const UAN_SOURCE_SERVICE = "mobile-to-uan";
+
+/** What every company could use before per-company plans existed (2026-09-17). Kept in lockstep
+ *  with the backfill in migrations/20260917_profilex_enabled_services.sql — it is also what a
+ *  deployment still missing that column behaves as, so neither side of the migration changes
+ *  what an existing company sees. */
+export const LEGACY_SERVICE_IDS: readonly string[] = [
+  "mobile-to-uan",
+  "employment-latest",
+  "employment-history",
+  "phone-to-prefill",
+  "mobile-to-gst",
+  "gst-to-contact",
+];
+
+/** Every catalogue id. NOT a default for companies: a company can only call what a superadmin
+ *  has put in its `profilex_settings.enabled_services`, so a newly added (and possibly pricier)
+ *  service never appears for every tenant at once. This exists for the superadmin's "select all". */
+export const ALL_SERVICE_IDS: string[] = PROFILEX_SERVICES.map((s) => s.id);
 
 /**
  * What a call will cost, in ₹, given the provider status it comes back with. `rateCard` is the

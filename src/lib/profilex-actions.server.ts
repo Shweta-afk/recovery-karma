@@ -22,7 +22,13 @@ import {
   normalisePhone,
   readProviderStatus,
 } from "./profilex/billing";
-import { getService, priceFor, type DerivedFrom, type ProfilexService } from "./profilex/catalogue";
+import {
+  LEGACY_SERVICE_IDS,
+  getService,
+  priceFor,
+  type DerivedFrom,
+  type ProfilexService,
+} from "./profilex/catalogue";
 
 // This project has no generated Supabase `Database` types, so every `.from(...)` resolves to
 // `never` and each column read is a type error (the older stores simply live with ~300 of
@@ -90,6 +96,9 @@ export interface ProfilexSettings {
   hit_ttl_hours: number;
   miss_ttl_hours: number;
   rate_card: Record<string, Record<string, number>>;
+  /** The services this company may use, chosen by a superadmin. An allow-list: empty means
+   *  none, never "all" — see migrations/20260917_profilex_enabled_services.sql. */
+  enabled_services: string[];
 }
 
 const FALLBACK_SETTINGS: ProfilexSettings = {
@@ -98,15 +107,32 @@ const FALLBACK_SETTINGS: ProfilexSettings = {
   hit_ttl_hours: 720,
   miss_ttl_hours: 168,
   rate_card: {},
+  enabled_services: [],
 };
 
 export async function loadSettings(clientId: string): Promise<ProfilexSettings> {
   const admin = db();
-  const { data } = await admin
+  let { data, error } = await admin
     .from("profilex_settings")
-    .select("enabled, monthly_budget, hit_ttl_hours, miss_ttl_hours, rate_card")
+    .select("enabled, monthly_budget, hit_ttl_hours, miss_ttl_hours, rate_card, enabled_services")
     .eq("client_id", clientId)
     .maybeSingle();
+
+  // Deployed before migrations/20260917_profilex_enabled_services.sql was applied: the column
+  // does not exist, the select above errors, and `data` is null — which used to read as "no
+  // settings" and switch Insights OFF for every company at once. Re-read without the column
+  // and treat the company as being on the pre-plans service list, which is exactly what the
+  // migration backfills, so behaviour is identical on either side of it.
+  let enabledServices: string[] | null = null;
+  if (error) {
+    ({ data, error } = await admin
+      .from("profilex_settings")
+      .select("enabled, monthly_budget, hit_ttl_hours, miss_ttl_hours, rate_card")
+      .eq("client_id", clientId)
+      .maybeSingle());
+    enabledServices = [...LEGACY_SERVICE_IDS];
+  }
+
   if (!data) return { ...FALLBACK_SETTINGS };
   return {
     enabled: !!data.enabled,
@@ -114,6 +140,9 @@ export async function loadSettings(clientId: string): Promise<ProfilexSettings> 
     hit_ttl_hours: Number(data.hit_ttl_hours ?? FALLBACK_SETTINGS.hit_ttl_hours),
     miss_ttl_hours: Number(data.miss_ttl_hours ?? FALLBACK_SETTINGS.miss_ttl_hours),
     rate_card: (data.rate_card as ProfilexSettings["rate_card"]) ?? {},
+    enabled_services:
+      enabledServices ??
+      (Array.isArray(data.enabled_services) ? (data.enabled_services as string[]) : []),
   };
 }
 
@@ -125,17 +154,23 @@ export async function loadSettings(clientId: string): Promise<ProfilexSettings> 
  */
 async function derivedValue(debtorId: string, from: DerivedFrom): Promise<string | null> {
   const admin = db();
-  const { data } = await admin
-    .from("debtor_traces")
-    .select("response")
-    .eq("debtor_id", debtorId)
-    .eq("service_id", from.service)
-    .eq("state", "done")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const payload = (data?.response as Row | undefined)?.data as Row | undefined;
-  return payload ? from.extract(payload) : null;
+  // Sources in catalogue order: the standalone service first, then any bundle that carries the
+  // same block. The first one holding a value wins.
+  for (const source of from.sources) {
+    const { data } = await admin
+      .from("debtor_traces")
+      .select("response")
+      .eq("debtor_id", debtorId)
+      .eq("service_id", source.service)
+      .eq("state", "done")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const payload = (data?.response as Row | undefined)?.data as Row | undefined;
+    const value = payload ? source.extract(payload) : null;
+    if (value) return value;
+  }
+  return null;
 }
 
 /** First and last four characters of an identifier — enough to compare against what the
@@ -177,13 +212,15 @@ async function callProfilex(
     );
   }
 
-  const headers = {
+  const headers: Record<string, string> = {
     "client-user-id": clientUserId,
     "secret-key": secretKey,
     "access-key": accessKey,
-    "service-id": service.serviceId,
     "Content-Type": "application/json",
   };
+  // Only when the service defines one: the skip-tracing bundles are called without it, and ANY
+  // service-id sent to them is rejected as "Invalid service url".
+  if (service.serviceId) headers["service-id"] = service.serviceId;
 
   // The provider intermittently returns HTTP 500 "You Dont Have UAT Access!!!" for a service
   // that works seconds earlier and seconds later — observed on employment-latest, which
@@ -256,10 +293,19 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     if (!settings.enabled) {
       throw new Error("Insights is turned off. An admin can enable it in Settings.");
     }
+    // The superadmin's per-company choice. Enforced here, before anything can be charged, so a
+    // hidden button is not the only thing keeping a company off a service it has not bought.
+    if (!settings.enabled_services.includes(service.id)) {
+      throw new Error(`"${service.label}" is not available on your company's Insights plan.`);
+    }
 
     // Resolve the input, still without trusting the browser for any of it.
     let requestBody: Record<string, string>;
-    if (service.input === "mobile" || service.input === "mobile+name") {
+    if (
+      service.input === "mobile" ||
+      service.input === "mobile+name" ||
+      service.input === "mobile+firstName"
+    ) {
       const mobile = normalisePhone(debtor.phone_primary as string);
       if (!/^[6-9]\d{9}$/.test(mobile)) {
         throw new Error(
@@ -267,7 +313,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         );
       }
       requestBody = { mobile };
-      if (service.input === "mobile+name") {
+      if (service.input === "mobile+name" || service.input === "mobile+firstName") {
         // Split the stored name rather than asking for one: the provider requires firstName,
         // and anything typed in the browser would be an input we cannot vouch for.
         const parts = String(debtor.name ?? "")
@@ -278,7 +324,8 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
           throw new Error(`${debtor.name || "This debtor"} has no name on file to look up with.`);
         }
         requestBody.firstName = parts[0];
-        requestBody.lastName = parts.slice(1).join(" ");
+        // Send exactly the fields each endpoint documents — skip tracing takes firstName only.
+        if (service.input === "mobile+name") requestBody.lastName = parts.slice(1).join(" ");
       }
     } else {
       const from = service.derivedFrom;

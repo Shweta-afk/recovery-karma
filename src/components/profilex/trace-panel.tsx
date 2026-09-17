@@ -25,6 +25,7 @@ import { getProfilexSettings, getMyWallet, runProfilexTrace } from "@/lib/profil
 import {
   PROFILEX_SERVICES,
   UAN_SOURCE_SERVICE,
+  SKIP_TRACING_SERVICE,
   type ProfilexService,
 } from "@/lib/profilex/catalogue";
 import {
@@ -146,6 +147,45 @@ function AllFields({ trace }: { trace: TraceRecord }) {
   );
 }
 
+/** Alternate numbers / emails / addresses, from a Phone to Prefill payload (standalone, or the
+ *  vrePhoneToPrefill block of the skip-tracing bundle — same shape either way). */
+function ContactRows({ block }: { block: unknown }) {
+  const b = block as
+    | {
+        alternatePhone?: { phoneNumber?: string }[];
+        email?: { email?: string }[];
+        address?: unknown[];
+      }
+    | null
+    | undefined;
+  if (!b || typeof b !== "object") return null;
+  const phones = (b.alternatePhone ?? []).map((p) => p.phoneNumber).filter(Boolean) as string[];
+  const emails = (b.email ?? []).map((e) => e.email).filter(Boolean) as string[];
+  const addresses = (b.address ?? []).length;
+  return (
+    <>
+      <Row label="Alternate numbers" value={phones.length ? phones.join(", ") : "—"} />
+      <Row label="Emails" value={emails.length ? emails.join(", ") : "—"} />
+      <Row label="Addresses on file" value={addresses || "—"} />
+    </>
+  );
+}
+
+/** GST registrations, from a Mobile to GST payload (or the bundle's vreMobileToGst block). */
+function GstRows({ block }: { block: unknown }) {
+  const result = (block as { result?: { gstin?: string; legal_name?: string }[] } | null)?.result;
+  if (!Array.isArray(result) || result.length === 0) return null;
+  return (
+    <Row
+      label={result.length === 1 ? "GST registration" : `GST registrations (${result.length})`}
+      value={result
+        .slice(0, 3)
+        .map((r) => [r.legal_name, r.gstin].filter(Boolean).join(" · "))
+        .join("; ")}
+    />
+  );
+}
+
 function ResultBody({ trace }: { trace: TraceRecord }) {
   if (trace.providerStatus && trace.providerStatus !== "1") {
     return (
@@ -167,6 +207,43 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
         <Row label="State" value={prefill.state ?? "—"} />
       </>
     );
+  }
+
+  const data = (trace.response as Record<string, unknown> | null)?.data as
+    | Record<string, unknown>
+    | undefined;
+
+  if (trace.serviceId === SKIP_TRACING_SERVICE) {
+    // The bundle nests each standalone service's payload under its own key, in the same shape,
+    // so its summary is the standalone summaries read off those blocks. Everything else it
+    // returned is under "Show all fields" below.
+    const empBlock = data?.vreEmploymentLatest;
+    const emp = empBlock ? readEmployment({ data: empBlock }) : null;
+    const uanBlock = data?.vreMobileToUan as Record<string, unknown> | undefined;
+    return (
+      <>
+        {emp?.employer && <Row label="Employer" value={emp.employer} />}
+        {uanBlock?.uan ? <Row label="UAN" value={String(uanBlock.uan)} /> : null}
+        <ContactRows block={data?.vrePhoneToPrefill} />
+        <GstRows block={data?.vreMobileToGst} />
+      </>
+    );
+  }
+  if (trace.serviceId === "phone-to-prefill") return <ContactRows block={data} />;
+  if (trace.serviceId === "mobile-to-gst") return <GstRows block={data} />;
+  if (trace.serviceId === "gst-to-contact") {
+    const result = data?.result as { mobile?: string; email?: string } | undefined;
+    return (
+      <>
+        <Row label="Business phone" value={result?.mobile || "—"} />
+        <Row label="Business email" value={result?.email || "—"} />
+      </>
+    );
+  }
+  // Only the employment services have an employment shape. Anything else used to fall through
+  // to here and render "Currently employed: Unknown" over data that was never about employment.
+  if (trace.serviceId !== "employment-latest" && trace.serviceId !== "employment-history") {
+    return null;
   }
 
   const emp = readEmployment(trace.response);
@@ -225,6 +302,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
   // hidden: showing a manager a button that can only throw "lookups are turned off" reads as a
   // broken feature rather than an unconfigured one.
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  // Which services this company's plan includes — chosen per company by a superadmin, and
+  // enforced again server-side in runProfilexTrace. Only these get a Run button.
+  const [allowed, setAllowed] = useState<string[]>([]);
   // A manager's own prepaid balance — the thing that actually gates their lookups now (see
   // runProfilexTrace's wallet check). Null for anyone but a manager (admins aren't wallet-gated).
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
@@ -254,9 +334,12 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
       .then(({ data: { session } }) =>
         session
           ? getProfilexSettings({ data: { accessToken: session.access_token } })
-          : { enabled: false },
+          : { enabled: false, enabled_services: [] as string[] },
       )
-      .then((s) => setEnabled(s.enabled))
+      .then((s) => {
+        setEnabled(s.enabled);
+        setAllowed(s.enabled_services ?? []);
+      })
       .catch(() => setEnabled(false));
     loadWallet();
   }, [canRun, loadWallet]);
@@ -279,11 +362,13 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
   const missingSource = (service: ProfilexService): string | null => {
     const from = service.derivedFrom;
     if (!from) return null;
-    const source = latest.get(from.service);
-    const data = (source?.response as Record<string, unknown> | null)?.data as
-      | Record<string, unknown>
-      | undefined;
-    return data && from.extract(data) ? null : from.label;
+    const satisfied = from.sources.some((src) => {
+      const data = (latest.get(src.service)?.response as Record<string, unknown> | null)?.data as
+        | Record<string, unknown>
+        | undefined;
+      return !!(data && src.extract(data));
+    });
+    return satisfied ? null : from.label;
   };
 
   async function run(service: ProfilexService) {
@@ -317,6 +402,19 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
 
   if (loadError) {
     return <p className="text-xs text-destructive">{loadError}</p>;
+  }
+
+  if (canRun && enabled === true && allowed.length === 0 && latest.size === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+        <Search className="h-8 w-8 text-muted-foreground/40" />
+        <p className="text-sm font-medium text-foreground">No lookups on your plan yet</p>
+        <p className="text-xs text-muted-foreground max-w-xs">
+          Insights is on for your company, but no lookups have been enabled. Contact SamvadX support
+          to choose which ones your company can use.
+        </p>
+      </div>
+    );
   }
 
   if (canRun && enabled === false && latest.size === 0) {
@@ -370,8 +468,11 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
       {PROFILEX_SERVICES.map((service) => {
         const trace = latest.get(service.id);
         const needsSource = missingSource(service);
+        // Runnable only if Insights is on AND the company's plan includes this service. A result
+        // already on file still shows after a service is removed from the plan — it was paid for.
+        const runnable = canRun && enabled === true && allowed.includes(service.id);
         // Agents only ever see what has already been paid for.
-        if (!(canRun && enabled === true) && !trace) return null;
+        if (!runnable && !trace) return null;
 
         return (
           <div key={service.id} className="rounded-lg border border-border p-3">
@@ -380,7 +481,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
                 <p className="text-xs font-semibold text-foreground">{service.label}</p>
                 <p className="text-[11px] text-muted-foreground">{service.blurb}</p>
               </div>
-              {canRun && enabled === true && (
+              {runnable && (
                 <Button
                   size="sm"
                   variant={trace ? "outline" : "default"}
@@ -400,7 +501,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
               )}
             </div>
 
-            {canRun && enabled === true && (needsSource || showCost) && (
+            {runnable && (needsSource || showCost) && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1 mb-2">
                 {!needsSource && <IndianRupee className="h-3 w-3" />}
                 {needsSource ? `Run ${needsSource} first` : priceLine(service)}
@@ -417,10 +518,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
                 </p>
               </div>
             ) : (
-              canRun &&
-              enabled === true && (
-                <p className="text-xs text-muted-foreground italic">Not looked up yet.</p>
-              )
+              runnable && <p className="text-xs text-muted-foreground italic">Not looked up yet.</p>
             )}
           </div>
         );
