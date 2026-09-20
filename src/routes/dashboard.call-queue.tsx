@@ -970,6 +970,44 @@ export function CallQueueContent({
         />
       </div>
 
+      {/* ── Portfolio switcher — first thing on the page, above every KPI card. Only shown when
+          there is more than one open portfolio to choose between. ── */}
+      {portfolioOptions.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Portfolio">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Portfolio
+          </span>
+          {[
+            { id: "all", name: "All portfolios", count: fullQueue.length },
+            ...portfolioOptions,
+          ].map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              role="tab"
+              aria-selected={activePortfolioFilter === o.id}
+              onClick={() => setPortfolioFilter(o.id)}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-colors",
+                activePortfolioFilter === o.id
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background text-foreground hover:bg-muted",
+              )}
+            >
+              {o.name}
+              <span
+                className={cn(
+                  "rounded-full px-1.5 text-xs tabular-nums",
+                  activePortfolioFilter === o.id ? "bg-primary-foreground/20" : "bg-muted",
+                )}
+              >
+                {o.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── Priority PTP reminder — PTPs due today, impossible to miss without dismissing ── */}
       {!ptpBannerDismissed && ptpFollowups.some((p) => p.daysLeft === 0) && (
         <div className="animate-in slide-in-from-top-2 duration-300 flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/8 px-4 py-2.5 text-sm text-destructive font-medium">
@@ -1463,21 +1501,6 @@ export function CallQueueContent({
             rule), which was silently clipping the Bucket/Disposition dropdown panels to this
             row's height instead of letting them float over the table. */}
         <div className="mt-3 flex items-center gap-2">
-          {portfolioOptions.length > 1 && (
-            <select
-              value={activePortfolioFilter}
-              onChange={(e) => setPortfolioFilter(e.target.value)}
-              aria-label="Portfolio"
-              className="h-8 flex-shrink-0 rounded-md border border-border bg-background px-2 text-xs font-semibold"
-            >
-              <option value="all">All portfolios ({fullQueue.length})</option>
-              {portfolioOptions.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name} ({o.count})
-                </option>
-              ))}
-            </select>
-          )}
           <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1">
             {FILTERS.map((f) => (
               <button
