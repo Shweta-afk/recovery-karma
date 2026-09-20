@@ -14,7 +14,9 @@ import {
 import {
   ALL_SERVICE_IDS,
   LEGACY_SERVICE_IDS,
+  PROFILEX_SERVICES,
   SKIP_TRACING_SERVICE,
+  priceLine,
   getService,
   priceFor,
 } from "../src/lib/profilex/catalogue";
@@ -365,6 +367,59 @@ describe("third-party numbers never reach a debtor's dialable numbers", () => {
   test("other third-party keys are excluded too", () => {
     for (const key of ["employer_phone", "branch_contact", "helpline_mobile", "office_phone"]) {
       expect([...extractPhones({ [key]: "9632065320" })]).toEqual([]);
+    }
+  });
+});
+
+describe("priceLine — what an admin is quoted must be what they are charged", () => {
+  // Axiotta's real markups, as set by superadmin (list prices are ₹3 / ₹5 / ₹6 / ₹1.42).
+  const marked: Record<string, Record<string, number>> = {
+    "mobile-to-uan": { "1": 5 },
+    "employment-latest": { "1": 7 },
+    "phone-to-prefill": { "1": 8 },
+    "mobile-to-gst": { "1": 4 },
+  };
+
+  test("quotes the company's price, not the provider's list price", () => {
+    expect(priceLine(getService("mobile-to-uan")!, marked)).toBe("₹5 if found, free if not");
+    expect(priceLine(getService("phone-to-prefill")!, marked)).toBe("₹8 if found, ₹5 if not");
+  });
+
+  test("falls back to list price for a company with no override", () => {
+    expect(priceLine(getService("mobile-to-uan")!)).toBe("₹3 if found, free if not");
+  });
+
+  test("never claims a miss is free when priceFor would charge for it", () => {
+    // Skip Tracing is priced for status 1 only; an unlisted status takes priceFor's
+    // fail-expensive path, so quoting "free if not" would have been a lie worth ₹46.
+    expect(priceLine(getService("skip-tracing")!)).toBe("₹46 if found, ₹46 if not");
+  });
+
+  test("only says free where the charge really is ₹0", () => {
+    expect(priceLine(getService("get-alternate-phone")!)).toBe("₹6 if found, free if not");
+  });
+
+  test("keeps paise for fractional prices", () => {
+    expect(priceLine(getService("mobile-to-gst")!)).toBe("₹1.42 if found, ₹1.42 if not");
+  });
+
+  test("every service, every rate card: the quote equals priceFor", () => {
+    for (const svc of PROFILEX_SERVICES) {
+      for (const card of [undefined, marked]) {
+        const line = priceLine(svc, card);
+        const hit = priceFor(svc, "1", card);
+        expect(line.startsWith(`₹${Number.isInteger(hit) ? hit : hit.toFixed(2)} if found`)).toBe(
+          true,
+        );
+        // The quoted miss must be a price priceFor can actually produce, never invented.
+        const missQuoted = line.includes("free if not")
+          ? 0
+          : Number(line.split(", ")[1].replace(/[^\d.]/g, ""));
+        const possible = Object.keys({ ...svc.defaultPrices, ...(card?.[svc.id] ?? {}) })
+          .filter((k) => k !== "1")
+          .map((k) => priceFor(svc, k, card));
+        expect(possible.length ? possible : [priceFor(svc, null, card)]).toContain(missQuoted);
+      }
     }
   });
 });

@@ -268,3 +268,32 @@ export function priceFor(
   if (status !== null && status in prices) return prices[status];
   return Math.max(...Object.values(prices));
 }
+
+const rupees = (n: number) => (Number.isInteger(n) ? `₹${n}` : `₹${n.toFixed(2)}`);
+
+/**
+ * What THIS company pays for a lookup — not the provider's list price.
+ *
+ * Both halves of that used to be wrong. It read `defaultPrices` while runProfilexTrace charges
+ * `priceFor(..., rate_card)`, so a company on a marked-up plan was quoted one number and billed
+ * another. And a service priced for "found" only (Skip Tracing, ₹46) fell to `miss = 0` and
+ * claimed a miss was free, when priceFor's fail-expensive rule charges the full ₹46. Both
+ * numbers now come from priceFor itself, so what is shown is by construction what is charged.
+ */
+export function priceLine(
+  s: ProfilexService,
+  rateCard?: Record<string, Record<string, number>>,
+): string {
+  const hit = priceFor(s, "1", rateCard);
+  const missStatuses = Object.keys({ ...s.defaultPrices, ...(rateCard?.[s.id] ?? {}) }).filter(
+    (k) => k !== "1",
+  );
+  // With no not-found status priced, an actual miss takes priceFor's unrecognised-status path,
+  // so quote that rather than inventing a free one.
+  const miss = missStatuses.length
+    ? Math.min(...missStatuses.map((k) => priceFor(s, k, rateCard)))
+    : priceFor(s, null, rateCard);
+  return miss === 0
+    ? `${rupees(hit)} if found, free if not`
+    : `${rupees(hit)} if found, ${rupees(miss)} if not`;
+}

@@ -25,6 +25,7 @@ import { supabase } from "@/lib/supabase";
 import { getProfilexSettings, getMyWallet, runProfilexTrace } from "@/lib/profilex-actions.server";
 import {
   PROFILEX_SERVICES,
+  priceLine,
   UAN_SOURCE_SERVICE,
   SKIP_TRACING_SERVICE,
   type ProfilexService,
@@ -47,13 +48,6 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <span className="text-xs font-medium text-foreground text-right">{value ?? "—"}</span>
     </div>
   );
-}
-
-function priceLine(s: ProfilexService): string {
-  const hit = s.defaultPrices["1"] ?? 0;
-  const misses = Object.entries(s.defaultPrices).filter(([k]) => k !== "1");
-  const miss = misses.length ? Math.min(...misses.map(([, v]) => v)) : 0;
-  return miss === 0 ? `₹${hit} if found, free if not` : `₹${hit} if found, ₹${miss} if not`;
 }
 
 // Envelope/plumbing keys that carry no information for an agent looking at a debtor.
@@ -401,6 +395,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
   // Which services this company's plan includes — chosen per company by a superadmin, and
   // enforced again server-side in runProfilexTrace. Only these get a Run button.
   const [allowed, setAllowed] = useState<string[]>([]);
+  // This company's own prices. Without it the panel quotes the provider's list price while the
+  // wallet is charged the company's — see priceLine.
+  const [rateCard, setRateCard] = useState<Record<string, Record<string, number>>>({});
   // A manager's own prepaid balance — the thing that actually gates their lookups now (see
   // runProfilexTrace's wallet check). Null for anyone but a manager (admins aren't wallet-gated).
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
@@ -430,11 +427,12 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
       .then(({ data: { session } }) =>
         session
           ? getProfilexSettings({ data: { accessToken: session.access_token } })
-          : { enabled: false, enabled_services: [] as string[] },
+          : { enabled: false, enabled_services: [] as string[], rate_card: {} },
       )
       .then((s) => {
         setEnabled(s.enabled);
         setAllowed(s.enabled_services ?? []);
+        setRateCard((s.rate_card as Record<string, Record<string, number>>) ?? {});
       })
       .catch(() => setEnabled(false));
     loadWallet();
@@ -599,7 +597,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
             {runnable && (needsSource || showCost) && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1 mb-2">
                 {!needsSource && <IndianRupee className="h-3 w-3" />}
-                {needsSource ? `Run ${needsSource} first` : priceLine(service)}
+                {needsSource ? `Run ${needsSource} first` : priceLine(service, rateCard)}
               </p>
             )}
 
@@ -627,7 +625,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
               This looks up {debtorName}'s number with the data provider.
               {showCost &&
                 confirming &&
-                ` Costs ${priceLine(confirming)}, charged even when nothing is found.`}
+                ` Costs ${priceLine(confirming, rateCard)}, charged even when nothing is found.`}
               {latest.has(confirming?.id ?? "") &&
                 " A recent result is already stored — if it is still within the cache window this will be served free."}
             </AlertDialogDescription>
