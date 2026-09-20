@@ -301,18 +301,16 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 
     // Resolve the input, still without trusting the browser for any of it.
     let requestBody: Record<string, string>;
-    if (
-      service.input === "mobile" ||
-      service.input === "mobile+name" ||
-      service.input === "mobile+firstName"
-    ) {
+    const PHONE_INPUTS = ["mobile", "phone", "mobile+name", "mobile+firstName"];
+    if (PHONE_INPUTS.includes(service.input)) {
       const mobile = normalisePhone(debtor.phone_primary as string);
       if (!/^[6-9]\d{9}$/.test(mobile)) {
         throw new Error(
           `${debtor.name} has no valid mobile number on file, so there is nothing to look up.`,
         );
       }
-      requestBody = { mobile };
+      // Same number either way; a couple of endpoints just name the field `phone`.
+      requestBody = service.input === "phone" ? { phone: mobile } : { mobile };
       if (service.input === "mobile+name" || service.input === "mobile+firstName") {
         // Split the stored name rather than asking for one: the provider requires firstName,
         // and anything typed in the browser would be an input we cannot vouch for.

@@ -57,7 +57,14 @@ export function extractPhones(node: unknown, found = new Set<string>()): Set<str
   }
   if (typeof node === "object") {
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      if (/phone|mobile|contact/i.test(k)) {
+      // Numbers belonging to someone OTHER than the debtor must never reach their dialable
+      // numbers: LPG Advance returns the gas distributor's landline, and an agent ringing a
+      // dealer about somebody's debt is both useless and a third-party disclosure risk. The
+      // landline even survives the digit checks — "08023…" normalises to a 10-digit number
+      // starting 8, indistinguishable from a mobile.
+      const THIRD_PARTY =
+        /distributor|dealer|agency|branch|office|helpline|support|customer_care|customercare|employer|establishment/i;
+      if (/phone|mobile|contact/i.test(k) && !THIRD_PARTY.test(k)) {
         // A phone-ish key can hold one number or a plain list of them — the skip-tracing bundles
         // return `alternate_phones: ["+918660820296"]`, which the recursion below never sees as
         // phone data because array items carry no key of their own.

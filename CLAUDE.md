@@ -351,7 +351,8 @@ manual sentiment tag — never overwrites it.
 on a debtor profile. The services are data, not code: `src/lib/profilex/catalogue.ts` — as of
 2026-09-17: Skip Tracing (the ₹46 "VRE Skip Tracing" card — `/exp/vre-skip-tracing`, NOT "VRE
 Skip Tracing V2" at ₹15, which was wired by mistake for a day and replaced before it ever ran), Mobile→UAN, Employment Latest/History, Phone to
-Prefill, Mobile→GST, GST→Contact.
+Prefill, Alternate Phone Numbers, Alternate Addresses, UPI IDs, LPG Connection, Mobile→GST,
+GST→Contact.
 
 **Each company only gets the services a superadmin puts on its plan** —
 `profilex_settings.enabled_services`, set per company on the superadmin company page, and enforced
@@ -364,6 +365,12 @@ test keeps that constant identical to the migration's backfill.
 ⚠️ **Some endpoints must be called WITHOUT a `service-id` header** (the skip-tracing bundles).
 Sending any service-id to them returns HTTP 500 `Invalid service url`. `serviceId` is optional in
 the catalogue for this reason — omit it where the provider's docs do.
+
+⚠️ **The alt-numbers writeback must never store a third party's number.** `extractPhones`
+skips keys naming someone else (distributor, dealer, branch, office, employer…): LPG Connection
+returns the gas distributor's landline, and "08023…" normalises to a 10-digit number starting 8 —
+indistinguishable from a mobile. An agent ringing a dealer about somebody's debt is a disclosure
+problem, not just a wasted call.
 
 ⚠️ **`client-user-id` is the console's _Client_ Hash ID, not the User Hash ID beside it** (env
 `PROFILEX_CLIENT_HASH_ID`). The wrong one returns `You Dont Have UAT Access!!!`, which is also

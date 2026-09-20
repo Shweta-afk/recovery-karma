@@ -211,8 +211,7 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
   }
 
   const data = (trace.response as Record<string, unknown> | null)?.data as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
 
   if (trace.serviceId === SKIP_TRACING_SERVICE) {
     // The bundle nests each source's payload under its own key. The headline facts are pulled
@@ -227,8 +226,7 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
     // Alternate numbers come from two sources in this bundle — its own alternate-phone lookup
     // and the prefill block — so merge and de-duplicate rather than show one and hide the other.
     const prefill = block("vrePhoneToPrefill") as
-      | { alternatePhone?: { phoneNumber?: string }[]; email?: { email?: string }[] }
-      | undefined;
+      { alternatePhone?: { phoneNumber?: string }[]; email?: { email?: string }[] } | undefined;
     const phones = [
       ...((block("getAlternatePhoneNumber")?.alternate_phones as string[] | undefined) ?? []),
       ...(prefill?.alternatePhone ?? []).map((p) => p.phoneNumber ?? ""),
@@ -263,6 +261,71 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
     );
   }
   if (trace.serviceId === "phone-to-prefill") return <ContactRows block={data} />;
+  if (trace.serviceId === "get-alternate-phone") {
+    const phones = ((data?.alternate_phones as string[] | undefined) ?? [])
+      .map((p) => normalisePhone(p))
+      .filter((p) => /^[6-9]\d{9}$/.test(p));
+    return (
+      <Row
+        label="Alternate numbers"
+        value={phones.length ? [...new Set(phones)].join(", ") : "—"}
+      />
+    );
+  }
+  if (trace.serviceId === "mobile-to-multiple-upi") {
+    const ids = (data?.upi_id as string[] | undefined) ?? [];
+    return (
+      <>
+        <Row label="Name on UPI" value={(data?.full_name as string) || "—"} />
+        <Row label="UPI IDs" value={ids.length ? ids.join(", ") : "—"} />
+      </>
+    );
+  }
+  if (trace.serviceId === "mobile-to-lpg-advance") {
+    const lpg = data?.vreConsumerIdToLpg as Record<string, unknown> | undefined;
+    if (!lpg) return <p className="text-xs text-muted-foreground italic">No connection found.</p>;
+    const addr = lpg.customer_address as Record<string, string | null> | undefined;
+    const line = addr
+      ? [
+          addr.address_line1,
+          addr.address_line2,
+          addr.address_line3,
+          addr.city,
+          addr.state,
+          addr.pincode,
+        ]
+          .filter(Boolean)
+          .join(", ")
+      : null;
+    return (
+      <>
+        <Row label="Name on connection" value={(lpg.customer_name as string) || "—"} />
+        <Row label="Address" value={line || "—"} />
+        <Row label="Consumer no." value={(lpg.consumer_id as string) || "—"} />
+      </>
+    );
+  }
+  if (trace.serviceId === "get-alternate-address") {
+    const addresses =
+      (data?.addresses as
+        { address_text?: string; confidence_score?: number; last_seen?: string }[] | undefined) ??
+      [];
+    if (addresses.length === 0)
+      return <p className="text-xs text-muted-foreground italic">No addresses returned.</p>;
+    return (
+      <div className="space-y-1.5">
+        {addresses.map((a, i) => (
+          <div key={i} className="text-xs border-b border-border/50 pb-1.5 last:border-0">
+            <div className="text-foreground">{a.address_text ?? "—"}</div>
+            <div className="text-[10px] text-muted-foreground">
+              {a.confidence_score != null && `confidence ${a.confidence_score}`}
+              {a.last_seen && ` · last seen ${String(a.last_seen).slice(0, 10)}`}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   if (trace.serviceId === "mobile-to-gst") return <GstRows block={data} />;
   if (trace.serviceId === "gst-to-contact") {
     const result = data?.result as { mobile?: string; email?: string } | undefined;
@@ -397,8 +460,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
     if (!from) return null;
     const satisfied = from.sources.some((src) => {
       const data = (latest.get(src.service)?.response as Record<string, unknown> | null)?.data as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       return !!(data && src.extract(data));
     });
     return satisfied ? null : from.label;

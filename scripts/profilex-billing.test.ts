@@ -292,3 +292,79 @@ describe("the trunk-0 domestic format", () => {
     expect([...extractPhones({ phone: "19632065320" })]).toEqual([]);
   });
 });
+
+describe("the alternate-contact lookups", () => {
+  test("Alternate Phone Numbers is genuinely free on a miss", () => {
+    const svc = getService("get-alternate-phone")!;
+    expect(priceFor(svc, "1")).toBe(6);
+    expect(priceFor(svc, "2")).toBe(0);
+  });
+
+  test("Alternate Addresses charges its only known price for an unpriced status", () => {
+    const svc = getService("get-alternate-address")!;
+    expect(priceFor(svc, "1")).toBe(4);
+    expect(priceFor(svc, null)).toBe(4);
+  });
+
+  test("both send the debtor's number as `phone`, not `mobile`", () => {
+    // The provider rejects these two with "Missing required input fields: phone" otherwise.
+    for (const id of ["get-alternate-phone", "get-alternate-address"]) {
+      expect(getService(id)!.input).toBe("phone");
+    }
+  });
+
+  test("the numbers it returns reach the writeback", () => {
+    // alternate_phones is a plain string array carrying +91 prefixes.
+    const body = { alternate_phones: ["+918660820296", "09632065320"] };
+    expect([...extractPhones(body)].sort()).toEqual(["8660820296", "9632065320"]);
+  });
+});
+
+describe("UPI IDs and LPG Connection", () => {
+  test("are priced the same found or not, as their console cards show", () => {
+    expect(priceFor(getService("mobile-to-multiple-upi")!, "1")).toBe(1.58);
+    expect(priceFor(getService("mobile-to-multiple-upi")!, "2")).toBe(1.58);
+    expect(priceFor(getService("mobile-to-lpg-advance")!, "1")).toBe(15);
+    expect(priceFor(getService("mobile-to-lpg-advance")!, "2")).toBe(15);
+  });
+
+  test("LPG Advance is called without a service-id, UPI IDs with one", () => {
+    expect(getService("mobile-to-lpg-advance")!.serviceId).toBeUndefined();
+    expect(getService("mobile-to-multiple-upi")!.serviceId).toBeDefined();
+  });
+
+  test("UPI IDs uses the VRE path — the non-VRE one is not on the account", () => {
+    // Verified live: the non-VRE variant returns "You Dont Have UAT Access!!!" even for an
+    // empty body, while this one reaches input validation.
+    expect(getService("mobile-to-multiple-upi")!.path).toBe(
+      "/core-svc/api/v2/vre/exp/upi/v1/mobile-to-multiple-vpa",
+    );
+  });
+});
+
+describe("third-party numbers never reach a debtor's dialable numbers", () => {
+  // LPG Advance returns the gas distributor's landline next to the customer's own mobile.
+  const lpg = {
+    vreConsumerIdToLpg: {
+      customer_name: "Saritha Jain",
+      customer_mobile: "8861588181",
+      distributor_name: "KAVITHA ENTERPRISES (BLR)",
+      distributor_contact: "08023456789",
+    },
+  };
+
+  test("the debtor's own number is still picked up", () => {
+    expect([...extractPhones(lpg)]).toContain("8861588181");
+  });
+
+  test("the distributor's line is not, even though it looks like a mobile once normalised", () => {
+    expect(normalisePhone("08023456789")).toBe("8023456789"); // passes the digit checks
+    expect([...extractPhones(lpg)]).not.toContain("8023456789");
+  });
+
+  test("other third-party keys are excluded too", () => {
+    for (const key of ["employer_phone", "branch_contact", "helpline_mobile", "office_phone"]) {
+      expect([...extractPhones({ [key]: "9632065320" })]).toEqual([]);
+    }
+  });
+});

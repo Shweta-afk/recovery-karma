@@ -11,7 +11,10 @@
  *  comes from the debtor's own `phone_primary`, `mobile+name` adds their stored name, and a
  *  derived input (`uan`, `gstin`) is read from an earlier trace on that same debtor. That is
  *  what keeps every lookup rooted in data already in the portfolio. */
-export type ProfilexInput = "mobile" | "mobile+name" | "mobile+firstName" | "uan" | "gstin";
+export type ProfilexInput =
+  /** The debtor's own number, sent as `mobile` — or as `phone`, which some endpoints want
+   *  instead. Same value either way; only the body key differs. */
+  "mobile" | "phone" | "mobile+name" | "mobile+firstName" | "uan" | "gstin";
 
 /** How a derived input is obtained: which service supplies it, and how to read it back out of
  *  that service's stored response. Declaring it here rather than branching in the server action
@@ -143,6 +146,51 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     blurb:
       "Alternate phone numbers, email addresses and past addresses. The only wired service that " +
       "returns contact details, so it is the one that adds numbers to the debtor's record.",
+  },
+  {
+    id: "get-alternate-phone",
+    label: "Alternate Phone Numbers",
+    path: "/core-svc/api/v2/vre/exp/get-alternate-phone",
+    serviceId: "8b0915a9-213a-4068-87d4-58dc966d62fe",
+    input: "phone",
+    // Free when nothing is found, so a miss on an unreachable debtor costs nothing.
+    defaultPrices: { "1": 6, "2": 0 },
+    blurb:
+      "Other numbers reachable for this debtor. Free when nothing is found, and anything it " +
+      "returns is added to the debtor's alternate numbers for the dialer.",
+  },
+  {
+    id: "get-alternate-address",
+    label: "Alternate Addresses",
+    path: "/core-svc/api/v2/vre/exp/get-alternate-address",
+    serviceId: "3bbb95f9-9119-49b0-b968-e5532e4b0600",
+    input: "phone",
+    // The console card lists ₹4 for status 1 only; an unpriced status resolves to ₹4.
+    defaultPrices: { "1": 4 },
+    blurb:
+      "Addresses seen for this number, each with a confidence score and when it was last seen.",
+  },
+  {
+    id: "mobile-to-multiple-upi",
+    label: "UPI IDs",
+    path: "/core-svc/api/v2/vre/exp/upi/v1/mobile-to-multiple-vpa",
+    serviceId: "8fd8642b-5d4f-4793-a110-3a7b9ca6c96d",
+    input: "mobile",
+    defaultPrices: { "1": 1.58, "2": 1.58 },
+    blurb:
+      "Every UPI ID registered to the number, plus the name they are held under — a cheap way " +
+      "to confirm the person is still transacting.",
+  },
+  {
+    id: "mobile-to-lpg-advance",
+    label: "LPG Connection",
+    // The provider's own path really is spelled "lgp" — not a typo on our side.
+    path: "/core-svc/api/v2/exp/v2/mobile-lgp-advance",
+    input: "mobile",
+    defaultPrices: { "1": 15, "2": 15 },
+    blurb:
+      "The debtor's gas connection: name, full registered address and consumer number. Charged " +
+      "the same whether or not anything is found.",
   },
   {
     id: "mobile-to-gst",
