@@ -11,6 +11,7 @@ import {
   idSchema,
   shortText,
   limitSchema,
+  isoDateSchema,
   amountSchema,
   noteSchema,
   emailSchema,
@@ -22,6 +23,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 import { ALL_SERVICE_IDS, getService, priceFor } from "./profilex/catalogue";
+import { fetchAllRows } from "./fetch-all-rows";
 
 function db() {
   return getSupabaseAdmin();
@@ -820,6 +822,7 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
         accessToken: tokenSchema,
         clientId: idSchema.optional(),
         limit: limitSchema.optional(),
+        since: isoDateSchema.optional(),
       })
       .parse(d),
   )
@@ -836,6 +839,7 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false })
       .limit(data.limit ?? 200);
     if (data.clientId) query = query.eq("client_id", data.clientId);
+    if (data.since) query = query.gte("created_at", data.since);
 
     let manualQuery = admin
       .from("insights_manual_lookups")
@@ -845,6 +849,7 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false })
       .limit(data.limit ?? 200);
     if (data.clientId) manualQuery = manualQuery.eq("client_id", data.clientId);
+    if (data.since) manualQuery = manualQuery.gte("created_at", data.since);
 
     const [{ data: traces, error }, { data: manualTraces, error: manualErr }] = await Promise.all([
       query,
@@ -920,6 +925,146 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
     });
 
     return { rows: result };
+  });
+
+export interface InsightsBucket {
+  lookups: number;
+  found: number;
+  /** Charged by ProfileX but returned nothing. */
+  paidNoData: number;
+  /** Never reached a data source, so never charged. */
+  failed: number;
+  /** Of `lookups`, how many an admin typed in by hand. */
+  manual: number;
+  /** What the company's own wallet was charged (its rate card). */
+  companyCost: number;
+  /** What ProfileX actually bills (published list price). */
+  realCost: number;
+}
+export interface InsightsCompanyReport extends InsightsBucket {
+  clientId: string;
+  companyName: string;
+}
+export interface InsightsServiceReport extends InsightsBucket {
+  serviceId: string;
+}
+export interface InsightsReport {
+  since: string;
+  totals: InsightsBucket;
+  byCompany: InsightsCompanyReport[];
+  byService: InsightsServiceReport[];
+  /** True when the row cap was hit, so the totals are a lower bound. */
+  truncated: boolean;
+}
+
+const emptyBucket = (): InsightsBucket => ({
+  lookups: 0,
+  found: 0,
+  paidNoData: 0,
+  failed: 0,
+  manual: 0,
+  companyCost: 0,
+  realCost: 0,
+});
+
+/** Every lookup in the window, aggregated per company and per service — the accurate numbers.
+ *  getInsightsActivity only returns the latest N rows, so totals derived from it stop being
+ *  true the moment there are more than N lookups; this pages through everything instead.
+ *  Debtor lookups and admins' manual lookups are both included. */
+export const getInsightsReport = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, since: isoDateSchema.optional() }).parse(d),
+  )
+  .handler(async ({ data }): Promise<InsightsReport> => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const admin = db();
+    const since = data.since ?? new Date(0).toISOString();
+    const MAX_ROWS = 100_000;
+
+    interface Row {
+      client_id: string;
+      service_id: string;
+      state: string;
+      provider_status: string | null;
+      billable: boolean;
+      cost: number;
+    }
+    const load = async (table: string) => {
+      return fetchAllRows<Row>(async (from, to) => {
+        const { data: rows, error } = await admin
+          .from(table)
+          .select("client_id, service_id, state, provider_status, billable, cost")
+          .gte("created_at", since)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: rows as unknown as Row[] | null, error };
+      });
+    };
+    const [debtor, manual] = await Promise.all([
+      load("debtor_traces"),
+      load("insights_manual_lookups"),
+    ]);
+    if (debtor.error) throw new Error(`Could not load Insights report (${debtor.error.message})`);
+    // Code deployed ahead of the manual-lookups migration: report debtor lookups regardless.
+    if (manual.error) console.error("[insights] manual lookups unavailable:", manual.error.message);
+
+    const all = [
+      ...debtor.data.map((r) => ({ r, manual: false })),
+      ...(manual.error ? [] : manual.data.map((r) => ({ r, manual: true }))),
+    ];
+    const truncated = all.length > MAX_ROWS;
+    const rows = truncated ? all.slice(0, MAX_ROWS) : all;
+
+    const totals = emptyBucket();
+    const companies = new Map<string, InsightsBucket>();
+    const services = new Map<string, InsightsBucket>();
+    for (const { r, manual: isManual } of rows) {
+      const service = getService(r.service_id);
+      const realCost =
+        r.billable && service ? priceFor(service, r.provider_status, null) : Number(r.cost);
+      for (const b of [
+        totals,
+        companies.get(r.client_id) ?? companies.set(r.client_id, emptyBucket()).get(r.client_id)!,
+        services.get(r.service_id) ?? services.set(r.service_id, emptyBucket()).get(r.service_id)!,
+      ]) {
+        b.lookups += 1;
+        if (r.state === "failed") b.failed += 1;
+        else if (r.provider_status === "1") b.found += 1;
+        else if (r.billable) b.paidNoData += 1;
+        if (isManual) b.manual += 1;
+        b.companyCost += Number(r.cost);
+        b.realCost += realCost;
+      }
+    }
+
+    const ids = [...companies.keys()];
+    const { data: clients } = ids.length
+      ? await admin.from("clients").select("id, company_name").in("id", ids)
+      : { data: [] as { id: string; company_name: string }[] };
+    const nameById = new Map(
+      ((clients ?? []) as { id: string; company_name: string }[]).map((c) => [
+        c.id,
+        c.company_name,
+      ]),
+    );
+
+    return {
+      since,
+      totals,
+      truncated,
+      byCompany: [...companies.entries()]
+        .map(([clientId, b]) => ({
+          clientId,
+          companyName: nameById.get(clientId) ?? "Unassigned",
+          ...b,
+        }))
+        .sort((a, b) => b.realCost - a.realCost),
+      byService: [...services.entries()]
+        .map(([serviceId, b]) => ({ serviceId, ...b }))
+        .sort((a, b) => b.realCost - a.realCost),
+    };
   });
 
 /** One company's Insights configuration (enable toggle, cache TTLs, rate card) — superadmin

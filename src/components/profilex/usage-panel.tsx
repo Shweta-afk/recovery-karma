@@ -21,6 +21,7 @@ import {
 } from "@/lib/profilex-actions.server";
 import { serviceLabel } from "@/lib/profilex-store";
 import { downloadCsv } from "@/lib/csv-export";
+import { periodLabel, periodSince, type InsightsPeriod } from "@/lib/profilex/period";
 
 interface UserUsage {
   agentId: string;
@@ -78,21 +79,26 @@ function aggregate(rows: UsageRow[]): UserUsage[] {
 }
 
 const money = (n: number) => `₹${n.toFixed(2)}`;
+const DETAIL_LIMIT = 1000;
 
-export function InsightsUsagePanel() {
+export function InsightsUsagePanel({ period = "this-month" }: { period?: InsightsPeriod }) {
+  const label = periodLabel(period).toLowerCase();
   const [rows, setRows] = useState<UsageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
+    setLoading(true);
     (async () => {
       try {
         const {
           data: { session },
         } = await supabase.auth.getSession();
         if (!session) throw new Error("Your session expired — sign in again");
-        const res = await getProfilexUsage({ data: { accessToken: session.access_token } });
+        const res = await getProfilexUsage({
+          data: { accessToken: session.access_token, since: periodSince(period) },
+        });
         setRows(res.rows);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not load usage");
@@ -100,7 +106,7 @@ export function InsightsUsagePanel() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [period]);
 
   if (loading) return <p className="text-xs text-muted-foreground py-6">Loading usage…</p>;
   if (error) return <p className="text-xs text-destructive">{error}</p>;
@@ -136,12 +142,12 @@ export function InsightsUsagePanel() {
 
       <ReportSection
         title="Usage by person"
-        description="This month. Click a row to see which lookups they ran."
+        description={`${periodLabel(period)}. Click a row to see which lookups they ran.`}
         icon={Users}
       >
         {users.length === 0 ? (
           <div className="rounded-lg border border-border bg-card/40 py-10 text-center">
-            <p className="text-sm text-muted-foreground">No lookups run this month.</p>
+            <p className="text-sm text-muted-foreground">No lookups run ({label}).</p>
           </div>
         ) : (
           <div className="rounded-lg border border-border overflow-x-auto bg-card">
@@ -275,7 +281,7 @@ export function InsightsUsagePanel() {
         )}
       </ReportSection>
 
-      <InsightsDetailLog />
+      <InsightsDetailLog period={period} />
     </div>
   );
 }
@@ -289,19 +295,27 @@ const RESULT_META: Record<string, { label: string; cls: string }> = {
 /** Every individual lookup, not just the per-agent/per-service totals above — "where did an
  * agent use Insights" answered with an actual debtor, not only a number. Same billing note as
  * the rest of this panel: a "Not found" row was still paid for unless free-cache-reuse. */
-function InsightsDetailLog() {
+function InsightsDetailLog({ period }: { period: InsightsPeriod }) {
+  const label = periodLabel(period).toLowerCase();
   const [rows, setRows] = useState<UsageDetailRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setLoading(true);
     (async () => {
       try {
         const {
           data: { session },
         } = await supabase.auth.getSession();
         if (!session) throw new Error("Your session expired — sign in again");
-        const res = await getProfilexUsageDetail({ data: { accessToken: session.access_token } });
+        const res = await getProfilexUsageDetail({
+          data: {
+            accessToken: session.access_token,
+            since: periodSince(period),
+            limit: DETAIL_LIMIT,
+          },
+        });
         setRows(res.rows);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not load the detail log");
@@ -309,7 +323,7 @@ function InsightsDetailLog() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [period]);
 
   if (loading) return <p className="text-xs text-muted-foreground py-6">Loading detail log…</p>;
   if (error) return <p className="text-xs text-destructive">{error}</p>;
@@ -317,7 +331,7 @@ function InsightsDetailLog() {
   return (
     <ReportSection
       title="Detail Log"
-      description="Every individual lookup this month — who ran it, and on which debtor"
+      description={`Every individual lookup (${label}) — who ran it, and on which debtor. Manual lookups typed in on the Insights page are listed as "Manual lookup".${rows.length >= DETAIL_LIMIT ? ` Showing the latest ${DETAIL_LIMIT}.` : ""}`}
       icon={Search}
       action={
         rows.length > 0 ? (
@@ -363,7 +377,7 @@ function InsightsDetailLog() {
       <DataTable
         rows={rows}
         keyOf={(r) => r.trace_id}
-        empty="No lookups yet this month."
+        empty={`No lookups (${label}).`}
         maxHeight="max-h-[500px]"
         columns={[
           {
