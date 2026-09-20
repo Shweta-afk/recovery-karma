@@ -238,12 +238,40 @@ export function CallQueueContent({
   const statusMeta = STATUS_META[status];
 
   // Queue = only the debtors assigned to this agent from uploaded portfolios
-  const [allQueue, setAllQueue] = useState<QueueDebtor[]>(() => buildAssignedQueue(agentId));
+  const [fullQueue, setFullQueue] = useState<QueueDebtor[]>(() => buildAssignedQueue(agentId));
+  // Which portfolio the agent/manager is looking at. Applied to the queue itself (not just the
+  // table) so counts, the dialer boards and the "primary portfolio" dialer settings below all
+  // follow the selection. "all" = every portfolio, the previous behaviour.
+  const [portfolioFilter, setPortfolioFilter] = useState<string>("all");
+  const portfolioOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const d of fullQueue) {
+      if (d.portfolioId) counts.set(d.portfolioId, (counts.get(d.portfolioId) ?? 0) + 1);
+    }
+    const all = getPortfolios();
+    return Array.from(counts, ([id, count]) => ({
+      id,
+      count,
+      name: all.find((p) => p.id === id)?.name ?? "Portfolio",
+    })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [fullQueue]);
+  // A selection that no longer exists (portfolio closed, accounts reassigned) falls back to all
+  // rather than leaving the queue empty behind a stale filter.
+  const activePortfolioFilter = portfolioOptions.some((o) => o.id === portfolioFilter)
+    ? portfolioFilter
+    : "all";
+  const allQueue = useMemo(
+    () =>
+      activePortfolioFilter === "all"
+        ? fullQueue
+        : fullQueue.filter((d) => d.portfolioId === activePortfolioFilter),
+    [fullQueue, activePortfolioFilter],
+  );
 
   // Reload queue when assignments/portfolios change
   useEffect(() => {
     const reload = () => {
-      setAllQueue(buildAssignedQueue(agentId));
+      setFullQueue(buildAssignedQueue(agentId));
     };
     window.addEventListener("portfolios-updated", reload);
     // buildAssignedQueue derives queueStatus/scheduledAt/ptpAmount from the dispositions
@@ -1435,6 +1463,21 @@ export function CallQueueContent({
             rule), which was silently clipping the Bucket/Disposition dropdown panels to this
             row's height instead of letting them float over the table. */}
         <div className="mt-3 flex items-center gap-2">
+          {portfolioOptions.length > 1 && (
+            <select
+              value={activePortfolioFilter}
+              onChange={(e) => setPortfolioFilter(e.target.value)}
+              aria-label="Portfolio"
+              className="h-8 flex-shrink-0 rounded-md border border-border bg-background px-2 text-xs font-semibold"
+            >
+              <option value="all">All portfolios ({fullQueue.length})</option>
+              {portfolioOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name} ({o.count})
+                </option>
+              ))}
+            </select>
+          )}
           <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1">
             {FILTERS.map((f) => (
               <button
