@@ -45,8 +45,8 @@ import {
   type PortfolioSettings,
   PRODUCT_LABEL_TO_ENUM,
 } from "@/lib/portfolio-store";
-import { useTeamAgents, withSelf } from "@/lib/team-store";
-import { useActiveTeam } from "@/lib/active-team-store";
+import { getTeamsByManager, refreshTeams, useTeamAgents, withSelf } from "@/lib/team-store";
+import { getActiveTeamId, useActiveTeam } from "@/lib/active-team-store";
 import {
   resolveMapping,
   confidenceLabel,
@@ -367,6 +367,29 @@ function PortfolioUploadPage() {
       return;
     }
 
+    // activeTeam can still be undefined here even though this manager does have a team: it's
+    // read from team-store's local cache (team-store.ts/active-team-store.ts), warmed by a
+    // background refreshTeams() fired on mount — a race a brand-new manager's first, cold-cache
+    // session can lose. Uploading with an unresolved team writes team_id: null, which silently
+    // orphans the portfolio from every team-scoped view (Portfolio Overview and the Debtors page
+    // both filter on portfolio.teamId) even though RLS and manager_id are fine — the same
+    // failure shape already hit manager_id once (see CLAUDE.md, 2026-08-22) and hit team_id live
+    // on 2026-09-11 (RR debt solutions / Kirti Zagade's Team). Re-resolve against a fresh
+    // refresh rather than trusting whatever the hook had at render time.
+    let teamId = activeTeam?.id;
+    if (!teamId) {
+      await refreshTeams();
+      const myTeams = getTeamsByManager(managerId);
+      teamId =
+        myTeams.length === 1
+          ? myTeams[0].id
+          : myTeams.find((t) => t.id === getActiveTeamId(managerId))?.id;
+      if (!teamId) {
+        toast.error("Couldn't confirm your team yet — wait a moment and try uploading again.");
+        return;
+      }
+    }
+
     setUploading(true);
     setUploadProgress(0);
 
@@ -383,7 +406,7 @@ function PortfolioUploadPage() {
         uploadedAt,
         rows: mappedRows,
         managerId,
-        teamId: activeTeam?.id,
+        teamId,
         settings,
         agentTargets: {},
         replacesPortfolioId: replacesPortfolioId || undefined,

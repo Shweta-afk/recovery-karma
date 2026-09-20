@@ -103,7 +103,7 @@ export function LiveCallsBoard({
 
 /**
  * Listen-in / Whisper / Merge — deliberately inert placeholders, not hidden and not wired to
- * anything. Decision 2026-09-07: the org is moving off Exotel (click-to-call) and evaluating a
+ * anything. Decision 2026-09-07: the org left Exotel (click-to-call, since removed) and evaluating a
  * new telephony vendor specifically so this becomes possible — with the CURRENT integration,
  * each call's two legs are bridged inside the provider, not in this app, so there is no API
  * here to call. See docs/LIVE_CALLS_SCOPE.md's "Explicitly OUT of scope" section for the fuller

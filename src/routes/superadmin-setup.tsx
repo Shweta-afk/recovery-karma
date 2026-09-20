@@ -24,6 +24,7 @@ function SuperadminSetupPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [bootstrapSecret, setBootstrapSecret] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +46,7 @@ function SuperadminSetupPage() {
       } = await supabase.auth.getSession();
 
       const result = await createSuperadmin({
-        data: { name, email, password, accessToken: session?.access_token },
+        data: { name, email, password, accessToken: session?.access_token, bootstrapSecret },
       });
 
       if (!result.ok) {
@@ -133,6 +134,18 @@ function SuperadminSetupPage() {
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bootstrap-secret">Setup key</Label>
+                <Input
+                  id="bootstrap-secret"
+                  type="password"
+                  placeholder="Only needed for the very first superadmin"
+                  value={bootstrapSecret}
+                  onChange={(e) => setBootstrapSecret(e.target.value)}
+                  autoComplete="off"
+                />
               </div>
 
               {error && (

@@ -332,14 +332,13 @@ function MessagesPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Messages</h1>
           <p className="text-sm text-muted-foreground">
             WhatsApp conversations, IVR call logs, and SMS delivery status.{" "}
-            {/* This used to say there was no gateway and that nothing reached the debtor. That
-                stopped being true: messages-store.sendMessage now calls Exotel through
-                telephony/server.ts before writing the row. Telling an agent a send goes nowhere
-                when it may actually deliver is the more dangerous of the two errors. */}
-            <span className="font-medium text-foreground">Sending attempts a real delivery</span> —
-            the row's status reflects whether the provider accepted it, and shows{" "}
-            <span className="font-medium text-foreground">Failed</span> when credentials are missing
-            or the WhatsApp template is not yet approved.
+            {/* SMS goes through the telephony provider and its status reflects whether the provider
+                accepted it. WhatsApp has no gateway wired (Exotel WABA was dropped 2026-09-05), so a
+                WhatsApp send is recorded as Failed rather than pretending to deliver. */}
+            <span className="font-medium text-foreground">SMS attempts a real delivery</span> — the
+            row's status reflects whether the provider accepted it.{" "}
+            <span className="font-medium text-foreground">WhatsApp is not connected yet</span>, so
+            WhatsApp sends show <span className="font-medium text-foreground">Failed</span>.
           </p>
         </div>
         <div className="flex items-center gap-2">

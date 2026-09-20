@@ -40,13 +40,8 @@ RAZORPAY_KEY_ID=rzp_live_...
 RAZORPAY_KEY_SECRET=your-secret
 ELEVENLABS_API_KEY=your-elevenlabs-key
 ELEVENLABS_VOICE_ID=your-voice-id
-TELEPHONY_PROVIDER=exotel
-EXOTEL_SID=your-exotel-sid
-EXOTEL_API_KEY=your-exotel-api-key
-EXOTEL_API_TOKEN=your-exotel-api-token
-EXOTEL_SUBDOMAIN=api.exotel.com
-EXOTEL_CALLER_ID=your-exophone
-EXOTEL_WEBHOOK_URL=https://your-railway-app.railway.app/api/telephony/webhook
+TELEPHONY_PROVIDER=sim
+TELEPHONY_WEBHOOK_SECRET=generate-with-openssl-rand-hex-32
 VITE_TELEPHONY_CALLER_IDS=your-exophone
 VITE_APP_URL=https://your-railway-app.railway.app
 ```
@@ -63,7 +58,7 @@ VITE_APP_URL=https://your-railway-app.railway.app
 
 Once you have your Railway URL from step 2:
 
-1. Update `EXOTEL_WEBHOOK_URL` in Railway Variables to point to your live app
+1. Point your telephony vendor's callback at `https://<your-domain>/api/telephony/webhook?secret=<TELEPHONY_WEBHOOK_SECRET>`
 2. Update the StatusCallback URL on the Exotel account/app config to match
 
 ## Monitoring
@@ -119,7 +114,7 @@ Check **Logs** tab for error messages. Most common:
 
 ### Webhooks not firing
 
-- Verify `EXOTEL_WEBHOOK_URL` matches your Railway domain
+- Verify the vendor's callback URL matches your Railway domain and carries the current `TELEPHONY_WEBHOOK_SECRET`
 - Check Railway logs for incoming requests
 - Confirm the Exotel account/app's StatusCallback config points at it
 
@@ -159,4 +154,4 @@ railway status
 2. Add env vars from `.env.example`
 3. Push to main → auto-deploy
 4. Test login page
-5. Update EXOTEL_WEBHOOK_URL once you have live domain
+5. Update the vendor's webhook callback URL once you have a live domain

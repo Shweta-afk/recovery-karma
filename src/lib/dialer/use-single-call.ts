@@ -12,6 +12,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
+import { getAccessToken } from "@/lib/access-token";
 import { applyEvent, isTerminal } from "@/lib/telephony/call-machine";
 import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provider";
 import type { CallState, TelephonyEvent } from "@/lib/telephony/types";
@@ -148,9 +149,11 @@ export function useSingleCall(
 
         startTransition(async () => {
           try {
+            const accessToken = await getAccessToken();
             const result = await withTimeout(
               serverStartCall({
                 data: {
+                  accessToken,
                   callLogId: debtor.id,
                   agentNumber: phoneToUse,
                   debtorNumber: debtor.phone,
@@ -168,7 +171,9 @@ export function useSingleCall(
               // never start polling a call we've already told the UI is over.
               cancelPendingRef.current = false;
               stoppedRef.current = true;
-              serverHangupCall({ data: { providerCallId: result.providerCallId } }).catch((err) => {
+              serverHangupCall({
+                data: { accessToken, providerCallId: result.providerCallId },
+              }).catch((err) => {
                 const msg = err instanceof Error ? err.message : String(err);
                 console.error("Failed to hang up call cancelled before it connected:", msg);
               });
@@ -181,9 +186,13 @@ export function useSingleCall(
             // nothing pushes those events at this component — poll the server for the latest
             // status instead, matching on either id the provider might report back.
             timerRef.current = setInterval(async () => {
+              // Fresh token every poll: the interval can outlive the one the call started with.
               const status = await serverGetCallStatus({
-                data: { keys: [result.providerCallId, debtor.id] },
-              });
+                data: {
+                  accessToken: await getAccessToken(),
+                  keys: [result.providerCallId, debtor.id],
+                },
+              }).catch(() => null);
               // hangup() (or a fresh dial) may have run while this request was in flight —
               // stoppedRef catches that even though clearInterval already fired, since
               // clearInterval only prevents the NEXT tick, not this one finishing late.
@@ -277,7 +286,9 @@ export function useSingleCall(
       // Server mode: call hangup via server function
       startTransition(async () => {
         try {
-          await serverHangupCall({ data: { providerCallId: pidRef.current! } });
+          await serverHangupCall({
+            data: { accessToken: await getAccessToken(), providerCallId: pidRef.current! },
+          });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error("Failed to hangup call:", msg);

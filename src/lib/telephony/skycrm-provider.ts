@@ -101,7 +101,17 @@ function mintToken(extension: string): string {
 }
 
 // ─── Shared POST helper ─────────────────────────────────────────────────────────
-// All non-login endpoints are POST + JSON, authenticated via `Authorization: Bearer <jwt>`.
+// All non-login endpoints are POST with a `Authorization: Bearer <jwt>` header, and the body is
+// FORM-ENCODED (application/x-www-form-urlencoded), NOT JSON.
+//
+// ⚠️ HARD-WON: the vendor's Django views read fields off `request.POST`, so a JSON body arrives
+// as empty and every field reads back as None — their code then indexes that None and returns
+// {"status":300,"Error":"'NoneType' object is not subscriptable — Failed to Dialing Number"}.
+// This crash cost days of debugging (2026-09) and looked like a channel/prefix/per_id problem;
+// it was purely the content-type. Verified 2026-09-11 against the test env: switching dial /
+// hangup / login_in_queue1 / check_for_incoming_api to form encoding made all four succeed.
+// Do NOT send JSON to this vendor.
+//
 // The vendor returns HTTP 200 even for logical failures, encoding the outcome in a `status`
 // field ({"status": 200, ...} ok, {"status": 300, "Error": ...} fail, {"status": 401, ...}
 // bad token). So a 2xx HTTP response is NOT success — the body's `status` is authoritative.
@@ -123,13 +133,17 @@ async function post(
   const token = mintToken(extension);
   let response: Response;
   try {
+    // Form-encode the body — see the ⚠️ note above; JSON makes every field read as None
+    // server-side. URLSearchParams sets Content-Type: application/x-www-form-urlencoded, which
+    // the vendor's Django `request.POST` reads (as does multipart form-data in Postman).
+    const form = new URLSearchParams();
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== undefined && v !== null) form.set(k, String(v));
+    }
     response = await fetch(`${SKYCRM_BASE_URL}/${path}`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

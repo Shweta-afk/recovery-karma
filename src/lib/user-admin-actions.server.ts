@@ -7,9 +7,11 @@
 // scoped to caller.clientId (resolved server-side via verifyCaller), never to anything the
 // browser claims about itself.
 
+import { z, tokenSchema, idSchema, shortText, emailSchema, grantableRoleSchema } from "./schemas";
 import { randomBytes } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
+import { enforceRateLimit } from "./rate-limit.server";
 import type { Role } from "./auth";
 
 function generatePassword(): string {
@@ -17,16 +19,16 @@ function generatePassword(): string {
 }
 
 export const inviteUser = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: {
-      accessToken: string;
-      name: string;
-      email: string;
-      role: Role;
-      /** agents.id of a manager — only meaningful when role === "agent". Adds the new
-       * agent to that manager's team so manager-facing pages see them immediately. */
-      managerId?: string;
-    }) => d,
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        name: shortText(),
+        email: emailSchema,
+        role: grantableRoleSchema,
+        managerId: idSchema.optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
@@ -36,6 +38,7 @@ export const inviteUser = createServerFn({ method: "POST" })
     if (caller.role !== "admin") {
       return { ok: false as const, error: "Only admins can invite users." };
     }
+    enforceRateLimit(`invite-user:${caller.authUserId}`, 30, 60 * 60_000);
 
     const name = data.name.trim();
     const email = data.email.trim().toLowerCase();
@@ -194,7 +197,14 @@ async function addAgentToManagerTeam(
  * the admin sees one new one-time password to hand off, same UX as the original invite.
  */
 export const resetUserPassword = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; agentId: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        agentId: idSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) {
@@ -203,6 +213,7 @@ export const resetUserPassword = createServerFn({ method: "POST" })
     if (caller.role !== "admin") {
       return { ok: false as const, error: "Only admins can reset passwords." };
     }
+    enforceRateLimit(`reset-password:${caller.authUserId}`, 20, 60 * 60_000);
 
     const admin = getSupabaseAdmin();
     const { data: agent, error: agentErr } = await admin

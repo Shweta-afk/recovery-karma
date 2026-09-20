@@ -14,6 +14,7 @@ import type { DialTarget, DialerRun } from "@/lib/dialer/engine";
 import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provider";
 import type { CallRecord, TelephonyEvent } from "@/lib/telephony/types";
 import { toLiveEntries } from "./live-adapter";
+import { getAccessToken } from "@/lib/access-token";
 import type { LiveCallEntry } from "@/routes/dashboard.call-queue";
 
 const TICK_MS = 1500;
@@ -118,13 +119,28 @@ export function useDialerRun(): UseDialerRun {
         // vendor/server code never ships in the eager client bundle.
         const srv = await import("@/lib/telephony/server");
         const started = await srv.startDialerRun({
-          data: { runId, settings, targets, agentsAvailable: lines, agentNumbers, callerId },
+          data: {
+            accessToken: await getAccessToken(),
+            runId,
+            settings,
+            targets,
+            agentsAvailable: lines,
+            agentNumbers,
+            callerId,
+          },
         });
         if (started) runRef.current = started;
         render();
         timerRef.current = setInterval(async () => {
           const ticked = await srv.tickDialerRun({
-            data: { runId, agentsAvailable: lines, targets, agentNumbers, callerId },
+            data: {
+              accessToken: await getAccessToken(),
+              runId,
+              agentsAvailable: lines,
+              targets,
+              agentNumbers,
+              callerId,
+            },
           });
           if (ticked) runRef.current = ticked;
           render();
@@ -165,7 +181,9 @@ export function useDialerRun(): UseDialerRun {
     clearTimer();
     if (modeRef.current === "server") {
       const srv = await import("@/lib/telephony/server");
-      const stopped = await srv.stopDialerRun({ data: { runId: runIdRef.current } });
+      const stopped = await srv.stopDialerRun({
+        data: { accessToken: await getAccessToken(), runId: runIdRef.current },
+      });
       if (stopped) runRef.current = stopped;
       render();
       return;
@@ -181,7 +199,9 @@ export function useDialerRun(): UseDialerRun {
       if (!run) return;
       if (modeRef.current === "server") {
         const srv = await import("@/lib/telephony/server");
-        const updated = await srv.hangupDialerLeg({ data: { runId: runIdRef.current, legId } });
+        const updated = await srv.hangupDialerLeg({
+          data: { accessToken: await getAccessToken(), runId: runIdRef.current, legId },
+        });
         if (updated) runRef.current = updated;
         render();
         return;

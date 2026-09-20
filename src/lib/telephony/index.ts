@@ -3,7 +3,6 @@
 // never touches feature code.
 import type { TelephonyProvider } from "./types";
 import { kookooProvider } from "./kookoo-provider";
-import { exotelProvider } from "./exotel-provider";
 import { skycrmProvider } from "./skycrm-provider";
 import { createSimProvider, type SimProvider } from "./sim-provider";
 
@@ -22,15 +21,14 @@ export function getSimProvider(): SimProvider {
 const PROVIDERS: Record<string, () => TelephonyProvider> = {
   sim: getSimProvider,
   kookoo: () => kookooProvider,
-  exotel: () => exotelProvider,
   // SkyCRM-ACD (Intellect Info Trade) — POC adapter over their REST APIs; agents use a SIP
   // softphone for audio until the vendor unlocks WebRTC. Unwired until credentials land.
   skycrm: () => skycrmProvider,
 };
 
 /** The active provider. Defaults to the simulated provider until a real SIP vendor is
- * wired via TELEPHONY_PROVIDER (server-side env). Exotel is the production default (see
- * .env.example) — Tata SmartFlo was evaluated and dropped; its provider code is removed.
+ * wired via TELEPHONY_PROVIDER (server-side env). Exotel and Tata SmartFlo were both dropped
+ * and their provider code removed; the next voice vendor plugs in here.
  * Guarded so a stray client import can't throw on a missing `process`. */
 export function getTelephonyProvider(): TelephonyProvider {
   const key =

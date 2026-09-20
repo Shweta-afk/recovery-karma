@@ -5,7 +5,8 @@
 //
 // Today the active provider is the simulator, so a run advances when tickDialerRun()
 // flushes due sim events. Swapping TELEPHONY_PROVIDER to a real vendor changes nothing
-// here: real providers deliver events via ingestProviderWebhook() instead of flushDue().
+// here: real providers deliver events via the authenticated /api/telephony/webhook route
+// (webhook-handler.ts) instead of flushDue().
 //
 // KNOWN LIMITATION (documented in the plan): runs live in module memory. That persists
 // across requests in a single dev/Node process but NOT across serverless instances, and
@@ -18,7 +19,8 @@ import type { PortfolioSettings } from "@/lib/portfolio-store";
 import * as engine from "@/lib/dialer/engine";
 import type { DialerRun, DialTarget } from "@/lib/dialer/engine";
 import { getTelephonyProvider } from "./index";
-import { sendWhatsApp as sendWhatsAppExotel } from "./exotel-provider";
+import { getSupabaseAdmin, verifyCaller, type VerifiedCaller } from "@/lib/supabase-admin.server";
+import { enforceRateLimit } from "@/lib/rate-limit.server";
 import type { SimProvider } from "./sim-provider";
 import { isTerminal } from "./call-machine";
 import type { TelephonyEvent, CallStatusEvent } from "./types";
@@ -42,6 +44,12 @@ const g = globalThis as typeof globalThis & {
     busyAgents: Map<string, string>;
     loggedLegs: Map<string, Set<string>>;
     latestStatus: Map<string, CallStatusEvent>;
+    /** run id / provider call id / call-log id → the client_id that started it. Every server
+     *  function below is a public endpoint, so this is what stops one company from hanging up,
+     *  polling or hijacking another company's calls even with a valid login of its own. */
+    owners: Map<string, string>;
+    /** run id → debtor id → the dialable row WE loaded from the database for that debtor. */
+    runTargets: Map<string, Map<string, DialTarget>>;
   };
 };
 
@@ -50,9 +58,137 @@ g.__recoveryaiTelephony ??= {
   busyAgents: new Map(),
   loggedLegs: new Map(),
   latestStatus: new Map(),
+  owners: new Map(),
+  runTargets: new Map(),
 };
+// A hot-reloaded module can inherit a global created before these fields existed.
+g.__recoveryaiTelephony.owners ??= new Map();
+g.__recoveryaiTelephony.runTargets ??= new Map();
 
 const runs = g.__recoveryaiTelephony.runs;
+const owners = g.__recoveryaiTelephony.owners;
+const runTargets = g.__recoveryaiTelephony.runTargets;
+
+// ─── Authorization ───────────────────────────────────────────────────────────────
+// TanStack server functions are ordinary HTTP endpoints whose ids ship in the client bundle, so
+// "only our UI calls this" is not a defence. Every handler below starts with requireCaller().
+
+const MAX_OWNERS = 20_000;
+function rememberOwner(clientId: string, ...keys: Array<string | undefined>): void {
+  if (owners.size > MAX_OWNERS) {
+    for (const k of Array.from(owners.keys()).slice(0, 2000)) owners.delete(k);
+  }
+  for (const k of keys) if (k) owners.set(k, clientId);
+}
+
+function owns(caller: VerifiedCaller, key: string | undefined): boolean {
+  return !!key && owners.get(key) === caller.clientId;
+}
+
+async function requireCaller(accessToken: unknown): Promise<VerifiedCaller> {
+  if (typeof accessToken !== "string" || !accessToken) throw new Error("Not authenticated");
+  const caller = await verifyCaller(accessToken);
+  if (!caller) throw new Error("Not authenticated");
+  return caller;
+}
+
+/** E.164-ish: optional +, 10–15 digits. Nothing else may reach the provider's dial API. */
+function cleanNumber(raw: unknown, label: string): string {
+  const s = typeof raw === "string" ? raw.replace(/[\s()-]/g, "") : "";
+  if (!/^\+?\d{10,15}$/.test(s)) throw new Error(`${label} is not a valid phone number`);
+  return s;
+}
+
+const sameNumber = (a: string, b: string) => a.replace(/\D/g, "") === b.replace(/\D/g, "");
+
+/** Phones of active agents in the caller's own company, straight from the database. An agent
+ *  number sent by the browser is only ever accepted if it is on this list. */
+async function companyAgentPhones(
+  caller: VerifiedCaller,
+): Promise<Array<{ id: string; phone: string }>> {
+  const { data, error } = (await getSupabaseAdmin()
+    .from("agents")
+    .select("id, agent_phone, is_active")
+    .eq("client_id", caller.clientId)) as {
+    data: Array<{ id: string; agent_phone: string | null; is_active: boolean | null }> | null;
+    error: unknown;
+  };
+  if (error || !data) throw new Error("Could not verify the agent's phone number");
+  return data
+    .filter((a) => a.is_active !== false && a.agent_phone?.trim())
+    .map((a) => ({ id: a.id, phone: a.agent_phone!.trim() }));
+}
+
+/** Which of `numbers` the caller may ring. Agents: only their own number. Managers and admins:
+ *  any active agent in the company (they run the shared dialer pool).
+ *
+ *  `filter` is for dialer runs: an agent's pool from the browser is themselves plus their manager
+ *  (that is what RLS lets them see), so unauthorised entries are dropped instead of failing the
+ *  whole run. Single calls use the default and reject anything that isn't allowed. */
+async function authorizeAgentNumbers(
+  caller: VerifiedCaller,
+  numbers: string[],
+  opts: { filter?: boolean } = {},
+): Promise<string[]> {
+  const pool = await companyAgentPhones(caller);
+  const allowed = caller.role === "agent" ? pool.filter((p) => p.id === caller.agentId) : pool;
+  const ok = (n: string) => allowed.some((p) => sameNumber(p.phone, n));
+  if (opts.filter && caller.role === "agent") {
+    const kept = numbers.filter(ok);
+    if (numbers.length && !kept.length) throw new Error("Your own phone number is not set up");
+    return kept;
+  }
+  for (const n of numbers) {
+    if (!ok(n)) throw new Error("That agent number is not registered to your account");
+  }
+  return numbers;
+}
+
+/** Replace browser-supplied dial targets with what the database holds for those debtors.
+ *  Unknown / other-company debtors are dropped, and phones are never taken from the request. */
+async function resolveTargets(
+  caller: VerifiedCaller,
+  runId: string,
+  targets: DialTarget[] | undefined,
+): Promise<DialTarget[]> {
+  if (!targets?.length) return [];
+  let known = runTargets.get(runId);
+  if (!known) {
+    known = new Map();
+    runTargets.set(runId, known);
+  }
+  const unknownIds = [...new Set(targets.map((t) => t.id))].filter(
+    (id) => typeof id === "string" && !known!.has(id),
+  );
+  for (let i = 0; i < unknownIds.length; i += 150) {
+    const chunk = unknownIds.slice(i, i + 150);
+    const { data, error } = (await getSupabaseAdmin()
+      .from("debtors")
+      .select("id, phone_primary, alt_phones")
+      .eq("client_id", caller.clientId)
+      .in("id", chunk)) as {
+      data: Array<{ id: string; phone_primary: string | null; alt_phones: string[] | null }> | null;
+      error: unknown;
+    };
+    if (error) throw new Error("Could not verify the dial list");
+    for (const row of data ?? []) {
+      const phone = row.phone_primary?.replace(/[\s()-]/g, "") ?? "";
+      if (!/^\+?\d{10,15}$/.test(phone)) continue;
+      const src = targets.find((t) => t.id === row.id);
+      known.set(row.id, {
+        ...(src as DialTarget),
+        phone,
+        altPhones: (row.alt_phones ?? [])
+          .map((p) => p.replace(/[\s()-]/g, ""))
+          .filter((p) => /^\+?\d{10,15}$/.test(p)),
+      });
+    }
+  }
+  return targets.flatMap((t) => {
+    const trusted = known!.get(t.id);
+    return trusted ? [{ ...t, phone: trusted.phone, altPhones: trusted.altPhones }] : [];
+  });
+}
 
 let subscribed = false;
 function ensureSubscribed(): void {
@@ -64,7 +200,7 @@ function ensureSubscribed(): void {
   });
 }
 
-/** Release due simulated events (real providers push via ingestProviderWebhook instead). */
+/** Release due simulated events (real providers push via the /api/telephony/webhook route instead). */
 function flushSim(now = Date.now()): void {
   const prov = getTelephonyProvider();
   if ("flushDue" in prov) (prov as SimProvider).flushDue(now);
@@ -100,6 +236,7 @@ async function dial(
   batch: DialTarget[],
   idPrefix: string,
   agentNumbers: string[],
+  clientId: string,
   callerId?: string,
 ): Promise<{ run: DialerRun; unassigned: number }> {
   const prov = getTelephonyProvider();
@@ -128,6 +265,7 @@ async function dial(
         },
       });
       busyAgents.set(agentNumber, leg.id);
+      rememberOwner(clientId, providerCallId, leg.id);
       next = engine.bindProviderCall(next, leg.id, providerCallId);
     } catch (err) {
       // One debtor's number being unreachable must not abort the whole batch.
@@ -177,6 +315,7 @@ async function persistLoggableLegs(run: DialerRun): Promise<void> {
 export const startDialerRun = createServerFn({ method: "POST" })
   .inputValidator(
     (d: {
+      accessToken: string;
       runId: string;
       settings: PortfolioSettings;
       targets: DialTarget[];
@@ -189,22 +328,42 @@ export const startDialerRun = createServerFn({ method: "POST" })
     }) => d,
   )
   .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    enforceRateLimit(`dialer-run:${caller.authUserId}`, 10, 60_000);
+    if (typeof data.runId !== "string" || !data.runId) throw new Error("Missing runId");
+    // A run id another company already owns must never be overwritten by a guessed one.
+    if (owners.has(`run:${data.runId}`) && !owns(caller, `run:${data.runId}`)) {
+      throw new Error("That dialer run belongs to another organisation");
+    }
+
     ensureSubscribed();
-    const agentNumbers = data.agentNumbers ?? [];
+    const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
+      filter: true,
+    });
+    const targets = await resolveTargets(caller, data.runId, data.targets);
+    rememberOwner(caller.clientId, `run:${data.runId}`);
+
     const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
     const batch =
       data.settings.dialerMode === "productive"
-        ? engine.planProductiveBatch(data.targets, [])
+        ? engine.planProductiveBatch(targets, [])
         : engine.planDialBatch({
             settings: data.settings,
-            queue: data.targets,
+            queue: targets,
             agentsAvailable: Math.min(
               data.agentsAvailable,
               agentNumbers.length || data.agentsAvailable,
             ),
             inFlight: 0,
           });
-    const { run, unassigned } = await dial(base, batch, data.runId, agentNumbers, data.callerId);
+    const { run, unassigned } = await dial(
+      base,
+      batch,
+      data.runId,
+      agentNumbers,
+      caller.clientId,
+      data.callerId,
+    );
     if (unassigned > 0) {
       console.warn(`[dialer] ${unassigned} target(s) not dialed — no free agent leg available`);
     }
@@ -215,6 +374,7 @@ export const startDialerRun = createServerFn({ method: "POST" })
 export const tickDialerRun = createServerFn({ method: "POST" })
   .inputValidator(
     (d: {
+      accessToken: string;
       runId: string;
       agentsAvailable: number;
       targets?: DialTarget[];
@@ -223,6 +383,9 @@ export const tickDialerRun = createServerFn({ method: "POST" })
     }) => d,
   )
   .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!owns(caller, `run:${data.runId}`)) return null;
+
     ensureSubscribed();
     flushSim(); // advance the simulated carrier; subscription mutates runs in place
     let run = runs.get(data.runId);
@@ -230,17 +393,20 @@ export const tickDialerRun = createServerFn({ method: "POST" })
 
     // Continuous dialing: top up capacity with debtors not yet dialed.
     if (run.running && data.targets?.length) {
-      const agentNumbers = data.agentNumbers ?? [];
+      const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
+        filter: true,
+      });
+      const targets = await resolveTargets(caller, data.runId, data.targets);
       // Productive needs the full leg history to decide "primary vs next alt number vs next
       // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
       // modes can, so it gets the whole target list every tick instead of `remaining`.
       let batch: DialTarget[];
       if (run.settings.dialerMode === "productive") {
-        batch = engine.planProductiveBatch(data.targets, run.legs);
+        batch = engine.planProductiveBatch(targets, run.legs);
       } else {
         const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
         const dialed = new Set(run.legs.map((l) => l.debtorId));
-        const remaining = data.targets.filter((t) => !dialed.has(t.id));
+        const remaining = targets.filter((t) => !dialed.has(t.id));
         batch = engine.planDialBatch({
           settings: run.settings,
           queue: remaining,
@@ -252,7 +418,14 @@ export const tickDialerRun = createServerFn({ method: "POST" })
         });
       }
       if (batch.length) {
-        const res = await dial(run, batch, data.runId, agentNumbers, data.callerId);
+        const res = await dial(
+          run,
+          batch,
+          data.runId,
+          agentNumbers,
+          caller.clientId,
+          data.callerId,
+        );
         run = res.run;
       }
     }
@@ -263,8 +436,10 @@ export const tickDialerRun = createServerFn({ method: "POST" })
   });
 
 export const stopDialerRun = createServerFn({ method: "POST" })
-  .inputValidator((d: { runId: string }) => d)
+  .inputValidator((d: { accessToken: string; runId: string }) => d)
   .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!owns(caller, `run:${data.runId}`)) return null;
     const run = runs.get(data.runId);
     if (!run) return null;
     const prov = getTelephonyProvider();
@@ -274,6 +449,7 @@ export const stopDialerRun = createServerFn({ method: "POST" })
     const stopped = engine.stopDialerRun(run);
     await persistLoggableLegs(stopped);
     loggedLegs.delete(data.runId);
+    runTargets.delete(data.runId);
     runs.set(stopped.id, stopped);
     return stopped;
   });
@@ -287,8 +463,10 @@ export const stopDialerRun = createServerFn({ method: "POST" })
 // leg advances through the exact same state machine (and gets logged via persistLoggableLegs)
 // a natural hangup would.
 export const hangupDialerLeg = createServerFn({ method: "POST" })
-  .inputValidator((d: { runId: string; legId: string }) => d)
+  .inputValidator((d: { accessToken: string; runId: string; legId: string }) => d)
   .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!owns(caller, `run:${data.runId}`)) return null;
     const run = runs.get(data.runId);
     if (!run) return null;
     const leg = run.legs.find((l) => l.id === data.legId);
@@ -315,80 +493,78 @@ export const hangupDialerLeg = createServerFn({ method: "POST" })
 // ─── Single-call + SMS wrappers ──────────────────────────────────────────────────
 
 export const startCall = createServerFn({ method: "POST" })
-  .inputValidator((d: any) => {
-    console.log("[telephony:server] inputValidator received:", {
-      callLogId: d?.callLogId,
-      agentNumber: d?.agentNumber,
-      debtorNumber: d?.debtorNumber,
-    });
-    return d;
-  })
+  .inputValidator(
+    (d: {
+      accessToken: string;
+      callLogId: string;
+      agentNumber: string;
+      debtorNumber: string;
+      callerId?: string;
+      aiScore?: number;
+      ivr?: boolean;
+    }) => d,
+  )
   .handler(async ({ data }) => {
+    const caller = await requireCaller(data?.accessToken);
+    // A real call costs money and rings real phones; 30/min per user is well above any human.
+    enforceRateLimit(`start-call:${caller.authUserId}`, 30, 60_000);
+
+    const agentNumber = cleanNumber(data.agentNumber, "Agent number");
+    const debtorNumber = cleanNumber(data.debtorNumber, "Debtor number");
+    if (typeof data.callLogId !== "string" || !data.callLogId) throw new Error("Missing callLogId");
+    await authorizeAgentNumbers(caller, [agentNumber]);
+
     ensureSubscribed();
-    console.log(
-      "[telephony:server] startCall - agentNumber:",
-      data?.agentNumber,
-      "debtorNumber:",
-      data?.debtorNumber,
-    );
-    if (!data?.agentNumber) {
-      throw new Error(`Missing agentNumber in request`);
-    }
     const { providerCallId } = await getTelephonyProvider().startCall({
-      agentNumber: data.agentNumber,
-      debtorNumber: data.debtorNumber,
-      callerId: data.callerId,
+      agentNumber,
+      debtorNumber,
+      callerId: typeof data.callerId === "string" ? data.callerId : undefined,
       callLogId: data.callLogId,
       hints: { aiScore: data.aiScore, ivr: data.ivr },
     });
+    rememberOwner(caller.clientId, providerCallId, data.callLogId);
     return { providerCallId };
   });
 
 /**
  * Look up recordings for calls we already logged, backfilling any that weren't on the
- * hangup webhook yet.
- *
- * Tata (the previous provider) published recordings asynchronously — its hangup webhook
- * arrived with `"recording_url": ""` — so this used to poll a CDR endpoint afterward.
- * Exotel's StatusCallback carries `RecordingUrl` directly (see exotel-provider.ts's
- * parseStatusWebhook), and Exotel has no documented CDR-polling endpoint to fall back to,
- * so there is nothing to backfill from yet. Returns {} until a real CDR endpoint is
- * confirmed against the live Exotel account and wired in here.
+ * hangup webhook yet. There is no vendor CDR endpoint wired in, so this returns {} until the
+ * next telephony provider's recording lookup lands here.
  */
 export const fetchRecordings = createServerFn({ method: "POST" })
-  .inputValidator((d: { providerCallIds: string[] }) => d)
-  .handler(async () => {
+  .inputValidator((d: { accessToken: string; providerCallIds: string[] }) => d)
+  .handler(async ({ data }) => {
+    await requireCaller(data?.accessToken);
     return {} as Record<string, string>;
   });
 
 export const hangupCall = createServerFn({ method: "POST" })
-  .inputValidator((d: { providerCallId: string }) => d)
+  .inputValidator((d: { accessToken: string; providerCallId: string }) => d)
   .handler(async ({ data }) => {
+    const caller = await requireCaller(data?.accessToken);
+    // Only the company that placed a call may end it.
+    if (!owns(caller, data.providerCallId)) throw new Error("Call not found");
     await getTelephonyProvider().hangup(data.providerCallId);
     return { ok: true };
   });
 
 export const sendSms = createServerFn({ method: "POST" })
-  .inputValidator((d: { to: string; templateId: string; templateParams: string[] }) => d)
+  .inputValidator(
+    (d: { accessToken: string; to: string; templateId: string; templateParams: string[] }) => d,
+  )
   .handler(async ({ data }) => {
-    const res = await getTelephonyProvider().sendSms({
-      to: data.to,
+    const caller = await requireCaller(data?.accessToken);
+    enforceRateLimit(`send-sms:${caller.authUserId}`, 20, 60_000);
+    const to = cleanNumber(data.to, "Recipient number");
+    if (typeof data.templateId !== "string" || !data.templateId)
+      throw new Error("Missing templateId");
+    if (!Array.isArray(data.templateParams) || data.templateParams.length > 20) {
+      throw new Error("Invalid template parameters");
+    }
+    return getTelephonyProvider().sendSms({
+      to,
       templateId: data.templateId,
-      templateParams: data.templateParams,
-    });
-    return res;
-  });
-
-// WhatsApp isn't part of TelephonyProvider (voice + SMS only — see ./types.ts), so this
-// calls the Exotel sender directly rather than going through getTelephonyProvider(). Only
-// works when EXOTEL_* credentials are set, regardless of TELEPHONY_PROVIDER.
-export const sendWhatsAppMessage = createServerFn({ method: "POST" })
-  .inputValidator((d: { to: string; templateName: string; templateParams: string[] }) => d)
-  .handler(async ({ data }) => {
-    return sendWhatsAppExotel({
-      to: data.to,
-      templateName: data.templateName,
-      templateParams: data.templateParams,
+      templateParams: data.templateParams.map((p) => String(p).slice(0, 1000)),
     });
   });
 
@@ -416,9 +592,13 @@ function rememberStatus(status: CallStatusEvent): void {
 }
 
 export const getCallStatus = createServerFn({ method: "POST" })
-  .inputValidator((d: { keys: string[] }) => d)
+  .inputValidator((d: { accessToken: string; keys: string[] }) => d)
   .handler(async ({ data }) => {
+    const caller = await requireCaller(data?.accessToken);
+    if (!Array.isArray(data.keys) || data.keys.length > 10) throw new Error("Invalid keys");
     for (const key of data.keys) {
+      // Only statuses for calls this company started — call ids alone must not be a password.
+      if (!owns(caller, key)) continue;
       const hit = latestStatus.get(key);
       if (hit) {
         console.log(`[telephony] getCallStatus hit ${key} -> ${hit.status}`);
@@ -427,10 +607,8 @@ export const getCallStatus = createServerFn({ method: "POST" })
     }
     // Logged so a "stuck on ringing" report can be told apart at a glance: an empty store
     // means no webhook ever landed in THIS process, whereas a populated one means the keys
-    // simply don't match.
-    console.log(
-      `[telephony] getCallStatus miss for [${data.keys.join(", ")}] — store holds ${latestStatus.size} entr${latestStatus.size === 1 ? "y" : "ies"}: [${[...latestStatus.keys()].slice(0, 6).join(", ")}]`,
-    );
+    // simply don't match. Sizes only — call ids are not written to logs.
+    console.log(`[telephony] getCallStatus miss — store holds ${latestStatus.size} entries`);
     return null;
   });
 
@@ -468,11 +646,3 @@ export async function ingestCallStatusEvent(status: CallStatusEvent): Promise<vo
   }
   for (const run of runs.values()) await persistLoggableLegs(run);
 }
-
-export const ingestProviderWebhook = createServerFn({ method: "POST" })
-  .inputValidator((payload: unknown) => payload)
-  .handler(async ({ data }) => {
-    const status = getTelephonyProvider().parseStatusWebhook(data);
-    await ingestCallStatusEvent(status);
-    return { ok: true };
-  });

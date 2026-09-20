@@ -3,8 +3,10 @@
 // call. Writes via the service-role client since call_logs has no general UPDATE policy (see
 // 20260814_call_logs_ai_sentiment.sql); verifyCaller() enforces manager/admin + same-client
 // scoping server-side rather than trusting anything the browser sends.
+import { z, tokenSchema, idSchema } from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
+import { fetchPublicBlob } from "./safe-fetch.server";
 
 const SENTIMENT_LABELS = ["happy", "neutral", "frustrated", "rude"] as const;
 type SentimentLabel = (typeof SENTIMENT_LABELS)[number];
@@ -57,10 +59,14 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function analyzeWithGemini(transcript: string, retries = 3): Promise<AiSentimentResult> {
   for (let attempt = 0; attempt < retries; attempt++) {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // Key in a header, not the URL: URLs end up in error messages and access logs.
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
+        },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents: [{ parts: [{ text: `Transcript:\n\n${transcript}` }] }],
@@ -82,7 +88,14 @@ async function analyzeWithGemini(transcript: string, retries = 3): Promise<AiSen
 }
 
 export const analyzeCallSentiment = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; callId: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        callId: idSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
@@ -107,9 +120,8 @@ export const analyzeCallSentiment = createServerFn({ method: "POST" })
     if (log.debtors?.client_id !== caller.clientId) throw new Error("Not authorized for this call");
     if (!log.recording_url) throw new Error("No recording available for this call yet");
 
-    const audioRes = await fetch(log.recording_url);
-    if (!audioRes.ok) throw new Error(`Could not fetch recording: ${audioRes.statusText}`);
-    const audioBlob = await audioRes.blob();
+    // recording_url is user-writable, so it is fetched through the SSRF guard, never raw.
+    const audioBlob = await fetchPublicBlob(log.recording_url);
 
     const transcript = await transcribeWithGroq(audioBlob);
     const sentiment = await analyzeWithGemini(transcript);

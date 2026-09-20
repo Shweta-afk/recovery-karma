@@ -1386,7 +1386,10 @@ function ActiveCallContent({
                               : "None offered",
                           ],
                         ].map(([k, v]) => (
-                          <div key={k} className="flex items-center justify-between text-sm">
+                          <div
+                            key={String(k)}
+                            className="flex items-center justify-between text-sm"
+                          >
                             <span className="text-muted-foreground">{k}</span>
                             <span className="text-foreground font-medium">{v}</span>
                           </div>

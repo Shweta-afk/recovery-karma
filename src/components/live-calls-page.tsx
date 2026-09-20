@@ -56,9 +56,9 @@ export function LiveCallsPageBody({ scopeLabel }: { scopeLabel: string }) {
 
       {/* Listen/Whisper/Merge buttons exist on each card below, disabled — see
           CALL_CONTROL_ACTIONS in live-calls-board.tsx. With the CURRENT telephony integration
-          (Exotel click-to-call) each call's two legs are bridged inside the provider, not in
+          (click-to-call) each call's two legs are bridged inside the provider, not in
           this app, so nothing here can actually tap into, whisper into or merge a call yet.
-          Decision 2026-09-07: the org is moving off Exotel and evaluating a new vendor
+          Decision 2026-09-07: the org left Exotel (since removed) and is evaluating a new vendor
           specifically to make this possible, so the controls stay visible as a placeholder
           rather than being removed again — see docs/LIVE_CALLS_SCOPE.md. */}
       <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">

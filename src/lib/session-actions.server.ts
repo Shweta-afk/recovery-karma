@@ -4,6 +4,7 @@
 // over Realtime and signs itself out — see the migration note in
 // 20260908_single_active_session.sql for why both halves are needed.
 
+import { z, tokenSchema, shortText } from "./schemas";
 import { randomBytes } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
@@ -23,7 +24,14 @@ const SUBDOMAIN_HOSTNAME_RE = /^([a-z0-9-]+)\.samvadx\.com$/i;
  * since nothing has claimed "axiotta" as a subdomain) are unaffected — this only restricts
  * logins on a subdomain a superadmin has actually assigned to one specific company. */
 export const verifySubdomainAccess = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; hostname: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        hostname: shortText(255),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const match = SUBDOMAIN_HOSTNAME_RE.exec(data.hostname.trim().toLowerCase());
     if (!match) return { ok: true as const };
@@ -74,7 +82,13 @@ export const verifySubdomainAccess = createServerFn({ method: "POST" })
   });
 
 export const enforceSingleSession = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) {

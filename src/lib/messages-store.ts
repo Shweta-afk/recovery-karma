@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
-import { sendSms, sendWhatsAppMessage } from "@/lib/telephony/server";
+import { sendSms } from "@/lib/telephony/server";
+import { getAccessToken } from "@/lib/access-token";
 
 export type MessageChannel = "whatsapp" | "sms" | "email";
 export type MessageDirection = "outbound" | "inbound";
@@ -98,15 +99,12 @@ export async function refreshMessages(): Promise<void> {
   window.dispatchEvent(new CustomEvent("messages-updated"));
 }
 
-/** Records an outbound message against a real debtor, and — for whatsapp/sms — actually
- * sends it via the Exotel gateway (see telephony/exotel-provider.ts) before writing the row.
- * `status` reflects whether the provider accepted the send, not just an optimistic "sent".
+/** Records an outbound message against a real debtor, and — for sms — actually sends it via the
+ * telephony provider before writing the row. `status` reflects whether the provider accepted the
+ * send, not just an optimistic "sent".
  *
- * Note on templates: `templateName` here is UI copy (see WA_TEMPLATES in
- * dashboard.messages.tsx), not necessarily a Meta-approved WhatsApp template name yet — until
- * each one is registered and approved, WhatsApp sends will fail (caught below, row still
- * written with status "failed" so the failure is visible instead of silently pretending
- * to succeed). */
+ * WhatsApp has no gateway wired (the Exotel WABA route was dropped 2026-09-05 and nothing has
+ * replaced it), so a WhatsApp send is recorded as "failed" rather than pretending to deliver. */
 export async function sendMessage(m: {
   debtorId: string;
   agentEmail: string;
@@ -132,16 +130,11 @@ export async function sendMessage(m: {
     } else {
       try {
         if (m.channel === "whatsapp") {
-          await sendWhatsAppMessage({
-            data: {
-              to: phone,
-              templateName: m.templateName ?? "generic_update",
-              templateParams: [m.content],
-            },
-          });
+          throw new Error("no WhatsApp gateway is configured");
         } else {
           await sendSms({
             data: {
+              accessToken: await getAccessToken(),
               to: phone,
               templateId: m.templateName ?? "generic_update",
               templateParams: [m.content],

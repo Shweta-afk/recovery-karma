@@ -624,8 +624,12 @@ export async function backfillRecordings(records: DispositionRecord[]): Promise<
   if (!pending.length) return 0;
 
   const { fetchRecordings } = await import("@/lib/telephony/server");
+  const { getAccessToken } = await import("@/lib/access-token");
   const found = await fetchRecordings({
-    data: { providerCallIds: pending.map((r) => r.providerCallId!) },
+    data: {
+      accessToken: await getAccessToken(),
+      providerCallIds: pending.map((r) => r.providerCallId!),
+    },
   });
 
   let filled = 0;

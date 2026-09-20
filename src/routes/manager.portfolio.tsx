@@ -1263,9 +1263,18 @@ function BulkPaidUploadDialog({
  * the old portfolio made it disappear from this page even though its history is exactly what
  * Reports and the debtor dashboard still need; toPortfolio() tags it "Closed" (STATUS_META)
  * instead, and the status filter row below has a "Closed" pill to isolate them on demand.
+ *
+ * Also falls back to `p.managerId === managerId` when a portfolio has no team_id at all — a
+ * portfolio can end up team-less despite the manager having a team (a cold team-store cache
+ * racing the upload; see the guard in manager.upload.tsx's handleUpload) or from any other write
+ * path that forgets to set it. Without this fallback that portfolio is invisible on this page
+ * and on the Debtors page (same filter shape) even though it's otherwise fully uploaded and
+ * assigned — the exact failure this comment already documents for manager_id, just on the other
+ * column. Confirmed live 2026-09-11 (RR debt solutions / Kirti Zagade's Team).
  */
-function visibleToTeam(teamId: string | undefined) {
-  return (p: UploadedPortfolio) => p.teamId === teamId;
+function visibleToTeam(teamId: string | undefined, managerId: string) {
+  return (p: UploadedPortfolio) =>
+    p.teamId === teamId || (!p.teamId && !!managerId && p.managerId === managerId);
 }
 
 // A colored left-border accent per row status — the table used to be identical rows of text and
@@ -1383,10 +1392,11 @@ function PortfolioOverviewPage() {
   const [editTarget, setEditTarget] = useState<UploadedPortfolio | null>(null);
   const [bulkPaidTarget, setBulkPaidTarget] = useState<UploadedPortfolio | null>(null);
   const [rawPortfolios, setRawPortfolios] = useState<UploadedPortfolio[]>(() =>
-    getPortfolios().filter(visibleToTeam(activeTeam?.id)),
+    getPortfolios().filter(visibleToTeam(activeTeam?.id, managerId)),
   );
 
-  const reload = () => setRawPortfolios(getPortfolios().filter(visibleToTeam(activeTeam?.id)));
+  const reload = () =>
+    setRawPortfolios(getPortfolios().filter(visibleToTeam(activeTeam?.id, managerId)));
   useEffect(() => {
     reload();
     window.addEventListener("portfolios-updated", reload);

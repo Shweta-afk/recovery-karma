@@ -2,6 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { CSP_REPORT_PATH, buildCspReportOnly, handleCspReport } from "./lib/csp";
 import { TELEPHONY_WEBHOOK_PATH, handleTelephonyWebhook } from "./lib/telephony/webhook-handler";
 
 type ServerEntry = {
@@ -38,22 +39,55 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
   });
 }
 
+// Safe-by-default response headers. Deliberately NOT a full Content-Security-Policy: the app has
+// an inline theme script and talks to Supabase/fonts, so a strict script-src needs a nonce
+// pipeline and a report-only soak first. What IS here cannot break a page:
+//  - frame-ancestors: no clickjacking (self + Lovable's preview hosts, since the project is still
+//    connected to Lovable and previews embed it)
+//  - HSTS, nosniff, referrer and permissions policies (microphone stays allowed for browser calling)
+const SECURITY_HEADERS: Record<string, string> = {
+  "Content-Security-Policy":
+    "frame-ancestors 'self' https://*.lovable.dev https://*.lovable.app https://*.lovableproject.com",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), geolocation=(), payment=(), microphone=(self)",
+};
+
+function withSecurityHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) if (!headers.has(k)) headers.set(k, v);
+  // Report-only: observes, never blocks. See src/lib/csp.ts before promoting it to enforcing.
+  headers.set("Content-Security-Policy-Report-Only", buildCspReportOnly());
+  // A new Response, not a mutation: responses coming out of the framework can have immutable headers.
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
-    try {
-      // Provider status callbacks are plain HTTP from outside the app, not app routes.
-      if (new URL(request.url).pathname === TELEPHONY_WEBHOOK_PATH) {
-        return await handleTelephonyWebhook(request);
-      }
-      const handler = await getServerEntry();
-      const response = await handler.fetch(request, env, ctx);
-      return await normalizeCatastrophicSsrResponse(response);
-    } catch (error) {
-      console.error(error);
-      return new Response(renderErrorPage(), {
-        status: 500,
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    }
+    return withSecurityHeaders(await handleRequest(request, env, ctx));
   },
 };
+
+async function handleRequest(request: Request, env: unknown, ctx: unknown): Promise<Response> {
+  try {
+    if (new URL(request.url).pathname === CSP_REPORT_PATH) return await handleCspReport(request);
+    // Provider status callbacks are plain HTTP from outside the app, not app routes.
+    if (new URL(request.url).pathname === TELEPHONY_WEBHOOK_PATH) {
+      return await handleTelephonyWebhook(request);
+    }
+    const handler = await getServerEntry();
+    const response = await handler.fetch(request, env, ctx);
+    return await normalizeCatastrophicSsrResponse(response);
+  } catch (error) {
+    console.error(error);
+    return new Response(renderErrorPage(), {
+      status: 500,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+}

@@ -36,7 +36,7 @@ different Cloudflare D1 backend from an earlier iteration of the project).
 - **Package manager:** bun
 - **UI:** Tailwind CSS v4 + shadcn/ui (Radix primitives)
 - **Real external APIs wired:** Supabase, Exotel (telephony), Groq (Whisper transcription),
-  Gemini (tone classification), ProfileX/Neokred (skip tracing — the only *paid-per-call*
+  Gemini (tone classification), ProfileX/Neokred (skip tracing — the only _paid-per-call_
   integration in the app). **Present in `.env.example` but NOT wired to anything:**
   `ANTHROPIC_API_KEY`, `INTERAKT_API_KEY`, `RAZORPAY_KEY_ID`/`SECRET`,
   `ELEVENLABS_API_KEY`/`VOICE_ID` — zero references in `src/`. Don't assume any of these do
@@ -169,7 +169,7 @@ if it 401s, migrations have to be pasted into the SQL Editor by hand rather than
 2026-08-21 — read this before touching anything under `src/supabase/`.**
 
 **Why it kept coming back:** migrations apply in **filename order**, and
-`20260814_scope_remaining_tables_to_agent_and_manager.sql` sorts *after* both
+`20260814_scope_remaining_tables_to_agent_and_manager.sql` sorts _after_ both
 `20260814_disable_row_security_in_auth_helpers.sql` and `20260814_fix_auth_agent_id_recursion.sql`.
 So every replay of the directory re-declared `auth_agent_id()` as `LANGUAGE sql` and restored
 the inline policy bodies — silently re-breaking production **on every deploy**. A fix applied
@@ -185,6 +185,7 @@ authoritative policy definitions live in
 **A guard now enforces this: `bun run check:sql`** (`scripts/check-rls-safety.ts`), wired into
 `bun run build` and `bun run test:logic`, so a bad migration fails the Railway deploy instead
 of taking the app down. It fails on:
+
 - any `auth_*` helper declared `LANGUAGE sql STABLE SECURITY DEFINER` (gets inlined — see below)
 - any migration containing its own `BEGIN;`/`COMMIT;`/`ROLLBACK;` — runners supply a
   transaction, and a nested one can abort the migration or silently roll back its DDL. This
@@ -193,18 +194,19 @@ of taking the app down. It fails on:
   `request.jwt.claims`) — keep verification in `scripts/debug/`, never in a file a runner executes.
 
 **Two rules that follow from all of this:**
+
 1. **No policy may read an RLS-protected table directly.** Every lookup goes through a
    `SECURITY DEFINER` helper (`auth_agent_id`, `auth_client_id`, `auth_role`,
    `auth_visible_agent_ids`, `auth_visible_portfolio_ids`, `auth_client_debtor_ids`). Fixing
    policies one at a time just relocates the cycle — observed live moving
    agents → team_agents → debtors → portfolios across four rounds.
 2. **`SET row_security = off` does NOT grant a bypass** (a belief that misled three earlier
-   fixes). Per the Postgres docs it makes a query *error* instead of applying a policy; it only
+   fixes). Per the Postgres docs it makes a query _error_ instead of applying a policy; it only
    ever looked load-bearing because the roles involved were already exempt. The real mechanism
    is `SECURITY DEFINER` + an owner that can bypass RLS (here `postgres`, `rolbypassrls=true`).
 
 **Diagnose with a smoke test over ALL tables at once**, never one 500 at a time — see
-`scripts/debug/rls-smoke-test.sql`. Which *relation* each error names tells you where the cycle
+`scripts/debug/rls-smoke-test.sql`. Which _relation_ each error names tells you where the cycle
 really is (8 tables all naming `agents` meant one bug, not eight). Note the Supabase SQL Editor
 renders **only the last statement's result**, so UNION diagnostics into a single result set or
 they come back blank.
@@ -267,15 +269,23 @@ that is a DATABASE change: rolling back application code will not undo it.
 
 ## Telephony
 
+**Auth (2026-09-19):** every function in `src/lib/telephony/server.ts` is a public HTTP endpoint (TanStack
+server functions ship their ids in the client bundle), so each takes `accessToken` and calls
+`verifyCaller` first — get it in the browser with `getAccessToken()` (`src/lib/access-token.ts`). Agent numbers
+are checked against `agents.agent_phone`, dialer-run phones come from the `debtors` table (never the
+request), runs/calls are tied to the starting company, and dial/SMS are rate-limited per user. The webhook
+(`/api/telephony/webhook`) requires `TELEPHONY_WEBHOOK_SECRET` and returns 503 while it is unset. There is no
+`ingestProviderWebhook` or `sendWhatsAppMessage` server function any more; WhatsApp sends are recorded `failed`.
+
 Single entry point: `src/lib/telephony/index.ts` → `getTelephonyProvider()`, keyed off the
 server-side `TELEPHONY_PROVIDER` env var. **Never import a vendor file directly** from feature
 code — always go through this.
 
-| Provider          | Env value       | Status                                                                                                                                                                                                                                                                               |
-| ----------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Simulator         | `sim` (default) | Local dev — no real calls, drives the same dialer engine/state machine so the UI behaves identically to production                                                                                                                                                                   |
-| Exotel            | `exotel`        | **Production default.** Trial account KYC complete, click-to-call live. `exotel-provider.ts` implements start/hangup/SMS/webhook parsing, written from Exotel's public docs — parts of it (especially `hangup`) have not been battle-tested against every real-account edge case yet |
-| KooKoo (Ozonetel) | `kookoo`        | Implemented (`kookoo-provider.ts`) but not the active choice — evaluated as an alternative, not currently used in production                                                                                                                                                         |
+| Provider          | Env value       | Status                                                                                                                                                             |
+| ----------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Simulator         | `sim` (default) | Local dev — no real calls, drives the same dialer engine/state machine so the UI behaves identically to production                                                 |
+| Exotel            | —               | **Removed 2026-09-19** (`exotel-provider.ts` deleted, `exotel` no longer a valid `TELEPHONY_PROVIDER`). Old notes elsewhere in this file about Exotel are history. |
+| KooKoo (Ozonetel) | `kookoo`        | Implemented (`kookoo-provider.ts`) but not the active choice — evaluated as an alternative, not currently used in production                                       |
 
 **Tata SmartFlo was evaluated, went live briefly, then was fully removed on 2026-08-06** ("nothing we did was working and aligning with our goals" — user's call). If you see "Tata" or "SmartFlo" referenced anywhere outside this note, it's stale.
 
@@ -352,7 +362,9 @@ on a debtor profile. The services are data, not code: `src/lib/profilex/catalogu
 2026-09-17: Skip Tracing (the ₹46 "VRE Skip Tracing" card — `/exp/vre-skip-tracing`, NOT "VRE
 Skip Tracing V2" at ₹15, which was wired by mistake for a day and replaced before it ever ran), Mobile→UAN, Employment Latest/History, Phone to
 Prefill, Alternate Phone Numbers, Alternate Addresses, UPI IDs, LPG Connection, Mobile→GST,
-GST→Contact.
+GST→Contact. Note a couple of
+endpoints name the debtor's number `phone` rather than `mobile` in the body — that is what
+`input: "phone"` means; sending the wrong key returns "Missing required input fields: phone".
 
 **Each company only gets the services a superadmin puts on its plan** —
 `profilex_settings.enabled_services`, set per company on the superadmin company page, and enforced
@@ -380,13 +392,13 @@ Unlike every other integration here:
 
 - **A "not found" is still billed.** ProfileX's rule is HTTP 200 + status `1` (found) → billed,
   HTTP 200 + status `2`/`3` (not found) → **also billed**, HTTP 500 → not billed. Prices are per
-  service *and* per status (₹5 found / ₹1 not, etc.), so the rate card is
+  service _and_ per status (₹5 found / ₹1 not, etc.), so the rate card is
   `{service: {status: ₹}}`, never a flat per-call cost. `priceFor()` deliberately fails
-  *expensive* on an unrecognised status — Employment Latest has been seen returning a null status
+  _expensive_ on an unrecognised status — Employment Latest has been seen returning a null status
   on success, and under-recording spend is the failure that matters.
 - **There is no balance or usage endpoint.** `debtor_traces` is the only record that spend
   happened; it is what gets reconciled against Neokred's invoice. The `x-ratelimit-*` response
-  headers are a rate limit, *not* a credit balance — don't confuse the two.
+  headers are a rate limit, _not_ a credit balance — don't confuse the two.
 - **Chained inputs (UAN, GSTIN) come from stored traces, never the browser.** Employment takes a
   UAN, GST→Contact a GSTIN; each declares `derivedFrom.sources` — the standalone service first,
   then any bundle that nests the same block. Skip Tracing carries `vreMobileToUan`, so a paid skip
@@ -429,7 +441,7 @@ WhatsApp. A different way to connect WhatsApp will be found later — nothing ch
 
 **Until the user names a new direction, do not propose or default to Exotel/Tata/SkyCRM again
 when asked about WhatsApp integration** — surface this decision instead and ask what they'd
-like to explore. This is a product-direction decision, not a code change: Exotel's *voice*
+like to explore. This is a product-direction decision, not a code change: Exotel's _voice_
 calling (click-to-call, the production telephony provider) is unaffected and keeps working
 exactly as documented above — this note is scoped to WhatsApp only.
 
@@ -442,7 +454,7 @@ exactly as documented above — this note is scoped to WhatsApp only.
 Activity History, Manager Activity, Call Audit, Payments, Messages, Debtors and Reports.
 
 **Never bucket a day with `toISOString().slice(0, 10)`.** That is the UTC day: anything logged
-between midnight and 05:30 IST lands on the *previous* day, silently dropping rows out of
+between midnight and 05:30 IST lands on the _previous_ day, silently dropping rows out of
 same-day filters and moving collections across month boundaries on the 1st. This bug was found
 and fixed in three separate places on 2026-08-27 (`fetch-debtors.ts`'s `lastContacted`, four
 sites in `dashboard.reports.tsx`, and `agent-time-stats.ts`), and it had been producing wrong
@@ -499,7 +511,7 @@ unmatched still dials and still logs, as an ad-hoc call with `debtor_id: null`. 
 call can be attached afterwards from the disposition screen (`attachLoanId`).
 
 `call_logs.dial_mode` records HOW a call was placed, as opposed to `call_type`, which records
-who handled it. It exists *because* loan-ID mapping destroys `debtor_id IS NULL`, which was
+who handled it. It exists _because_ loan-ID mapping destroys `debtor_id IS NULL`, which was
 previously the only thing identifying a manual call.
 
 ⚠️ **Its stored values deliberately use none of the confusing words**, given the swapped
@@ -533,20 +545,20 @@ promise_date" as promises would start counting callbacks.
 
 ## Page-by-page status
 
-| Page                                                                   | Status                                                                                                                      |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `dashboard/` (Call Queue)                                              | ✅ Real debtors via `portfolio-store.ts`, real dialer. Manual Dial is **no longer on this page** — see `ManualDialDock` below |
-| `dashboard/debtors`                                                    | ✅ Real debtor list + Calls/Payments tabs. Messages/Disputes tabs are intentionally honest empty-states (no write path yet) |
-| `dashboard/history` (Activity History)                                 | ✅ Real `call_logs`, with async recording backfill. Filters by date range and by dial type (`call_logs.dial_mode`)          |
-| `dashboard/payments`                                                   | ✅ Real `payments`/`settlement_requests` via `payments-store.ts`                                                            |
-| `dashboard/messages`                                                   | 🟡 Real `messages` table, but Send has no gateway behind it (see above)                                                     |
+| Page                                                                   | Status                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dashboard/` (Call Queue)                                              | ✅ Real debtors via `portfolio-store.ts`, real dialer. Manual Dial is **no longer on this page** — see `ManualDialDock` below                                                                                                                                     |
+| `dashboard/debtors`                                                    | ✅ Real debtor list + Calls/Payments tabs. Messages/Disputes tabs are intentionally honest empty-states (no write path yet)                                                                                                                                       |
+| `dashboard/history` (Activity History)                                 | ✅ Real `call_logs`, with async recording backfill. Filters by date range and by dial type (`call_logs.dial_mode`)                                                                                                                                                |
+| `dashboard/payments`                                                   | ✅ Real `payments`/`settlement_requests` via `payments-store.ts`                                                                                                                                                                                                  |
+| `dashboard/messages`                                                   | 🟡 Real `messages` table, but Send has no gateway behind it (see above)                                                                                                                                                                                           |
 | `dashboard/reports`                                                    | ✅ Real. **Was wrongly listed here as an unwired placeholder until 2026-08-27** — it has been reading real dispositions/payments/portfolios for a while, and the page says so on screen. Seven reports incl. Time & Effort (see the estimated-time warning below) |
-| Debtor profile → Insights tab (`components/profilex/`)                    | ✅ Real ProfileX lookups; manager/admin run them, agents read-only. Needs `PROFILEX_*` env + the admin toggle |
-| `manager/portfolio` (Portfolio Overview)                               | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown                                      |
-| `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity` | ✅ Real                                                                                                                     |
-| `admin/portfolio` (Portfolio Assignment)                               | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only                                     |
-| `admin/reports`, `admin/users`, `admin/teams`, `admin/settings`        | ✅ Real                                                                                                                     |
-| `admin/index`                                                          | ✅ Real (navigation tiles)                                                                                                  |
+| Debtor profile → Insights tab (`components/profilex/`)                 | ✅ Real ProfileX lookups; manager/admin run them, agents read-only. Needs `PROFILEX_*` env + the admin toggle                                                                                                                                                     |
+| `manager/portfolio` (Portfolio Overview)                               | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown                                                                                                                                                                            |
+| `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity` | ✅ Real                                                                                                                                                                                                                                                           |
+| `admin/portfolio` (Portfolio Assignment)                               | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only                                                                                                                                                                           |
+| `admin/reports`, `admin/users`, `admin/teams`, `admin/settings`        | ✅ Real                                                                                                                                                                                                                                                           |
+| `admin/index`                                                          | ✅ Real (navigation tiles)                                                                                                                                                                                                                                        |
 
 ---
 

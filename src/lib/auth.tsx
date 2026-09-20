@@ -1,3 +1,4 @@
+import { clearLocalCaches } from "@/lib/clear-local-caches";
 import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import { supabase } from "./supabase";
 import { enforceSingleSession, verifySubdomainAccess } from "./session-actions.server";
@@ -113,10 +114,25 @@ async function fetchSuperadminProfile(authUserId: string): Promise<AuthUser | nu
   }
 }
 
+const SIGNED_OUT_REASON_KEY = "samvadx:signedOutReason";
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [signedOutReason, setSignedOutReason] = useState<string | null>(null);
+  useEffect(() => {
+    // Set by forceSignOutLocally just before it reloads the page. Read after mount, not in the
+    // useState initialiser, so server and client markup agree during hydration.
+    try {
+      const saved = sessionStorage.getItem(SIGNED_OUT_REASON_KEY);
+      if (saved) {
+        sessionStorage.removeItem(SIGNED_OUT_REASON_KEY);
+        setSignedOutReason(saved);
+      }
+    } catch {
+      /* storage blocked */
+    }
+  }, []);
 
   // The session_nonce this tab believes is current. Compared against Realtime updates on the
   // agents row to detect "a newer login happened elsewhere" — see
@@ -215,8 +231,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error("[auth] signOut during forced eviction failed (continuing anyway):", err);
     }
+    clearLocalCaches();
+    // The reason has to survive the reload below (which is what wipes the stores' in-memory
+    // copies of the previous user's data); the mount effect reads it back out.
+    try {
+      sessionStorage.setItem(SIGNED_OUT_REASON_KEY, reason);
+    } catch {
+      /* storage blocked — the user still gets signed out, just without the explanation */
+    }
     setSignedOutReason(reason);
     setUser(null);
+    window.location.replace("/login");
   }
 
   useEffect(() => {
@@ -325,6 +350,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setSignedOutReason(null);
     loggingInRef.current = true;
+    // Whatever the previous user of this browser left cached is not this user's data.
+    clearLocalCaches();
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setLoading(false);
@@ -384,7 +411,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     sessionNonceRef.current = null;
     await supabase.auth.signOut();
+    clearLocalCaches();
     setUser(null);
+    // Full load, not a client-side navigation: the stores also keep their data in memory, and
+    // only a reload guarantees the next person to sign in on this tab starts with nothing.
+    window.location.replace("/login");
   };
 
   return (

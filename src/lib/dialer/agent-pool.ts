@@ -1,6 +1,6 @@
 // Who the dialer may ring, sourced from OUR database rather than the telephony vendor's CRM.
 //
-// The provider identifies an agent by the phone number it rings — for Exotel that is the
+// The provider identifies an agent by the phone number it rings — for click-to-call vendors that is the
 // agent's registered number/extension, which is what agents.agent_phone must hold. If the two
 // drift apart the provider can't route the leg to the right agent, so this is the one field
 // that has to stay in sync with the vendor dashboard.

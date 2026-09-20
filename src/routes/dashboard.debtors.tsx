@@ -127,8 +127,16 @@ function DebtorsPage() {
       if (isSupervisor) {
         // Closed cycles already carry rows: [] (see refreshPortfolios), so they contribute
         // nothing here and no extra closedAt filter is needed.
+        // Falls back to managerId when a portfolio has no team_id — same fallback and same
+        // reasoning as visibleToTeam() in manager.portfolio.tsx, which this filter mirrors;
+        // keep the two in sync.
         const visible =
-          user?.role === "admin" ? portfolios : portfolios.filter((p) => p.teamId === activeTeamId);
+          user?.role === "admin"
+            ? portfolios
+            : portfolios.filter(
+                (p) =>
+                  p.teamId === activeTeamId || (!p.teamId && !!agentId && p.managerId === agentId),
+              );
         const result: Debtor[] = [];
         for (const p of visible) for (const r of p.rows) result.push(toDebtor(r, p));
         setUploadedDebtors(result);
