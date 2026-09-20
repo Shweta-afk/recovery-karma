@@ -10,9 +10,20 @@
 //
 // Credentials are read from server env only; there is deliberately no VITE_ fallback, so they
 // cannot end up in a client bundle. See .env.example for the four vars.
+import {
+  z,
+  tokenSchema,
+  idSchema,
+  shortText,
+  isoDateSchema,
+  limitSchema,
+  offsetSchema,
+  amountSchema,
+} from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
+import { enforceRateLimit } from "./rate-limit.server";
 import {
   extractPhones,
   normaliseBaseUrl,
@@ -260,8 +271,15 @@ async function callProfilex(
 }
 
 export const runProfilexTrace = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: { accessToken: string; debtorId: string; serviceId: string; force?: boolean }) => d,
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        debtorId: idSchema,
+        serviceId: shortText(64),
+        force: z.boolean().optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
@@ -269,6 +287,8 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     if (caller.role !== "manager" && caller.role !== "admin") {
       throw new Error("Only managers or admins can run a lookup");
     }
+    // Every lookup is billed per call, so cap the burst rate regardless of wallet balance.
+    enforceRateLimit(`profilex-trace:${caller.authUserId}`, 30, 60_000);
 
     const service = getService(data.serviceId);
     if (!service) throw new Error(`Unknown lookup service "${data.serviceId}"`);
@@ -422,13 +442,54 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       );
     }
 
+    // Hold the worst-case price in ONE conditional UPDATE (it cannot go below zero, and two
+    // concurrent lookups cannot both spend the same funds — the read-then-charge check above is
+    // only a friendly early message). Settled below with what the provider really billed.
+    let held = 0;
+    if (caller.role === "manager" && caller.agentId) {
+      const worstCase = priceFor(service, null, settings.rate_card);
+      const { data: ok, error: holdErr } = await admin.rpc("profilex_wallet_hold", {
+        p_manager_id: caller.agentId,
+        p_amount: worstCase,
+      });
+      if (holdErr || !ok) {
+        await admin
+          .from("debtor_traces")
+          .update({
+            state: "failed",
+            error: holdErr
+              ? `Wallet hold failed: ${holdErr.message}`
+              : "Insufficient wallet balance",
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", pending.id);
+        throw new Error(
+          holdErr
+            ? `Could not reserve funds for this lookup (${holdErr.message})`
+            : "Your Insights wallet does not have enough left for this lookup. Ask an admin to top it up in Settings.",
+        );
+      }
+      held = worstCase;
+    }
+    /** Give back whatever part of the hold was not actually spent. Never throws. */
+    const settle = async (cost: number) => {
+      if (!held || !caller.agentId) return;
+      const { error: settleErr } = await admin.rpc("profilex_wallet_settle", {
+        p_manager_id: caller.agentId,
+        p_hold: held,
+        p_cost: Math.min(cost, held),
+      });
+      if (settleErr) console.error("[profilex] wallet settle failed:", settleErr.message);
+    };
+
     let httpStatus = 0;
     let json: Row | null = null;
     let raw = "";
     try {
       ({ httpStatus, json, text: raw } = await callProfilex(service, requestBody));
     } catch (err) {
-      // Never reached the provider, so nothing was billed. Record it and release the slot.
+      // Never reached the provider, so nothing was billed. Record it, release the slot and the hold.
+      await settle(0);
       await admin
         .from("debtor_traces")
         .update({
@@ -472,18 +533,9 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       .select()
       .single();
 
-    // Charge the manager's wallet for what was actually billed — real cost, not the worst-case
-    // figure the pre-flight check above used. Best-effort: the lookup already happened and was
-    // paid for with the real provider by this point, so a failure recording the charge should
-    // not fail the whole request — debtor_traces.cost stays the authoritative billing record
-    // (see profilex_spend_report) even if this manager's wallet display drifts until reconciled.
-    if (billable && cost > 0 && caller.role === "manager" && caller.agentId) {
-      const { error: chargeErr } = await admin.rpc("profilex_wallet_charge", {
-        p_manager_id: caller.agentId,
-        p_amount: cost,
-      });
-      if (chargeErr) console.error("[profilex] wallet charge failed:", chargeErr.message);
-    }
+    // Settle the hold against what was actually billed — real cost, not the worst-case figure.
+    // debtor_traces.cost stays the authoritative billing record (see profilex_spend_report).
+    await settle(cost);
 
     // Deduct the REAL ProfileX price (catalogue.ts's defaultPrices, ignoring this client's own
     // rate_card override) from the superadmin's actual-balance wallet — the true remaining
@@ -554,24 +606,36 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 /** Per-service spend for the admin report. SECURITY INVOKER on the RPC means the caller's own
  *  RLS still applies, so a manager sees their team's spend and an admin the whole client's. */
 export const getProfilexSpend = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; since?: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        since: isoDateSchema.optional(),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
     if (caller.role !== "manager" && caller.role !== "admin") {
       throw new Error("Only managers or admins can view Insights spend");
     }
-    const admin = db();
     const since = data.since ?? istMonthStart().toISOString();
-    const [{ data: rows }, settings, { data: spent }] = await Promise.all([
-      admin.rpc("profilex_spend_report", { p_since: since }),
+    // The report RPC is SECURITY INVOKER, so it must run as the caller (asCaller) for RLS to
+    // scope it — through the service-role client it saw every company's lookups. Manual admin
+    // lookups are folded in by the RPC itself and are visible to admins only.
+    const [{ data: rows }, settings] = await Promise.all([
+      asCaller(data.accessToken).rpc("profilex_spend_report", { p_since: since }),
       loadSettings(caller.clientId),
-      admin.rpc("profilex_month_spend", { p_client_id: caller.clientId, p_since: since }),
     ]);
+    const byService = (rows as ServiceSpendRow[] | null) ?? [];
     return {
       since,
-      byService: (rows as ServiceSpendRow[] | null) ?? [],
-      totalSpend: Number(spent ?? 0),
+      byService,
+      // Summed from the same scoped rows, so the headline can never disagree with the table
+      // (profilex_month_spend is company-wide and would count admin-only manual spend for a
+      // manager).
+      totalSpend: byService.reduce((n, r) => n + Number(r.spend), 0),
       monthlyBudget: settings.monthly_budget,
     };
   });
@@ -581,7 +645,13 @@ export const getProfilexSpend = createServerFn({ method: "POST" })
  * superadmin-actions.server.ts's saveCompanyProfilexSettings for why that moved to
  * superadmin-only. */
 export const getProfilexSettings = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
@@ -591,7 +661,13 @@ export const getProfilexSettings = createServerFn({ method: "POST" })
 /** A manager's own Insights wallet balance — what the Trace tab shows them before they run a
  * lookup. Admins get null (they aren't wallet-gated — see runProfilexTrace). */
 export const getMyWallet = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
@@ -618,7 +694,13 @@ export interface ManagerWalletRow {
 /** Every manager in the admin's client, with their wallet balance (0 for one that's never been
  * funded — no profilex_wallets row exists until the first top-up). Admin only. */
 export const getManagerWallets = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
@@ -660,7 +742,13 @@ export const getManagerWallets = createServerFn({ method: "POST" })
  * (see 20260909_superadmin_and_wallets.sql: it can only ever grow via a superadmin allocation).
  * Admin only. */
 export const getCompanyWallet = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
@@ -679,7 +767,15 @@ export const getCompanyWallet = createServerFn({ method: "POST" })
  * admin can never hand out more than their company was allocated by the superadmin. Replaces
  * the old setManagerWallet, which upserted any balance with no ceiling at all. Admin only. */
 export const allocateToManager = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; managerId: string; amount: number }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        managerId: idSchema,
+        amount: amountSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
@@ -728,7 +824,14 @@ export const allocateToManager = createServerFn({ method: "POST" })
  * admin saw every client's usage. See migrations/20260905_profilex_usage_detail.sql.
  */
 export const getProfilexUsage = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; since?: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        since: isoDateSchema.optional(),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
@@ -762,8 +865,15 @@ export interface UsageDetailRow {
 
 /** Same RLS-scoping requirement as getProfilexUsage above — asCaller(), never db(). */
 export const getProfilexUsageDetail = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: { accessToken: string; since?: string; limit?: number; offset?: number }) => d,
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        since: isoDateSchema.optional(),
+        limit: limitSchema.optional(),
+        offset: offsetSchema.optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
@@ -781,3 +891,210 @@ export const getProfilexUsageDetail = createServerFn({ method: "POST" })
     if (error) throw new Error(`Could not load Insights detail log (${error.message})`);
     return { since, rows: (rows as UsageDetailRow[] | null) ?? [] };
   });
+
+// ── Admin > Insights: lookups typed in by hand ───────────────────────────────────────────────
+// runProfilexTrace deliberately never takes a number from the browser. This is the one place
+// that does, and it is admin-only: the admin types the mobile (or UAN / GSTIN) themselves. Every
+// other guardrail carries over — the company's Insights switch and plan, the rate limit, the
+// in-flight lock, and the real-price charge to the superadmin's actual wallet. Admins are not
+// wallet-gated, same as runProfilexTrace. Results go to insights_manual_lookups, not
+// debtor_traces (no debtor to hang them on), and nothing is written back to any debtor.
+
+const UAN_RE = /^\d{12}$/;
+const GSTIN_RE = /^[0-9A-Z]{15}$/;
+
+export const runManualInsight = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        serviceId: shortText(64),
+        /** Mobile number, UAN or GSTIN — whichever the chosen service takes. */
+        value: shortText(40),
+        firstName: z.string().trim().max(80).optional(),
+        lastName: z.string().trim().max(80).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "admin") throw new Error("Only admins can run a manual lookup");
+    enforceRateLimit(`profilex-manual:${caller.authUserId}`, 20, 60_000);
+
+    const service = getService(data.serviceId);
+    if (!service) throw new Error(`Unknown lookup service "${data.serviceId}"`);
+
+    const settings = await loadSettings(caller.clientId);
+    if (!settings.enabled) {
+      throw new Error("Insights is turned off for your company. Ask your platform contact.");
+    }
+    if (!settings.enabled_services.includes(service.id)) {
+      throw new Error(`"${service.label}" is not available on your company's Insights plan.`);
+    }
+
+    // Build the request body from what was typed, validating each shape before any money moves.
+    let requestBody: Record<string, string>;
+    let queryKey: string;
+    if (["mobile", "phone", "mobile+name", "mobile+firstName"].includes(service.input)) {
+      const mobile = normalisePhone(data.value);
+      if (!/^[6-9]\d{9}$/.test(mobile)) {
+        throw new Error("Enter a valid 10-digit Indian mobile number (starting 6–9).");
+      }
+      queryKey = mobile;
+      requestBody = service.input === "phone" ? { phone: mobile } : { mobile };
+      if (service.input === "mobile+name" || service.input === "mobile+firstName") {
+        const first = data.firstName?.trim();
+        if (!first) throw new Error(`"${service.label}" also needs the person's first name.`);
+        requestBody.firstName = first;
+        if (service.input === "mobile+name") requestBody.lastName = data.lastName?.trim() ?? "";
+      }
+    } else if (service.input === "uan") {
+      const uan = data.value.replace(/\s+/g, "");
+      if (!UAN_RE.test(uan)) throw new Error("A UAN is 12 digits.");
+      queryKey = uan;
+      requestBody = { uan };
+    } else {
+      const gstin = data.value.replace(/\s+/g, "").toUpperCase();
+      if (!GSTIN_RE.test(gstin)) throw new Error("A GSTIN is 15 letters and digits.");
+      queryKey = gstin;
+      requestBody = { gstin };
+    }
+
+    const admin = db();
+
+    // Release an abandoned claim, then take the in-flight slot — see runProfilexTrace.
+    await admin
+      .from("insights_manual_lookups")
+      .update({
+        state: "failed",
+        error: "Abandoned — no response was recorded, so it is not counted as spend.",
+        completed_at: new Date().toISOString(),
+      })
+      .eq("client_id", caller.clientId)
+      .eq("service_id", service.id)
+      .eq("query_key", queryKey)
+      .eq("state", "pending")
+      .lt("created_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
+
+    const { data: pending, error: claimErr } = await admin
+      .from("insights_manual_lookups")
+      .insert({
+        client_id: caller.clientId,
+        service_id: service.id,
+        requested_by: caller.agentId ?? null,
+        query_key: queryKey,
+        input: requestBody,
+        state: "pending",
+      })
+      .select()
+      .single();
+    if (claimErr || !pending) {
+      throw new Error(`A ${service.label} lookup for that value is already running.`);
+    }
+
+    let httpStatus = 0;
+    let json: Row | null = null;
+    let raw = "";
+    try {
+      ({ httpStatus, json, text: raw } = await callProfilex(service, requestBody));
+    } catch (err) {
+      await admin
+        .from("insights_manual_lookups")
+        .update({
+          state: "failed",
+          error: err instanceof Error ? err.message : String(err),
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", pending.id);
+      throw err;
+    }
+
+    const providerStatus = readProviderStatus(json);
+    const billable = httpStatus === 200;
+    const cost = billable ? priceFor(service, providerStatus, settings.rate_card) : 0;
+
+    const { data: finished } = await admin
+      .from("insights_manual_lookups")
+      .update({
+        state: billable ? "done" : "failed",
+        http_status: httpStatus,
+        provider_status: providerStatus,
+        billable,
+        cost,
+        transaction_id: (json?.transactionId as string | undefined) ?? null,
+        response: json ?? { raw: raw.slice(0, 4000) },
+        error: billable ? null : `HTTP ${httpStatus}: ${raw.slice(0, 400)}`,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", pending.id)
+      .select()
+      .single();
+
+    if (billable) {
+      const realCost = priceFor(service, providerStatus, null);
+      if (realCost > 0) {
+        const { error: actualErr } = await admin.rpc("profilex_actual_wallet_charge", {
+          p_amount: realCost,
+          p_client_id: caller.clientId,
+        });
+        if (actualErr) console.error("[profilex] actual wallet charge failed:", actualErr.message);
+      }
+    }
+
+    if (!billable) {
+      const providerMessage =
+        typeof json?.message === "string" ? json.message : raw.slice(0, 200) || "no detail given";
+      if (/UAT Access/i.test(providerMessage)) {
+        throw new Error(
+          `"${service.label}" is not enabled on the data provider account, so this lookup cannot ` +
+            `run. Nothing was charged.`,
+        );
+      }
+      throw new Error(
+        `The data provider rejected this request (HTTP ${httpStatus}: ${providerMessage}). ` +
+          `Nothing was charged.`,
+      );
+    }
+
+    return { lookup: finished, cost };
+  });
+
+/** The company's manual lookups, newest first. Admin only. */
+export const listManualInsights = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, limit: limitSchema.optional() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "admin") throw new Error("Only admins can view manual lookups");
+    const { data: rows, error } = await db()
+      .from("insights_manual_lookups")
+      .select(
+        "id, service_id, query_key, input, state, provider_status, cost, response, error, created_at",
+      )
+      .eq("client_id", caller.clientId)
+      .order("created_at", { ascending: false })
+      .limit(data.limit ?? 50);
+    if (error) throw new Error(`Could not load lookups (${error.message})`);
+    return {
+      rows: (rows as ManualLookupRow[] | null) ?? [],
+      settings: await loadSettings(caller.clientId),
+    };
+  });
+
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+
+export interface ManualLookupRow {
+  id: string;
+  service_id: string;
+  query_key: string;
+  input: Record<string, string>;
+  state: "pending" | "done" | "failed";
+  provider_status: string | null;
+  cost: number;
+  response: Json | null;
+  error: string | null;
+  created_at: string;
+}

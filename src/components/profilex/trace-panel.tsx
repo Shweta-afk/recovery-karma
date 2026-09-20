@@ -90,7 +90,7 @@ interface Leaf {
  * date of birth and bank branch. Anything paid for should be visible; the curated block above
  * stays as the scannable part, and this is everything else.
  */
-function flatten(node: unknown, prefix = "", out: Leaf[] = [], depth = 0): Leaf[] {
+export function flatten(node: unknown, prefix = "", out: Leaf[] = [], depth = 0): Leaf[] {
   if (node === null || node === undefined || depth > 6) return out;
   if (Array.isArray(node)) {
     node.forEach((v, i) =>

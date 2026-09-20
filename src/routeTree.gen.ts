@@ -9,70 +9,48 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SuperadminSetupRouteImport } from './routes/superadmin-setup'
-import { Route as SuperadminRouteImport } from './routes/superadmin'
-import { Route as SetupRouteImport } from './routes/setup'
-import { Route as ManagerRouteImport } from './routes/manager'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as DashboardRouteImport } from './routes/dashboard'
-import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
-import { Route as ManagerIndexRouteImport } from './routes/manager.index'
-import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
+import { Route as AdminRouteImport } from './routes/admin'
+import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as ManagerRouteImport } from './routes/manager'
+import { Route as SetupRouteImport } from './routes/setup'
+import { Route as SetupConfirmRouteImport } from './routes/setup-confirm'
+import { Route as SuperadminRouteImport } from './routes/superadmin'
+import { Route as SuperadminSetupRouteImport } from './routes/superadmin-setup'
+import { Route as WebphoneTestRouteImport } from './routes/webphone-test'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
-import { Route as SuperadminWalletRouteImport } from './routes/superadmin.wallet'
-import { Route as SuperadminInsightsRouteImport } from './routes/superadmin.insights'
-import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
-import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
-import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
-import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
-import { Route as ManagerLiveCallsRouteImport } from './routes/manager.live-calls'
-import { Route as ManagerAuditRouteImport } from './routes/manager.audit'
-import { Route as ManagerActivityRouteImport } from './routes/manager.activity'
-import { Route as DashboardSettingsRouteImport } from './routes/dashboard.settings'
-import { Route as DashboardReportsRouteImport } from './routes/dashboard.reports'
-import { Route as DashboardPaymentsRouteImport } from './routes/dashboard.payments'
-import { Route as DashboardMessagesRouteImport } from './routes/dashboard.messages'
-import { Route as DashboardHistoryRouteImport } from './routes/dashboard.history'
-import { Route as DashboardDebtorsRouteImport } from './routes/dashboard.debtors'
-import { Route as DashboardCallQueueRouteImport } from './routes/dashboard.call-queue'
-import { Route as AdminUsersRouteImport } from './routes/admin.users'
-import { Route as AdminTeamsRouteImport } from './routes/admin.teams'
-import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
-import { Route as AdminReportsRouteImport } from './routes/admin.reports'
-import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
+import { Route as AdminInsightsRouteImport } from './routes/admin.insights'
 import { Route as AdminLiveCallsRouteImport } from './routes/admin.live-calls'
+import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
+import { Route as AdminReportsRouteImport } from './routes/admin.reports'
+import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
+import { Route as AdminTeamsRouteImport } from './routes/admin.teams'
+import { Route as AdminUsersRouteImport } from './routes/admin.users'
+import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
+import { Route as DashboardCallQueueRouteImport } from './routes/dashboard.call-queue'
+import { Route as DashboardDebtorsRouteImport } from './routes/dashboard.debtors'
+import { Route as DashboardHistoryRouteImport } from './routes/dashboard.history'
+import { Route as DashboardMessagesRouteImport } from './routes/dashboard.messages'
+import { Route as DashboardPaymentsRouteImport } from './routes/dashboard.payments'
+import { Route as DashboardReportsRouteImport } from './routes/dashboard.reports'
+import { Route as DashboardSettingsRouteImport } from './routes/dashboard.settings'
+import { Route as ManagerIndexRouteImport } from './routes/manager.index'
+import { Route as ManagerActivityRouteImport } from './routes/manager.activity'
+import { Route as ManagerAuditRouteImport } from './routes/manager.audit'
+import { Route as ManagerLiveCallsRouteImport } from './routes/manager.live-calls'
+import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
+import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
+import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
+import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
+import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
+import { Route as SuperadminInsightsRouteImport } from './routes/superadmin.insights'
+import { Route as SuperadminWalletRouteImport } from './routes/superadmin.wallet'
 import { Route as SuperadminCompaniesClientIdRouteImport } from './routes/superadmin.companies.$clientId'
 
-const SuperadminSetupRoute = SuperadminSetupRouteImport.update({
-  id: '/superadmin-setup',
-  path: '/superadmin-setup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SuperadminRoute = SuperadminRouteImport.update({
-  id: '/superadmin',
-  path: '/superadmin',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SetupRoute = SetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ManagerRoute = ManagerRouteImport.update({
-  id: '/manager',
-  path: '/manager',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DashboardRoute = DashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminRoute = AdminRouteImport.update({
@@ -80,129 +58,59 @@ const AdminRoute = AdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SuperadminIndexRoute = SuperadminIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => SuperadminRoute,
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const ManagerIndexRoute = ManagerIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => ManagerRoute,
+const ManagerRoute = ManagerRouteImport.update({
+  id: '/manager',
+  path: '/manager',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const DashboardIndexRoute = DashboardIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => DashboardRoute,
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupConfirmRoute = SetupConfirmRouteImport.update({
+  id: '/setup-confirm',
+  path: '/setup-confirm',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuperadminRoute = SuperadminRouteImport.update({
+  id: '/superadmin',
+  path: '/superadmin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuperadminSetupRoute = SuperadminSetupRouteImport.update({
+  id: '/superadmin-setup',
+  path: '/superadmin-setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WebphoneTestRoute = WebphoneTestRouteImport.update({
+  id: '/webphone-test',
+  path: '/webphone-test',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
-const SuperadminWalletRoute = SuperadminWalletRouteImport.update({
-  id: '/wallet',
-  path: '/wallet',
-  getParentRoute: () => SuperadminRoute,
-} as any)
-const SuperadminInsightsRoute = SuperadminInsightsRouteImport.update({
+const AdminInsightsRoute = AdminInsightsRouteImport.update({
   id: '/insights',
   path: '/insights',
-  getParentRoute: () => SuperadminRoute,
+  getParentRoute: () => AdminRoute,
 } as any)
-const ManagerUploadRoute = ManagerUploadRouteImport.update({
-  id: '/upload',
-  path: '/upload',
-  getParentRoute: () => ManagerRoute,
-} as any)
-const ManagerReportsRoute = ManagerReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
-  getParentRoute: () => ManagerRoute,
-} as any)
-const ManagerQueueRoute = ManagerQueueRouteImport.update({
-  id: '/queue',
-  path: '/queue',
-  getParentRoute: () => ManagerRoute,
-} as any)
-const ManagerPortfolioRoute = ManagerPortfolioRouteImport.update({
-  id: '/portfolio',
-  path: '/portfolio',
-  getParentRoute: () => ManagerRoute,
-} as any)
-const ManagerLiveCallsRoute = ManagerLiveCallsRouteImport.update({
+const AdminLiveCallsRoute = AdminLiveCallsRouteImport.update({
   id: '/live-calls',
   path: '/live-calls',
-  getParentRoute: () => ManagerRoute,
-} as any)
-const ManagerAuditRoute = ManagerAuditRouteImport.update({
-  id: '/audit',
-  path: '/audit',
-  getParentRoute: () => ManagerRoute,
-} as any)
-const ManagerActivityRoute = ManagerActivityRouteImport.update({
-  id: '/activity',
-  path: '/activity',
-  getParentRoute: () => ManagerRoute,
-} as any)
-const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => DashboardRoute,
-} as any)
-const DashboardReportsRoute = DashboardReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
-  getParentRoute: () => DashboardRoute,
-} as any)
-const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
-  id: '/payments',
-  path: '/payments',
-  getParentRoute: () => DashboardRoute,
-} as any)
-const DashboardMessagesRoute = DashboardMessagesRouteImport.update({
-  id: '/messages',
-  path: '/messages',
-  getParentRoute: () => DashboardRoute,
-} as any)
-const DashboardHistoryRoute = DashboardHistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
-  getParentRoute: () => DashboardRoute,
-} as any)
-const DashboardDebtorsRoute = DashboardDebtorsRouteImport.update({
-  id: '/debtors',
-  path: '/debtors',
-  getParentRoute: () => DashboardRoute,
-} as any)
-const DashboardCallQueueRoute = DashboardCallQueueRouteImport.update({
-  id: '/call-queue',
-  path: '/call-queue',
-  getParentRoute: () => DashboardRoute,
-} as any)
-const AdminUsersRoute = AdminUsersRouteImport.update({
-  id: '/users',
-  path: '/users',
-  getParentRoute: () => AdminRoute,
-} as any)
-const AdminTeamsRoute = AdminTeamsRouteImport.update({
-  id: '/teams',
-  path: '/teams',
-  getParentRoute: () => AdminRoute,
-} as any)
-const AdminSettingsRoute = AdminSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => AdminRoute,
-} as any)
-const AdminReportsRoute = AdminReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminPortfolioRoute = AdminPortfolioRouteImport.update({
@@ -210,10 +118,120 @@ const AdminPortfolioRoute = AdminPortfolioRouteImport.update({
   path: '/portfolio',
   getParentRoute: () => AdminRoute,
 } as any)
-const AdminLiveCallsRoute = AdminLiveCallsRouteImport.update({
+const AdminReportsRoute = AdminReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminSettingsRoute = AdminSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminTeamsRoute = AdminTeamsRouteImport.update({
+  id: '/teams',
+  path: '/teams',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminUsersRoute = AdminUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AdminRoute,
+} as any)
+const DashboardIndexRoute = DashboardIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardCallQueueRoute = DashboardCallQueueRouteImport.update({
+  id: '/call-queue',
+  path: '/call-queue',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardDebtorsRoute = DashboardDebtorsRouteImport.update({
+  id: '/debtors',
+  path: '/debtors',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardHistoryRoute = DashboardHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardMessagesRoute = DashboardMessagesRouteImport.update({
+  id: '/messages',
+  path: '/messages',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
+  id: '/payments',
+  path: '/payments',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardReportsRoute = DashboardReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const ManagerIndexRoute = ManagerIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerActivityRoute = ManagerActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerAuditRoute = ManagerAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerLiveCallsRoute = ManagerLiveCallsRouteImport.update({
   id: '/live-calls',
   path: '/live-calls',
-  getParentRoute: () => AdminRoute,
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerPortfolioRoute = ManagerPortfolioRouteImport.update({
+  id: '/portfolio',
+  path: '/portfolio',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerQueueRoute = ManagerQueueRouteImport.update({
+  id: '/queue',
+  path: '/queue',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerReportsRoute = ManagerReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerUploadRoute = ManagerUploadRouteImport.update({
+  id: '/upload',
+  path: '/upload',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const SuperadminIndexRoute = SuperadminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SuperadminRoute,
+} as any)
+const SuperadminInsightsRoute = SuperadminInsightsRouteImport.update({
+  id: '/insights',
+  path: '/insights',
+  getParentRoute: () => SuperadminRoute,
+} as any)
+const SuperadminWalletRoute = SuperadminWalletRouteImport.update({
+  id: '/wallet',
+  path: '/wallet',
+  getParentRoute: () => SuperadminRoute,
 } as any)
 const SuperadminCompaniesClientIdRoute =
   SuperadminCompaniesClientIdRouteImport.update({
@@ -229,8 +247,11 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
   '/setup': typeof SetupRoute
+  '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/superadmin-setup': typeof SuperadminSetupRoute
+  '/webphone-test': typeof WebphoneTestRoute
+  '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -263,7 +284,10 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin-setup': typeof SuperadminSetupRoute
+  '/webphone-test': typeof WebphoneTestRoute
+  '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -300,8 +324,11 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
   '/setup': typeof SetupRoute
+  '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/superadmin-setup': typeof SuperadminSetupRoute
+  '/webphone-test': typeof WebphoneTestRoute
+  '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -339,8 +366,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/setup'
+    | '/setup-confirm'
     | '/superadmin'
     | '/superadmin-setup'
+    | '/webphone-test'
+    | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -373,7 +403,10 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/setup'
+    | '/setup-confirm'
     | '/superadmin-setup'
+    | '/webphone-test'
+    | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -409,8 +442,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/setup'
+    | '/setup-confirm'
     | '/superadmin'
     | '/superadmin-setup'
+    | '/webphone-test'
+    | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -447,52 +483,19 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ManagerRoute: typeof ManagerRouteWithChildren
   SetupRoute: typeof SetupRoute
+  SetupConfirmRoute: typeof SetupConfirmRoute
   SuperadminRoute: typeof SuperadminRouteWithChildren
   SuperadminSetupRoute: typeof SuperadminSetupRoute
+  WebphoneTestRoute: typeof WebphoneTestRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/superadmin-setup': {
-      id: '/superadmin-setup'
-      path: '/superadmin-setup'
-      fullPath: '/superadmin-setup'
-      preLoaderRoute: typeof SuperadminSetupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/superadmin': {
-      id: '/superadmin'
-      path: '/superadmin'
-      fullPath: '/superadmin'
-      preLoaderRoute: typeof SuperadminRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/setup': {
-      id: '/setup'
-      path: '/setup'
-      fullPath: '/setup'
-      preLoaderRoute: typeof SetupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/manager': {
-      id: '/manager'
-      path: '/manager'
-      fullPath: '/manager'
-      preLoaderRoute: typeof ManagerRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dashboard': {
-      id: '/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof DashboardRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin': {
@@ -502,33 +505,61 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/superadmin/': {
-      id: '/superadmin/'
-      path: '/'
-      fullPath: '/superadmin/'
-      preLoaderRoute: typeof SuperadminIndexRouteImport
-      parentRoute: typeof SuperadminRoute
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/manager/': {
-      id: '/manager/'
-      path: '/'
-      fullPath: '/manager/'
-      preLoaderRoute: typeof ManagerIndexRouteImport
-      parentRoute: typeof ManagerRoute
+    '/manager': {
+      id: '/manager'
+      path: '/manager'
+      fullPath: '/manager'
+      preLoaderRoute: typeof ManagerRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/dashboard/': {
-      id: '/dashboard/'
-      path: '/'
-      fullPath: '/dashboard/'
-      preLoaderRoute: typeof DashboardIndexRouteImport
-      parentRoute: typeof DashboardRoute
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup-confirm': {
+      id: '/setup-confirm'
+      path: '/setup-confirm'
+      fullPath: '/setup-confirm'
+      preLoaderRoute: typeof SetupConfirmRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/superadmin': {
+      id: '/superadmin'
+      path: '/superadmin'
+      fullPath: '/superadmin'
+      preLoaderRoute: typeof SuperadminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/superadmin-setup': {
+      id: '/superadmin-setup'
+      path: '/superadmin-setup'
+      fullPath: '/superadmin-setup'
+      preLoaderRoute: typeof SuperadminSetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/webphone-test': {
+      id: '/webphone-test'
+      path: '/webphone-test'
+      fullPath: '/webphone-test'
+      preLoaderRoute: typeof WebphoneTestRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/admin/': {
       id: '/admin/'
@@ -537,144 +568,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
-    '/superadmin/wallet': {
-      id: '/superadmin/wallet'
-      path: '/wallet'
-      fullPath: '/superadmin/wallet'
-      preLoaderRoute: typeof SuperadminWalletRouteImport
-      parentRoute: typeof SuperadminRoute
-    }
-    '/superadmin/insights': {
-      id: '/superadmin/insights'
+    '/admin/insights': {
+      id: '/admin/insights'
       path: '/insights'
-      fullPath: '/superadmin/insights'
-      preLoaderRoute: typeof SuperadminInsightsRouteImport
-      parentRoute: typeof SuperadminRoute
+      fullPath: '/admin/insights'
+      preLoaderRoute: typeof AdminInsightsRouteImport
+      parentRoute: typeof AdminRoute
     }
-    '/manager/upload': {
-      id: '/manager/upload'
-      path: '/upload'
-      fullPath: '/manager/upload'
-      preLoaderRoute: typeof ManagerUploadRouteImport
-      parentRoute: typeof ManagerRoute
-    }
-    '/manager/reports': {
-      id: '/manager/reports'
-      path: '/reports'
-      fullPath: '/manager/reports'
-      preLoaderRoute: typeof ManagerReportsRouteImport
-      parentRoute: typeof ManagerRoute
-    }
-    '/manager/queue': {
-      id: '/manager/queue'
-      path: '/queue'
-      fullPath: '/manager/queue'
-      preLoaderRoute: typeof ManagerQueueRouteImport
-      parentRoute: typeof ManagerRoute
-    }
-    '/manager/portfolio': {
-      id: '/manager/portfolio'
-      path: '/portfolio'
-      fullPath: '/manager/portfolio'
-      preLoaderRoute: typeof ManagerPortfolioRouteImport
-      parentRoute: typeof ManagerRoute
-    }
-    '/manager/live-calls': {
-      id: '/manager/live-calls'
+    '/admin/live-calls': {
+      id: '/admin/live-calls'
       path: '/live-calls'
-      fullPath: '/manager/live-calls'
-      preLoaderRoute: typeof ManagerLiveCallsRouteImport
-      parentRoute: typeof ManagerRoute
-    }
-    '/manager/audit': {
-      id: '/manager/audit'
-      path: '/audit'
-      fullPath: '/manager/audit'
-      preLoaderRoute: typeof ManagerAuditRouteImport
-      parentRoute: typeof ManagerRoute
-    }
-    '/manager/activity': {
-      id: '/manager/activity'
-      path: '/activity'
-      fullPath: '/manager/activity'
-      preLoaderRoute: typeof ManagerActivityRouteImport
-      parentRoute: typeof ManagerRoute
-    }
-    '/dashboard/settings': {
-      id: '/dashboard/settings'
-      path: '/settings'
-      fullPath: '/dashboard/settings'
-      preLoaderRoute: typeof DashboardSettingsRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/dashboard/reports': {
-      id: '/dashboard/reports'
-      path: '/reports'
-      fullPath: '/dashboard/reports'
-      preLoaderRoute: typeof DashboardReportsRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/dashboard/payments': {
-      id: '/dashboard/payments'
-      path: '/payments'
-      fullPath: '/dashboard/payments'
-      preLoaderRoute: typeof DashboardPaymentsRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/dashboard/messages': {
-      id: '/dashboard/messages'
-      path: '/messages'
-      fullPath: '/dashboard/messages'
-      preLoaderRoute: typeof DashboardMessagesRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/dashboard/history': {
-      id: '/dashboard/history'
-      path: '/history'
-      fullPath: '/dashboard/history'
-      preLoaderRoute: typeof DashboardHistoryRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/dashboard/debtors': {
-      id: '/dashboard/debtors'
-      path: '/debtors'
-      fullPath: '/dashboard/debtors'
-      preLoaderRoute: typeof DashboardDebtorsRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/dashboard/call-queue': {
-      id: '/dashboard/call-queue'
-      path: '/call-queue'
-      fullPath: '/dashboard/call-queue'
-      preLoaderRoute: typeof DashboardCallQueueRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/admin/users': {
-      id: '/admin/users'
-      path: '/users'
-      fullPath: '/admin/users'
-      preLoaderRoute: typeof AdminUsersRouteImport
-      parentRoute: typeof AdminRoute
-    }
-    '/admin/teams': {
-      id: '/admin/teams'
-      path: '/teams'
-      fullPath: '/admin/teams'
-      preLoaderRoute: typeof AdminTeamsRouteImport
-      parentRoute: typeof AdminRoute
-    }
-    '/admin/settings': {
-      id: '/admin/settings'
-      path: '/settings'
-      fullPath: '/admin/settings'
-      preLoaderRoute: typeof AdminSettingsRouteImport
-      parentRoute: typeof AdminRoute
-    }
-    '/admin/reports': {
-      id: '/admin/reports'
-      path: '/reports'
-      fullPath: '/admin/reports'
-      preLoaderRoute: typeof AdminReportsRouteImport
+      fullPath: '/admin/live-calls'
+      preLoaderRoute: typeof AdminLiveCallsRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/portfolio': {
@@ -684,12 +589,166 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPortfolioRouteImport
       parentRoute: typeof AdminRoute
     }
-    '/admin/live-calls': {
-      id: '/admin/live-calls'
-      path: '/live-calls'
-      fullPath: '/admin/live-calls'
-      preLoaderRoute: typeof AdminLiveCallsRouteImport
+    '/admin/reports': {
+      id: '/admin/reports'
+      path: '/reports'
+      fullPath: '/admin/reports'
+      preLoaderRoute: typeof AdminReportsRouteImport
       parentRoute: typeof AdminRoute
+    }
+    '/admin/settings': {
+      id: '/admin/settings'
+      path: '/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/teams': {
+      id: '/admin/teams'
+      path: '/teams'
+      fullPath: '/admin/teams'
+      preLoaderRoute: typeof AdminTeamsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/users': {
+      id: '/admin/users'
+      path: '/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AdminUsersRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/dashboard/': {
+      id: '/dashboard/'
+      path: '/'
+      fullPath: '/dashboard/'
+      preLoaderRoute: typeof DashboardIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/call-queue': {
+      id: '/dashboard/call-queue'
+      path: '/call-queue'
+      fullPath: '/dashboard/call-queue'
+      preLoaderRoute: typeof DashboardCallQueueRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/debtors': {
+      id: '/dashboard/debtors'
+      path: '/debtors'
+      fullPath: '/dashboard/debtors'
+      preLoaderRoute: typeof DashboardDebtorsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/history': {
+      id: '/dashboard/history'
+      path: '/history'
+      fullPath: '/dashboard/history'
+      preLoaderRoute: typeof DashboardHistoryRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/messages': {
+      id: '/dashboard/messages'
+      path: '/messages'
+      fullPath: '/dashboard/messages'
+      preLoaderRoute: typeof DashboardMessagesRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/payments': {
+      id: '/dashboard/payments'
+      path: '/payments'
+      fullPath: '/dashboard/payments'
+      preLoaderRoute: typeof DashboardPaymentsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/reports': {
+      id: '/dashboard/reports'
+      path: '/reports'
+      fullPath: '/dashboard/reports'
+      preLoaderRoute: typeof DashboardReportsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/settings': {
+      id: '/dashboard/settings'
+      path: '/settings'
+      fullPath: '/dashboard/settings'
+      preLoaderRoute: typeof DashboardSettingsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/manager/': {
+      id: '/manager/'
+      path: '/'
+      fullPath: '/manager/'
+      preLoaderRoute: typeof ManagerIndexRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/activity': {
+      id: '/manager/activity'
+      path: '/activity'
+      fullPath: '/manager/activity'
+      preLoaderRoute: typeof ManagerActivityRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/audit': {
+      id: '/manager/audit'
+      path: '/audit'
+      fullPath: '/manager/audit'
+      preLoaderRoute: typeof ManagerAuditRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/live-calls': {
+      id: '/manager/live-calls'
+      path: '/live-calls'
+      fullPath: '/manager/live-calls'
+      preLoaderRoute: typeof ManagerLiveCallsRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/portfolio': {
+      id: '/manager/portfolio'
+      path: '/portfolio'
+      fullPath: '/manager/portfolio'
+      preLoaderRoute: typeof ManagerPortfolioRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/queue': {
+      id: '/manager/queue'
+      path: '/queue'
+      fullPath: '/manager/queue'
+      preLoaderRoute: typeof ManagerQueueRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/reports': {
+      id: '/manager/reports'
+      path: '/reports'
+      fullPath: '/manager/reports'
+      preLoaderRoute: typeof ManagerReportsRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/manager/upload': {
+      id: '/manager/upload'
+      path: '/upload'
+      fullPath: '/manager/upload'
+      preLoaderRoute: typeof ManagerUploadRouteImport
+      parentRoute: typeof ManagerRoute
+    }
+    '/superadmin/': {
+      id: '/superadmin/'
+      path: '/'
+      fullPath: '/superadmin/'
+      preLoaderRoute: typeof SuperadminIndexRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
+    '/superadmin/insights': {
+      id: '/superadmin/insights'
+      path: '/insights'
+      fullPath: '/superadmin/insights'
+      preLoaderRoute: typeof SuperadminInsightsRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
+    '/superadmin/wallet': {
+      id: '/superadmin/wallet'
+      path: '/wallet'
+      fullPath: '/superadmin/wallet'
+      preLoaderRoute: typeof SuperadminWalletRouteImport
+      parentRoute: typeof SuperadminRoute
     }
     '/superadmin/companies/$clientId': {
       id: '/superadmin/companies/$clientId'
@@ -702,6 +761,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
+  AdminInsightsRoute: typeof AdminInsightsRoute
   AdminLiveCallsRoute: typeof AdminLiveCallsRoute
   AdminPortfolioRoute: typeof AdminPortfolioRoute
   AdminReportsRoute: typeof AdminReportsRoute
@@ -712,6 +772,7 @@ interface AdminRouteChildren {
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminInsightsRoute: AdminInsightsRoute,
   AdminLiveCallsRoute: AdminLiveCallsRoute,
   AdminPortfolioRoute: AdminPortfolioRoute,
   AdminReportsRoute: AdminReportsRoute,
@@ -799,8 +860,10 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ManagerRoute: ManagerRouteWithChildren,
   SetupRoute: SetupRoute,
+  SetupConfirmRoute: SetupConfirmRoute,
   SuperadminRoute: SuperadminRouteWithChildren,
   SuperadminSetupRoute: SuperadminSetupRoute,
+  WebphoneTestRoute: WebphoneTestRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -5,6 +5,19 @@
 // resolveSuperadmin calls verifySuperadminCaller first and throws if it returns null — same
 // chokepoint discipline supabase-admin.server.ts documents for verifyCaller.
 
+import {
+  z,
+  tokenSchema,
+  idSchema,
+  shortText,
+  limitSchema,
+  amountSchema,
+  noteSchema,
+  emailSchema,
+  passwordSchema,
+  grantableRoleSchema,
+} from "./schemas";
+import { timingSafeEqual } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
@@ -30,7 +43,17 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  *  account instead of failing — one login, both identities. See the inline comment below for
  *  why that's safe only once the bootstrap gap above has closed. */
 export const createSuperadmin = createServerFn({ method: "POST" })
-  .inputValidator((d: { name: string; email: string; password: string; accessToken?: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        name: shortText(),
+        email: emailSchema,
+        password: passwordSchema,
+        accessToken: tokenSchema.optional(),
+        bootstrapSecret: z.string().max(256).optional(),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const name = data.name.trim();
     const email = data.email.trim().toLowerCase();
@@ -56,6 +79,21 @@ export const createSuperadmin = createServerFn({ method: "POST" })
         return {
           ok: false as const,
           error: "A superadmin already exists — sign in as one to create another.",
+        };
+      }
+    } else {
+      // The table is empty (a fresh or restored database), which used to mean ANYONE who found
+      // this route became the platform owner. Now the first superadmin must present a secret that
+      // only whoever controls the server's environment knows. Unset secret => closed, not open.
+      const expected = process.env.SUPERADMIN_BOOTSTRAP_SECRET?.trim();
+      const given = data.bootstrapSecret?.trim() ?? "";
+      const a = Buffer.from(given);
+      const b = Buffer.from(expected ?? "");
+      if (!expected || a.length !== b.length || !timingSafeEqual(a, b)) {
+        return {
+          ok: false as const,
+          error:
+            "Creating the first superadmin needs the setup key from the server's SUPERADMIN_BOOTSTRAP_SECRET.",
         };
       }
     }
@@ -143,7 +181,13 @@ export const createSuperadmin = createServerFn({ method: "POST" })
  *  { superadmin: null } rather than throwing when they aren't, so a normal agent/manager/admin
  *  login is unaffected. */
 export const resolveSuperadmin = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) return { superadmin: null };
@@ -169,7 +213,13 @@ export interface CompanyRow {
 /** Every company, with role counts and its ProfileX company-wallet balance — the "see users of
  *  each company, admins, managers" overview. */
 export const getCompanies = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -252,7 +302,15 @@ const SUBDOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
  *  the superadmin has picked one). Until this runs, every user at the company sees the
  *  "awaiting verification" gate (auth.tsx / app-shell.tsx) instead of the app. */
 export const approveCompany = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; clientId: string; subdomain?: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        subdomain: z.string().max(63).optional(),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -288,7 +346,14 @@ export const approveCompany = createServerFn({ method: "POST" })
 /** Rejects a pending company — status only, nothing is deleted (the auth account and client
  *  row survive so a superadmin can revisit the decision later). */
 export const rejectCompany = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; clientId: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -308,7 +373,15 @@ export const rejectCompany = createServerFn({ method: "POST" })
 /** Sets (or changes) an already-approved company's subdomain slug on its own, separate from
  *  the approve step above. */
 export const setCompanySubdomain = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; clientId: string; subdomain: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        subdomain: z.string().max(63),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -337,7 +410,14 @@ export interface CompanyUserRow {
 
 /** Every agents-table row (admins/managers/agents) for one company. */
 export const getCompanyUsers = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; clientId: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -393,13 +473,15 @@ export const getCompanyUsers = createServerFn({ method: "POST" })
  *  this goes through the service-role client instead, with the same "does this user actually
  *  belong to this company" check the browser-side RLS policy would otherwise have enforced. */
 export const updateCompanyUserRole = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: {
-      accessToken: string;
-      clientId: string;
-      userId: string;
-      role: "agent" | "manager" | "admin";
-    }) => d,
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        userId: idSchema,
+        role: grantableRoleSchema,
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
@@ -434,13 +516,15 @@ export const updateCompanyUserRole = createServerFn({ method: "POST" })
  *  so an existing company like Axiotta is never retroactively capped by this migration —
  *  only companies a superadmin explicitly sets a number for are restricted. */
 export const setCompanyLimits = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: {
-      accessToken: string;
-      clientId: string;
-      maxAgents: number | null;
-      maxManagers: number | null;
-    }) => d,
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        maxAgents: z.number().int().min(0).max(100000).nullable(),
+        maxManagers: z.number().int().min(0).max(100000).nullable(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
@@ -463,7 +547,13 @@ export const setCompanyLimits = createServerFn({ method: "POST" })
 
 /** The one real ProfileX/Neokred wallet's current balance. */
 export const getMasterWallet = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -479,7 +569,15 @@ export const getMasterWallet = createServerFn({ method: "POST" })
 
 /** Records real money the superadmin actually paid ProfileX. */
 export const topUpMasterWallet = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; amount: number; note?: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        amount: amountSchema,
+        note: noteSchema.optional(),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -501,7 +599,13 @@ export const topUpMasterWallet = createServerFn({ method: "POST" })
  *  across every company (profilex-actions.server.ts's runProfilexTrace). Only a manual top-up
  *  ever increases it. */
 export const getActualWallet = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -522,7 +626,15 @@ export const getActualWallet = createServerFn({ method: "POST" })
 /** Records real money the superadmin actually paid ProfileX/Neokred into the actual wallet —
  *  distinct from topUpMasterWallet, which only affects the internal allocation pool. */
 export const topUpActualWallet = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; amount: number; note?: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        amount: amountSchema,
+        note: noteSchema.optional(),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -540,7 +652,14 @@ export const topUpActualWallet = createServerFn({ method: "POST" })
 /** The ₹ level below which the superadmin wallet UI shows a low-balance alert. Editable so 500
  *  is a default, not a hardcoded floor. */
 export const setActualWalletThreshold = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; threshold: number }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        threshold: z.number().finite().min(0).max(1_000_000_000),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -557,8 +676,15 @@ export const setActualWalletThreshold = createServerFn({ method: "POST" })
 /** Moves a slice of the master wallet into one company's wallet — the budget that company
  *  admin can then hand out to their own managers. */
 export const allocateToCompany = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: { accessToken: string; clientId: string; amount: number; note?: string }) => d,
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        amount: amountSchema,
+        note: noteSchema.optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
@@ -590,8 +716,15 @@ export interface WalletLedgerRow {
 /** Cross-company wallet activity — every top-up, allocation, and manager charge, at every
  *  level. The audit trail behind "all transactions from multiple companies". */
 export const getWalletLedger = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: { accessToken: string; clientId?: string; scope?: string; limit?: number }) => d,
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema.optional(),
+        scope: shortText(40).optional(),
+        limit: limitSchema.optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
@@ -671,13 +804,25 @@ export interface InsightsActivityRow {
    *  20260910_profilex_actual_wallet.sql. */
   realCost: number;
   createdAt: string;
+  /** Typed in by a company admin on Admin > Insights, not run against a debtor. */
+  manual: boolean;
+  /** The mobile / UAN / GSTIN that was typed in — only set for manual lookups. */
+  queryValue: string | null;
 }
 
 /** Every ProfileX ("Insights") trace across every company — who ran it, on which debtor's
  *  behalf, and what it cost. Scoped read via service role, so no cross-client RLS policy on
  *  debtor_traces needs to change for this to work. */
 export const getInsightsActivity = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; clientId?: string; limit?: number }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema.optional(),
+        limit: limitSchema.optional(),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -692,10 +837,25 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
       .limit(data.limit ?? 200);
     if (data.clientId) query = query.eq("client_id", data.clientId);
 
-    const { data: traces, error } = await query;
-    if (error) throw new Error(`Could not load Insights activity (${error.message})`);
+    let manualQuery = admin
+      .from("insights_manual_lookups")
+      .select(
+        "id, client_id, requested_by, service_id, state, provider_status, billable, cost, created_at, query_key",
+      )
+      .order("created_at", { ascending: false })
+      .limit(data.limit ?? 200);
+    if (data.clientId) manualQuery = manualQuery.eq("client_id", data.clientId);
 
-    const rows = (traces ?? []) as {
+    const [{ data: traces, error }, { data: manualTraces, error: manualErr }] = await Promise.all([
+      query,
+      manualQuery,
+    ]);
+    if (error) throw new Error(`Could not load Insights activity (${error.message})`);
+    // Tolerate the manual table not existing yet (code deployed ahead of the migration): the
+    // debtor activity must keep loading.
+    if (manualErr) console.error("[insights] manual lookups unavailable:", manualErr.message);
+
+    interface TraceRow {
       id: string;
       client_id: string;
       requested_by: string | null;
@@ -705,7 +865,15 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
       billable: boolean;
       cost: number;
       created_at: string;
-    }[];
+      query_key?: string | null;
+      manual?: boolean;
+    }
+    const rows: TraceRow[] = [
+      ...((traces ?? []) as TraceRow[]),
+      ...((manualTraces ?? []) as TraceRow[]).map((r) => ({ ...r, manual: true })),
+    ]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, data.limit ?? 200);
 
     const clientIds = [...new Set(rows.map((r) => r.client_id))];
     const agentIds = [...new Set(rows.map((r) => r.requested_by).filter((v): v is string => !!v))];
@@ -746,6 +914,8 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
         cost: Number(r.cost),
         realCost,
         createdAt: r.created_at,
+        manual: !!r.manual,
+        queryValue: r.manual ? (r.query_key ?? null) : null,
       };
     });
 
@@ -756,7 +926,14 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
  * read, paired with saveCompanyProfilexSettings below for the write. Reuses profilex-actions.
  * server.ts's loadSettings so the shape/fallback defaults never drift between the two. */
 export const getCompanyProfilexSettings = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string; clientId: string }) => d)
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+      })
+      .parse(d),
+  )
   .handler(async ({ data }): Promise<ProfilexSettings> => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
@@ -770,17 +947,21 @@ export const getCompanyProfilexSettings = createServerFn({ method: "POST" })
  * admins now see this read-only (getProfilexSettings) and can only manage their managers'
  * wallets, not the pricing those wallets spend against. */
 export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
-  .inputValidator(
-    (d: {
-      accessToken: string;
-      clientId: string;
-      enabled: boolean;
-      hitTtlHours: number;
-      missTtlHours: number;
-      rateCard: Record<string, Record<string, number>>;
-      /** Which catalogue services this company may use — the per-company plan. */
-      enabledServices: string[];
-    }) => d,
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        enabled: z.boolean(),
+        hitTtlHours: z.number().finite().min(0).max(8760),
+        missTtlHours: z.number().finite().min(0).max(8760),
+        rateCard: z.record(
+          z.string().max(64),
+          z.record(z.string().max(16), z.number().finite().min(0).max(100000)),
+        ),
+        enabledServices: z.array(shortText(64)).max(100),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);

@@ -86,9 +86,10 @@ function SuperadminInsightsPage() {
           <Badge variant="secondary">Superadmin</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          Every ProfileX skip-tracing lookup across every company — who ran it, on which debtor, and
-          two costs side by side: what that company's own wallet was charged (its rate card) versus
-          what ProfileX actually charged (their real published price). Most recent 200 shown.
+          Every ProfileX lookup across every company (debtor lookups and admins' manual ones) — who
+          ran it, and two costs side by side: what that company's own wallet was charged (its rate
+          card) versus what ProfileX actually charged (their real published price). Most recent 200
+          shown.
         </p>
       </div>
 
@@ -219,7 +220,14 @@ function SuperadminInsightsPage() {
                         <td className="py-2 pr-4 text-muted-foreground">
                           {row.managerName ?? "—"}
                         </td>
-                        <td className="py-2 pr-4">{serviceLabel(row.serviceId)}</td>
+                        <td className="py-2 pr-4">
+                          {serviceLabel(row.serviceId)}
+                          {row.manual && (
+                            <span className="ml-2 text-[10px] text-muted-foreground">
+                              Manual · {row.queryValue}
+                            </span>
+                          )}
+                        </td>
                         <td className="py-2 pr-4">
                           <Badge variant={badge.variant} className="text-[10px]">
                             {badge.label}

@@ -69,6 +69,7 @@ const adminItems = [
   { title: "Users", url: "/admin/users", icon: UserCog },
   { title: "Teams", url: "/admin/teams", icon: Users },
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
+  { title: "Insights", url: "/admin/insights", icon: Sparkles },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];
