@@ -14,7 +14,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/lib/supabase";
 import { getProfilexSettings } from "@/lib/profilex-actions.server";
-import { PROFILEX_SERVICES } from "@/lib/profilex/catalogue";
+import { PROFILEX_SERVICES, priceFor, priceStatuses, statusLabel } from "@/lib/profilex/catalogue";
 
 type RateCard = Record<string, Record<string, number>>;
 
@@ -122,13 +122,13 @@ export function ProfilexSettingsCard() {
                   <div key={s.id} className="flex items-center justify-between gap-3">
                     <span className="text-xs text-foreground truncate">{s.label}</span>
                     <div className="flex items-center gap-3 flex-shrink-0">
-                      {Object.keys(s.defaultPrices).map((status) => (
+                      {priceStatuses(s, rateCard).map((status, _i, all) => (
                         <div key={status} className="flex items-center gap-1.5">
                           <span className="text-[10px] text-muted-foreground">
-                            {status === "1" ? "found" : "not found"}
+                            {statusLabel(status, all)}
                           </span>
                           <span className="text-xs text-foreground">
-                            ₹{priceOf(s.id, status, s.defaultPrices[status]).toFixed(2)}
+                            ₹{priceOf(s.id, status, priceFor(s, status)).toFixed(2)}
                           </span>
                         </div>
                       ))}

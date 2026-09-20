@@ -280,6 +280,35 @@ const rupees = (n: number) => (Number.isInteger(n) ? `₹${n}` : `₹${n.toFixed
  * claimed a miss was free, when priceFor's fail-expensive rule charges the full ₹46. Both
  * numbers now come from priceFor itself, so what is shown is by construction what is charged.
  */
+/**
+ * The provider statuses a company's rate card should be editable for.
+ *
+ * Always includes "1" (found) and "2" (not found), even when the provider's console lists only
+ * a found price: a miss is still charged, and without a box for it a superadmin cannot record
+ * what it actually costs — priceFor would keep falling back to the found price. Any extra
+ * status the catalogue knows (employment history returns 3 for a miss) or the company's card
+ * already carries is included too, so nothing stored becomes uneditable.
+ */
+export function priceStatuses(
+  service: ProfilexService,
+  rateCard?: Record<string, Record<string, number>>,
+): string[] {
+  return [
+    ...new Set([
+      "1",
+      "2",
+      ...Object.keys(service.defaultPrices),
+      ...Object.keys(rateCard?.[service.id] ?? {}),
+    ]),
+  ].sort();
+}
+
+/** "found" / "not found", with the provider's status code when more than one means not-found. */
+export function statusLabel(status: string, allStatuses: string[]): string {
+  if (status === "1") return "found";
+  return allStatuses.filter((s) => s !== "1").length > 1 ? `not found (${status})` : "not found";
+}
+
 export function priceLine(
   s: ProfilexService,
   rateCard?: Record<string, Record<string, number>>,

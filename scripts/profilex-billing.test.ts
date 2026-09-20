@@ -17,6 +17,8 @@ import {
   PROFILEX_SERVICES,
   SKIP_TRACING_SERVICE,
   priceLine,
+  priceStatuses,
+  statusLabel,
   getService,
   priceFor,
 } from "../src/lib/profilex/catalogue";
@@ -421,5 +423,42 @@ describe("priceLine — what an admin is quoted must be what they are charged", 
         expect(possible.length ? possible : [priceFor(svc, null, card)]).toContain(missQuoted);
       }
     }
+  });
+});
+
+describe("priceStatuses — every service must be priceable for a miss", () => {
+  test("found and not-found are always editable, even where the console lists one price", () => {
+    // Skip Tracing and Alternate Addresses list only a found price. Without a status-2 box a
+    // superadmin could not record what a miss really costs, and priceFor would keep charging
+    // the found price for it.
+    for (const svc of PROFILEX_SERVICES) {
+      expect(priceStatuses(svc)).toContain("1");
+      expect(priceStatuses(svc)).toContain("2");
+    }
+  });
+
+  test("keeps an extra status the catalogue knows about", () => {
+    // employment-history returns 3 for a miss.
+    expect(priceStatuses(getService("employment-history")!)).toEqual(["1", "2", "3"]);
+  });
+
+  test("keeps a status the company's rate card already carries, so nothing becomes uneditable", () => {
+    const card = { "get-alternate-address": { "1": 4, "7": 2 } };
+    expect(priceStatuses(getService("get-alternate-address")!, card)).toEqual(["1", "2", "7"]);
+  });
+
+  test("setting a miss price actually changes what is charged", () => {
+    const skip = getService("skip-tracing")!;
+    expect(priceFor(skip, "2")).toBe(46); // falls back to the found price today
+    expect(priceFor(skip, "2", { "skip-tracing": { "2": 5 } })).toBe(5);
+  });
+
+  test("labels disambiguate when more than one status means not-found", () => {
+    const three = priceStatuses(getService("employment-history")!);
+    expect(statusLabel("1", three)).toBe("found");
+    expect(statusLabel("2", three)).toBe("not found (2)");
+    expect(statusLabel("3", three)).toBe("not found (3)");
+    const two = priceStatuses(getService("mobile-to-uan")!);
+    expect(statusLabel("2", two)).toBe("not found");
   });
 });

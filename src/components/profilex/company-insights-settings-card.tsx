@@ -17,7 +17,14 @@ import {
   getCompanyProfilexSettings,
   saveCompanyProfilexSettings,
 } from "@/lib/superadmin-actions.server";
-import { ALL_SERVICE_IDS, PROFILEX_SERVICES, getService } from "@/lib/profilex/catalogue";
+import {
+  ALL_SERVICE_IDS,
+  PROFILEX_SERVICES,
+  getService,
+  priceFor,
+  priceStatuses,
+  statusLabel,
+} from "@/lib/profilex/catalogue";
 
 type RateCard = Record<string, Record<string, number>>;
 
@@ -241,16 +248,18 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                       </span>
                     </label>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {Object.keys(s.defaultPrices).map((status) => (
+                      {priceStatuses(s, rateCard).map((status, _i, all) => (
                         <div key={status} className="flex items-center gap-1">
                           <span className="text-[10px] text-muted-foreground">
-                            {status === "1" ? "found" : "not found"}
+                            {statusLabel(status, all)}
                           </span>
                           <Input
                             type="number"
                             min={0}
                             step="0.5"
-                            value={priceOf(s.id, status, s.defaultPrices[status])}
+                            // Defaults to what a lookup with this status costs today, so leaving
+                            // it alone changes nothing and typing over it records the real price.
+                            value={priceOf(s.id, status, priceFor(s, status))}
                             onChange={(e) => setPrice(s.id, status, +e.target.value)}
                             className="w-16 h-7 text-xs text-right"
                           />
