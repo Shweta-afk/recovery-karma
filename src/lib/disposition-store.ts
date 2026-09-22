@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
-import { fetchDebtorsShared } from "./debtors-fetch";
+import { fetchDebtorsByIds } from "./debtors-fetch";
 import { createJsonCache } from "./json-cache";
 // Type-only (erased) — the valid call_logs.outcome union, shared with fetch-debtors.
 import type { CallLogOutcome } from "./fetch-debtors";
@@ -111,11 +111,13 @@ export function getDispositions(): DispositionRecord[] {
  * derived from team membership at read time — never stored — so it can't go stale like the
  * old localStorage version's manually-set `teamId` field did. */
 export async function refreshDispositions(): Promise<void> {
-  // call_logs and debtors both cross PostgREST's 1000-row cap on any real client, so both go
-  // through fetchAllRows(). Truncating `debtors` was the worse of the two: every call log
-  // whose debtor fell past row 1000 resolved to `undefined` here, losing its portfolioId —
-  // which silently zeroed out the per-portfolio KPI cards that group by it.
-  const [callLogs, debtors, portfolios, agents, teamAgents] = await Promise.all([
+  // call_logs crosses PostgREST's 1000-row cap on any real client, so it's paginated. `debtors`
+  // used to be too (fetchDebtorsShared) — a full-table read just to look up the name/portfolio
+  // of whichever debtor each call log happens to reference, meaning every debtor the caller can
+  // see (16,617+ and growing) got downloaded to look up the ones that actually have a call
+  // logged. Fetched by id, once call_logs' own debtor_ids are known, instead — still every
+  // referenced debtor regardless of row-1000 truncation, just not every debtor that exists.
+  const [callLogs, portfolios, agents, teamAgents] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("call_logs")
@@ -127,11 +129,17 @@ export async function refreshDispositions(): Promise<void> {
         .order("created_at", { ascending: false })
         .range(from, to),
     ),
-    fetchDebtorsShared(),
     supabase.from("portfolios").select("id, name"),
     supabase.from("agents").select("id, email, name"),
     supabase.from("team_agents").select("team_id, agent_id"),
   ]);
+  const debtors = callLogs.error
+    ? { data: [] as Awaited<ReturnType<typeof fetchDebtorsByIds>>["data"], error: null }
+    : await fetchDebtorsByIds(
+        (callLogs.data as { debtor_id: string | null }[])
+          .map((l) => l.debtor_id)
+          .filter((id): id is string => !!id),
+      );
 
   // Each query used to fail this whole function silently (a bare `return`, no log) — so a
   // single broken table meant Activity History just showed nothing with no way to tell why.

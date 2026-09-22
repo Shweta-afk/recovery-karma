@@ -5,7 +5,11 @@ import { fetchAllRows } from "./fetch-all-rows";
  * portfolio-store's set is already a superset of disposition-store's and payments-store's, so
  * this is exactly what portfolio-store asked for on its own. `alt_phones` and
  * `retained_from_portfolio_id` are deliberately absent: they live behind migrations that may
- * not be applied, so portfolio-store keeps fetching those separately and best-effort. */
+ * not be applied, so portfolio-store keeps fetching those separately and best-effort.
+ *
+ * (2026-09-23) disposition-store and payments-store no longer read this via
+ * fetchDebtorsShared() below — see fetchDebtorsByIds(). Kept as one shared column list so the
+ * two functions can't drift apart on what a "debtor" looks like to either caller. */
 const COLUMNS =
   "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id, status";
 
@@ -32,12 +36,16 @@ type DebtorRow = SharedDebtorRow;
 let inFlight: Promise<{ data: DebtorRow[]; error: { message: string } | null }> | null = null;
 
 /**
- * One paginated read of `debtors`, shared by every caller that asks while it is in flight.
+ * One paginated read of the WHOLE `debtors` table, shared by every caller that asks while it
+ * is in flight — originally built because portfolio-store, disposition-store and
+ * payments-store each paged the whole table independently, and all three fired from the same
+ * useEffect on mount.
  *
- * portfolio-store, disposition-store and payments-store each used to page the whole table
- * independently, and all three fire from the same useEffect on mount — so a single page load
- * pulled the full debtor set three times over (~45,000 rows across ~18 requests on the live
- * data). They now await the same promise and get the same rows.
+ * (2026-09-23) Only portfolio-store.ts calls this now. disposition-store and payments-store
+ * used to as well, just to build an id -> debtor lookup for enriching call_logs/payments rows
+ * with a name/portfolio — which means they were downloading every debtor the caller could see
+ * (16,617 rows and growing) to look up the few hundred that actually have a call or payment on
+ * them. See fetchDebtorsByIds() below, which they use instead.
  *
  * Dedupe is strictly in-flight, with NO time-based cache: a call that starts after the
  * previous one settled issues a fresh read. That matters because every write path here calls
@@ -66,4 +74,43 @@ export function fetchDebtorsShared(): Promise<{
   })();
   inFlight = run;
   return run;
+}
+
+/** How many ids go in one `.in(...)` request. Keeps each request's URL/param size sane as the
+ * distinct-debtors-with-activity count grows into the thousands; unrelated to MAX_PAGE_ROWS,
+ * which caps rows RETURNED per page rather than ids SENT per request. */
+const ID_CHUNK = 300;
+
+/**
+ * Fetches exactly the debtor rows named by `ids` — for disposition-store/payments-store
+ * enriching a page of call_logs/payments with the debtor's name, loan reference and portfolio,
+ * where the right scope is "whichever debtors this batch of rows actually references," not
+ * "everything the caller can see." Chunked, not paginated: `ids` is already the caller's own
+ * result set, so there is no server-side "next page" to ask for — just enough distinct ids to
+ * need more than one request comfortably.
+ */
+export async function fetchDebtorsByIds(
+  ids: string[],
+): Promise<{ data: DebtorRow[]; error: { message: string } | null }> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return { data: [], error: null };
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += ID_CHUNK) chunks.push(unique.slice(i, i + ID_CHUNK));
+  const results = await Promise.all(
+    chunks.map(
+      (chunk) =>
+        supabase.from("debtors").select(COLUMNS).in("id", chunk) as unknown as PromiseLike<{
+          data: DebtorRow[] | null;
+          error: { message: string } | null;
+        }>,
+    ),
+  );
+  const data: DebtorRow[] = [];
+  for (const r of results) {
+    // Return what we have rather than a partial set silently presented as complete — matches
+    // fetchAllRows()'s own contract, which every caller here already checks `error` against.
+    if (r.error) return { data, error: r.error };
+    if (r.data) data.push(...r.data);
+  }
+  return { data, error: null };
 }

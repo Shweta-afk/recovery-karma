@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
-import { fetchDebtorsShared } from "./debtors-fetch";
+import { fetchDebtorsByIds } from "./debtors-fetch";
 import { createJsonCache } from "./json-cache";
 
 export type PaymentMethod = "upi" | "card" | "netbanking" | "cash" | "cheque" | "link";
@@ -100,10 +100,12 @@ export function getPortfolioRecovered(portfolioId: string): {
 /** Pulls the `payments` table (joined against debtors/portfolios/agents for display fields)
  * and refreshes the local cache. Mirrors disposition-store.refreshDispositions(). */
 export async function refreshPayments(): Promise<void> {
-  // payments and debtors both outgrow PostgREST's 1000-row cap — an unpaginated `debtors`
-  // read left every payment past row 1000 with no debtor, and therefore no portfolio, name or
-  // phone to display or filter on.
-  const [payments, debtors, portfolios, agents] = await Promise.all([
+  // payments outgrows PostgREST's 1000-row cap, so it's paginated same as before. `debtors`
+  // used to be a full-table read too (fetchDebtorsShared) purely to build a name/portfolio
+  // lookup for whichever debtor each payment happens to reference — which meant downloading
+  // every debtor the caller can see (16,617+ and growing) to look up the few hundred that
+  // actually have a payment. Fetched by id, once payments' own debtor_ids are known, instead.
+  const [payments, portfolios, agents] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("payments")
@@ -111,10 +113,16 @@ export async function refreshPayments(): Promise<void> {
         .order("created_at", { ascending: false })
         .range(from, to),
     ),
-    fetchDebtorsShared(),
     supabase.from("portfolios").select("id, name, lender_name, product_type"),
     supabase.from("agents").select("id, name, email, role"),
   ]);
+  const debtors = payments.error
+    ? { data: [] as Awaited<ReturnType<typeof fetchDebtorsByIds>>["data"], error: null }
+    : await fetchDebtorsByIds(
+        (payments.data as { debtor_id: string | null }[])
+          .map((p) => p.debtor_id)
+          .filter((id): id is string => !!id),
+      );
 
   const named = [
     ["payments", payments] as const,
