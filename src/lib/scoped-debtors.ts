@@ -119,7 +119,7 @@ interface PortfolioRow {
 /** id -> email, the small agents table (RLS already scopes it to who the caller may see). Not
  * cached across calls: it is cheap (an org's agent count, not its debtor count) and every
  * caller here already accepts one query per refresh in exchange for a much smaller one. */
-async function loadAgentEmails(): Promise<{
+export async function loadAgentEmails(): Promise<{
   idByEmail: Map<string, string>;
   emailById: Map<string, string>;
 }> {
@@ -260,6 +260,15 @@ export interface PortfolioMeta {
   managerId?: string;
   closedAt?: string;
   endDate?: string;
+  // Everything below is extra beyond what dashboard.debtors.tsx's manager path reads — added
+  // for scoped-portfolio-overview.ts, which needs the full UploadedPortfolio shape. Kept on
+  // this one shared fetch rather than a second near-identical portfolios query.
+  lender?: string;
+  product?: string;
+  uploadedAt?: string;
+  settings?: PortfolioSettings;
+  replacesPortfolioId?: string;
+  storedTotalAccounts?: number;
 }
 
 let portfolioMeta: PortfolioMeta[] = [];
@@ -268,19 +277,34 @@ export function getVisiblePortfolioMeta(): PortfolioMeta[] {
   return portfolioMeta;
 }
 
+const PORTFOLIO_META_COLUMNS =
+  "id, name, lender_name, product_type, uploaded_at, settings, team_id, manager_id, " +
+  "closed_at, end_date, replaces_portfolio_id, total_accounts";
+
 export async function refreshVisiblePortfolioMeta(): Promise<void> {
   const [{ data, error }, { emailById }] = await Promise.all([
-    supabase.from("portfolios").select("id, name, team_id, manager_id, closed_at, end_date"),
+    supabase.from("portfolios").select(PORTFOLIO_META_COLUMNS),
     loadAgentEmails(),
   ]);
   if (error || !data) return;
-  portfolioMeta = (data as unknown as PortfolioRow[]).map((p) => ({
+  portfolioMeta = (
+    data as unknown as (PortfolioRow & {
+      replaces_portfolio_id: string | null;
+      total_accounts: number | null;
+    })[]
+  ).map((p) => ({
     id: p.id,
     name: p.name,
     teamId: p.team_id ?? undefined,
     managerId: p.manager_id ? emailById.get(p.manager_id) : undefined,
     closedAt: p.closed_at ?? undefined,
     endDate: p.end_date ?? undefined,
+    lender: p.lender_name ?? "",
+    product: p.product_type ? (PRODUCT_ENUM_TO_LABEL[p.product_type] ?? p.product_type) : "",
+    uploadedAt: p.uploaded_at ?? "",
+    settings: (p.settings as unknown as PortfolioSettings) ?? DEFAULT_PORTFOLIO_SETTINGS,
+    replacesPortfolioId: p.replaces_portfolio_id ?? undefined,
+    storedTotalAccounts: p.total_accounts ?? undefined,
   }));
   window.dispatchEvent(new CustomEvent("visible-portfolio-meta-updated"));
 }

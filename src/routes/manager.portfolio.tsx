@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  getPortfolios,
-  refreshPortfolios,
   assignDebtors,
   updatePortfolioMeta,
   setPortfolioAgentTargets,
@@ -28,6 +26,8 @@ import {
   resolveRemapSource,
   type StdFieldKey,
 } from "@/lib/csv-fields";
+import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
+import { getPortfolioOverview, refreshPortfolioOverview } from "@/lib/scoped-portfolio-overview";
 import {
   Briefcase,
   TrendingUp,
@@ -1272,8 +1272,10 @@ function BulkPaidUploadDialog({
  * assigned — the exact failure this comment already documents for manager_id, just on the other
  * column. Confirmed live 2026-09-11 (RR debt solutions / Kirti Zagade's Team).
  */
+// Typed to the two fields it actually reads (not UploadedPortfolio) so it can filter either the
+// full portfolio objects OR the lighter PortfolioMeta list from scoped-debtors.ts.
 function visibleToTeam(teamId: string | undefined, managerId: string) {
-  return (p: UploadedPortfolio) =>
+  return (p: { teamId?: string; managerId?: string }) =>
     p.teamId === teamId || (!p.teamId && !!managerId && p.managerId === managerId);
 }
 
@@ -1391,30 +1393,59 @@ function PortfolioOverviewPage() {
   const [reassignTarget, setReassignTarget] = useState<UploadedPortfolio | null>(null);
   const [editTarget, setEditTarget] = useState<UploadedPortfolio | null>(null);
   const [bulkPaidTarget, setBulkPaidTarget] = useState<UploadedPortfolio | null>(null);
-  const [rawPortfolios, setRawPortfolios] = useState<UploadedPortfolio[]>(() =>
-    getPortfolios().filter(visibleToTeam(activeTeam?.id, managerId)),
-  );
+  const [rawPortfolios, setRawPortfolios] = useState<UploadedPortfolio[]>([]);
+  // Which portfolio ids the last resolution settled on — a ref rather than a useEffect-local
+  // variable so render() (below) can also be handed to useStorageSync, for the cross-tab case:
+  // dispositions/payments are still their own localStorage-backed caches (unchanged by this
+  // pass), so another tab logging a call or payment should still refresh this page's stats.
+  // Re-resolving WHICH portfolios are visible cross-tab is not covered — scoped-debtors.ts's
+  // caches are deliberately in-memory-only, so there is no `storage` event to react to for
+  // that half; a portfolio created/reassigned in another tab needs this tab reloaded.
+  const visibleIdsRef = useRef<string[]>([]);
 
-  const reload = () =>
-    setRawPortfolios(getPortfolios().filter(visibleToTeam(activeTeam?.id, managerId)));
+  // Spread into a fresh array on every render, not the cached reference straight from
+  // getPortfolioOverview — dispositions-updated/payments-updated need toPortfolio() (which
+  // reads those caches directly, not via props) to re-run even when the portfolio-overview
+  // data itself hasn't changed, and setState bails out on an identical array reference.
+  const render = useCallback(() => {
+    setRawPortfolios([...getPortfolioOverview(visibleIdsRef.current)]);
+  }, []);
+
+  // Scoped Portfolio Overview: resolves which portfolios are visible to this manager's active
+  // team from the small portfolios-metadata fetch (getVisiblePortfolioMeta), THEN fetches
+  // debtor rows/targets/aggregates only for those — instead of refreshPortfolios()'s full sync
+  // of every debtor the manager can see plus an aggregate RPC that itself scanned all of them
+  // again. See scoped-portfolio-overview.ts for the measurements.
   useEffect(() => {
-    reload();
-    window.addEventListener("portfolios-updated", reload);
-    window.addEventListener("dispositions-updated", reload);
+    let cancelled = false;
+    const resolveAndLoad = async () => {
+      await refreshVisiblePortfolioMeta();
+      if (cancelled) return;
+      visibleIdsRef.current = getVisiblePortfolioMeta()
+        .filter(visibleToTeam(activeTeam?.id, managerId))
+        .map((p) => p.id);
+      render();
+      await refreshPortfolioOverview(visibleIdsRef.current);
+      if (cancelled) return;
+      render();
+    };
+    void resolveAndLoad();
+    window.addEventListener("portfolios-updated", resolveAndLoad);
+    window.addEventListener("dispositions-updated", render);
     // The Recovered KPI now reads the payments cache (toPortfolio → getPortfolioRecovered),
     // so this page has to populate and listen to it like the other two.
-    window.addEventListener("payments-updated", reload);
-    refreshPortfolios();
+    window.addEventListener("payments-updated", render);
     refreshDispositions();
     refreshPayments();
     return () => {
-      window.removeEventListener("portfolios-updated", reload);
-      window.removeEventListener("dispositions-updated", reload);
-      window.removeEventListener("payments-updated", reload);
+      cancelled = true;
+      window.removeEventListener("portfolios-updated", resolveAndLoad);
+      window.removeEventListener("dispositions-updated", render);
+      window.removeEventListener("payments-updated", render);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [managerId, activeTeam?.id]);
-  useStorageSync(reload);
+  useStorageSync(render);
 
   const allPortfolios = useMemo(() => rawPortfolios.map(toPortfolio), [rawPortfolios]);
 
