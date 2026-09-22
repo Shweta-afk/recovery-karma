@@ -38,18 +38,29 @@ import {
   type PortfolioSettings,
 } from "./portfolio-store";
 
-/** Which slice of the debtors table to fetch. `agents` filters by assigned_agent_id (a Call
- * Queue's natural scope, whoever is looking at it); `portfolios` filters by portfolio_id (a
- * manager's Debtors page, where an unassigned account in a visible portfolio must still show).
- * `portfolioIds` is resolved by the caller via getVisiblePortfolioMeta() so a closed or
- * out-of-team portfolio is never even queried. */
+/** Which slice of the debtors table to fetch.
+ *
+ * - `agents` filters by assigned_agent_id — a Call Queue's natural scope, and an agent's own
+ *   Debtors/Messages book.
+ * - `portfolios` filters by portfolio_id — a manager's Debtors page, where an unassigned
+ *   account in a visible portfolio must still show. `portfolioIds` is resolved by the caller
+ *   via getVisiblePortfolioMeta() so a closed or out-of-team portfolio is never even queried.
+ * - `visible` adds no extra filter at all beyond what debtors_select already restricts the
+ *   caller to — for a page like Messages that has always shown a manager's (or admin's) WHOLE
+ *   visible book, not just their active team's. Still a real improvement over the old
+ *   five-plus-query full sync: one query instead of several, and no supplementary full-table
+ *   scans for alt_phones/principal_amount/etc. — but, unlike the other two, the RESULT size for
+ *   a manager or admin doesn't shrink, since RLS was already the only thing scoping it. */
 export type DebtorScope =
-  { kind: "agents"; agentIds: string[] } | { kind: "portfolios"; portfolioIds: string[] };
+  | { kind: "agents"; agentIds: string[] }
+  | { kind: "portfolios"; portfolioIds: string[] }
+  | { kind: "visible" };
 
 function scopeKey(scope: DebtorScope): string {
-  return scope.kind === "agents"
-    ? `agents:${[...new Set(scope.agentIds)].sort().join(",")}`
-    : `portfolios:${[...new Set(scope.portfolioIds)].sort().join(",")}`;
+  if (scope.kind === "agents") return `agents:${[...new Set(scope.agentIds)].sort().join(",")}`;
+  if (scope.kind === "portfolios")
+    return `portfolios:${[...new Set(scope.portfolioIds)].sort().join(",")}`;
+  return "visible";
 }
 
 const portfolioCache = new Map<string, UploadedPortfolio[]>();
@@ -124,53 +135,36 @@ export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void>
   const key = scopeKey(scope);
   const { idByEmail, emailById } = await loadAgentEmails();
 
-  let debtorRows: DebtorRow[];
+  // Resolves the scope down to the one extra .in(...) filter (if any) to apply on top of the
+  // status filter every branch shares — RLS itself is always the outer boundary regardless.
+  let uuids: string[] | undefined;
   if (scope.kind === "agents") {
-    const uuids = scope.agentIds
-      .map((email) => idByEmail.get(email))
-      .filter((x): x is string => !!x);
+    uuids = scope.agentIds.map((email) => idByEmail.get(email)).filter((x): x is string => !!x);
     if (!uuids.length) {
       portfolioCache.set(key, []);
       notify(key);
       return;
     }
-    const { data, error } = await fetchAllRows<DebtorRow>(
-      (from, to) =>
-        supabase
-          .from("debtors")
-          .select(DEBTOR_COLUMNS)
-          .in("assigned_agent_id", uuids)
-          .neq("status", "removed")
-          .range(from, to) as unknown as PromiseLike<{
-          data: DebtorRow[] | null;
-          error: { message: string } | null;
-        }>,
-    );
-    // Silently keep the previous cache rather than clearing it on a transient failure — the
-    // same choice refreshPortfolios() makes, so a flaky request doesn't blank a working screen.
-    if (error) return;
-    debtorRows = data;
-  } else {
-    if (!scope.portfolioIds.length) {
-      portfolioCache.set(key, []);
-      notify(key);
-      return;
-    }
-    const { data, error } = await fetchAllRows<DebtorRow>(
-      (from, to) =>
-        supabase
-          .from("debtors")
-          .select(DEBTOR_COLUMNS)
-          .in("portfolio_id", scope.portfolioIds)
-          .neq("status", "removed")
-          .range(from, to) as unknown as PromiseLike<{
-          data: DebtorRow[] | null;
-          error: { message: string } | null;
-        }>,
-    );
-    if (error) return;
-    debtorRows = data;
+  } else if (scope.kind === "portfolios" && !scope.portfolioIds.length) {
+    portfolioCache.set(key, []);
+    notify(key);
+    return;
   }
+
+  const { data, error } = await fetchAllRows<DebtorRow>((from, to) => {
+    let q = supabase.from("debtors").select(DEBTOR_COLUMNS).neq("status", "removed");
+    if (scope.kind === "agents") q = q.in("assigned_agent_id", uuids as string[]);
+    else if (scope.kind === "portfolios") q = q.in("portfolio_id", scope.portfolioIds);
+    // scope.kind === "visible": no extra filter — RLS alone decides what comes back.
+    return q.range(from, to) as unknown as PromiseLike<{
+      data: DebtorRow[] | null;
+      error: { message: string } | null;
+    }>;
+  });
+  // Silently keep the previous cache rather than clearing it on a transient failure — the same
+  // choice refreshPortfolios() makes, so a flaky request doesn't blank a working screen.
+  if (error) return;
+  const debtorRows = data;
 
   // Portfolios referenced either directly (portfolio_id) or as the OLD cycle a retained debtor
   // came from (retained_from_portfolio_id, for the "Retained from X" label) — a superset of

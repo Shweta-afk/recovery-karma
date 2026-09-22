@@ -51,12 +51,12 @@ import { cn } from "@/lib/utils";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { EMPTY_RANGE, inDateRange, type DateRange } from "@/lib/date-filter";
 import { bucketOf, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
+import { type UploadedDebtor } from "@/lib/portfolio-store";
 import {
-  getPortfolios,
-  getAgentDebtorIds,
-  refreshPortfolios,
-  type UploadedDebtor,
-} from "@/lib/portfolio-store";
+  getScopedPortfolios,
+  refreshScopedPortfolios,
+  type DebtorScope,
+} from "@/lib/scoped-debtors";
 import { useAuth } from "@/lib/auth";
 import {
   getMessages,
@@ -174,26 +174,27 @@ function MessagesPage() {
   const [disps, setDisps] = useState<DispositionRecord[]>(() => getDispositions());
   const [allDebtors, setAllDebtors] = useState<UploadedDebtor[]>([]);
 
+  // Scoped to this agent's own accounts (assigned_agent_id) — this used to flatten every
+  // portfolio in the FULL synced cache, which handed an agent the name and number of debtors
+  // booked to someone else through the "new message" picker, the same accounts the Debtors
+  // page and Call Queue correctly hide. Supervisors keep the whole book they can already see
+  // (unchanged from before — "visible" adds no filter beyond what RLS already restricts them
+  // to), just fetched in one query instead of the old five-plus. See scoped-debtors.ts.
+  const debtorScope: DebtorScope = useMemo(
+    () => (isSupervisor ? { kind: "visible" } : { kind: "agents", agentIds: [agentEmail] }),
+    [isSupervisor, agentEmail],
+  );
+
   useEffect(() => {
     const loadMessages = () => setMessages(getMessages());
     const loadDisps = () => setDisps(getDispositions());
-    // Scoped to this agent's own accounts. This used to flatten every portfolio in the cache,
-    // which handed an agent the name and number of debtors booked to someone else through the
-    // "new message" picker — the same accounts the Debtors page and call queue correctly hide.
-    // Supervisors keep the whole book they can already see.
     const loadDebtors = () => {
-      const portfolios = getPortfolios();
-      if (isSupervisor) {
-        setAllDebtors(portfolios.flatMap((p) => p.rows));
-        return;
-      }
-      const assigned = new Set(getAgentDebtorIds(agentEmail).flatMap((slice) => slice.debtorIds));
-      setAllDebtors(portfolios.flatMap((p) => p.rows).filter((r) => assigned.has(r.id)));
+      setAllDebtors(getScopedPortfolios(debtorScope).flatMap((p) => p.rows));
     };
 
     window.addEventListener("messages-updated", loadMessages);
     window.addEventListener("dispositions-updated", loadDisps);
-    window.addEventListener("portfolios-updated", loadDebtors);
+    window.addEventListener("scoped-portfolios-updated", loadDebtors);
 
     refreshMessages()
       .then(loadMessages)
@@ -201,19 +202,19 @@ function MessagesPage() {
     refreshDispositions()
       .then(loadDisps)
       .catch((e) => console.warn("[messages] disposition refresh failed:", e));
-    refreshPortfolios()
+    refreshScopedPortfolios(debtorScope)
       .then(loadDebtors)
-      .catch((e) => console.warn("[messages] portfolio refresh failed:", e));
+      .catch((e) => console.warn("[messages] debtor refresh failed:", e));
     loadDebtors();
 
     return () => {
       window.removeEventListener("messages-updated", loadMessages);
       window.removeEventListener("dispositions-updated", loadDisps);
-      window.removeEventListener("portfolios-updated", loadDebtors);
+      window.removeEventListener("scoped-portfolios-updated", loadDebtors);
     };
-    // agentEmail/isSupervisor decide which debtors loadDebtors keeps, and both start empty
-    // while auth resolves — without them here an agent's picker would stay empty for good.
-  }, [agentEmail, isSupervisor]);
+    // debtorScope already depends on agentEmail/isSupervisor, and both start empty while auth
+    // resolves — without depending on it here an agent's picker would stay empty for good.
+  }, [debtorScope]);
 
   const debtorById = useMemo(() => new Map(allDebtors.map((d) => [d.id, d])), [allDebtors]);
 
