@@ -50,8 +50,6 @@ import { todayIstKey } from "@/lib/date-filter";
 import { setAgentStatus, closeOpenStatus } from "@/lib/agent-presence-store";
 import { bucketOf, formatINR, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
 import {
-  getPortfolios,
-  refreshPortfolios,
   addDebtorPhone,
   DEFAULT_PORTFOLIO_SETTINGS,
   type CallMode,
@@ -97,7 +95,12 @@ import { DebtorProfile } from "@/components/debtor-profile";
 // these live in proper shared modules now, not in this route file.
 export { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active-call";
 export { buildAssignedQueue } from "@/lib/call-queue/build-queue";
-import { buildAssignedQueue } from "@/lib/call-queue/build-queue";
+import { buildQueueFromPortfolios } from "@/lib/call-queue/build-queue";
+import {
+  getScopedPortfolios,
+  refreshScopedPortfolios,
+  type DebtorScope,
+} from "@/lib/scoped-debtors";
 export {
   DialerModeBar,
   DialingBoard,
@@ -231,6 +234,14 @@ export function CallQueueContent({
   // render (the caller mapping agents -> ids inline), which would otherwise reload/re-fire
   // every effect below on every render instead of only when the actual membership changes.
   const agentKey = isCombined ? agentId.slice().sort().join(",") : agentId;
+  // Every Call Queue view — an agent's own, a manager reading one agent, or the "whole team"
+  // combined view — is scoped by assigned_agent_id, never by portfolio/team membership. See
+  // scoped-debtors.ts for why this replaces a full sync of every debtor the caller can see.
+  const debtorScope: DebtorScope = useMemo(
+    () => ({ kind: "agents", agentIds: isCombined ? agentId : [agentId] }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agentKey],
+  );
 
   // Agent availability status
   const [status, setStatus] = useState<AgentStatus>("available");
@@ -238,7 +249,9 @@ export function CallQueueContent({
   const statusMeta = STATUS_META[status];
 
   // Queue = only the debtors assigned to this agent from uploaded portfolios
-  const [fullQueue, setFullQueue] = useState<QueueDebtor[]>(() => buildAssignedQueue(agentId));
+  const [fullQueue, setFullQueue] = useState<QueueDebtor[]>(() =>
+    buildQueueFromPortfolios(getScopedPortfolios(debtorScope)),
+  );
   // Which portfolio the agent/manager is looking at. Applied to the queue itself (not just the
   // table) so counts, the dialer boards and the "primary portfolio" dialer settings below all
   // follow the selection. "all" = every portfolio, the previous behaviour.
@@ -248,13 +261,13 @@ export function CallQueueContent({
     for (const d of fullQueue) {
       if (d.portfolioId) counts.set(d.portfolioId, (counts.get(d.portfolioId) ?? 0) + 1);
     }
-    const all = getPortfolios();
+    const all = getScopedPortfolios(debtorScope);
     return Array.from(counts, ([id, count]) => ({
       id,
       count,
       name: all.find((p) => p.id === id)?.name ?? "Portfolio",
     })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [fullQueue]);
+  }, [fullQueue, debtorScope]);
   // A selection that no longer exists (portfolio closed, accounts reassigned) falls back to all
   // rather than leaving the queue empty behind a stale filter.
   const activePortfolioFilter = portfolioOptions.some((o) => o.id === portfolioFilter)
@@ -268,20 +281,21 @@ export function CallQueueContent({
     [fullQueue, activePortfolioFilter],
   );
 
-  // Reload queue when assignments/portfolios change
+  // Reload queue when assignments/portfolios change. Scoped to just this agentId/agentIds set
+  // (see scoped-debtors.ts) instead of resyncing every debtor the signed-in user can see —
+  // that full sync measured at 1.3s in the database alone for one manager's team, before
+  // network transfer, and was the main cause of Call Queue loading slowly (2026-09-22).
   useEffect(() => {
-    const reload = () => {
-      setFullQueue(buildAssignedQueue(agentId));
-    };
-    window.addEventListener("portfolios-updated", reload);
-    // buildAssignedQueue derives queueStatus/scheduledAt/ptpAmount from the dispositions
+    const reload = () => setFullQueue(buildQueueFromPortfolios(getScopedPortfolios(debtorScope)));
+    window.addEventListener("scoped-portfolios-updated", reload);
+    // buildQueueFromPortfolios derives queueStatus/scheduledAt/ptpAmount from the dispositions
     // cache, so the queue has to rebuild when that cache lands — not just when portfolios do.
     // refreshDispositions() below is async and usually resolves AFTER this first build.
     window.addEventListener("dispositions-updated", reload);
-    refreshPortfolios();
+    refreshScopedPortfolios(debtorScope);
     refreshDispositions();
     return () => {
-      window.removeEventListener("portfolios-updated", reload);
+      window.removeEventListener("scoped-portfolios-updated", reload);
       window.removeEventListener("dispositions-updated", reload);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -291,7 +305,7 @@ export function CallQueueContent({
   // An agent's queue can span multiple portfolios; show the primary (first) one they're
   // currently working, falling back to the platform default when nothing is assigned yet.
   const primaryPortfolio = allQueue[0]?.portfolioId
-    ? getPortfolios().find((p) => p.id === allQueue[0].portfolioId)
+    ? getScopedPortfolios(debtorScope).find((p) => p.id === allQueue[0].portfolioId)
     : undefined;
   const dialerSettings = primaryPortfolio?.settings ?? DEFAULT_PORTFOLIO_SETTINGS;
   const portfolioMode: CallMode = dialerSettings.callMode;

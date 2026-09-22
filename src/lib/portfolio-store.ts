@@ -27,7 +27,10 @@ export const PRODUCT_LABEL_TO_ENUM: Record<string, string> = {
   "Gold Loan": "gold_loan",
   Microfinance: "other",
 };
-const PRODUCT_ENUM_TO_LABEL: Record<string, string> = Object.fromEntries(
+// Exported for scoped-debtors.ts, which builds UploadedPortfolio objects the same way
+// refreshPortfolios() below does, just from a narrower query — kept as one source rather than
+// a second copy of the enum->label mapping.
+export const PRODUCT_ENUM_TO_LABEL: Record<string, string> = Object.fromEntries(
   Object.entries(PRODUCT_LABEL_TO_ENUM).map(([label, enumValue]) => [enumValue, label]),
 );
 

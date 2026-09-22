@@ -19,12 +19,15 @@ import {
 } from "@/lib/mock-debtors";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { useRoster } from "@/lib/team-store";
+import { getPortfolios, refreshPortfolios, debtorFromRow } from "@/lib/portfolio-store";
 import {
-  getPortfolios,
-  getAgentDebtorIds,
-  refreshPortfolios,
-  debtorFromRow,
-} from "@/lib/portfolio-store";
+  getScopedPortfolios,
+  refreshScopedPortfolios,
+  getVisiblePortfolioMeta,
+  refreshVisiblePortfolioMeta,
+  isPortfolioEnded,
+  type DebtorScope,
+} from "@/lib/scoped-debtors";
 import { useAuth } from "@/lib/auth";
 import { AssignedAgentLine } from "@/components/assigned-agent";
 import { DebtorProfile } from "@/components/debtor-profile";
@@ -48,12 +51,7 @@ const BUCKET_ORDER: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
 const toDebtor = debtorFromRow;
 
 type SortKey =
-  | "dpd_asc"
-  | "dpd_desc"
-  | "outstanding_desc"
-  | "outstanding_asc"
-  | "score_desc"
-  | "name_asc";
+  "dpd_asc" | "dpd_desc" | "outstanding_desc" | "outstanding_asc" | "score_desc" | "name_asc";
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "dpd_desc", label: "DPD — High first" },
@@ -118,48 +116,92 @@ function DebtorsPage() {
   const [selected, setSelected] = useState<Debtor | null>(null);
   const [uploadedDebtors, setUploadedDebtors] = useState<Debtor[]>([]);
 
-  // Load only debtors assigned to this agent from uploaded portfolios
+  // Load only the debtors this screen actually needs, not every debtor the signed-in user can
+  // see. The old version called refreshPortfolios(), which — measured directly against
+  // production, 2026-09-22 — took 1.3s in the database alone for one manager's visible set,
+  // because RLS can only narrow the search to "this client's debtors" before checking
+  // assignment row by row; there's no index for "this agent's rows" or "this team's rows"
+  // alone. See scoped-debtors.ts for the full write-up.
+  //
+  // Admins are the one exception: they're org-wide by design, and scoping "everything RLS
+  // lets an admin see" doesn't shrink anything, so that path keeps using the full
+  // portfolio-store.ts cache unchanged.
   useEffect(() => {
-    const load = () => {
-      const assignedSlices = getAgentDebtorIds(agentId);
-      const portfolios = getPortfolios();
+    let cancelled = false;
 
-      if (isSupervisor) {
-        // Closed cycles already carry rows: [] (see refreshPortfolios), so they contribute
-        // nothing here and no extra closedAt filter is needed.
-        // Falls back to managerId when a portfolio has no team_id — same fallback and same
-        // reasoning as visibleToTeam() in manager.portfolio.tsx, which this filter mirrors;
-        // keep the two in sync.
-        const visible =
-          user?.role === "admin"
-            ? portfolios
-            : portfolios.filter(
-                (p) =>
-                  p.teamId === activeTeamId || (!p.teamId && !!agentId && p.managerId === agentId),
-              );
+    if (isSupervisor && user?.role === "admin") {
+      const load = () => {
+        const portfolios = getPortfolios();
         const result: Debtor[] = [];
-        for (const p of visible) for (const r of p.rows) result.push(toDebtor(r, p));
+        for (const p of portfolios) for (const r of p.rows) result.push(toDebtor(r, p));
         setUploadedDebtors(result);
-      } else if (assignedSlices.length > 0) {
-        // Agent has explicit assignments — show only those debtors
+      };
+      load();
+      window.addEventListener("portfolios-updated", load);
+      refreshPortfolios();
+      return () => window.removeEventListener("portfolios-updated", load);
+    }
+
+    if (isSupervisor) {
+      // A manager's book is by PORTFOLIO (their active team's, or theirs directly), which can
+      // include accounts nobody has picked up yet — not just accounts already assigned to one
+      // of their agents. Resolve which portfolios that is first (a small, cheap query — the
+      // portfolios table, not the debtors table), THEN fetch only those portfolios' debtors.
+      let scope: DebtorScope | null = null;
+      const render = () => {
+        if (cancelled || !scope) return;
         const result: Debtor[] = [];
-        for (const { portfolioId, debtorIds } of assignedSlices) {
-          const p = portfolios.find((p) => p.id === portfolioId);
-          if (!p) continue;
-          const idSet = new Set(debtorIds);
-          p.rows.filter((r) => idSet.has(r.id)).forEach((r) => result.push(toDebtor(r, p)));
-        }
+        for (const p of getScopedPortfolios(scope))
+          for (const r of p.rows) result.push(toDebtor(r, p));
         setUploadedDebtors(result);
-      } else {
-        // No assignments yet — this agent has an empty book
-        setUploadedDebtors([]);
-      }
+      };
+      const resolveAndLoad = async () => {
+        await refreshVisiblePortfolioMeta();
+        if (cancelled) return;
+        // Same fallback and reasoning as visibleToTeam() in manager.portfolio.tsx, which this
+        // mirrors — keep the two in sync. isPortfolioEnded excludes a closed or past-end-date
+        // cycle, which the old rows:[] trick handled implicitly; there is no such fallback
+        // here since a closed portfolio's debtors are never fetched at all now.
+        const visible = getVisiblePortfolioMeta().filter(
+          (p) =>
+            !isPortfolioEnded(p) &&
+            (p.teamId === activeTeamId || (!p.teamId && !!agentId && p.managerId === agentId)),
+        );
+        scope = { kind: "portfolios", portfolioIds: visible.map((p) => p.id) };
+        render();
+        await refreshScopedPortfolios(scope);
+        render();
+      };
+      void resolveAndLoad();
+      // portfolios-updated covers a portfolio being created/closed/reassigned to a different
+      // team — anything that could change WHICH portfolios are visible, so the whole
+      // resolution re-runs; scoped-portfolios-updated covers a debtor row changing within an
+      // already-resolved scope.
+      window.addEventListener("portfolios-updated", resolveAndLoad);
+      window.addEventListener("scoped-portfolios-updated", render);
+      return () => {
+        cancelled = true;
+        window.removeEventListener("portfolios-updated", resolveAndLoad);
+        window.removeEventListener("scoped-portfolios-updated", render);
+      };
+    }
+
+    // A plain agent — their own book only, scoped by assigned_agent_id. Same scope shape Call
+    // Queue uses, so the two pages share one fetch when both are open for the same agent.
+    const scope: DebtorScope = { kind: "agents", agentIds: [agentId] };
+    const render = () => {
+      if (cancelled) return;
+      const result: Debtor[] = [];
+      for (const p of getScopedPortfolios(scope))
+        for (const r of p.rows) result.push(toDebtor(r, p));
+      setUploadedDebtors(result);
     };
-    load();
-    window.addEventListener("portfolios-updated", load);
-    refreshPortfolios();
+    render();
+    void refreshScopedPortfolios(scope).then(render);
+    window.addEventListener("scoped-portfolios-updated", render);
     return () => {
-      window.removeEventListener("portfolios-updated", load);
+      cancelled = true;
+      window.removeEventListener("scoped-portfolios-updated", render);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, isSupervisor, activeTeamId, user?.role]);
