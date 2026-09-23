@@ -37,7 +37,7 @@ import {
   type Team,
   type AgentRef,
 } from "@/lib/team-store";
-import { getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
 
 export const Route = createFileRoute("/admin/teams")({
   head: () => ({ meta: [{ title: "Teams · SamvadX Admin" }] }),
@@ -52,8 +52,14 @@ function AdminTeamsPage() {
   const roster = useRoster();
   const agentCount = roster.filter((r) => r.role === "agent").length;
 
+  // Only each team's portfolio count is shown, so the portfolio list is enough — this used to
+  // run the full debtor sync (growth plan #3). The tick re-renders the cards once it lands.
+  const [, setPortfolioTick] = useState(0);
   useEffect(() => {
-    refreshPortfolios();
+    const bump = () => setPortfolioTick((t) => t + 1);
+    window.addEventListener("visible-portfolio-meta-updated", bump);
+    void refreshVisiblePortfolioMeta();
+    return () => window.removeEventListener("visible-portfolio-meta-updated", bump);
   }, []);
 
   const handleDelete = async (id: string, name: string) => {
@@ -149,7 +155,7 @@ function TeamCard({
   onDelete: (id: string, name: string) => void;
   deleting: boolean;
 }) {
-  const activePortfolios = getPortfolios().filter((p) => p.teamId === team.id).length;
+  const activePortfolios = getVisiblePortfolioMeta().filter((p) => p.teamId === team.id).length;
   const agentRefs = team.agentIds.map((id) => getAgentById(id)).filter(Boolean) as AgentRef[];
 
   return (

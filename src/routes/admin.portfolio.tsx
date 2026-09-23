@@ -21,12 +21,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { updatePortfolioMeta, type UploadedPortfolio } from "@/lib/portfolio-store";
 import {
-  getPortfolios,
-  updatePortfolioMeta,
-  refreshPortfolios,
-  type UploadedPortfolio,
-} from "@/lib/portfolio-store";
+  getVisiblePortfolioMeta,
+  refreshVisiblePortfolioMeta,
+  type PortfolioMeta,
+} from "@/lib/scoped-debtors";
+import {
+  fetchPortfolioAccountCounts,
+  getPortfolioOverview,
+  refreshPortfolioOverview,
+} from "@/lib/scoped-portfolio-overview";
 import { useRoster, useTeams, getTeamsByManager } from "@/lib/team-store";
 import { saveNotification } from "@/lib/notification-store";
 import { useAuth } from "@/lib/auth";
@@ -60,41 +65,69 @@ function PortfolioAssignmentPage() {
   const MANAGERS = roster.filter((a) => a.role === "manager");
   useTeams(); // keeps getTeamsByManager's cache fresh for the picker below
 
-  const [portfolios, setPortfolios] = useState<UploadedPortfolio[]>(() => getPortfolios());
+  // The list is portfolio metadata + per-portfolio account counts from the database; only the
+  // one portfolio an admin opens loads its account rows (growth plan #3 — this page used to
+  // download every debtor in the org to show a count per row).
+  const [portfolios, setPortfolios] = useState<PortfolioMeta[]>(() => getVisiblePortfolioMeta());
+  const [accountsById, setAccountsById] = useState<Map<string, number>>(new Map());
   const [pending, setPending] = useState<Record<string, string>>({}); // portfolioId -> selected managerId (uncommitted)
   // portfolioId -> selected teamId (uncommitted) — only needed when the chosen manager owns
   // more than one team, since getTeamsByManager can no longer be collapsed to a single pick.
   const [pendingTeam, setPendingTeam] = useState<Record<string, string>>({});
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [viewing, setViewing] = useState<UploadedPortfolio | null>(null);
+  // Re-renders the open dashboard when dispositions/payments land (its KPI cards read them).
+  const [, setTick] = useState(0);
 
-  const reload = () => setPortfolios(getPortfolios());
+  const loadList = async () => {
+    await refreshVisiblePortfolioMeta();
+    const meta = getVisiblePortfolioMeta();
+    setPortfolios(meta);
+    setAccountsById(await fetchPortfolioAccountCounts(meta.map((p) => p.id)));
+  };
+  const loadViewing = async (id: string) => {
+    // Portfolio Overview's loader: this one portfolio's rows, targets and aggregates. It reads
+    // the metadata loadList() just refreshed.
+    await refreshPortfolioOverview([id]);
+    setViewing(getPortfolioOverview([id])[0] ?? null);
+  };
+
   useEffect(() => {
-    reload();
-    window.addEventListener("portfolios-updated", reload);
+    const bump = () => setTick((t) => t + 1);
+    // Any portfolio write elsewhere (upload, close, reassignment) — re-read the list.
+    const onPortfolios = () => void loadList();
+    window.addEventListener("portfolios-updated", onPortfolios);
     // The read-only dashboard this page opens shows the same KPI cards as the manager's, and
     // those read the dispositions + payments caches. Without refreshing them here the admin
     // saw whatever happened to be cached — usually nothing at all, so every KPI read zero.
-    window.addEventListener("dispositions-updated", reload);
-    window.addEventListener("payments-updated", reload);
-    refreshPortfolios();
+    window.addEventListener("dispositions-updated", bump);
+    window.addEventListener("payments-updated", bump);
+    void loadList();
     refreshDispositions();
     refreshPayments();
     return () => {
-      window.removeEventListener("portfolios-updated", reload);
-      window.removeEventListener("dispositions-updated", reload);
-      window.removeEventListener("payments-updated", reload);
+      window.removeEventListener("portfolios-updated", onPortfolios);
+      window.removeEventListener("dispositions-updated", bump);
+      window.removeEventListener("payments-updated", bump);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useStorageSync(reload);
+  useStorageSync(() => setTick((t) => t + 1));
 
-  // Keep the open dashboard in sync with the latest data after an assignment
+  // Load the opened portfolio, and reload it when the list changes (e.g. after an assignment),
+  // so the open dashboard shows the new owner.
   useEffect(() => {
-    setViewing((prev) => (prev ? (portfolios.find((p) => p.id === prev.id) ?? prev) : prev));
-  }, [portfolios]);
+    if (!viewingId) {
+      setViewing(null);
+      return;
+    }
+    void loadViewing(viewingId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewingId, portfolios]);
 
   const [assigning, setAssigning] = useState<string | null>(null);
 
-  const assignAndNotify = async (portfolio: UploadedPortfolio) => {
+  const assignAndNotify = async (portfolio: PortfolioMeta) => {
     const managerId = pending[portfolio.id];
     if (!managerId) {
       toast.error("Select a manager first");
@@ -121,7 +154,7 @@ function PortfolioAssignmentPage() {
       await saveNotification({
         toAgentId: managerId,
         fromName: adminName,
-        message: `You've been assigned portfolio "${portfolio.name}" (${portfolio.rows.length} accounts).`,
+        message: `You've been assigned portfolio "${portfolio.name}" (${accountsById.get(portfolio.id) ?? 0} accounts).`,
       });
       toast.success(`Assigned "${portfolio.name}" to ${manager.name} and sent a notification.`);
       setPending((p) => {
@@ -184,7 +217,7 @@ function PortfolioAssignmentPage() {
                 <TableBody>
                   {portfolios.map((p) => {
                     const owner = MANAGERS.find((m) => m.id === p.managerId);
-                    const dateStr = new Date(p.uploadedAt).toLocaleDateString("en-IN", {
+                    const dateStr = new Date(p.uploadedAt ?? "").toLocaleDateString("en-IN", {
                       day: "numeric",
                       month: "short",
                       year: "numeric",
@@ -197,7 +230,7 @@ function PortfolioAssignmentPage() {
                         <TableCell>
                           <button
                             type="button"
-                            onClick={() => setViewing(p)}
+                            onClick={() => setViewingId(p.id)}
                             className="group flex items-center gap-1.5 text-left"
                           >
                             <div className="font-medium text-sm text-foreground group-hover:underline">
@@ -209,7 +242,7 @@ function PortfolioAssignmentPage() {
                         </TableCell>
                         <TableCell className="text-sm">{p.lender}</TableCell>
                         <TableCell className="text-right text-sm tabular-nums">
-                          {p.rows.length}
+                          {(accountsById.get(p.id) ?? 0).toLocaleString("en-IN")}
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">{dateStr}</TableCell>
                         <TableCell>
@@ -316,7 +349,7 @@ function PortfolioAssignmentPage() {
           p={toPortfolio(viewing)}
           raw={viewing}
           agents={[]}
-          onClose={() => setViewing(null)}
+          onClose={() => setViewingId(null)}
           replacedByName={portfolios.find((x) => x.replacesPortfolioId === viewing.id)?.name}
         />
       )}

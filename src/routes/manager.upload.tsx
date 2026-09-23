@@ -37,8 +37,6 @@ import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import {
   createPortfolio,
   dpd2bucket,
-  getPortfolios,
-  refreshPortfolios,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
   type UploadedDebtor,
@@ -46,6 +44,11 @@ import {
   PRODUCT_LABEL_TO_ENUM,
 } from "@/lib/portfolio-store";
 import { getTeamsByManager, refreshTeams, useTeamAgents, withSelf } from "@/lib/team-store";
+import {
+  getVisiblePortfolioMeta,
+  refreshVisiblePortfolioMeta,
+  type PortfolioMeta,
+} from "@/lib/scoped-debtors";
 import { getActiveTeamId, useActiveTeam } from "@/lib/active-team-store";
 import {
   resolveMapping,
@@ -173,11 +176,13 @@ function PortfolioUploadPage() {
   // Manager-set target end date for this cycle (see isPortfolioEnded in portfolio-store.ts) —
   // no default; the manager picks whatever date makes sense for this cycle.
   const [endDate, setEndDate] = useState<string>("");
-  const [existingPortfolios, setExistingPortfolios] = useState<UploadedPortfolio[]>(() =>
-    getPortfolios(),
+  // Only name/lender/upload date/closed status are read below, so the portfolio list is enough —
+  // this used to run the full debtor sync (growth plan #3).
+  const [existingPortfolios, setExistingPortfolios] = useState<PortfolioMeta[]>(() =>
+    getVisiblePortfolioMeta(),
   );
   useEffect(() => {
-    refreshPortfolios().then(() => setExistingPortfolios(getPortfolios()));
+    refreshVisiblePortfolioMeta().then(() => setExistingPortfolios(getVisiblePortfolioMeta()));
   }, []);
   // Open (not-yet-closed) portfolios, most recent first — defaults the picker toward whichever
   // one the manager most likely means once they've typed a lender name.
@@ -185,7 +190,7 @@ function PortfolioUploadPage() {
     () =>
       existingPortfolios
         .filter((p) => !p.closedAt)
-        .sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1)),
+        .sort((a, b) => ((a.uploadedAt ?? "") < (b.uploadedAt ?? "") ? 1 : -1)),
     [existingPortfolios],
   );
 
@@ -628,7 +633,7 @@ function PortfolioUploadPage() {
                       {continuablePortfolios.map((p) => (
                         <SelectItem key={p.id} value={p.id}>
                           {p.name} · {p.lender || "no lender set"} · uploaded{" "}
-                          {new Date(p.uploadedAt).toLocaleDateString("en-IN")}
+                          {new Date(p.uploadedAt ?? "").toLocaleDateString("en-IN")}
                         </SelectItem>
                       ))}
                     </SelectContent>
