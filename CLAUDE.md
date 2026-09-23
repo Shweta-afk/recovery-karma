@@ -121,6 +121,14 @@ profiles, Call Audit, and the IVR tab on Messages), `payments-store.ts`
 `monthly-trend.ts` (`istDayKey`, month comparisons), `agent-time-stats.ts` (mostly
 placeholders — see the warning below), `call-queue/build-queue.ts`.
 
+**`extra` on a list-fetched debtor is a SUBSET (2026-09-23).** List queries select the computed
+columns `extra_named` (address/city/…/language, pos, Principal) and — Call Queue only —
+`extra_head` (first 25 keys), not the ~2.4KB `extra` bag
+(`migrations/20260923_debtors_extra_preview.sql`, `src/lib/debtor-extra.ts`). Screens that show
+every bank-file column read the full bag themselves (`useFullExtra`, `fetchPortfolioFullExtra`).
+Never write a cached row's `extra` back to the database; the client falls back to plain `extra`
+if the functions are missing.
+
 **If asked to wire another page/table, match this pattern** — it's a deliberate, established
 convention across the whole app, not an oversight. Don't introduce `useQuery` for it.
 

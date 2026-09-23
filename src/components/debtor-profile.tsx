@@ -37,6 +37,7 @@ import { AssignedAgentLine } from "@/components/assigned-agent";
 import { CopyButton } from "@/components/ui/copy-button";
 import { TracePanel } from "@/components/profilex/trace-panel";
 import { getDispositions, refreshDispositions } from "@/lib/disposition-store";
+import { useFullExtra } from "@/lib/debtor-extra";
 import { requestRetention, getRetentionRequestsFor } from "@/lib/retention-store";
 
 const CALL_OUTCOME_LABEL: Record<string, string> = {
@@ -212,7 +213,8 @@ export function DebtorProfile({
     _product?: string;
   };
   const isUploaded = !!anyD._uploadedExtra;
-  const csvFields = anyD._uploadedExtra ?? {};
+  // A list fetch carries only part of the bag (debtor-extra.ts); this shows every column.
+  const csvFields = useFullExtra(isUploaded ? d.id : undefined, anyD._uploadedExtra);
   const extra = isUploaded ? null : getExtra(d.id);
   const initials = d.name
     .split(" ")

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useFullExtra } from "@/lib/debtor-extra";
 import {
   Phone,
   PhoneCall,
@@ -289,8 +290,11 @@ function ActiveCallContent({
   // loan_amount, dpd, email, address, city, state, dob, employer, income, language) — shown
   // generically below the mapped Loan Details so nothing from the source file is ever silently
   // dropped mid-call. Empty for mock/demo debtors, which have no _uploadedExtra bag.
-  const uploadedExtra =
-    (debtor as QueueDebtor & { _uploadedExtra?: Record<string, string> })._uploadedExtra ?? {};
+  // The queue's copy of the bag is only its first 25 columns + named fields (debtor-extra.ts),
+  // so the full one is read for this one account.
+  const listExtra = (debtor as QueueDebtor & { _uploadedExtra?: Record<string, string> })
+    ._uploadedExtra;
+  const uploadedExtra = useFullExtra(listExtra ? debtor.id : undefined, listExtra);
   const otherFields = leftoverExtraKeys([{ extra: uploadedExtra }])
     .map((key) => [key, uploadedExtra[key]] as const)
     .filter(([, value]) => !!value?.trim());

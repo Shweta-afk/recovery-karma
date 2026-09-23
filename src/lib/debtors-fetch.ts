@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
+import { selectWithSlimExtra, slimExtraFromRow } from "./debtor-extra";
 
 /** Every debtor column any of the three stores needs, unioned into one selection.
  * portfolio-store's set is already a superset of disposition-store's and payments-store's, so
@@ -10,8 +11,12 @@ import { fetchAllRows } from "./fetch-all-rows";
  * (2026-09-23) disposition-store and payments-store no longer read this via
  * fetchDebtorsShared() below — see fetchDebtorsByIds(). Kept as one shared column list so the
  * two functions can't drift apart on what a "debtor" looks like to either caller. */
+//
+// (2026-09-23) `extra` is not in this list. fetchDebtorsShared() appends only its named
+// sub-fields (debtor-extra.ts) and fetchDebtorsByIds() none at all — its two callers never
+// read it, yet it was ~87% of every row they downloaded.
 const COLUMNS =
-  "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, assigned_agent_id, status";
+  "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, assigned_agent_id, status";
 
 /** The shape COLUMNS actually returns. Declared here rather than leaning on the generated
  * Supabase types, which do not cover these columns and widen every row to `never` (as the
@@ -25,6 +30,8 @@ export interface SharedDebtorRow {
   loan_amount: number | string | null;
   dpd: number | null;
   loan_reference: string | null;
+  /** A SUBSET of the real bag (named sub-fields only), or null from fetchDebtorsByIds() —
+   * never write this back to the database. See debtor-extra.ts. */
   extra: Record<string, string> | null;
   assigned_agent_id: string | null;
   status: string | null;
@@ -59,13 +66,22 @@ export function fetchDebtorsShared(): Promise<{
   if (inFlight) return inFlight;
   const run = (async () => {
     try {
-      return await fetchAllRows<DebtorRow>(
-        (from, to) =>
-          supabase.from("debtors").select(COLUMNS).range(from, to) as unknown as PromiseLike<{
-            data: DebtorRow[] | null;
-            error: { message: string } | null;
-          }>,
+      const result = await selectWithSlimExtra(false, (extraColumns) =>
+        fetchAllRows<DebtorRow>(
+          (from, to) =>
+            supabase
+              .from("debtors")
+              .select(`${COLUMNS}, ${extraColumns}`)
+              .range(from, to) as unknown as PromiseLike<{
+              data: DebtorRow[] | null;
+              error: { message: string } | null;
+            }>,
+        ),
       );
+      return {
+        ...result,
+        data: result.data.map((r) => ({ ...r, extra: slimExtraFromRow(r) })),
+      };
     } finally {
       // Cleared before any awaiting caller resumes, so the next call after this settles starts
       // a genuinely fresh read rather than latching onto a finished promise.
@@ -110,7 +126,7 @@ export async function fetchDebtorsByIds(
     // Return what we have rather than a partial set silently presented as complete — matches
     // fetchAllRows()'s own contract, which every caller here already checks `error` against.
     if (r.error) return { data, error: r.error };
-    if (r.data) data.push(...r.data);
+    if (r.data) for (const row of r.data) data.push({ ...row, extra: null });
   }
   return { data, error: null };
 }

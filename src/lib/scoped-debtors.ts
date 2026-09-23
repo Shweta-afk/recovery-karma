@@ -10,6 +10,7 @@
 // rows". The `extra` column (the bank file's ~150 unmapped columns) adds ~1.4KB/row on top —
 // 9MB+ before JSON encoding for that one manager. It is also the reason this project has
 // already hit localStorage's ~5-10MB quota twice (see recoveryai-localstorage-cache-limit).
+// (2026-09-23: `extra` is no longer selected in full — see debtor-extra.ts.)
 //
 // This module fetches only the rows the CALLER actually needs — one agent's book, or one
 // manager's active team's portfolios — filtered server-side so Postgres can use
@@ -28,6 +29,7 @@
 // still read the full portfolio-store.ts cache.
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
+import { selectWithSlimExtra, slimExtraFromRow } from "./debtor-extra";
 import {
   dpd2bucket,
   isPortfolioEnded,
@@ -51,16 +53,25 @@ import {
  *   five-plus-query full sync: one query instead of several, and no supplementary full-table
  *   scans for alt_phones/principal_amount/etc. — but, unlike the other two, the RESULT size for
  *   a manager or admin doesn't shrink, since RLS was already the only thing scoping it. */
-export type DebtorScope =
+export type DebtorScope = (
   | { kind: "agents"; agentIds: string[] }
   | { kind: "portfolios"; portfolioIds: string[] }
-  | { kind: "visible" };
+  | { kind: "visible" }
+) & {
+  /** Also fetch the first 25 bank-file columns per row (`extra_head`) — Call Queue renders
+   * them as table columns. Everyone else gets only the named sub-fields; see debtor-extra.ts.
+   * Part of the cache key, so a Call Queue and a Debtors page on the same scope never hand
+   * each other the wrong-sized rows. */
+  extraColumns?: boolean;
+};
 
 function scopeKey(scope: DebtorScope): string {
-  if (scope.kind === "agents") return `agents:${[...new Set(scope.agentIds)].sort().join(",")}`;
+  const head = scope.extraColumns ? "+head" : "";
+  if (scope.kind === "agents")
+    return `agents:${[...new Set(scope.agentIds)].sort().join(",")}${head}`;
   if (scope.kind === "portfolios")
-    return `portfolios:${[...new Set(scope.portfolioIds)].sort().join(",")}`;
-  return "visible";
+    return `portfolios:${[...new Set(scope.portfolioIds)].sort().join(",")}${head}`;
+  return `visible${head}`;
 }
 
 const portfolioCache = new Map<string, UploadedPortfolio[]>();
@@ -79,8 +90,11 @@ function notify(scopeKeyStr: string) {
 // alt_phones / principal_amount+emi_amount+product_code "best-effort" follow-up queries — all
 // confirmed live on the debtors table (information_schema, 2026-09-22), so unlike that older
 // code this can read them in the one query without a migration-not-applied-yet fallback.
+//
+// `extra` is NOT in this list: selectWithSlimExtra() appends the slim computed columns instead
+// (debtor-extra.ts), so a row's `extra` here is a subset of the real bag.
 const DEBTOR_COLUMNS =
-  "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, extra, " +
+  "id, portfolio_id, name, phone_primary, email, loan_amount, dpd, loan_reference, " +
   "assigned_agent_id, status, alt_phones, principal_amount, emi_amount, product_code, " +
   "retained_from_portfolio_id";
 
@@ -93,7 +107,9 @@ interface DebtorRow {
   loan_amount: number | string | null;
   dpd: number | null;
   loan_reference: string | null;
-  extra: Record<string, string> | null;
+  extra?: Record<string, string> | null;
+  extra_named?: Record<string, string> | null;
+  extra_head?: Record<string, string> | null;
   assigned_agent_id: string | null;
   status: string | null;
   alt_phones: string[] | null;
@@ -151,16 +167,21 @@ export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void>
     return;
   }
 
-  const { data, error } = await fetchAllRows<DebtorRow>((from, to) => {
-    let q = supabase.from("debtors").select(DEBTOR_COLUMNS).neq("status", "removed");
-    if (scope.kind === "agents") q = q.in("assigned_agent_id", uuids as string[]);
-    else if (scope.kind === "portfolios") q = q.in("portfolio_id", scope.portfolioIds);
-    // scope.kind === "visible": no extra filter — RLS alone decides what comes back.
-    return q.range(from, to) as unknown as PromiseLike<{
-      data: DebtorRow[] | null;
-      error: { message: string } | null;
-    }>;
-  });
+  const { data, error } = await selectWithSlimExtra(!!scope.extraColumns, (extraColumns) =>
+    fetchAllRows<DebtorRow>((from, to) => {
+      let q = supabase
+        .from("debtors")
+        .select(`${DEBTOR_COLUMNS}, ${extraColumns}`)
+        .neq("status", "removed");
+      if (scope.kind === "agents") q = q.in("assigned_agent_id", uuids as string[]);
+      else if (scope.kind === "portfolios") q = q.in("portfolio_id", scope.portfolioIds);
+      // scope.kind === "visible": no extra filter — RLS alone decides what comes back.
+      return q.range(from, to) as unknown as PromiseLike<{
+        data: DebtorRow[] | null;
+        error: { message: string } | null;
+      }>;
+    }),
+  );
   // Silently keep the previous cache rather than clearing it on a transient failure — the same
   // choice refreshPortfolios() makes, so a flaky request doesn't blank a working screen.
   if (error) return;
@@ -210,7 +231,7 @@ export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void>
       email: d.email ?? "",
       assignedAgentId: d.assigned_agent_id ? emailById.get(d.assigned_agent_id) : undefined,
       status: d.status ?? undefined,
-      extra: (d.extra as Record<string, string>) ?? {},
+      extra: slimExtraFromRow(d),
       altPhones: d.alt_phones ?? [],
       retained: !!retainedFromPortfolioId,
       retainedFrom: retainedFromPortfolioId

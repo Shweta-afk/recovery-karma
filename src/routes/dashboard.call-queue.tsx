@@ -237,8 +237,9 @@ export function CallQueueContent({
   // Every Call Queue view — an agent's own, a manager reading one agent, or the "whole team"
   // combined view — is scoped by assigned_agent_id, never by portfolio/team membership. See
   // scoped-debtors.ts for why this replaces a full sync of every debtor the caller can see.
+  // extraColumns: the one list that renders bank-file columns (see extraColumns below).
   const debtorScope: DebtorScope = useMemo(
-    () => ({ kind: "agents", agentIds: isCombined ? agentId : [agentId] }),
+    () => ({ kind: "agents", agentIds: isCombined ? agentId : [agentId], extraColumns: true }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [agentKey],
   );

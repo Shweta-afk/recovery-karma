@@ -27,6 +27,7 @@ import {
   type StdFieldKey,
 } from "@/lib/csv-fields";
 import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
+import { fetchPortfolioFullExtra } from "@/lib/debtor-extra";
 import { getPortfolioOverview, refreshPortfolioOverview } from "@/lib/scoped-portfolio-overview";
 import {
   Briefcase,
@@ -291,7 +292,31 @@ function EditPortfolioDialog({
   // sources alongside our own fields so a manager can pick the *actual* file column instead of
   // only swapping between our canonical labels. Hooks must run unconditionally on every render
   // of this always-mounted dialog, so this has to sit above the `!portfolio` early return.
-  const extraKeys = useMemo(() => leftoverExtraKeys(portfolio?.rows ?? []), [portfolio]);
+  //
+  // portfolio.rows only carries part of each bag (debtor-extra.ts), so the full one is read the
+  // first time a manager opens one of the remap dropdowns — not on every open of this dialog.
+  const [fullExtras, setFullExtras] = useState<{
+    portfolioId: string;
+    byId: Map<string, Record<string, string>>;
+  } | null>(null);
+  const [extrasLoading, setExtrasLoading] = useState(false);
+  const extrasFor = fullExtras && fullExtras.portfolioId === portfolio?.id ? fullExtras.byId : null;
+  const loadFullExtras = () => {
+    if (!portfolio || extrasFor || extrasLoading) return;
+    const portfolioId = portfolio.id;
+    setExtrasLoading(true);
+    fetchPortfolioFullExtra(portfolioId)
+      .then((byId) => setFullExtras({ portfolioId, byId }))
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Couldn't load file columns"))
+      .finally(() => setExtrasLoading(false));
+  };
+  const extraKeys = useMemo(
+    () =>
+      extrasFor
+        ? leftoverExtraKeys([...extrasFor.values()].map((extra) => ({ extra })))
+        : leftoverExtraKeys(portfolio?.rows ?? []),
+    [portfolio, extrasFor],
+  );
 
   if (!portfolio) return null;
 
@@ -513,6 +538,7 @@ function EditPortfolioDialog({
                     <Select
                       value={remap[key]}
                       onValueChange={(v) => setRemap((prev) => ({ ...prev, [key]: v }))}
+                      onOpenChange={(open) => open && loadFullExtras()}
                     >
                       <SelectTrigger className="h-8 text-xs">
                         <SelectValue />
@@ -523,6 +549,14 @@ function EditPortfolioDialog({
                             {f.key === key ? `${f.label} (unchanged)` : f.label}
                           </SelectItem>
                         ))}
+                        {extrasLoading && (
+                          <>
+                            <SelectSeparator />
+                            <SelectItem value="__loading_file_columns" disabled>
+                              <span className="text-muted-foreground">Loading file columns…</span>
+                            </SelectItem>
+                          </>
+                        )}
                         {extraKeys.length > 0 && (
                           <>
                             <SelectSeparator />
@@ -560,7 +594,11 @@ function EditPortfolioDialog({
                             {f.label}:{" "}
                             <span className="line-through">{oldSlots[f.key] || "—"}</span> →{" "}
                             <span className="text-foreground">
-                              {resolveRemapSource(remap[f.key], oldSlots, r.extra) || "—"}
+                              {resolveRemapSource(
+                                remap[f.key],
+                                oldSlots,
+                                extrasFor?.get(r.id) ?? r.extra,
+                              ) || "—"}
                             </span>
                           </p>
                         ))}
