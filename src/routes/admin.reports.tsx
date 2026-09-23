@@ -42,7 +42,8 @@ import {
   calcStats,
   type DispositionRecord,
 } from "@/lib/disposition-store";
-import { getPortfolios, refreshPortfolios, posByDebtorMap } from "@/lib/portfolio-store";
+import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
+import { usePosByDebtor } from "@/lib/pos-lookup";
 import { formatINR } from "@/lib/mock-debtors";
 import { MonthlyTrendPanel, type TrendGroup } from "@/components/reports/monthly-trend";
 import { scopeToAgents, unattributedCollected } from "@/lib/monthly-trend";
@@ -174,14 +175,23 @@ function AdminReportsPage() {
     };
   }, []);
 
-  const portfolios = useMemo(() => getPortfolios(), []);
-  // Principal per debtor, for the POS Worked / POS Promised trend metrics.
-  const posByDebtor = useMemo(() => posByDebtorMap(), []);
-  const teamName = (teamId?: string) => teams.find((t) => t.id === teamId)?.name ?? "—";
-
+  // Portfolio id/name/team only — from the portfolio list, not the full debtor sync this page
+  // used to run (growth plan #3). Also re-read when it lands: this used to be a useMemo with no
+  // dependencies, so it kept whatever the localStorage cache held when the page opened and
+  // never picked up the refresh — an empty cache meant no team portfolios until a revisit.
+  const [portfolios, setPortfolios] = useState(() => getVisiblePortfolioMeta());
   useEffect(() => {
-    refreshPortfolios();
+    const load = () => setPortfolios(getVisiblePortfolioMeta());
+    window.addEventListener("visible-portfolio-meta-updated", load);
+    const refetch = () => void refreshVisiblePortfolioMeta();
+    window.addEventListener("portfolios-updated", refetch);
+    refetch();
+    return () => {
+      window.removeEventListener("visible-portfolio-meta-updated", load);
+      window.removeEventListener("portfolios-updated", refetch);
+    };
   }, []);
+  const teamName = (teamId?: string) => teams.find((t) => t.id === teamId)?.name ?? "—";
 
   const [payments, setPayments] = useState<PaymentRecord[]>(() => getPayments());
   useEffect(() => {
@@ -191,6 +201,13 @@ function AdminReportsPage() {
     refreshPayments();
     return () => window.removeEventListener("payments-updated", load);
   }, []);
+
+  // Loan amount per account named in these calls/payments, for the POS Worked / POS Promised
+  // trend metrics — fetched for those accounts only (pos-lookup.ts).
+  const posByDebtor = usePosByDebtor([
+    ...disps.map((d) => d.debtorId),
+    ...payments.map((p) => p.debtorId),
+  ]);
 
   const [settlements, setSettlements] = useState(() => getSettlements());
   useEffect(() => {

@@ -39,7 +39,8 @@ import {
   calcStats,
   type DispositionRecord,
 } from "@/lib/disposition-store";
-import { getPortfolios, refreshPortfolios, posByDebtorMap } from "@/lib/portfolio-store";
+import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
+import { usePosByDebtor } from "@/lib/pos-lookup";
 import {
   getAgentAccountCounts,
   getPortfolioTotals,
@@ -141,22 +142,32 @@ function ManagerReportsPage() {
     [agentCounts],
   );
 
+  // The team's portfolios (only their ids are read, to attribute bank-reported payments) come
+  // from the portfolio list, not the full debtor sync this page used to run (growth plan #3).
   const [portfolioVersion, setPortfolioVersion] = useState(0);
-  // Principal per debtor, for the POS Worked / POS Promised trend metrics. Keyed on the
-  // portfolio cache version so it refreshes with the rest of the page.
-  const posByDebtor = useMemo(() => posByDebtorMap(), [portfolioVersion]);
   useEffect(() => {
     const bump = () => setPortfolioVersion((n) => n + 1);
-    window.addEventListener("portfolios-updated", bump);
-    refreshPortfolios();
-    return () => window.removeEventListener("portfolios-updated", bump);
+    window.addEventListener("visible-portfolio-meta-updated", bump);
+    const refetch = () => void refreshVisiblePortfolioMeta();
+    window.addEventListener("portfolios-updated", refetch);
+    refetch();
+    return () => {
+      window.removeEventListener("visible-portfolio-meta-updated", bump);
+      window.removeEventListener("portfolios-updated", refetch);
+    };
   }, []);
 
   const portfolios = useMemo(
-    () => getPortfolios().filter((p) => p.teamId === activeTeam?.id),
+    () => getVisiblePortfolioMeta().filter((p) => p.teamId === activeTeam?.id),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeTeam?.id, portfolioVersion],
   );
+  // Loan amount per account named in these calls/payments, for the POS Worked / POS Promised
+  // trend metrics — fetched for those accounts only (pos-lookup.ts).
+  const posByDebtor = usePosByDebtor([
+    ...disps.map((d) => d.debtorId),
+    ...allPayments.map((p) => p.debtorId),
+  ]);
   // Summed from the per-agent SQL aggregate, so it is correct regardless of how much of the
   // portfolio cache survived localStorage's quota.
   const assignedCount = useMemo(

@@ -42,12 +42,13 @@ import {
   type DispositionRecord,
   type PtpFollowup,
 } from "@/lib/disposition-store";
+import type { UploadedPortfolio } from "@/lib/portfolio-store";
 import {
-  getAgentDebtorIds,
-  getPortfolios,
-  refreshPortfolios,
-  posByDebtorMap,
-} from "@/lib/portfolio-store";
+  getScopedPortfolios,
+  refreshScopedPortfolios,
+  type DebtorScope,
+} from "@/lib/scoped-debtors";
+import { usePosByDebtor } from "@/lib/pos-lookup";
 import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
 import { getAgentTimeStats, formatDuration, formatDurationOrDash } from "@/lib/agent-time-stats";
 import { MonthlyTrendPanel } from "@/components/reports/monthly-trend";
@@ -141,13 +142,7 @@ const AXIS_TICK = { fontSize: 10, fill: "oklch(0.55 0.02 257)" };
 // ─── report definitions ─────────────────────────────────────────────────────────
 
 type ReportType =
-  | "weekly"
-  | "monthly"
-  | "portfolio"
-  | "performance"
-  | "time"
-  | "outcomes"
-  | "followups";
+  "weekly" | "monthly" | "portfolio" | "performance" | "time" | "outcomes" | "followups";
 
 interface ReportDef {
   id: ReportType;
@@ -277,18 +272,20 @@ interface PortfolioHealthRow {
   bucketPct: Record<DPDBucket, number>;
 }
 
+/** `portfolios` is this agent's own book (a scoped fetch, see ReportsPage) — the same accounts
+ * getAgentDebtorIds() found in the full-sync cache: assigned to them, not removed, in a portfolio
+ * that is not closed. */
 function computePortfolioHealth(
   agentId: string,
   rangeDisps: DispositionRecord[],
+  portfolios: UploadedPortfolio[],
 ): PortfolioHealthRow[] {
-  const slices = getAgentDebtorIds(agentId);
-  const portfolios = getPortfolios();
   const rows: PortfolioHealthRow[] = [];
-  for (const { portfolioId, debtorIds } of slices) {
-    const p = portfolios.find((p) => p.id === portfolioId);
-    if (!p) continue;
-    const idSet = new Set(debtorIds);
-    const myRows = p.rows.filter((r) => idSet.has(r.id));
+  for (const p of portfolios) {
+    // The cache carried a closed portfolio's rows as []; a scoped fetch returns them, so skip.
+    if (p.closedAt) continue;
+    const myRows = p.rows.filter((r) => r.assignedAgentId === agentId);
+    const idSet = new Set(myRows.map((r) => r.id));
     const total = myRows.length;
     if (total === 0) continue;
     const bucketCount = { X: 0, "1": 0, "2": 0, NPA: 0, WriteOff: 0 } as Record<DPDBucket, number>;
@@ -541,15 +538,32 @@ function ReportsPage() {
     return () => window.removeEventListener("payments-updated", load);
   }, [agentId]);
 
-  const [portfolioVersion, setPortfolioVersion] = useState(0);
-  // Principal per debtor, for the POS trend metrics.
-  const posByDebtor = useMemo(() => posByDebtorMap(), [portfolioVersion]);
+  // This agent's own book — the scoped fetch Call Queue and Debtors already use (and cache), not
+  // the full debtor sync this page used to run (growth plan #3).
+  const bookScope: DebtorScope = useMemo(
+    () => ({ kind: "agents", agentIds: [agentId] }),
+    [agentId],
+  );
+  const [book, setBook] = useState<UploadedPortfolio[]>(() => getScopedPortfolios(bookScope));
   useEffect(() => {
-    const bump = () => setPortfolioVersion((n) => n + 1);
-    window.addEventListener("portfolios-updated", bump);
-    refreshPortfolios();
-    return () => window.removeEventListener("portfolios-updated", bump);
-  }, []);
+    if (!agentId) return;
+    const load = () => setBook(getScopedPortfolios(bookScope));
+    load();
+    window.addEventListener("scoped-portfolios-updated", load);
+    // A portfolio write elsewhere (reassignment, upload) — re-read the book.
+    const refetch = () => void refreshScopedPortfolios(bookScope);
+    window.addEventListener("portfolios-updated", refetch);
+    refetch();
+    return () => {
+      window.removeEventListener("scoped-portfolios-updated", load);
+      window.removeEventListener("portfolios-updated", refetch);
+    };
+  }, [agentId, bookScope]);
+  // Loan amount per account named in these calls/payments, for the POS trend metrics.
+  const posByDebtor = usePosByDebtor([
+    ...disps.map((d) => d.debtorId),
+    ...payments.map((p) => p.debtorId),
+  ]);
 
   const days = useMemo(() => enumerateDays(fromDate, toDate), [fromDate, toDate]);
   const rangeDisps = useMemo(
@@ -572,11 +586,10 @@ function ReportsPage() {
     [agentId, rangeDisps, days, presenceIntervals],
   );
   const portfolioRows = useMemo(
-    () => computePortfolioHealth(agentId, rangeDisps),
-    // rangeDisps added: the collected / accounts-touched columns are range-scoped, so this
-    // must recompute when the date filter moves, not only when portfolios reload.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agentId, portfolioVersion, rangeDisps],
+    () => computePortfolioHealth(agentId, rangeDisps, book),
+    // rangeDisps: the collected / accounts-touched columns are range-scoped, so this must
+    // recompute when the date filter moves, not only when the book reloads.
+    [agentId, book, rangeDisps],
   );
   // `disps` isn't read directly below — it's a dependency so this recomputes whenever the
   // dispositions cache updates (getPtpFollowups reads that same cache internally).
