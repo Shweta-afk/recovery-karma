@@ -39,10 +39,10 @@ import {
   formatClockTime,
   pctOfShift,
 } from "@/lib/agent-time-stats";
-import { getAgentDebtorIds, getPortfolios, refreshPortfolios } from "@/lib/portfolio-store";
+import { getAgentBook, refreshAgentBooks } from "@/lib/agent-book-store";
 import { getPayments, refreshPayments, type PaymentRecord } from "@/lib/payments-store";
 import { MonthlyTrendCompact } from "@/components/reports/monthly-trend";
-import { computeDrr, monthDays, monthlyCollectionTarget } from "@/lib/daily-run-rate";
+import { computeDrr, monthDays } from "@/lib/daily-run-rate";
 import {
   fetchStatusIntervals,
   todayPresenceKey,
@@ -161,32 +161,29 @@ function useAgentPeriodStats(agentId: string) {
     const today = extendedStats(disps.filter((d) => isSameDay(d.time, now)));
     const month = extendedStats(disps.filter((d) => isSameMonth(d.time, now)));
 
-    let assignedPOS = 0;
-    if (agentId) {
-      const slices = getAgentDebtorIds(agentId);
-      const portfolios = getPortfolios();
-      for (const { portfolioId, debtorIds } of slices) {
-        const p = portfolios.find((p) => p.id === portfolioId);
-        if (!p) continue;
-        const idSet = new Set(debtorIds);
-        for (const row of p.rows) if (idSet.has(row.id)) assignedPOS += row.loanAmount;
-      }
-    }
+    // Summed in the database (agent-book-store.ts), not by downloading every debtor row.
+    const book = agentId ? getAgentBook(agentId) : null;
+    const assignedPOS = book?.assignedPos ?? 0;
     // Real, from portfolio_agent_targets — read as a MONTHLY figure (see daily-run-rate.ts).
-    return { today, month, assignedPOS, monthlyTarget: monthlyCollectionTarget(agentId) };
+    return { today, month, assignedPOS, monthlyTarget: book?.monthlyTarget ?? 0 };
   };
 
   const [stats, setStats] = useState(compute);
   useEffect(() => {
     const reload = () => setStats(compute());
     reload();
+    // A write anywhere in the app (reassignment, upload) still fires portfolios-updated; the
+    // totals are re-read from the database then, rather than recomputed from a full sync.
+    const refetchBook = () => void refreshAgentBooks([agentId]);
     window.addEventListener("dispositions-updated", reload);
-    window.addEventListener("portfolios-updated", reload);
+    window.addEventListener("agent-books-updated", reload);
+    window.addEventListener("portfolios-updated", refetchBook);
     refreshDispositions();
-    refreshPortfolios();
+    refetchBook();
     return () => {
       window.removeEventListener("dispositions-updated", reload);
-      window.removeEventListener("portfolios-updated", reload);
+      window.removeEventListener("agent-books-updated", reload);
+      window.removeEventListener("portfolios-updated", refetchBook);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
@@ -570,10 +567,7 @@ export function AgentDashboardContent({
                   // green — it's a call to action, not a pass/fail readout.
                   label: "To Collect",
                   value: remainingToday === null ? "—" : formatINR(remainingToday),
-                  hint:
-                    remainingToday === null
-                      ? "no target set"
-                      : "to hit today's projection",
+                  hint: remainingToday === null ? "no target set" : "to hit today's projection",
                   icon: Target,
                   highlight: true,
                   filter: "paid" as const,

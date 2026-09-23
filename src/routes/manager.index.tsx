@@ -38,7 +38,7 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-import { computeDrr, istMonthKey, teamMonthlyCollectionTarget } from "@/lib/daily-run-rate";
+import { computeDrr, istMonthKey } from "@/lib/daily-run-rate";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -64,7 +64,7 @@ import {
   calcStats,
   type DispositionRecord,
 } from "@/lib/disposition-store";
-import { getPortfolios, getAgentDebtorIds, refreshPortfolios } from "@/lib/portfolio-store";
+import { getAgentBook, refreshAgentBooks } from "@/lib/agent-book-store";
 import { saveNotification } from "@/lib/notification-store";
 import { getEscalations, refreshEscalations } from "@/lib/escalation-store";
 import { useStorageSync } from "@/lib/storage-sync";
@@ -179,20 +179,9 @@ function computeAgentStats(agent: AgentRef): AgentComputedStat {
   const thisMonth = calcStats(disps.filter((d) => istMonthKey(d.time) === nowMonth));
   const all = calcStats(disps);
 
-  const slices = getAgentDebtorIds(agent.id);
-  const portfolios = getPortfolios();
-  let assignedCount = 0,
-    assignedPOS = 0;
-  for (const { portfolioId, debtorIds } of slices) {
-    const p = portfolios.find((p) => p.id === portfolioId);
-    if (!p) continue;
-    const idSet = new Set(debtorIds);
-    for (const row of p.rows)
-      if (idSet.has(row.id)) {
-        assignedCount++;
-        assignedPOS += row.loanAmount;
-      }
-  }
+  // Counted and summed in the database (agent-book-store.ts), not by downloading every debtor
+  // row the team can see.
+  const { accounts: assignedCount, assignedPos: assignedPOS } = getAgentBook(agent.id);
 
   return {
     id: agent.id,
@@ -217,15 +206,20 @@ function useTeamStats(agents: AgentRef[]) {
   const reload = () => setStats(agents.map(computeAgentStats));
   useEffect(() => {
     reload();
+    // A write anywhere in the app (reassignment, upload) still fires portfolios-updated; the
+    // totals are re-read from the database then, rather than recomputed from a full sync.
+    const refetchBooks = () => void refreshAgentBooks(agents.map((a) => a.id));
     window.addEventListener("dispositions-updated", reload);
-    window.addEventListener("portfolios-updated", reload);
+    window.addEventListener("agent-books-updated", reload);
+    window.addEventListener("portfolios-updated", refetchBooks);
     window.addEventListener("escalations-updated", reload);
-    refreshPortfolios();
+    refetchBooks();
     refreshDispositions();
     refreshEscalations();
     return () => {
       window.removeEventListener("dispositions-updated", reload);
-      window.removeEventListener("portfolios-updated", reload);
+      window.removeEventListener("agent-books-updated", reload);
+      window.removeEventListener("portfolios-updated", refetchBooks);
       window.removeEventListener("escalations-updated", reload);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1242,7 +1236,7 @@ function ManagerDashboardPage() {
   // spread over the calendar days still left. Added alongside "Daily Target" (a CALL-count
   // goal) rather than replacing it — they answer different questions.
   const teamDrr = computeDrr(
-    teamMonthlyCollectionTarget(agents.map((a) => a.id)),
+    agents.reduce((sum, a) => sum + getAgentBook(a.id).monthlyTarget, 0),
     agentStats.reduce((s, a) => s + a.paidThisMonth, 0),
   );
   const teamPtpAmountToday = agentStats.reduce((s, a) => s + a.ptpAmountToday, 0);

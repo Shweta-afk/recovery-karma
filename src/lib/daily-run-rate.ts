@@ -117,13 +117,3 @@ export function monthlyCollectionTarget(agentEmail: string): number {
     0,
   );
 }
-
-/** Team-level target: every listed agent's monthly target, summed. */
-export function teamMonthlyCollectionTarget(agentEmails: string[]): number {
-  const portfolios = getPortfolios();
-  return agentEmails.reduce(
-    (sum, email) =>
-      sum + portfolios.reduce((s, p) => s + (p.agentTargets?.[email]?.targetAmount ?? 0), 0),
-    0,
-  );
-}

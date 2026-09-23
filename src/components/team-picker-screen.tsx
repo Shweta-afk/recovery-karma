@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Users, ArrowRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { isPortfolioEnded } from "@/lib/portfolio-store";
 import {
-  getPortfolios,
-  refreshPortfolios,
-  isPortfolioEnded,
-  type UploadedPortfolio,
-} from "@/lib/portfolio-store";
+  getVisiblePortfolioMeta,
+  refreshVisiblePortfolioMeta,
+  type PortfolioMeta,
+} from "@/lib/scoped-debtors";
+import { fetchPortfolioAccountCounts } from "@/lib/scoped-portfolio-overview";
 import type { Team } from "@/lib/team-store";
 
 // Shown by ManagerLayout (manager.tsx) whenever a manager owns 2+ teams and hasn't picked one
@@ -23,9 +24,25 @@ export function TeamPickerScreen({
   onPick: (teamId: string) => void;
   managerName: string;
 }) {
-  const [portfolios, setPortfolios] = useState<UploadedPortfolio[]>(() => getPortfolios());
+  // Portfolio list + per-portfolio account counts only — this screen shows two numbers per team
+  // and used to download every debtor the manager can see to get them (growth plan #3).
+  const [portfolios, setPortfolios] = useState<PortfolioMeta[]>(() => getVisiblePortfolioMeta());
+  const [accountsByPortfolio, setAccountsByPortfolio] = useState<Map<string, number>>(new Map());
   useEffect(() => {
-    refreshPortfolios().then(() => setPortfolios(getPortfolios()));
+    let cancelled = false;
+    (async () => {
+      await refreshVisiblePortfolioMeta();
+      const meta = getVisiblePortfolioMeta();
+      if (cancelled) return;
+      setPortfolios(meta);
+      const counts = await fetchPortfolioAccountCounts(
+        meta.filter((p) => !isPortfolioEnded(p)).map((p) => p.id),
+      );
+      if (!cancelled) setAccountsByPortfolio(counts);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -42,7 +59,10 @@ export function TeamPickerScreen({
           const openPortfolios = portfolios.filter(
             (p) => p.teamId === t.id && !isPortfolioEnded(p),
           );
-          const totalAccounts = openPortfolios.reduce((s, p) => s + p.rows.length, 0);
+          const totalAccounts = openPortfolios.reduce(
+            (s, p) => s + (accountsByPortfolio.get(p.id) ?? 0),
+            0,
+          );
           return (
             <button key={t.id} type="button" onClick={() => onPick(t.id)} className="text-left">
               <Card className="h-full transition-all hover:border-primary/50 hover:shadow-sm">

@@ -37,7 +37,7 @@ import { useCallSession } from "@/lib/call-session";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
 import { useStorageSync } from "@/lib/storage-sync";
 import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
-import { findDebtorByLoanReference } from "@/lib/portfolio-store";
+import { useLoanReferenceMatch } from "@/lib/loan-ref-lookup";
 import { getDispositions, type DispositionRecord } from "@/lib/disposition-store";
 import { OUTCOME_META } from "@/lib/call-queue/types";
 import type { QueueDebtor } from "@/lib/call-queue/types";
@@ -78,9 +78,9 @@ export function ManualDialDock() {
   const [tick, setTick] = useState(0);
   useStorageSync(() => setTick((t) => t + 1));
 
-  /** The account the typed loan ID resolves to, or null. Recomputed as they type — this is a
-   * pure read over the already-loaded portfolio cache, not a network call. */
-  const match = useMemo(() => findDebtorByLoanReference(loanId), [loanId]);
+  /** The account the typed loan ID resolves to, or null. Instant from the portfolio cache when
+   * it has the account; otherwise one debounced database lookup (loan-ref-lookup.ts). */
+  const match = useLoanReferenceMatch(loanId);
 
   const recentManual = useMemo(() => {
     void tick;

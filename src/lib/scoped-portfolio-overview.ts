@@ -62,6 +62,20 @@ function isMissingFunctionError(e: { message?: string; code?: string } | null): 
   return e.code === "PGRST202" || e.code === "42883" || /schema cache/i.test(e.message ?? "");
 }
 
+/** Accounts per portfolio (removed ones excluded), counted in the database — for screens that
+ * need only the count, not the rows (team picker, admin portfolio/teams lists). */
+export async function fetchPortfolioAccountCounts(
+  portfolioIds: string[],
+): Promise<Map<string, number>> {
+  if (!portfolioIds.length) return new Map();
+  const rows = await fetchAggregates(portfolioIds);
+  return new Map(
+    rows
+      .filter((r): r is AggregateRow & { portfolio_id: string } => !!r.portfolio_id)
+      .map((r) => [r.portfolio_id, Number(r.total_accounts ?? 0)]),
+  );
+}
+
 async function fetchAggregates(portfolioIds: string[]): Promise<AggregateRow[]> {
   const scoped = await supabase.rpc("portfolio_debtor_aggregates_for", {
     p_portfolio_ids: portfolioIds,

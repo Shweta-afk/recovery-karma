@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useFullExtra } from "@/lib/debtor-extra";
+import { useLoanReferenceMatch } from "@/lib/loan-ref-lookup";
 import {
   Phone,
   PhoneCall,
@@ -93,7 +94,6 @@ import {
   refreshDispositions,
   type PtpFollowup,
 } from "@/lib/disposition-store";
-import { findDebtorByLoanReference } from "@/lib/portfolio-store";
 import { leftoverExtraKeys } from "@/lib/csv-fields";
 import { buildDispositionSms } from "@/lib/sms-templates";
 
@@ -254,8 +254,9 @@ function ActiveCallContent({
   }, [debtor.id, debtor.paymentHistory, dispositionsTick]);
 
   // Live resolution of the retro-attach Loan ID, so the agent sees which account the call is
-  // about to be filed against before they submit. Pure read over the portfolio cache.
-  const attachMatch = findDebtorByLoanReference(disposition.attachLoanId);
+  // about to be filed against before they submit. Cache first, then a database lookup, which
+  // also makes the save-time lookup in dashboard.call-queue.tsx resolve (loan-ref-lookup.ts).
+  const attachMatch = useLoanReferenceMatch(disposition.attachLoanId);
 
   // elapsed ticks centrally in CallSessionProvider so it keeps counting regardless of which
   // call UI (or none) is currently mounted — nothing to do here but read it off `call`.

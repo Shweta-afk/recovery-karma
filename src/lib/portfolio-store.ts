@@ -1423,9 +1423,10 @@ export async function addDebtorPhone(debtorId: string, phone: string): Promise<v
  * `reconcileRetentionRequests` use for loan_reference — so a match here means the same thing a
  * match there does.
  *
- * Scoped to the portfolios already in the cache, which RLS has scoped to what this user may
- * see. An agent cannot use this to reach an account they have no access to: an unknown ID
- * simply returns null and the call proceeds unmapped.
+ * Scoped to the portfolios already in the cache plus any match loan-ref-lookup.ts read from the
+ * database — both through RLS, so only what this user may see. An agent cannot use this to reach
+ * an account they have no access to: an unknown ID simply returns null and the call proceeds
+ * unmapped.
  */
 export function findDebtorByLoanReference(
   ref: string,
@@ -1439,7 +1440,20 @@ export function findDebtorByLoanReference(
       }
     }
   }
+  // Pages no longer full-sync this cache just to have it ready (growth plan #3), so a match
+  // may instead have come from a database lookup — see loan-ref-lookup.ts, which records it here.
+  const looked = lookedUpLoanRefs.get(needle);
+  if (looked) return { ...looked, debtor: debtorFromRow(looked.row, looked.portfolio) };
   return null;
+}
+
+const lookedUpLoanRefs = new Map<string, { row: UploadedDebtor; portfolio: UploadedPortfolio }>();
+
+/** Called by loan-ref-lookup.ts with a match it read from the database, so the synchronous
+ * findDebtorByLoanReference() above — e.g. at disposition save time — resolves it too. */
+export function rememberLoanReferenceMatch(row: UploadedDebtor, portfolio: UploadedPortfolio) {
+  const key = (row.loanReference ?? "").trim().toLowerCase();
+  if (key) lookedUpLoanRefs.set(key, { row, portfolio });
 }
 
 /**

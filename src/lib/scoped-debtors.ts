@@ -57,6 +57,9 @@ export type DebtorScope = (
   | { kind: "agents"; agentIds: string[] }
   | { kind: "portfolios"; portfolioIds: string[] }
   | { kind: "visible" }
+  /** One Loan/Account ID, matched case-insensitively — Manual Dial's lookup (loan-ref-lookup.ts).
+   * `loanRef` must already be trimmed and free of LIKE wildcards; see that module. */
+  | { kind: "loanRef"; loanRef: string }
 ) & {
   /** Also fetch the first 25 bank-file columns per row (`extra_head`) — Call Queue renders
    * them as table columns. Everyone else gets only the named sub-fields; see debtor-extra.ts.
@@ -71,6 +74,7 @@ function scopeKey(scope: DebtorScope): string {
     return `agents:${[...new Set(scope.agentIds)].sort().join(",")}${head}`;
   if (scope.kind === "portfolios")
     return `portfolios:${[...new Set(scope.portfolioIds)].sort().join(",")}${head}`;
+  if (scope.kind === "loanRef") return `loanRef:${scope.loanRef.toLowerCase()}${head}`;
   return `visible${head}`;
 }
 
@@ -175,6 +179,7 @@ export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void>
         .neq("status", "removed");
       if (scope.kind === "agents") q = q.in("assigned_agent_id", uuids as string[]);
       else if (scope.kind === "portfolios") q = q.in("portfolio_id", scope.portfolioIds);
+      else if (scope.kind === "loanRef") q = q.ilike("loan_reference", scope.loanRef);
       // scope.kind === "visible": no extra filter — RLS alone decides what comes back.
       return q.range(from, to) as unknown as PromiseLike<{
         data: DebtorRow[] | null;
