@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { Search, X, ChevronRight, ChevronDown, FileDown, Upload, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { AssignedAgentLine } from "@/components/assigned-agent";
 import { DebtorProfile } from "@/components/debtor-profile";
+import { ListPager, usePaged } from "@/components/list-pager";
 
 /** Filter value standing for "nobody owns this account". A sentinel rather than `undefined`
  * so the dropdown can round-trip it as a plain string alongside real agent emails; the "@" makes
@@ -252,6 +253,14 @@ function DebtorsPage() {
     });
     return sortDebtors(list, sort);
   }, [search, contactedRange, bucket, portfolio, assignee, sort, allDebtors]);
+
+  // Paged rendering (list-pager.tsx) — a book of ~3,000 accounts used to render ~3,000 cards.
+  // Counts and Export above still use the whole `filtered` list.
+  const debtorsPaged = usePaged(
+    filtered,
+    JSON.stringify([search, contactedRange, bucket, portfolio, assignee, sort]),
+  );
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const currentSortLabel = SORT_OPTIONS.find((s) => s.key === sort)?.label ?? "";
 
@@ -573,8 +582,11 @@ function DebtorsPage() {
         </div>
 
         {/* ── Card grid ── */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((d, i) => (
+        <div
+          ref={gridRef}
+          className="grid grid-cols-1 gap-3 scroll-mt-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        >
+          {debtorsPaged.pageItems.map((d, i) => (
             <DebtorCard
               key={d.id}
               d={d}
@@ -609,6 +621,7 @@ function DebtorsPage() {
             </div>
           )}
         </div>
+        <ListPager paged={debtorsPaged} scrollTo={gridRef} noun="accounts" />
       </div>
 
       <Sheet

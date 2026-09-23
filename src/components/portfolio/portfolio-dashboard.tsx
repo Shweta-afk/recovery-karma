@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ListPager, usePaged } from "@/components/list-pager";
 import {
   transferDebtor,
   transferDebtors,
@@ -402,6 +403,12 @@ function AccountsTable({
     }
   };
 
+  // Paged rendering (list-pager.tsx): every row carries a Select, a Checkbox and a copy button,
+  // and one portfolio holds up to ~2,750 accounts. Select-all and bulk move still cover every
+  // row, not just the page on screen.
+  const accountsPaged = usePaged(visibleRows, markedFilter);
+  const accountsScrollRef = useRef<HTMLDivElement>(null);
+
   const toggleRow = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -486,7 +493,7 @@ function AccountsTable({
         )}
       </div>
       <div className="rounded-lg border border-border overflow-hidden">
-        <div className="max-h-64 overflow-y-auto">
+        <div ref={accountsScrollRef} className="max-h-64 overflow-y-auto">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-card z-10">
               <tr className="border-b border-border">
@@ -514,7 +521,7 @@ function AccountsTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {visibleRows.map((r) => (
+              {accountsPaged.pageItems.map((r) => (
                 <tr key={r.id} className={selected.has(r.id) ? "bg-primary/5" : undefined}>
                   {!readOnly && (
                     <td className="py-2 pl-3">
@@ -598,6 +605,12 @@ function AccountsTable({
             </tbody>
           </table>
         </div>
+        <ListPager
+          paged={accountsPaged}
+          scrollTo={accountsScrollRef}
+          noun="accounts"
+          className="border-t border-border px-3"
+        />
       </div>
 
       <AlertDialog open={!!confirmRemove} onOpenChange={(o) => !o && setConfirmRemove(null)}>

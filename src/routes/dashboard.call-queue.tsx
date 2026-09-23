@@ -139,6 +139,7 @@ import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { toast } from "sonner";
 import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
+import { ListPager, usePaged } from "@/components/list-pager";
 
 export const Route = createFileRoute("/dashboard/call-queue")({
   head: () => ({
@@ -890,6 +891,30 @@ export function CallQueueContent({
   // keeps the table in a width range with no observed ghosting and is already far more of the
   // upload than the table showed before this feature existed.
   const MAX_EXTRA_COLUMNS = 25;
+  // Paged rendering (list-pager.tsx). Everything above — filters, counts, export, "dial all" —
+  // still works on the whole filteredQueue; only the table body shows one page. The key is the
+  // same set of inputs filteredQueue depends on (plus whose queue it is), so a filter/sort/
+  // search change goes back to page 1 but a background refresh or a saved disposition does not.
+  const queuePaged = usePaged(
+    filteredQueue,
+    JSON.stringify([
+      agentKey,
+      queueFilter,
+      bucketFilter,
+      dispositionFilter,
+      reasonFilter,
+      queueSearch,
+      prodFilter,
+      filterStatus,
+      filterOutstanding,
+      filterDpd,
+      filterScore,
+      qSortKey,
+      qSortDir,
+    ]),
+  );
+  const queueScrollRef = useRef<HTMLDivElement>(null);
+
   const extraColumns = useMemo(() => {
     const seen = new Set<string>();
     const cols: string[] = [];
@@ -1773,7 +1798,7 @@ export function CallQueueContent({
 
         <Card className="animate-in fade-in duration-400">
           <CardContent className="p-0">
-            <div className="overflow-auto max-h-[480px]">
+            <div ref={queueScrollRef} className="overflow-auto max-h-[480px]">
               <Table>
                 <TableHeader className="sticky top-0 bg-card z-10">
                   <TableRow>
@@ -2025,7 +2050,7 @@ export function CallQueueContent({
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredQueue.map((d, i) => (
+                    queuePaged.pageItems.map((d, i) => (
                       <QueueRow
                         key={d.id}
                         d={d}
@@ -2040,6 +2065,12 @@ export function CallQueueContent({
                 </TableBody>
               </Table>
             </div>
+            <ListPager
+              paged={queuePaged}
+              scrollTo={queueScrollRef}
+              noun="debtors"
+              className="border-t border-border px-4"
+            />
           </CardContent>
         </Card>
       </section>
