@@ -81,24 +81,35 @@ export function getOpenEscalationsForAgents(agentIds: string[] | undefined): Esc
 }
 
 export async function refreshEscalations(): Promise<void> {
-  const [
-    { data: rows, error },
-    { data: debtorRows },
-    { data: portfolioRows },
-    { data: agentRows },
-  ] = await Promise.all([
+  const [{ data: rows, error }, { data: agentRows }] = await Promise.all([
     supabase
       .from("escalations")
       .select("id, debtor_id, reason, priority, notes, agent_id, resolved, created_at"),
-    supabase
-      .from("debtors")
-      .select(
-        "id, name, phone_primary, phone_alternate, loan_amount, dpd, ai_score, ai_score_reason, last_contacted_at, portfolio_id",
-      ),
-    supabase.from("portfolios").select("id, name"),
     supabase.from("agents").select("id, email, name"),
   ]);
-  if (error || !rows || !debtorRows || !portfolioRows || !agentRows) return;
+  if (error || !rows || !agentRows) return;
+
+  // Only the debtors (and their portfolios) these escalations point at. This used to read the
+  // whole debtors table on every refresh — capped by PostgREST at 1,000 rows, so an escalation
+  // on any account past the first 1,000 showed a blank name and ₹0 — to label what was, on
+  // 2026-09-23, a single escalation (growth plan #3).
+  const debtorIds = [...new Set(rows.map((e) => e.debtor_id).filter((x): x is string => !!x))];
+  const { data: debtorRows, error: dErr } = debtorIds.length
+    ? await supabase
+        .from("debtors")
+        .select(
+          "id, name, phone_primary, phone_alternate, loan_amount, dpd, ai_score, ai_score_reason, last_contacted_at, portfolio_id",
+        )
+        .in("id", debtorIds)
+    : { data: [], error: null };
+  if (dErr || !debtorRows) return;
+  const portfolioIds = [
+    ...new Set(debtorRows.map((d) => d.portfolio_id).filter((x): x is string => !!x)),
+  ];
+  const { data: portfolioRows, error: pErr } = portfolioIds.length
+    ? await supabase.from("portfolios").select("id, name").in("id", portfolioIds)
+    : { data: [], error: null };
+  if (pErr || !portfolioRows) return;
 
   const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
   const portfolioById = new Map(portfolioRows.map((p) => [p.id, p]));

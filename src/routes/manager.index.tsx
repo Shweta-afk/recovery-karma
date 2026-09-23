@@ -203,12 +203,21 @@ function computeAgentStats(agent: AgentRef): AgentComputedStat {
 
 function useTeamStats(agents: AgentRef[]) {
   const [stats, setStats] = useState<AgentComputedStat[]>(() => agents.map(computeAgentStats));
-  const reload = () => setStats(agents.map(computeAgentStats));
+  // useTeamAgents hands back a NEW array on every teams/roster/storage event even when the team
+  // is unchanged, and keying the effect on that identity re-ran every refresh below ~7 times per
+  // page load. Key on who is in the team instead; the ref keeps reload() on the latest array.
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+  const agentsKey = agents
+    .map((a) => a.id)
+    .sort()
+    .join(",");
+  const reload = () => setStats(agentsRef.current.map(computeAgentStats));
   useEffect(() => {
     reload();
     // A write anywhere in the app (reassignment, upload) still fires portfolios-updated; the
     // totals are re-read from the database then, rather than recomputed from a full sync.
-    const refetchBooks = () => void refreshAgentBooks(agents.map((a) => a.id));
+    const refetchBooks = () => void refreshAgentBooks(agentsRef.current.map((a) => a.id));
     window.addEventListener("dispositions-updated", reload);
     window.addEventListener("agent-books-updated", reload);
     window.addEventListener("portfolios-updated", refetchBooks);
@@ -223,7 +232,7 @@ function useTeamStats(agents: AgentRef[]) {
       window.removeEventListener("escalations-updated", reload);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents]);
+  }, [agentsKey]);
   useStorageSync(reload);
   return stats;
 }
