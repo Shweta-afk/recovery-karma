@@ -49,8 +49,10 @@ different Cloudflare D1 backend from an earlier iteration of the project).
 - **Start command:** `node .output/server/index.mjs`
 - **Deployment:** Railway (`railway.json`, nixpacks builder). Project `bubbly-communication`,
   service `recoveryai-app`. Custom domain **`axiotta.samvadx.com`** (verified 2026-08-21 in
-  Railway → Settings → Networking, serving on port 8080), alongside the default domains
-  `recoveryai-app-production.up.railway.app` and `karmaapp-production.up.railway.app`.
+  Railway → Settings → Networking, serving on port 8080). Sibling custom domains on the same
+  service: `rrdebt.samvadx.com`, `kuber.samvadx.com`, `abhiyanta.samvadx.com`. The old default
+  domains `recoveryai-app-production.up.railway.app` and `karmaapp-production.up.railway.app`
+  now return Railway's "Application not found" (checked 2026-09-23) — don't use them.
   ⚠️ An earlier version of this file said `axiora.axiotta.com` — that domain is DEAD and
   returns Railway's `x-railway-fallback` "Application not found" 404. Checking it wastes real
   debugging time (it did on 2026-08-21); use `axiotta.samvadx.com`. Auto-deploys on push to

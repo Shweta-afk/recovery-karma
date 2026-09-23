@@ -25,8 +25,8 @@ Two jobs, one daily schedule:
    `/api/cron/archive` answers 503 and nothing runs on a schedule (the admin button still works).
 3. Store the same secret in Supabase Vault and create the schedule. Intentionally not a migration:
    this directory is replayed on deploy, and a schedule should be created deliberately, once.
-   It calls the Railway default domain rather than the custom one so it never depends on
-   `axiotta.samvadx.com`'s DNS.
+   It calls the custom domain: both `*.up.railway.app` default domains return Railway's
+   "Application not found" (checked 2026-09-23), so they cannot be used.
 
 ```sql
 create extension if not exists pg_net;
@@ -39,7 +39,7 @@ select cron.schedule(
   'samvadx-daily-archive',
   '30 20 * * *',
   $$select net.http_post(
-      url     := 'https://recoveryai-app-production.up.railway.app/api/cron/archive',
+      url     := 'https://axiotta.samvadx.com/api/cron/archive',
       headers := jsonb_build_object(
         'content-type', 'application/json',
         'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets
