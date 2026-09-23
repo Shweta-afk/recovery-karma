@@ -54,6 +54,8 @@ function valueField(s: ProfilexService): {
       return { label: "UAN", placeholder: "12-digit UAN", inputMode: "numeric" };
     case "gstin":
       return { label: "GSTIN", placeholder: "15-character GSTIN" };
+    case "din":
+      return { label: "DIN", placeholder: "8-digit DIN", inputMode: "numeric" };
     default:
       return { label: "Mobile number", placeholder: "10-digit mobile", inputMode: "numeric" };
   }
@@ -203,8 +205,8 @@ function AdminInsightsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Insights</h1>
         <p className="text-sm text-muted-foreground">
-          Look up any mobile number, UAN or GSTIN directly. Every lookup is billed to your company —
-          a "not found" is usually still charged.
+          Look up any mobile number, UAN, GSTIN or DIN directly. Every lookup is billed to your
+          company — a "not found" is usually still charged.
         </p>
       </div>
 

@@ -523,3 +523,31 @@ describe("cross-upload reuse", () => {
     expect(pickReusable([cand({ createdAt: "garbage" })], ttl)).toBeNull();
   });
 });
+
+describe("DIN to Contact — the one manual-only, admin-typed lookup", () => {
+  const service = getService("din-to-contact")!;
+
+  test("is catalogued with a din input and marked manual-only", () => {
+    expect(service).toBeDefined();
+    expect(service.input).toBe("din");
+    expect(service.manualOnly).toBe(true);
+  });
+
+  test("has no derivedFrom — it cannot be chained off a debtor trace either", () => {
+    expect(service.derivedFrom).toBeUndefined();
+  });
+
+  test("is not in LEGACY_SERVICE_IDS — no tenant gets it until a superadmin opts in", () => {
+    expect(LEGACY_SERVICE_IDS).not.toContain("din-to-contact");
+  });
+
+  test("still counted in ALL_SERVICE_IDS, like any other catalogue entry", () => {
+    expect(ALL_SERVICE_IDS).toContain("din-to-contact");
+  });
+
+  test("prices a found result; an unrecognised status fails expensive to the same price", () => {
+    expect(priceFor(service, "1")).toBe(1.42);
+    expect(priceFor(service, "2")).toBe(1.42);
+    expect(priceFor(service, null)).toBe(1.42);
+  });
+});

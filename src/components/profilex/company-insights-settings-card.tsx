@@ -246,6 +246,14 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                       >
                         {s.label}
                       </span>
+                      {s.manualOnly && (
+                        <span
+                          className="text-[9px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1 flex-shrink-0"
+                          title="Run from Admin > Insights by typing the value in — not offered on a debtor's own Insights tab"
+                        >
+                          Manual only
+                        </span>
+                      )}
                     </label>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {priceStatuses(s, rateCard).map((status, _i, all) => (

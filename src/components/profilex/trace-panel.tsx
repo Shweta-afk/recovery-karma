@@ -500,7 +500,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
         </div>
       )}
 
-      {PROFILEX_SERVICES.map((service) => {
+      {/* manualOnly services (e.g. DIN to Contact) have no debtor field to run against — they
+          only ever appear on Admin > Insights, where an admin types the value in. */}
+      {PROFILEX_SERVICES.filter((service) => !service.manualOnly).map((service) => {
         const trace = latest.get(service.id);
         const needsSource = missingSource(service);
         // Runnable only if Insights is on AND the company's plan includes this service. A result

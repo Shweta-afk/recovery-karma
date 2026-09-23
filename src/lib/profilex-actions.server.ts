@@ -396,6 +396,12 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 
     const service = getService(data.serviceId);
     if (!service) throw new Error(`Unknown lookup service "${data.serviceId}"`);
+    // Defense in depth: trace-panel.tsx already hides a manualOnly service from the debtor Trace
+    // tab, since nothing on a debtor row can supply its input (e.g. a DIN). Refuse it here too,
+    // in case this is ever called directly.
+    if (service.manualOnly) {
+      throw new Error(`"${service.label}" can only be run from Admin > Insights.`);
+    }
 
     const admin = db();
 
@@ -1040,6 +1046,7 @@ export const getProfilexUsageDetail = createServerFn({ method: "POST" })
 
 const UAN_RE = /^\d{12}$/;
 const GSTIN_RE = /^[0-9A-Z]{15}$/;
+const DIN_RE = /^\d{8}$/;
 
 export const runManualInsight = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
@@ -1092,11 +1099,17 @@ export const runManualInsight = createServerFn({ method: "POST" })
       if (!UAN_RE.test(uan)) throw new Error("A UAN is 12 digits.");
       queryKey = uan;
       requestBody = { uan };
-    } else {
+    } else if (service.input === "gstin") {
       const gstin = data.value.replace(/\s+/g, "").toUpperCase();
       if (!GSTIN_RE.test(gstin)) throw new Error("A GSTIN is 15 letters and digits.");
       queryKey = gstin;
       requestBody = { gstin };
+    } else {
+      // service.input === "din" — the only other case a manual lookup can be.
+      const din = data.value.replace(/\s+/g, "");
+      if (!DIN_RE.test(din)) throw new Error("A DIN is 8 digits.");
+      queryKey = din;
+      requestBody = { din };
     }
 
     const admin = db();

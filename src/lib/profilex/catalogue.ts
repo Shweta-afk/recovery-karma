@@ -7,14 +7,20 @@
 //
 // Verified against ProfileX's published Postman collection (docs.profilex.tech) on 2026-08-26.
 
-/** What a service consumes. Nothing here accepts a free-text value from the browser: `mobile`
- *  comes from the debtor's own `phone_primary`, `mobile+name` adds their stored name, and a
- *  derived input (`uan`, `gstin`) is read from an earlier trace on that same debtor. That is
- *  what keeps every lookup rooted in data already in the portfolio. */
+/** What a service consumes. For a debtor-triggered lookup (runProfilexTrace, the Trace tab on a
+ *  debtor profile) nothing here accepts a free-text value from the browser: `mobile` comes from
+ *  the debtor's own `phone_primary`, `mobile+name` adds their stored name, and a derived input
+ *  (`uan`, `gstin`) is read from an earlier trace on that same debtor. That is what keeps every
+ *  lookup rooted in data already in the portfolio.
+ *
+ *  `din` is the one exception, and it is typed in by hand — no debtor row carries a director's
+ *  DIN, and nothing derives one. A service with `input: "din"` MUST also set `manualOnly: true`,
+ *  which keeps it off the debtor Trace tab entirely and reachable only from Admin > Insights
+ *  (runManualInsight), where an admin is the one supplying the value. */
 export type ProfilexInput =
   /** The debtor's own number, sent as `mobile` — or as `phone`, which some endpoints want
    *  instead. Same value either way; only the body key differs. */
-  "mobile" | "phone" | "mobile+name" | "mobile+firstName" | "uan" | "gstin";
+  "mobile" | "phone" | "mobile+name" | "mobile+firstName" | "uan" | "gstin" | "din";
 
 /** How a derived input is obtained: which service supplies it, and how to read it back out of
  *  that service's stored response. Declaring it here rather than branching in the server action
@@ -43,6 +49,12 @@ export interface ProfilexService {
   input: ProfilexInput;
   /** Required for `uan`/`gstin` inputs; omitted for the ones that start from the phone. */
   derivedFrom?: DerivedFrom;
+  /** True for a service whose input (currently only `din`) nothing on a debtor row can ever
+   *  supply. Hidden from the debtor Trace tab (trace-panel.tsx filters these out) and refused
+   *  server-side by runProfilexTrace even if called directly; reachable only from Admin >
+   *  Insights, where an admin types the value in. Still subject to the normal per-company
+   *  enabled_services allow-list and rate card. */
+  manualOnly?: boolean;
   /** Price in ₹ keyed by the provider's `data.status`. ProfileX bills per service AND per
    *  status: a "not found" (status 2/3) still costs money on most services. Overridable per
    *  client via profilex_settings.rate_card — these are the published list prices. */
@@ -213,6 +225,31 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     // spend figure in Reports is calculated from the rate card.
     defaultPrices: { "1": 1.42, "2": 1.42 },
     blurb: "Business phone and email registered against the debtor's GSTIN.",
+  },
+  {
+    id: "din-to-contact",
+    label: "DIN to Contact",
+    // Confirmed 2026-09-23 against ProfileX's published Postman collection (see
+    // recoveryai-profilex memory for the fetch URL) — path, service-id and body all verified;
+    // no not-found example in the collection, and the console pricing card wasn't checked, so
+    // treat the price below as unconfirmed (see the comment on defaultPrices).
+    path: "/core-svc/api/v2/vre/exp/din-to-contact",
+    serviceId: "d6ad42e9-3a72-44b9-9a06-7f869b5104c0",
+    input: "din",
+    // No debtor field ever holds a company director's DIN, and nothing derives one — this can
+    // only run from Admin > Insights, where an admin types the DIN in by hand. See
+    // ProfilexInput's and manualOnly's doc comments.
+    manualOnly: true,
+    // The console card wasn't checked for this one (no ProfileX console access when this was
+    // added). Priced alongside GST to Contact as a placeholder — same shape of lookup (an
+    // identifier resolved to a contact) — since ProfileX's API docs never carry pricing.
+    // Confirm against the console/contract and correct it in Admin > Settings before enabling
+    // this for any company; every spend figure in Reports is calculated from the rate card.
+    defaultPrices: { "1": 1.42 },
+    blurb:
+      "A company director's mobile number and email, resolved from their DIN (Director " +
+      "Identification Number) — typed in by an admin, not run against a debtor. Useful when a " +
+      "business or proprietor loan needs to reach a director directly.",
   },
 ];
 
