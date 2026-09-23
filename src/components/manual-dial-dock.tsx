@@ -80,7 +80,7 @@ export function ManualDialDock() {
 
   /** The account the typed loan ID resolves to, or null. Instant from the portfolio cache when
    * it has the account; otherwise one debounced database lookup (loan-ref-lookup.ts). */
-  const match = useLoanReferenceMatch(loanId);
+  const { match, looking: lookingUp } = useLoanReferenceMatch(loanId);
 
   const recentManual = useMemo(() => {
     void tick;
@@ -220,6 +220,11 @@ export function ManualDialDock() {
                 <p className="mt-1 flex items-center gap-1 text-[10px] font-medium text-success">
                   <Link2 className="h-3 w-3 shrink-0" />
                   {match.debtor.name} · {match.portfolio.name}
+                </p>
+              ) : lookingUp ? (
+                <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <Search className="h-3 w-3 shrink-0" />
+                  Looking up account…
                 </p>
               ) : (
                 <p className="mt-1 flex items-center gap-1 text-[10px] text-amber-500">

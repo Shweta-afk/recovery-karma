@@ -151,6 +151,17 @@ export async function loadAgentEmails(): Promise<{
   };
 }
 
+/** fetchAllRows()'s shape for a query that is known to fit one page. */
+async function fetchOnePage<T>(
+  page: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const { data, error } = await page(0, 49);
+  return { data: data ?? [], error };
+}
+
 export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void> {
   const key = scopeKey(scope);
   const { idByEmail, emailById } = await loadAgentEmails();
@@ -171,8 +182,13 @@ export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void>
     return;
   }
 
+  // A Loan ID names one account (a handful at most across portfolios), so it is one request —
+  // fetchAllRows always fires several pages at once, which is wasted on a lookup.
+  const pageRange = (from: number, to: number) =>
+    scope.kind === "loanRef" ? ([0, 49] as const) : ([from, to] as const);
+  const fetchPages = scope.kind === "loanRef" ? fetchOnePage : fetchAllRows;
   const { data, error } = await selectWithSlimExtra(!!scope.extraColumns, (extraColumns) =>
-    fetchAllRows<DebtorRow>((from, to) => {
+    fetchPages<DebtorRow>((from, to) => {
       let q = supabase
         .from("debtors")
         .select(`${DEBTOR_COLUMNS}, ${extraColumns}`)
@@ -181,7 +197,7 @@ export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void>
       else if (scope.kind === "portfolios") q = q.in("portfolio_id", scope.portfolioIds);
       else if (scope.kind === "loanRef") q = q.ilike("loan_reference", scope.loanRef);
       // scope.kind === "visible": no extra filter — RLS alone decides what comes back.
-      return q.range(from, to) as unknown as PromiseLike<{
+      return q.range(...pageRange(from, to)) as unknown as PromiseLike<{
         data: DebtorRow[] | null;
         error: { message: string } | null;
       }>;

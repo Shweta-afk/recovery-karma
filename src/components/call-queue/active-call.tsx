@@ -256,7 +256,9 @@ function ActiveCallContent({
   // Live resolution of the retro-attach Loan ID, so the agent sees which account the call is
   // about to be filed against before they submit. Cache first, then a database lookup, which
   // also makes the save-time lookup in dashboard.call-queue.tsx resolve (loan-ref-lookup.ts).
-  const attachMatch = useLoanReferenceMatch(disposition.attachLoanId);
+  const { match: attachMatch, looking: attachLooking } = useLoanReferenceMatch(
+    disposition.attachLoanId,
+  );
 
   // elapsed ticks centrally in CallSessionProvider so it keeps counting regardless of which
   // call UI (or none) is currently mounted — nothing to do here but read it off `call`.
@@ -1212,6 +1214,8 @@ function ActiveCallContent({
                           Will be logged against {attachMatch.debtor.name} ·{" "}
                           {attachMatch.portfolio.name}
                         </p>
+                      ) : attachLooking ? (
+                        <p className="text-[11px] text-muted-foreground">Looking up account…</p>
                       ) : (
                         <p className="text-[11px] text-amber-500">
                           No account matches — this call stays unmapped

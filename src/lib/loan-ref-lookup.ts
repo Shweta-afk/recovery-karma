@@ -51,19 +51,24 @@ export async function resolveLoanReference(ref: string): Promise<Match> {
   return null;
 }
 
-/** findDebtorByLoanReference(ref), falling back to a debounced database lookup. */
-export function useLoanReferenceMatch(ref: string): Match {
-  const [, setResolved] = useState(0);
+/**
+ * findDebtorByLoanReference(ref), falling back to a debounced database lookup. `looking` is true
+ * while that lookup is pending, so the UI can say so instead of "No account matches" — which an
+ * agent might otherwise dial on, logging the call unmapped.
+ */
+export function useLoanReferenceMatch(ref: string): { match: Match; looking: boolean } {
+  const [settledFor, setSettledFor] = useState<string | null>(null);
   const cached = findDebtorByLoanReference(ref);
   useEffect(() => {
     if (cached || !ref.trim()) return;
     let cancelled = false;
     const t = setTimeout(() => {
       resolveLoanReference(ref)
-        .then((m) => {
-          if (!cancelled && m) setResolved((n) => n + 1);
-        })
-        .catch((e) => console.warn("[loan-ref-lookup] lookup failed:", e));
+        .catch((e) => console.warn("[loan-ref-lookup] lookup failed:", e))
+        .finally(() => {
+          // Re-renders either way: a match is then found synchronously via the remembered map.
+          if (!cancelled) setSettledFor(ref);
+        });
     }, DEBOUNCE_MS);
     return () => {
       cancelled = true;
@@ -72,5 +77,5 @@ export function useLoanReferenceMatch(ref: string): Match {
     // `cached` is derived from `ref`; re-running on its identity would re-fire on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref, !!cached]);
-  return cached;
+  return { match: cached, looking: !cached && !!ref.trim() && settledFor !== ref };
 }
