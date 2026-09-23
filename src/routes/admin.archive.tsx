@@ -84,7 +84,7 @@ function AdminArchivePage() {
   const archiveNow = async () => {
     setArchiving(true);
     try {
-      const { results, deadAccounts } = await runArchiveNow({
+      const { results, accounts, deadAccounts } = await runArchiveNow({
         data: { accessToken: await getAccessToken() },
       });
       const failed = results.filter((r) => !r.ok);
@@ -93,6 +93,7 @@ function AdminArchivePage() {
       } else {
         toast.success(`Archived ${results.length} month${results.length === 1 ? "" : "s"}.`);
       }
+      if (accounts.error) toast.error(`Account details were not saved: ${accounts.error}`);
       if (deadAccounts.error) {
         toast.error(`Closed accounts were not archived: ${deadAccounts.error}`);
       } else if (deadAccounts.failed.length) {

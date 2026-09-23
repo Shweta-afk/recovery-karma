@@ -13,6 +13,7 @@ import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import { enforceRateLimit } from "./rate-limit.server";
 import { monthsBetween } from "./archive-shared";
 import { archiveDeadAccounts, signedDeadAccountFileUrl } from "./dead-account-archive.server";
+import { snapshotDebtorVersions } from "./archive-snapshot.server";
 
 interface LooseDb {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- no generated Database types
@@ -66,6 +67,15 @@ export const runArchiveNow = createServerFn({ method: "POST" })
       results.push(error ? { month, ok: false, error: error.message } : { month, ok: true });
     }
 
+    // Account versions for this month, in batches (one statement for every account timed out —
+    // see archive-snapshot.server.ts). Reported, not thrown: the months above are already saved.
+    let accounts: { saved: number; error?: string };
+    try {
+      accounts = { saved: await snapshotDebtorVersions(caller.clientId, thisMonth) };
+    } catch (e) {
+      accounts = { saved: 0, error: e instanceof Error ? e.message : String(e) };
+    }
+
     // Dead accounts (portfolio closed 60+ days, nothing open) -> Excel file + strip. Scoped to the
     // verified caller's company only.
     // find(), not [0]: archiveDeadAccounts is single-flight, so if the daily run for every
@@ -85,7 +95,7 @@ export const runArchiveNow = createServerFn({ method: "POST" })
         .filter((p) => p.error)
         .map((p) => ({ portfolio: p.portfolioName, error: p.error as string })),
     };
-    return { results, deadAccounts };
+    return { results, accounts, deadAccounts };
   });
 
 /** A 5-minute download link for one dead-account file — admins, own company only. */

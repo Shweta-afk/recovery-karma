@@ -5,7 +5,8 @@
 //
 // Each run, for every company:
 //   1. archive_month(<yesterday's IST month>) — finalises last month on the 1st, and otherwise
-//      keeps the current month's snapshot fresh; idempotent, so running daily is safe;
+//      keeps the current month's snapshot fresh; idempotent, so running daily is safe. On the 1st
+//      it also saves every account's month-end version, in batches (archive-snapshot.server.ts);
 //   2. archiveDeadAccounts() — Excel file + strip for accounts closed 60+ days with nothing open.
 // Step 2 needs Node (it writes Excel), which is why the schedule calls the app rather than
 // running purely inside Postgres.
@@ -16,6 +17,7 @@
 // few seconds, and a large first run can take longer than that.
 import { getSupabaseAdmin } from "./supabase-admin.server";
 import { archiveDeadAccounts } from "./dead-account-archive.server";
+import { archiveMonth, istMonthOf, snapshotDebtorVersions } from "./archive-snapshot.server";
 
 export const ARCHIVE_CRON_PATH = "/api/cron/archive";
 
@@ -33,28 +35,28 @@ const json = (body: unknown, status: number) =>
     headers: { "content-type": "application/json" },
   });
 
-/** 'YYYY-MM' of yesterday, in IST. */
-function yesterdayIstMonth(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-  })
-    .format(new Date(Date.now() - 86_400_000))
-    .slice(0, 7);
-}
-
 async function runScheduledArchive(): Promise<void> {
-  const month = yesterdayIstMonth();
+  const now = new Date();
+  const month = istMonthOf(new Date(now.getTime() - 86_400_000)); // yesterday's IST month
+  const monthRolledOver = month !== istMonthOf(now); // i.e. today is the 1st (IST)
+
+  // One company per call — each is well inside the 8s statement timeout on its own.
   const admin = getSupabaseAdmin() as unknown as {
-    rpc: (
-      fn: string,
-      args: Record<string, unknown>,
-    ) => Promise<{ error: { message: string } | null }>;
+    from: (t: string) => { select: (c: string) => PromiseLike<{ data: { id: string }[] | null }> };
   };
-  const { error } = await admin.rpc("archive_month", { p_month: month });
-  if (error) console.error(`[archive-cron] archive_month(${month}) failed:`, error.message);
-  else console.log(`[archive-cron] archive_month(${month}) done`);
+  const { data: clients } = await admin.from("clients").select("id");
+  for (const { id } of clients ?? []) {
+    try {
+      await archiveMonth(id, month);
+      if (monthRolledOver) {
+        const saved = await snapshotDebtorVersions(id, month);
+        console.log(`[archive-cron] ${month} client ${id}: ${saved} account versions saved`);
+      }
+    } catch (e) {
+      console.error(`[archive-cron] client ${id}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  console.log(`[archive-cron] ${month} monthly archive done for ${clients?.length ?? 0} companies`);
 
   const results = await archiveDeadAccounts();
   for (const c of results) {

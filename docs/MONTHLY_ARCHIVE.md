@@ -11,6 +11,7 @@ Two jobs, one daily schedule:
 | Piece | Where |
 |---|---|
 | Monthly tables + `archive_month()` | `src/supabase/migrations/20260922_monthly_archive.sql` |
+| Account versions in batches (`archive_debtor_versions()`) | `src/supabase/migrations/20260923_archive_debtor_versions_batched.sql`, `src/lib/archive-snapshot.server.ts` |
 | `debtors.archived_at` + `dead_account_files` ledger | `src/supabase/migrations/20260923_dead_account_archive.sql` |
 | Dead-account rules + sheet contents (pure, tested) | `src/lib/dead-accounts-shared.ts`, `scripts/dead-accounts.test.ts` |
 | Dead-account job (Excel, upload, strip) | `src/lib/dead-account-archive.server.ts` |
@@ -59,8 +60,16 @@ Stop it: `select cron.unschedule('samvadx-daily-archive');`
 
 ## Each daily run
 
-For every company: `archive_month(<yesterday's IST month>)` — on the 1st that finalises the
-month that just ended, otherwise it refreshes the current month — then the dead-account job.
+For each company, one call at a time: `archive_month(<yesterday's IST month>)` — on the 1st that
+finalises the month that just ended, otherwise it refreshes the current month. **On the 1st only**,
+it also saves every account's month-end version via `archive_debtor_versions()`, 1,000 accounts
+per call. Then the dead-account job.
+
+**Why batches (2026-09-23):** every API call to Postgres is cut off at **8s** (PostgREST's
+`authenticator` statement timeout). The first scheduled run versioned all accounts in one
+statement — 12.8s for a 14,061-account company — was cancelled, and rolled back with nothing
+saved. Measured after the change: `archive_month` for all 8 companies 0.69s; 1,000 accounts 1.2s
+on a first save, 0.14s when nothing changed. Keep any new archive work under that limit per call.
 The endpoint answers 202 straight away and works in the background (pg_net stops waiting after
 a few seconds).
 
@@ -96,9 +105,9 @@ through a 5-minute signed link after a server-side company check.
 amounts, DPD and every link (call logs, payments, disputes, settlements, Insights) stay, so
 Reports, Activity History and lookup reuse are unaffected.
 
-**Order, so a failure never loses data:** safety snapshot (`archive_month` for the current month,
-which saves each account's full row) → build + upload file → ledger row → strip. If the snapshot
-fails the company is skipped entirely; if the ledger insert fails the file is removed; a strip
+**Order, so a failure never loses data:** safety snapshot (`archive_debtor_versions` for exactly the
+accounts about to be stripped — full row, `extra` included) → build + upload file → ledger row →
+strip. If the snapshot fails that portfolio is skipped; if the ledger insert fails the file is removed; a strip
 that fails part-way resumes on the next run (`archived_at IS NULL`). A portfolio re-archived later
 (e.g. accounts kept alive by a PTP that has since lapsed) gets a second, dated file.
 

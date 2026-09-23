@@ -80,6 +80,10 @@ CREATE POLICY monthly_archive_rows_select ON monthly_archive_rows FOR SELECT TO 
 -- Idempotent: running a month twice overwrites its rows with the same values, so a retry after
 -- a failure, or a manual "Archive now" on the current month, never duplicates anything.
 --
+-- (2026-09-23) Account rows are no longer versioned here — see
+-- 20260923_archive_debtor_versions_batched.sql (one statement timed out at 12.8s). This file is
+-- kept identical to that end state so replaying either converges.
+--
 -- Account/portfolio rows are VERSIONED, not re-copied every month: a new row is written only
 -- when the content differs from the newest saved version (content_hash). Copying ~15k accounts
 -- with ~150 extra columns each, monthly, would grow the database by hundreds of MB for no gain.
@@ -212,35 +216,11 @@ CREATE OR REPLACE FUNCTION archive_month(p_month TEXT, p_client UUID DEFAULT NUL
         GET DIAGNOSTICS n = ROW_COUNT;
         run_counts := run_counts || jsonb_build_object('settlement', n);
 
-        -- Versioned state: accounts, portfolios, per-agent targets.
+        -- Versioned state: portfolios and per-agent targets (accounts: see below).
         IF p_month IN (this_ist, prev_ist) THEN
-          INSERT INTO monthly_archive_rows
-              (client_id, month, kind, source_id, phone_key, occurred_at, content_hash, data)
-            SELECT c, p_month, 'debtor', s.id::TEXT, s.phone_key, s.created_at, s.h, s.j
-              FROM (
-                SELECT d.id, d.created_at,
-                       right(regexp_replace(COALESCE(d.phone_primary, ''), '\D', '', 'g'), 10)
-                         AS phone_key,
-                       md5(to_jsonb(d)::TEXT) AS h,
-                       to_jsonb(d) || jsonb_build_object('portfolio_name', p.name) AS j
-                  FROM debtors d LEFT JOIN portfolios p ON p.id = d.portfolio_id
-                  WHERE d.client_id = c
-              ) s
-              WHERE NOT EXISTS (
-                SELECT 1 FROM monthly_archive_rows r
-                  WHERE r.client_id = c AND r.kind = 'debtor' AND r.source_id = s.id::TEXT
-                    AND r.content_hash = s.h
-                    AND r.month = (
-                      SELECT max(r2.month) FROM monthly_archive_rows r2
-                        WHERE r2.client_id = c AND r2.kind = 'debtor'
-                          AND r2.source_id = s.id::TEXT)
-              )
-            ON CONFLICT (client_id, month, kind, source_id) DO UPDATE
-              SET data = EXCLUDED.data, content_hash = EXCLUDED.content_hash,
-                  phone_key = EXCLUDED.phone_key, archived_at = NOW();
-          GET DIAGNOSTICS n = ROW_COUNT;
-          run_counts := run_counts || jsonb_build_object('debtor', n);
-
+          -- Account rows are versioned separately, in batches, by archive_debtor_versions() below:
+          -- done here in one statement they took 12.8s for a 14,061-account company (2026-09-23),
+          -- past the 8s limit on API requests, and the whole month rolled back.
           INSERT INTO monthly_archive_rows
               (client_id, month, kind, source_id, occurred_at, content_hash, data)
             SELECT c, p_month, 'portfolio', s.id::TEXT, s.uploaded_at, s.h, s.j
@@ -303,5 +283,6 @@ CREATE OR REPLACE FUNCTION archive_month(p_month TEXT, p_client UUID DEFAULT NUL
 
 -- Only the scheduler and the server's service-role key may run it. Left executable by default
 -- it would let any signed-in user copy another company's data into the archive.
+
 REVOKE ALL ON FUNCTION archive_month(TEXT, UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION archive_month(TEXT, UUID) TO service_role;

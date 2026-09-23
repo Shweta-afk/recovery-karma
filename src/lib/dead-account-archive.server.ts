@@ -6,8 +6,9 @@
 // (/api/cron/archive, see archive-cron.server.ts) runs every company.
 //
 // Order is what makes it safe to re-run or to fail half-way:
-//   1. snapshot the company's full rows into monthly_archive_rows (archive_month) — so nothing
-//      the strip clears is ever lost, even though the Excel file itself is deliberately slim;
+//   1. save a version of exactly the accounts about to be stripped (full row, `extra` included)
+//      into monthly_archive_rows — so nothing the strip clears is ever lost, even though the Excel
+//      file itself is deliberately slim;
 //   2. build the file and upload it;
 //   3. record it in dead_account_files;
 //   4. only then strip the accounts (`archived_at IS NULL` guard, so a retry never double-strips).
@@ -15,6 +16,7 @@
 import { getSupabaseAdmin } from "./supabase-admin.server";
 import { fetchAllRows } from "./fetch-all-rows";
 import { todayIstKey } from "./date-filter";
+import { istMonthOf, snapshotDebtorVersions } from "./archive-snapshot.server";
 import {
   OPEN_RETENTION_STATUSES,
   buildDeadAccountSheets,
@@ -112,11 +114,6 @@ async function toXlsx(sheets: SheetData[]): Promise<Uint8Array> {
   return new Uint8Array(await wb.xlsx.writeBuffer());
 }
 
-const istMonth = (d: Date) =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit" })
-    .format(d)
-    .slice(0, 7);
-
 async function archivePortfolio(
   clientId: string,
   portfolio: { id: string; name: string; closed_at: string },
@@ -185,6 +182,10 @@ async function archivePortfolio(
   result.keptOpenCommitment = skipped.filter((s) => s.reason === "open_commitment").length;
   result.keptOpenRetention = skipped.filter((s) => s.reason === "open_retention").length;
   if (!archive.length) return result;
+
+  // Step 1 — the safety copy, for exactly these accounts. Throws (so this portfolio is skipped
+  // and nothing is stripped) if it can't be taken.
+  await snapshotDebtorVersions(clientId, istMonthOf(new Date()), archive);
 
   const traces = await selectIn<TraceLite>(archive, (part) =>
     admin
@@ -255,7 +256,7 @@ async function archivePortfolio(
   return result;
 }
 
-async function archiveClient(clientId: string, now: Date): Promise<ClientArchiveResult> {
+async function archiveClient(clientId: string): Promise<ClientArchiveResult> {
   const admin = db();
   const out: ClientArchiveResult = { clientId, portfolios: [] };
   const todayKey = todayIstKey();
@@ -270,16 +271,6 @@ async function archiveClient(clientId: string, now: Date): Promise<ClientArchive
     isPastDeadCutoff(p.closed_at, todayKey),
   );
   if (!due.length) return out;
-
-  // Step 1 — the safety copy. Refuse to strip anything if it can't be taken (e.g. the monthly
-  // archive migration isn't applied yet): the Excel file alone is deliberately too slim to undo
-  // a strip from.
-  const { error: snapErr } = await admin.rpc("archive_month", {
-    p_month: istMonth(now),
-    p_client: clientId,
-  });
-  if (snapErr)
-    return { ...out, error: `safety snapshot (archive_month) failed: ${snapErr.message}` };
 
   const { data: agentRows } = await admin
     .from("agents")
@@ -322,7 +313,6 @@ export function archiveDeadAccounts(clientId?: string): Promise<ClientArchiveRes
   running = (async () => {
     try {
       await ensureBucket();
-      const now = new Date();
       let clientIds: string[];
       if (clientId) {
         clientIds = [clientId];
@@ -332,7 +322,7 @@ export function archiveDeadAccounts(clientId?: string): Promise<ClientArchiveRes
         clientIds = ((data ?? []) as { id: string }[]).map((c) => c.id);
       }
       const results: ClientArchiveResult[] = [];
-      for (const id of clientIds) results.push(await archiveClient(id, now));
+      for (const id of clientIds) results.push(await archiveClient(id));
       return results;
     } finally {
       running = null;
