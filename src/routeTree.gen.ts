@@ -20,6 +20,7 @@ import { Route as SuperadminRouteImport } from './routes/superadmin'
 import { Route as SuperadminSetupRouteImport } from './routes/superadmin-setup'
 import { Route as WebphoneTestRouteImport } from './routes/webphone-test'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminArchiveRouteImport } from './routes/admin.archive'
 import { Route as AdminInsightsRouteImport } from './routes/admin.insights'
 import { Route as AdminLiveCallsRouteImport } from './routes/admin.live-calls'
 import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
@@ -101,6 +102,11 @@ const WebphoneTestRoute = WebphoneTestRouteImport.update({
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminArchiveRoute = AdminArchiveRouteImport.update({
+  id: '/archive',
+  path: '/archive',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminInsightsRoute = AdminInsightsRouteImport.update({
@@ -251,6 +257,7 @@ export interface FileRoutesByFullPath {
   '/superadmin': typeof SuperadminRouteWithChildren
   '/superadmin-setup': typeof SuperadminSetupRoute
   '/webphone-test': typeof WebphoneTestRoute
+  '/admin/archive': typeof AdminArchiveRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
@@ -287,6 +294,7 @@ export interface FileRoutesByTo {
   '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin-setup': typeof SuperadminSetupRoute
   '/webphone-test': typeof WebphoneTestRoute
+  '/admin/archive': typeof AdminArchiveRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
@@ -328,6 +336,7 @@ export interface FileRoutesById {
   '/superadmin': typeof SuperadminRouteWithChildren
   '/superadmin-setup': typeof SuperadminSetupRoute
   '/webphone-test': typeof WebphoneTestRoute
+  '/admin/archive': typeof AdminArchiveRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
@@ -370,6 +379,7 @@ export interface FileRouteTypes {
     | '/superadmin'
     | '/superadmin-setup'
     | '/webphone-test'
+    | '/admin/archive'
     | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
@@ -406,6 +416,7 @@ export interface FileRouteTypes {
     | '/setup-confirm'
     | '/superadmin-setup'
     | '/webphone-test'
+    | '/admin/archive'
     | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
@@ -446,6 +457,7 @@ export interface FileRouteTypes {
     | '/superadmin'
     | '/superadmin-setup'
     | '/webphone-test'
+    | '/admin/archive'
     | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
@@ -566,6 +578,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/archive': {
+      id: '/admin/archive'
+      path: '/archive'
+      fullPath: '/admin/archive'
+      preLoaderRoute: typeof AdminArchiveRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/insights': {
@@ -761,6 +780,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
+  AdminArchiveRoute: typeof AdminArchiveRoute
   AdminInsightsRoute: typeof AdminInsightsRoute
   AdminLiveCallsRoute: typeof AdminLiveCallsRoute
   AdminPortfolioRoute: typeof AdminPortfolioRoute
@@ -772,6 +792,7 @@ interface AdminRouteChildren {
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminArchiveRoute: AdminArchiveRoute,
   AdminInsightsRoute: AdminInsightsRoute,
   AdminLiveCallsRoute: AdminLiveCallsRoute,
   AdminPortfolioRoute: AdminPortfolioRoute,

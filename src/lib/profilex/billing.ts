@@ -92,3 +92,60 @@ export function normalisePhone(raw: string | null | undefined): string {
   if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
   return digits;
 }
+
+/** Every way a 10-digit mobile can sit in `debtors.phone_primary`. Uploads store whatever the
+ *  bank's file had, so the same borrower can be "9876543210" in one file and "+919876543210" in
+ *  the next — matching on the bare number alone would miss exactly the repeat we want to catch. */
+export function phoneVariants(mobile: string): string[] {
+  return [mobile, `91${mobile}`, `+91${mobile}`, `0${mobile}`, `+91 ${mobile}`];
+}
+
+/** First word of a name, lower-cased. Name-taking services (mobile+name) can answer differently
+ *  for two different people on one number, so a reused result must at least agree on this. */
+export function firstNameKey(name: string | null | undefined): string {
+  return (
+    String(name ?? "")
+      .trim()
+      .split(/\s+/)[0]
+      ?.toLowerCase() ?? ""
+  );
+}
+
+/** A previously paid-for lookup on the same phone + service, from a debtor row in an earlier
+ *  upload (`live`) or from the monthly archive (`archive`). */
+export interface ReuseCandidate {
+  id: string;
+  source: "live" | "archive";
+  providerStatus: string | null;
+  createdAt: string;
+  debtorName: string | null;
+  httpStatus: number | null;
+  response: unknown;
+}
+
+/** The newest candidate still inside its freshness window — a found result lives for
+ *  `hitTtlHours`, a miss for the shorter `missTtlHours`, the same rule the per-debtor cache uses
+ *  so a borrower is treated identically whether or not their row was re-uploaded. */
+export function pickReusable(
+  candidates: ReuseCandidate[],
+  opts: {
+    hitTtlHours: number;
+    missTtlHours: number;
+    now?: number;
+    /** Set for name-taking services: only reuse when the first name agrees. */
+    sameFirstNameAs?: string | null;
+  },
+): ReuseCandidate | null {
+  const now = opts.now ?? Date.now();
+  const wantName = opts.sameFirstNameAs === undefined ? null : firstNameKey(opts.sameFirstNameAs);
+  let best: ReuseCandidate | null = null;
+  for (const c of candidates) {
+    const created = new Date(c.createdAt).getTime();
+    if (!Number.isFinite(created)) continue;
+    const ttlHours = isHit(c.providerStatus) ? opts.hitTtlHours : opts.missTtlHours;
+    if (now - created >= ttlHours * 3_600_000) continue;
+    if (wantName !== null && firstNameKey(c.debtorName) !== wantName) continue;
+    if (!best || created > new Date(best.createdAt).getTime()) best = c;
+  }
+  return best;
+}

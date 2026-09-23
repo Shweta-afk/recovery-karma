@@ -32,6 +32,9 @@ import {
   istMonthStart,
   normalisePhone,
   readProviderStatus,
+  phoneVariants,
+  pickReusable,
+  type ReuseCandidate,
 } from "./profilex/billing";
 import {
   LEGACY_SERVICE_IDS,
@@ -270,6 +273,107 @@ async function callProfilex(
   return { httpStatus: res.status, json, text };
 }
 
+/** Any dialable number a trace surfaced joins the debtor's alternate numbers so it reaches the
+ * agent's dialer without anyone re-keying it. Deduped against the primary and what's already
+ * stored. Shared by a fresh lookup and a reused one — a reused result must still enrich the new
+ * debtor row, which is the whole reason the agent asked. */
+async function writebackPhones(
+  admin: ReturnType<typeof db>,
+  debtor: { id?: unknown; phone_primary?: unknown; alt_phones?: unknown },
+  discovered: string[],
+): Promise<void> {
+  if (!discovered.length) return;
+  const primary = normalisePhone(debtor.phone_primary as string);
+  const existing = ((debtor.alt_phones as string[] | null) ?? []).map(normalisePhone);
+  const fresh = discovered.filter((p) => p !== primary && !existing.includes(p));
+  if (!fresh.length) return;
+  await admin
+    .from("debtors")
+    .update({ alt_phones: [...((debtor.alt_phones as string[] | null) ?? []), ...fresh] })
+    .eq("id", debtor.id as string);
+}
+
+/** Looks for a lookup this company already paid for on the same phone + service — first on other
+ * debtor rows (an earlier upload of the same borrower), then in the monthly archive. Returns
+ * null when nothing usable exists, including when the archive table has not been created yet
+ * (code can deploy ahead of migrations/20260922_monthly_archive.sql). Reads only; the caller
+ * records the copy. */
+async function findReusableTrace(
+  admin: ReturnType<typeof db>,
+  a: {
+    clientId: string;
+    debtorId: string;
+    debtorName: string | null;
+    mobile: string;
+    service: { id: string; input: string };
+    settings: { hit_ttl_hours: number; miss_ttl_hours: number };
+  },
+): Promise<ReuseCandidate | null> {
+  const nameSensitive = a.service.input === "mobile+name" || a.service.input === "mobile+firstName";
+  const candidates: ReuseCandidate[] = [];
+
+  const { data: live } = await admin
+    .from("debtor_traces")
+    .select(
+      "id, transaction_id, provider_status, http_status, response, created_at, debtors!inner(name, phone_primary, client_id)",
+    )
+    .eq("client_id", a.clientId)
+    .eq("service_id", a.service.id)
+    .eq("state", "done")
+    .neq("debtor_id", a.debtorId)
+    .in("debtors.phone_primary", phoneVariants(a.mobile))
+    .order("created_at", { ascending: false })
+    .limit(25);
+  for (const t of (live ?? []) as unknown as Array<Record<string, unknown>>) {
+    // Skip copies. A copy is stamped with today's date, so reusing it would restart the freshness
+    // clock: data bought on day 0 could be served on day 50 via a copy made on day 25. The
+    // original purchase is always itself a candidate.
+    if (String(t.transaction_id ?? "").startsWith("reused:")) continue;
+    const debtors = t.debtors as { name: string | null } | null;
+    candidates.push({
+      id: t.id as string,
+      source: "live",
+      providerStatus: (t.provider_status as string | null) ?? null,
+      createdAt: t.created_at as string,
+      debtorName: debtors?.name ?? null,
+      httpStatus: (t.http_status as number | null) ?? null,
+      response: t.response,
+    });
+  }
+
+  const { data: archived, error: archErr } = await admin
+    .from("monthly_archive_rows")
+    .select("source_id, occurred_at, data")
+    .eq("client_id", a.clientId)
+    .eq("kind", "trace")
+    .eq("tag", a.service.id)
+    .eq("phone_key", a.mobile)
+    .order("occurred_at", { ascending: false })
+    .limit(25);
+  if (!archErr) {
+    for (const r of (archived ?? []) as unknown as Array<Record<string, unknown>>) {
+      const d = (r.data ?? {}) as Record<string, unknown>;
+      if (d.state !== "done") continue;
+      if (String(d.transaction_id ?? "").startsWith("reused:")) continue; // see live loop above
+      candidates.push({
+        id: r.source_id as string,
+        source: "archive",
+        providerStatus: (d.provider_status as string | null) ?? null,
+        createdAt: (r.occurred_at as string) ?? (d.created_at as string),
+        debtorName: (d.debtor_name as string | null) ?? null,
+        httpStatus: (d.http_status as number | null) ?? null,
+        response: d.response,
+      });
+    }
+  }
+
+  return pickReusable(candidates, {
+    hitTtlHours: a.settings.hit_ttl_hours,
+    missTtlHours: a.settings.miss_ttl_hours,
+    sameFirstNameAs: nameSensitive ? a.debtorName : undefined,
+  });
+}
+
 export const runProfilexTrace = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
@@ -378,6 +482,50 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         if (ageMs < ttlHours * 3_600_000) {
           return { trace: prior, cached: true, cost: 0 };
         }
+      }
+    }
+
+    // Same borrower, different upload. The per-debtor cache above is keyed by debtor_id, and a
+    // re-uploaded portfolio gets brand-new debtor rows — so a borrower we already paid to look up
+    // would be bought again. Look the phone up across the company's other debtor rows and the
+    // monthly archive (which outlives deleted/closed portfolios) before spending anything.
+    if (!data.force && PHONE_INPUTS.includes(service.input)) {
+      const reused = await findReusableTrace(admin, {
+        clientId: caller.clientId,
+        debtorId: debtor.id as string,
+        debtorName: debtor.name as string | null,
+        mobile: normalisePhone(debtor.phone_primary as string),
+        service,
+        settings,
+      });
+      if (reused) {
+        const { data: copy, error: copyErr } = await admin
+          .from("debtor_traces")
+          .insert({
+            client_id: caller.clientId,
+            debtor_id: debtor.id,
+            service_id: service.id,
+            requested_by: caller.agentId ?? null,
+            state: "done",
+            http_status: reused.httpStatus ?? 200,
+            provider_status: reused.providerStatus,
+            // Nothing was bought: cost 0 and not billable, so spend reports and wallets are
+            // untouched and the row counts as a cached reuse (profilex_usage_by_user).
+            billable: false,
+            cost: 0,
+            transaction_id: `reused:${reused.id}`,
+            response: reused.response,
+            completed_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+        if (copy) {
+          const discovered = [...extractPhones(reused.response)];
+          await writebackPhones(admin, debtor, discovered);
+          return { trace: copy, cached: true, cost: 0, discoveredPhones: discovered };
+        }
+        // Could not record the copy — fall through and buy it rather than show the agent nothing.
+        console.error("[profilex] reuse copy failed:", copyErr?.message);
       }
     }
 
@@ -588,17 +736,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     // number, and often an empty one — this matters mainly for contact-returning services added
     // to the catalogue later.)
     const discovered = [...extractPhones(json)];
-    if (discovered.length) {
-      const primary = normalisePhone(debtor.phone_primary as string);
-      const existing = ((debtor.alt_phones as string[] | null) ?? []).map(normalisePhone);
-      const fresh = discovered.filter((p) => p !== primary && !existing.includes(p));
-      if (fresh.length) {
-        await admin
-          .from("debtors")
-          .update({ alt_phones: [...((debtor.alt_phones as string[] | null) ?? []), ...fresh] })
-          .eq("id", debtor.id);
-      }
-    }
+    await writebackPhones(admin, debtor, discovered);
 
     return { trace: finished, cached: false, cost, discoveredPhones: discovered };
   });

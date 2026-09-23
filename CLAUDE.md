@@ -405,6 +405,22 @@ Unlike every other integration here:
   trace unlocks the employment lookups. It has **no** GST block, so it does not unlock GST→Contact. The phone and name are read from the debtor row
   server-side; that is what keeps every lookup to data already in a portfolio.
 
+**Monthly archive + cross-upload lookup reuse (2026-09-22).** `monthly_archive_rows` /
+`monthly_archive_runs` (`migrations/20260922_monthly_archive.sql`) permanently keep every Insights
+lookup, call log/feedback, payment etc. per IST month; admins download a month as Excel from
+**Admin → Archive History**. `runProfilexTrace` reuses an earlier paid lookup for the same
+phone + service (other debtor rows, then the archive) at ₹0 instead of re-buying it after a
+re-upload. The schedule is deliberately NOT a migration — see `docs/MONTHLY_ARCHIVE.md`.
+
+**Dead accounts are stripped, not deleted (2026-09-23).** 60 IST days after a portfolio closes,
+each account with no open PTP/callback or retention request is written to an Excel file in the
+private `dead-accounts` Storage bucket (ledger: `dead_account_files`), then its `extra` and
+`email` are cleared and `debtors.archived_at` is set (`src/lib/dead-account-archive.server.ts`,
+rules in `dead-accounts-shared.ts`). Never delete debtor rows instead: call_logs/payments/disputes/
+settlements reference them with no cascade and Reports' past months read payments. Runs from
+Admin → Archive History ("Archive now") and daily via `POST /api/cron/archive` (needs
+`ARCHIVE_CRON_SECRET`; 503 without it).
+
 Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the
 `profilex_settings` table, **not** `org-settings-store.ts`, which is localStorage-only and so
 unreadable by the server): manager/admin role gate, per-client monthly budget in IST, a

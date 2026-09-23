@@ -19,6 +19,7 @@ import {
   Building2,
   Wallet,
   Sparkles,
+  DatabaseBackup,
 } from "lucide-react";
 import {
   Sidebar,
@@ -70,6 +71,7 @@ const adminItems = [
   { title: "Teams", url: "/admin/teams", icon: Users },
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
   { title: "Insights", url: "/admin/insights", icon: Sparkles },
+  { title: "Archive History", url: "/admin/archive", icon: DatabaseBackup },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];

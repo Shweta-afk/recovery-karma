@@ -4,6 +4,7 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { CSP_REPORT_PATH, buildCspReportOnly, handleCspReport } from "./lib/csp";
 import { TELEPHONY_WEBHOOK_PATH, handleTelephonyWebhook } from "./lib/telephony/webhook-handler";
+import { ARCHIVE_CRON_PATH, handleArchiveCron } from "./lib/archive-cron.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -79,6 +80,10 @@ async function handleRequest(request: Request, env: unknown, ctx: unknown): Prom
     // Provider status callbacks are plain HTTP from outside the app, not app routes.
     if (new URL(request.url).pathname === TELEPHONY_WEBHOOK_PATH) {
       return await handleTelephonyWebhook(request);
+    }
+    // The daily archive schedule (pg_cron + pg_net) — see src/lib/archive-cron.server.ts.
+    if (new URL(request.url).pathname === ARCHIVE_CRON_PATH) {
+      return await handleArchiveCron(request);
     }
     const handler = await getServerEntry();
     const response = await handler.fetch(request, env, ctx);

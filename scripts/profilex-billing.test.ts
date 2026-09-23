@@ -10,6 +10,8 @@ import {
   istMonthStart,
   normalisePhone,
   readProviderStatus,
+  phoneVariants,
+  pickReusable,
 } from "../src/lib/profilex/billing";
 import {
   ALL_SERVICE_IDS,
@@ -460,5 +462,64 @@ describe("priceStatuses — every service must be priceable for a miss", () => {
     expect(statusLabel("3", three)).toBe("not found (3)");
     const two = priceStatuses(getService("mobile-to-uan")!);
     expect(statusLabel("2", two)).toBe("not found");
+  });
+});
+
+describe("cross-upload reuse", () => {
+  const H = 3_600_000;
+  const now = Date.parse("2026-09-20T00:00:00Z");
+  const cand = (over: Partial<import("../src/lib/profilex/billing").ReuseCandidate>) => ({
+    id: "t1",
+    source: "live" as const,
+    providerStatus: "1",
+    createdAt: new Date(now - 24 * H).toISOString(),
+    debtorName: "Ravi Kumar",
+    httpStatus: 200,
+    response: {},
+    ...over,
+  });
+  const ttl = { hitTtlHours: 720, missTtlHours: 168, now };
+
+  test("phoneVariants covers the ways an upload can store one mobile", () => {
+    const v = phoneVariants("9876543210");
+    expect(v).toContain("9876543210");
+    expect(v).toContain("+919876543210");
+    expect(v).toContain("919876543210");
+    expect(v).toContain("09876543210");
+  });
+
+  test("reuses a found result inside the hit window", () => {
+    expect(pickReusable([cand({})], ttl)?.id).toBe("t1");
+  });
+
+  test("does not reuse a found result past the hit window", () => {
+    expect(
+      pickReusable([cand({ createdAt: new Date(now - 721 * H).toISOString() })], ttl),
+    ).toBeNull();
+  });
+
+  test("a miss expires on the shorter window", () => {
+    const miss = cand({ providerStatus: "2", createdAt: new Date(now - 169 * H).toISOString() });
+    expect(pickReusable([miss], ttl)).toBeNull();
+    const freshMiss = cand({
+      providerStatus: "2",
+      createdAt: new Date(now - 167 * H).toISOString(),
+    });
+    expect(pickReusable([freshMiss], ttl)?.id).toBe("t1");
+  });
+
+  test("picks the newest of several usable results", () => {
+    const older = cand({ id: "old", createdAt: new Date(now - 100 * H).toISOString() });
+    const newer = cand({ id: "new", createdAt: new Date(now - 10 * H).toISOString() });
+    expect(pickReusable([older, newer], ttl)?.id).toBe("new");
+  });
+
+  test("a name-taking service is not reused for a different first name on the same number", () => {
+    expect(pickReusable([cand({})], { ...ttl, sameFirstNameAs: "Suresh Patil" })).toBeNull();
+    expect(pickReusable([cand({})], { ...ttl, sameFirstNameAs: "  ravi  " })?.id).toBe("t1");
+  });
+
+  test("an unparseable date is never reused", () => {
+    expect(pickReusable([cand({ createdAt: "garbage" })], ttl)).toBeNull();
   });
 });
