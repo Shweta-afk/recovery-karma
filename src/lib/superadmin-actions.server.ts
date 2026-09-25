@@ -24,9 +24,35 @@ import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.serve
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 import { ALL_SERVICE_IDS, getService, priceFor } from "./profilex/catalogue";
 import { fetchAllRows } from "./fetch-all-rows";
+import type { Json } from "./database.types";
 
 function db() {
   return getSupabaseAdmin();
+}
+
+/** Writes one row to superadmin_activity_log (20260925_superadmin_activity_log.sql) — the
+ *  non-money half of "whole history of superadmin activities" (money already has a full
+ *  history in profilex_wallet_ledger). Fire-and-forget on purpose: a logging failure must
+ *  never fail the action it's describing, so this only console.errors, never throws. */
+async function logSuperadminActivity(params: {
+  superadminId: string;
+  action: string;
+  clientId?: string | null;
+  summary: string;
+  detail?: Record<string, Json>;
+}) {
+  const { error } = await db()
+    .from("superadmin_activity_log")
+    .insert({
+      superadmin_id: params.superadminId,
+      action: params.action,
+      client_id: params.clientId ?? null,
+      summary: params.summary,
+      detail: params.detail ?? null,
+    });
+  if (error) {
+    console.error(`[logSuperadminActivity] failed to log "${params.action}":`, error);
+  }
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -335,13 +361,30 @@ export const approveCompany = createServerFn({ method: "POST" })
     };
     if (subdomain) patch.subdomain = subdomain;
 
-    const { error } = await admin.from("clients").update(patch).eq("id", data.clientId);
+    const { data: updated, error } = await admin
+      .from("clients")
+      .update(patch)
+      .eq("id", data.clientId)
+      .select("company_name")
+      .maybeSingle();
     if (error) {
       if (/duplicate key|already exists/i.test(error.message)) {
         throw new Error("That subdomain is already taken by another company");
       }
       throw new Error(`Could not approve the company (${error.message})`);
     }
+
+    const companyName = (updated as { company_name: string } | null)?.company_name ?? null;
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "company_approved",
+      clientId: data.clientId,
+      summary: subdomain
+        ? `Approved ${companyName ?? "a company"} and set subdomain to ${subdomain}`
+        : `Approved ${companyName ?? "a company"}`,
+      detail: subdomain ? { subdomain } : undefined,
+    });
+
     return { ok: true };
   });
 
@@ -360,15 +403,26 @@ export const rejectCompany = createServerFn({ method: "POST" })
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
     const admin = db();
-    const { error } = await admin
+    const { data: updated, error } = await admin
       .from("clients")
       .update({
         status: "rejected",
         verified_at: new Date().toISOString(),
         verified_by: caller.superadminId,
       })
-      .eq("id", data.clientId);
+      .eq("id", data.clientId)
+      .select("company_name")
+      .maybeSingle();
     if (error) throw new Error(`Could not reject the company (${error.message})`);
+
+    const companyName = (updated as { company_name: string } | null)?.company_name ?? null;
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "company_rejected",
+      clientId: data.clientId,
+      summary: `Rejected ${companyName ?? "a company"}`,
+    });
+
     return { ok: true };
   });
 
@@ -392,6 +446,11 @@ export const setCompanySubdomain = createServerFn({ method: "POST" })
       throw new Error("Subdomain must be lowercase letters, numbers and hyphens only");
     }
     const admin = db();
+    const { data: before } = await admin
+      .from("clients")
+      .select("company_name, subdomain")
+      .eq("id", data.clientId)
+      .maybeSingle();
     const { error } = await admin.from("clients").update({ subdomain }).eq("id", data.clientId);
     if (error) {
       if (/duplicate key|already exists/i.test(error.message)) {
@@ -399,6 +458,16 @@ export const setCompanySubdomain = createServerFn({ method: "POST" })
       }
       throw new Error(`Could not update the subdomain (${error.message})`);
     }
+
+    const prior = before as { company_name: string; subdomain: string | null } | null;
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "subdomain_set",
+      clientId: data.clientId,
+      summary: `Set ${prior?.company_name ?? "a company"}'s subdomain to ${subdomain}`,
+      detail: { subdomain: { from: prior?.subdomain ?? null, to: subdomain } },
+    });
+
     return { ok: true };
   });
 
@@ -495,7 +564,7 @@ export const updateCompanyUserRole = createServerFn({ method: "POST" })
     const admin = db();
     const { data: user, error: findErr } = await admin
       .from("agents")
-      .select("id, client_id")
+      .select("id, client_id, name, email, role")
       .eq("id", data.userId)
       .maybeSingle();
     if (findErr) throw new Error(`Could not verify that user (${findErr.message})`);
@@ -508,6 +577,15 @@ export const updateCompanyUserRole = createServerFn({ method: "POST" })
       .update({ role: data.role })
       .eq("id", data.userId);
     if (updateErr) throw new Error(`Could not update role (${updateErr.message})`);
+
+    const target = user as { name: string; email: string; role: string };
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "user_role_changed",
+      clientId: data.clientId,
+      summary: `Changed ${target.name} (${target.email})'s role from ${target.role} to ${data.role}`,
+      detail: { userId: data.userId, role: { from: target.role, to: data.role } },
+    });
 
     return { ok: true };
   });
@@ -539,11 +617,33 @@ export const setCompanyLimits = createServerFn({ method: "POST" })
     }
 
     const admin = db();
+    const { data: before } = await admin
+      .from("clients")
+      .select("company_name, max_agents, max_managers")
+      .eq("id", data.clientId)
+      .maybeSingle();
     const { error } = await admin
       .from("clients")
       .update({ max_agents: data.maxAgents, max_managers: data.maxManagers })
       .eq("id", data.clientId);
     if (error) throw new Error(`Could not update seat limits (${error.message})`);
+
+    const prior = before as {
+      company_name: string;
+      max_agents: number | null;
+      max_managers: number | null;
+    } | null;
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "seat_limits_set",
+      clientId: data.clientId,
+      summary: `Set ${prior?.company_name ?? "a company"}'s seat limits to ${data.maxAgents ?? "unlimited"} agents / ${data.maxManagers ?? "unlimited"} managers`,
+      detail: {
+        maxAgents: { from: prior?.max_agents ?? null, to: data.maxAgents },
+        maxManagers: { from: prior?.max_managers ?? null, to: data.maxManagers },
+      },
+    });
+
     return { ok: true };
   });
 
@@ -788,6 +888,173 @@ export const getWalletLedger = createServerFn({ method: "POST" })
     }));
 
     return { rows: result };
+  });
+
+/** Ledger scopes that are actually a superadmin doing something, as opposed to automatic
+ *  per-lookup debits (company_to_manager/manager_charge are a company admin/manager's own
+ *  activity, not a superadmin's — deliberately left out of this feed). actual_charge is
+ *  included only when created_by is set, i.e. a manual correction rather than the automatic
+ *  real-time ProfileX debit (see getSuperadminActivity's filtering below). */
+const SUPERADMIN_MONEY_SCOPES = ["master_topup", "master_to_company", "actual_topup", "actual_charge"];
+
+export interface SuperadminActivityRow {
+  id: string;
+  /** "action" = superadmin_activity_log row (approvals, subdomain, limits, roles, Insights
+   *  config). "money" = a profilex_wallet_ledger row a superadmin caused. */
+  kind: "action" | "money";
+  action: string;
+  actorName: string | null;
+  clientId: string | null;
+  companyName: string | null;
+  summary: string;
+  amount: number | null;
+  detail: Record<string, Json> | null;
+  createdAt: string;
+}
+
+const MONEY_SCOPE_LABEL: Record<string, string> = {
+  master_topup: "Topped up the master Insights wallet",
+  master_to_company: "Allocated Insights budget to",
+  actual_topup: "Recorded a real ProfileX/Neokred top-up",
+  actual_charge: "Corrected the actual ProfileX wallet balance for",
+};
+
+/** The unified "whole history of superadmin activities" feed: every non-money action from
+ *  superadmin_activity_log (20260925_superadmin_activity_log.sql) merged with every
+ *  superadmin-caused money movement from profilex_wallet_ledger — e.g. exactly "how much money
+ *  was assigned to the company" — into one chronological list. Two bounded reads merged and
+ *  re-sorted in memory rather than a SQL UNION/view, since the two tables have different shapes
+ *  and this keeps each one's own reader (getWalletLedger, this) simple and independently
+ *  correct. */
+export const getSuperadminActivity = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema.optional(),
+        limit: limitSchema.optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const admin = db();
+    const limit = data.limit ?? 200;
+
+    let actionQuery = admin
+      .from("superadmin_activity_log")
+      .select("id, superadmin_id, action, client_id, summary, detail, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (data.clientId) actionQuery = actionQuery.eq("client_id", data.clientId);
+
+    let moneyQuery = admin
+      .from("profilex_wallet_ledger")
+      .select("id, scope, client_id, amount, note, created_by, created_at")
+      .in("scope", SUPERADMIN_MONEY_SCOPES)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (data.clientId) moneyQuery = moneyQuery.eq("client_id", data.clientId);
+
+    const [{ data: actions, error: actionErr }, { data: money, error: moneyErr }] =
+      await Promise.all([actionQuery, moneyQuery]);
+    if (actionErr) throw new Error(`Could not load activity log (${actionErr.message})`);
+    if (moneyErr) throw new Error(`Could not load wallet ledger (${moneyErr.message})`);
+
+    const actionRows = (actions ?? []) as {
+      id: string;
+      superadmin_id: string | null;
+      action: string;
+      client_id: string | null;
+      summary: string;
+      detail: Record<string, Json> | null;
+      created_at: string;
+    }[];
+    // actual_charge is automatic (created_by NULL) except for a manual correction — exclude the
+    // automatic ones here, they belong on the wallet page's balance, not a superadmin's history.
+    const moneyRows = (
+      (money ?? []) as {
+        id: string;
+        scope: string;
+        client_id: string | null;
+        amount: number;
+        note: string | null;
+        created_by: string | null;
+        created_at: string;
+      }[]
+    ).filter((r) => r.scope !== "actual_charge" || r.created_by !== null);
+
+    const superadminIds = [
+      ...new Set([
+        ...actionRows.map((r) => r.superadmin_id).filter((v): v is string => !!v),
+        ...moneyRows.map((r) => r.created_by).filter((v): v is string => !!v),
+      ]),
+    ];
+    const clientIds = [
+      ...new Set([
+        ...actionRows.map((r) => r.client_id).filter((v): v is string => !!v),
+        ...moneyRows.map((r) => r.client_id).filter((v): v is string => !!v),
+      ]),
+    ];
+
+    const [{ data: superadmins }, { data: clients }] = await Promise.all([
+      superadminIds.length
+        ? admin.from("superadmins").select("id, name").in("id", superadminIds)
+        : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+      clientIds.length
+        ? admin.from("clients").select("id, company_name").in("id", clientIds)
+        : Promise.resolve({ data: [] as { id: string; company_name: string }[] }),
+    ]);
+    const actorNameById = new Map(
+      ((superadmins ?? []) as { id: string; name: string }[]).map((s) => [s.id, s.name]),
+    );
+    const companyNameById = new Map(
+      ((clients ?? []) as { id: string; company_name: string }[]).map((c) => [
+        c.id,
+        c.company_name,
+      ]),
+    );
+
+    const fromActions: SuperadminActivityRow[] = actionRows.map((r) => ({
+      id: r.id,
+      kind: "action",
+      action: r.action,
+      actorName: r.superadmin_id ? (actorNameById.get(r.superadmin_id) ?? null) : null,
+      clientId: r.client_id,
+      companyName: r.client_id ? (companyNameById.get(r.client_id) ?? null) : null,
+      summary: r.summary,
+      amount: null,
+      detail: r.detail,
+      createdAt: r.created_at,
+    }));
+
+    const fromMoney: SuperadminActivityRow[] = moneyRows.map((r) => {
+      const companyName = r.client_id ? (companyNameById.get(r.client_id) ?? null) : null;
+      const label = MONEY_SCOPE_LABEL[r.scope] ?? r.scope;
+      const summary =
+        r.scope === "master_topup"
+          ? `${label}: ₹${Number(r.amount).toFixed(2)}`
+          : `${label} ${companyName ?? "a company"}: ₹${Number(r.amount).toFixed(2)}`;
+      return {
+        id: r.id,
+        kind: "money",
+        action: r.scope,
+        actorName: r.created_by ? (actorNameById.get(r.created_by) ?? null) : null,
+        clientId: r.client_id,
+        companyName,
+        summary: r.note ? `${summary} — ${r.note}` : summary,
+        amount: Number(r.amount),
+        detail: null,
+        createdAt: r.created_at,
+      };
+    });
+
+    const rows = [...fromActions, ...fromMoney]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
+
+    return { rows };
   });
 
 export interface InsightsActivityRow {
@@ -1139,5 +1406,19 @@ export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
       { onConflict: "client_id" },
     );
     if (error) throw new Error(`Could not save Insights settings (${error.message})`);
+
+    const { data: client } = await admin
+      .from("clients")
+      .select("company_name")
+      .eq("id", data.clientId)
+      .maybeSingle();
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "insights_services_changed",
+      clientId: data.clientId,
+      summary: `Updated ${(client as { company_name: string } | null)?.company_name ?? "a company"}'s Insights settings (${enabledServices.length} service${enabledServices.length === 1 ? "" : "s"} enabled, ${data.enabled ? "on" : "off"})`,
+      detail: { enabled: data.enabled, enabledServices },
+    });
+
     return { ok: true };
   });

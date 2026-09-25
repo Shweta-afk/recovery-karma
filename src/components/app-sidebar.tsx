@@ -80,6 +80,7 @@ const superadminItems = [
   { title: "Companies", url: "/superadmin", icon: Building2 },
   { title: "Insights Wallet", url: "/superadmin/wallet", icon: Wallet },
   { title: "Insights Activity", url: "/superadmin/insights", icon: Sparkles },
+  { title: "Superadmin Activity", url: "/superadmin/activity", icon: History },
 ];
 
 export function AppSidebar({ role }: { role: Role }) {

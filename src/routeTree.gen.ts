@@ -45,6 +45,7 @@ import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
 import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
 import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
+import { Route as SuperadminActivityRouteImport } from './routes/superadmin.activity'
 import { Route as SuperadminInsightsRouteImport } from './routes/superadmin.insights'
 import { Route as SuperadminWalletRouteImport } from './routes/superadmin.wallet'
 import { Route as SuperadminCompaniesClientIdRouteImport } from './routes/superadmin.companies.$clientId'
@@ -229,6 +230,11 @@ const SuperadminIndexRoute = SuperadminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SuperadminRoute,
 } as any)
+const SuperadminActivityRoute = SuperadminActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => SuperadminRoute,
+} as any)
 const SuperadminInsightsRoute = SuperadminInsightsRouteImport.update({
   id: '/insights',
   path: '/insights',
@@ -279,6 +285,7 @@ export interface FileRoutesByFullPath {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
   '/superadmin/wallet': typeof SuperadminWalletRoute
   '/admin/': typeof AdminIndexRoute
@@ -316,6 +323,7 @@ export interface FileRoutesByTo {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
   '/superadmin/wallet': typeof SuperadminWalletRoute
   '/admin': typeof AdminIndexRoute
@@ -358,6 +366,7 @@ export interface FileRoutesById {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
   '/superadmin/wallet': typeof SuperadminWalletRoute
   '/admin/': typeof AdminIndexRoute
@@ -401,6 +410,7 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/superadmin/activity'
     | '/superadmin/insights'
     | '/superadmin/wallet'
     | '/admin/'
@@ -438,6 +448,7 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/superadmin/activity'
     | '/superadmin/insights'
     | '/superadmin/wallet'
     | '/admin'
@@ -479,6 +490,7 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/superadmin/activity'
     | '/superadmin/insights'
     | '/superadmin/wallet'
     | '/admin/'
@@ -755,6 +767,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SuperadminIndexRouteImport
       parentRoute: typeof SuperadminRoute
     }
+    '/superadmin/activity': {
+      id: '/superadmin/activity'
+      path: '/activity'
+      fullPath: '/superadmin/activity'
+      preLoaderRoute: typeof SuperadminActivityRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
     '/superadmin/insights': {
       id: '/superadmin/insights'
       path: '/insights'
@@ -857,6 +876,7 @@ const ManagerRouteWithChildren =
   ManagerRoute._addFileChildren(ManagerRouteChildren)
 
 interface SuperadminRouteChildren {
+  SuperadminActivityRoute: typeof SuperadminActivityRoute
   SuperadminInsightsRoute: typeof SuperadminInsightsRoute
   SuperadminWalletRoute: typeof SuperadminWalletRoute
   SuperadminIndexRoute: typeof SuperadminIndexRoute
@@ -864,6 +884,7 @@ interface SuperadminRouteChildren {
 }
 
 const SuperadminRouteChildren: SuperadminRouteChildren = {
+  SuperadminActivityRoute: SuperadminActivityRoute,
   SuperadminInsightsRoute: SuperadminInsightsRoute,
   SuperadminWalletRoute: SuperadminWalletRoute,
   SuperadminIndexRoute: SuperadminIndexRoute,

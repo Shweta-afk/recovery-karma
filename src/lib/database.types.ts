@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 29 tables.
+// Generated from 34 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -268,6 +268,42 @@ export interface Database {
         };
         Relationships: [];
       };
+      dead_account_files: {
+        Row: {
+          id: string;
+          client_id: string;
+          portfolio_id: string | null;
+          portfolio_name: string;
+          closed_at: string | null;
+          file_path: string;
+          account_count: number;
+          size_bytes: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          portfolio_id?: string | null;
+          portfolio_name: string;
+          closed_at?: string | null;
+          file_path: string;
+          account_count: number;
+          size_bytes?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          portfolio_id?: string | null;
+          portfolio_name?: string;
+          closed_at?: string | null;
+          file_path?: string;
+          account_count?: number;
+          size_bytes?: number | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       debtor_traces: {
         Row: {
           id: string;
@@ -354,6 +390,7 @@ export interface Database {
           retained_from_portfolio_id: string | null;
           principal_amount: number | null;
           product_code: string | null;
+          archived_at: string | null;
         };
         Insert: {
           id?: string;
@@ -386,6 +423,7 @@ export interface Database {
           retained_from_portfolio_id?: string | null;
           principal_amount?: number | null;
           product_code?: string | null;
+          archived_at?: string | null;
         };
         Update: {
           id?: string;
@@ -418,6 +456,7 @@ export interface Database {
           retained_from_portfolio_id?: string | null;
           principal_amount?: number | null;
           product_code?: string | null;
+          archived_at?: string | null;
         };
         Relationships: [];
       };
@@ -493,6 +532,63 @@ export interface Database {
           agent_id?: string | null;
           resolved?: boolean | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      insights_manual_lookups: {
+        Row: {
+          id: string;
+          client_id: string;
+          service_id: string;
+          requested_by: string | null;
+          query_key: string;
+          input: Json;
+          state: string;
+          http_status: number | null;
+          provider_status: string | null;
+          billable: boolean;
+          cost: number;
+          transaction_id: string | null;
+          response: Json | null;
+          error: string | null;
+          created_at: string;
+          completed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          service_id: string;
+          requested_by?: string | null;
+          query_key: string;
+          input: Json;
+          state?: string;
+          http_status?: number | null;
+          provider_status?: string | null;
+          billable?: boolean;
+          cost?: number;
+          transaction_id?: string | null;
+          response?: Json | null;
+          error?: string | null;
+          created_at?: string;
+          completed_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          service_id?: string;
+          requested_by?: string | null;
+          query_key?: string;
+          input?: Json;
+          state?: string;
+          http_status?: number | null;
+          provider_status?: string | null;
+          billable?: boolean;
+          cost?: number;
+          transaction_id?: string | null;
+          response?: Json | null;
+          error?: string | null;
+          created_at?: string;
+          completed_at?: string | null;
         };
         Relationships: [];
       };
@@ -616,6 +712,84 @@ export interface Database {
           payment_link_url?: string | null;
           razorpay_link_id?: string | null;
           sent_at?: string | null;
+        };
+        Relationships: [];
+      };
+      monthly_archive_rows: {
+        Row: {
+          id: number;
+          client_id: string;
+          month: string;
+          kind: string;
+          source_id: string;
+          phone_key: string | null;
+          tag: string | null;
+          occurred_at: string | null;
+          content_hash: string | null;
+          data: Json;
+          archived_at: string;
+        };
+        Insert: {
+          id: number;
+          client_id: string;
+          month: string;
+          kind: string;
+          source_id: string;
+          phone_key?: string | null;
+          tag?: string | null;
+          occurred_at?: string | null;
+          content_hash?: string | null;
+          data: Json;
+          archived_at?: string;
+        };
+        Update: {
+          id?: number;
+          client_id?: string;
+          month?: string;
+          kind?: string;
+          source_id?: string;
+          phone_key?: string | null;
+          tag?: string | null;
+          occurred_at?: string | null;
+          content_hash?: string | null;
+          data?: Json;
+          archived_at?: string;
+        };
+        Relationships: [];
+      };
+      monthly_archive_runs: {
+        Row: {
+          id: string;
+          client_id: string;
+          month: string;
+          status: string;
+          counts: Json;
+          error: string | null;
+          triggered_by: string;
+          started_at: string;
+          finished_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          month: string;
+          status?: string;
+          counts: Json;
+          error?: string | null;
+          triggered_by?: string;
+          started_at?: string;
+          finished_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          month?: string;
+          status?: string;
+          counts?: Json;
+          error?: string | null;
+          triggered_by?: string;
+          started_at?: string;
+          finished_at?: string | null;
         };
         Relationships: [];
       };
@@ -861,9 +1035,9 @@ export interface Database {
           hit_ttl_hours: number;
           miss_ttl_hours: number;
           rate_card: Json;
-          enabled_services: string[];
           updated_at: string;
           updated_by: string | null;
+          enabled_services: string[];
         };
         Insert: {
           client_id: string;
@@ -872,9 +1046,9 @@ export interface Database {
           hit_ttl_hours?: number;
           miss_ttl_hours?: number;
           rate_card: Json;
-          enabled_services?: string[];
           updated_at?: string;
           updated_by?: string | null;
+          enabled_services?: string[];
         };
         Update: {
           client_id?: string;
@@ -883,9 +1057,9 @@ export interface Database {
           hit_ttl_hours?: number;
           miss_ttl_hours?: number;
           rate_card?: Json;
-          enabled_services?: string[];
           updated_at?: string;
           updated_by?: string | null;
+          enabled_services?: string[];
         };
         Relationships: [];
       };
@@ -1090,6 +1264,36 @@ export interface Database {
           agent_notes?: string | null;
           status?: string | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      superadmin_activity_log: {
+        Row: {
+          id: string;
+          superadmin_id: string | null;
+          action: string;
+          client_id: string | null;
+          summary: string;
+          detail: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          superadmin_id?: string | null;
+          action: string;
+          client_id?: string | null;
+          summary: string;
+          detail?: Json | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          superadmin_id?: string | null;
+          action?: string;
+          client_id?: string | null;
+          summary?: string;
+          detail?: Json | null;
+          created_at?: string;
         };
         Relationships: [];
       };
