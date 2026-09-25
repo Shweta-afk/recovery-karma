@@ -202,6 +202,12 @@ of taking the app down. It fails on:
   bit us directly: the breaking file applied while the fixing file did not.
 - any migration containing debug scaffolding (`SET LOCAL ROLE`, `_rls_probe`,
   `request.jwt.claims`) — keep verification in `scripts/debug/`, never in a file a runner executes.
+- **Table grants (added 2026-09-23).** From 2026-10-30 Supabase stops auto-granting Data API
+  access to new `public` tables. Any migration dated `20260924` or later that creates a public
+  table must `GRANT` it to `service_role`, and to `authenticated` unless marked
+  `-- check:sql server-only: <table>`. No SQL file may grant a table to `anon`/`PUBLIC` — every
+  live table (checked 2026-09-23) has RLS on and no `anon` access; Supabase's own notice suggests
+  `grant select ... to anon`, which this project must not copy.
 
 **Two rules that follow from all of this:**
 
