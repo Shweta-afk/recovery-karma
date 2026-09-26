@@ -454,6 +454,38 @@ vestigial; don't build against them without confirming this has changed.
 **WhatsApp/SMS now go through Exotel — this section was stale until 2026-08-27.**
 `messages-store.ts`'s `sendMessage()` calls `sendWhatsAppMessage` / SMS in
 `telephony/server.ts`, which hit Exotel's real API before the row is written; `status` records
+**Insights outcome report + lookup feedback (2026-09-27).** `insights_outcome_report` RPC
+(`migrations/20260927_insights_outcome_report.sql`, applied live) gives one row per lookup with the
+calls/contacts/PTPs/payments on that account AFTER it — attribution by time, not causation; logic
+in `src/lib/profilex/outcome.ts`, UI `components/profilex/outcome-report.tsx` (Admin Reports →
+Insights, Manager Reports → Insights). Called via `asCaller` so RLS scopes it (verified: manager =
+own lookups, admin = own company). `call_logs.dialed_phone` (written best-effort by
+`saveDisposition`) is what lets it say a found number connected; older calls are NULL.
+Paid-file payments (`payments.source 'bank_reported'`, or a no-amount paid-file row that only
+set `debtors.status='paid'`) are split out as "Paid Via: Bank paid file". They carry the UPLOAD
+time as `received_at`, so "paid after" means "reported after". **No usefulness rating** — a manual
+Useful/Not useful and then a calculated one were both built and removed on 2026-09-27 at the
+user's request (`_v2.sql` drops the manual columns); don't reintroduce either without asking.
+
+**Lookup data by Loan ID** (same Insights tab, second view; `components/profilex/loan-lookup-report.tsx`,
+pure logic `src/lib/profilex/loan-lookup-data.ts`, server `getPortfolioLookupData`): pick a
+portfolio → one row per loan with every lookup ever run on it merged (new numbers, emails,
+PAN/UAN/DOB/father's name, employer, addresses, UPI, GST) beside the bank file's
+`extra_named` address/city/dob/employer, with Match/Differs per field. Excel download = "By Loan
+ID" sheet + "All fields" sheet (every flattened field of every lookup). Fields are extracted by
+KEY NAME across the whole response, so the skip-tracing bundle and standalone services share one
+extractor.
+
+**That Excel is request-only for companies** (`migrations/20260927_insights_export_requests.sql`).
+A company admin/manager clicks Request → a superadmin approves/declines on **Superadmin → Insights
+Activity → Excel requests** → approval opens that portfolio's download for 7 days (requester is
+notified; decision is in the superadmin activity log). `profilex_settings.direct_export` exempts a
+company — ON for Axiotta Technologies (`0a3aedc6…`, set 2026-09-27), off for everyone else; toggle
+on the superadmin company page. Enforced server-side: the "All fields" data only leaves via
+`getPortfolioLookupExport`, which checks direct_export or an unexpired approval;
+`getPortfolioLookupData` (the on-screen view) returns per-loan rows only. `insights_export_requests`
+is server-only (RLS on, no policies, no `authenticated` grant).
+
 whether the provider accepted it, and a failure is stored as `"failed"` rather than optimistic
 "sent". `INTERAKT_API_KEY` remains unused — Interakt was never the gateway.
 

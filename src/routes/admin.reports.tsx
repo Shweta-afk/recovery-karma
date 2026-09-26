@@ -85,7 +85,8 @@ import { AgentCallLog } from "@/components/reports/agent-call-log";
 import { AgentReportDetail } from "@/components/reports/agent-detail";
 import { ProfilexSpendPanel } from "@/components/profilex/spend-panel";
 import { InsightsUsagePanel } from "@/components/profilex/usage-panel";
-import { INSIGHTS_PERIODS, type InsightsPeriod } from "@/lib/profilex/period";
+import { InsightsReports } from "@/components/profilex/insights-reports";
+import { type InsightsPeriod } from "@/lib/profilex/period";
 import { DataTable, ReportSection } from "@/components/reports/data-table";
 import {
   Leaderboard,
@@ -1743,30 +1744,11 @@ function AdminReportsPage() {
 
         {/* ── CALL LOG TAB ── */}
         <TabsContent value="profilex" className="mt-4 space-y-6">
-          {/* Who spent it, then what it went on. Per-person first: every lookup is charged, so
-              the actionable question is which manager is running them, not which service. */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Period</span>
-            <div className="inline-flex rounded-md border border-border bg-card p-0.5">
-              {INSIGHTS_PERIODS.map((p) => (
-                <button
-                  key={p.value}
-                  type="button"
-                  onClick={() => setInsightsPeriod(p.value)}
-                  className={cn(
-                    "rounded px-2.5 py-1 text-xs transition-colors",
-                    insightsPeriod === p.value
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <InsightsUsagePanel period={insightsPeriod} />
-          <ProfilexSpendPanel period={insightsPeriod} />
+          {/* Whether it helped recover first, then who spent it and what it went on. */}
+          <InsightsReports period={insightsPeriod} onPeriodChange={setInsightsPeriod}>
+            <InsightsUsagePanel period={insightsPeriod} />
+            <ProfilexSpendPanel period={insightsPeriod} />
+          </InsightsReports>
         </TabsContent>
 
         <TabsContent value="detail" className="mt-4">

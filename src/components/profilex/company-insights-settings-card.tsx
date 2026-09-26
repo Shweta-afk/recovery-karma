@@ -14,9 +14,12 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase";
 import {
+  getCompanyDirectExport,
   getCompanyProfilexSettings,
   saveCompanyProfilexSettings,
+  setCompanyDirectExport,
 } from "@/lib/superadmin-actions.server";
+import { getAccessToken } from "@/lib/access-token";
 import {
   ALL_SERVICE_IDS,
   PROFILEX_SERVICES,
@@ -138,6 +141,10 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
               </div>
               <Switch checked={enabled} onCheckedChange={setEnabled} />
             </div>
+
+            <Separator />
+
+            <DirectExportSwitch clientId={clientId} />
 
             <Separator />
 
@@ -293,5 +300,58 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Saved on its own, immediately, rather than with the card's Save button: it governs a data
+ *  export, not pricing, and has its own activity-log entry (setCompanyDirectExport). */
+function DirectExportSwitch({ clientId }: { clientId: string }) {
+  const [direct, setDirect] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await getCompanyDirectExport({
+          data: { accessToken: await getAccessToken(), clientId },
+        });
+        setDirect(res.direct);
+      } catch {
+        setDirect(false);
+      }
+    })();
+  }, [clientId]);
+
+  const toggle = async (next: boolean) => {
+    setSaving(true);
+    try {
+      await setCompanyDirectExport({
+        data: { accessToken: await getAccessToken(), clientId, direct: next },
+      });
+      setDirect(next);
+      toast.success(next ? "Direct Excel download allowed" : "Excel now needs a request");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <p className="text-xs font-medium text-foreground">Direct Excel download</p>
+        <p className="text-[11px] text-muted-foreground">
+          Off: this company must request each portfolio's "Lookup data by Loan ID" Excel and a
+          superadmin approves it (Insights Activity page). On: it downloads straight away. Saves
+          immediately.
+        </p>
+      </div>
+      <Switch
+        checked={!!direct}
+        disabled={direct === null || saving}
+        onCheckedChange={(v) => void toggle(v)}
+      />
+    </div>
   );
 }

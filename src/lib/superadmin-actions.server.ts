@@ -895,7 +895,12 @@ export const getWalletLedger = createServerFn({ method: "POST" })
  *  activity, not a superadmin's — deliberately left out of this feed). actual_charge is
  *  included only when created_by is set, i.e. a manual correction rather than the automatic
  *  real-time ProfileX debit (see getSuperadminActivity's filtering below). */
-const SUPERADMIN_MONEY_SCOPES = ["master_topup", "master_to_company", "actual_topup", "actual_charge"];
+const SUPERADMIN_MONEY_SCOPES = [
+  "master_topup",
+  "master_to_company",
+  "actual_topup",
+  "actual_charge",
+];
 
 export interface SuperadminActivityRow {
   id: string;
@@ -1420,5 +1425,263 @@ export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
       detail: { enabled: data.enabled, enabledServices },
     });
 
+    return { ok: true };
+  });
+
+// ── Lookup-data Excel requests ─────────────────────────────────────────────────────────────────
+// Companies ask for a portfolio's "Lookup data by Loan ID" Excel; a superadmin decides here. An
+// approval opens that portfolio's download for EXPORT_APPROVAL_DAYS (enforced in
+// getPortfolioLookupExport, profilex-actions.server.ts). See
+// migrations/20260927_insights_export_requests.sql.
+
+const EXPORT_APPROVAL_DAYS = 7;
+
+export interface LookupExportRequestRow {
+  id: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  note: string | null;
+  clientId: string;
+  companyName: string;
+  portfolioId: string;
+  portfolioName: string;
+  lenderName: string;
+  requestedByName: string;
+  requestedByEmail: string;
+  requestedByRole: string;
+  decidedAt: string | null;
+  decidedByName: string;
+  decisionNote: string | null;
+  expiresAt: string | null;
+  downloadCount: number;
+  lastDownloadAt: string | null;
+  /** Lookups ever run on the portfolio — how much the file would contain. */
+  lookups: number;
+}
+
+export const listLookupExportRequests = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, status: z.enum(["pending", "all"]).optional() }).parse(d),
+  )
+  .handler(async ({ data }): Promise<{ rows: LookupExportRequestRow[] }> => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const admin = db();
+    let q = admin
+      .from("insights_export_requests")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (data.status !== "all") q = q.eq("status", "pending");
+    const { data: reqs, error } = await q;
+    if (error) {
+      throw new Error(
+        /insights_export_requests/.test(error.message)
+          ? "Excel requests aren't set up yet — run migrations/20260927_insights_export_requests.sql"
+          : `Could not load requests (${error.message})`,
+      );
+    }
+    const list = reqs ?? [];
+    if (!list.length) return { rows: [] };
+
+    const uniq = (xs: (string | null)[]) => [...new Set(xs.filter((x): x is string => !!x))];
+    const [clients, portfolios, agents, supers] = await Promise.all([
+      admin
+        .from("clients")
+        .select("id, company_name")
+        .in("id", uniq(list.map((r) => r.client_id))),
+      admin
+        .from("portfolios")
+        .select("id, name, lender_name")
+        .in("id", uniq(list.map((r) => r.portfolio_id))),
+      admin
+        .from("agents")
+        .select("id, name, email, role")
+        .in("id", uniq(list.map((r) => r.requested_by))),
+      admin
+        .from("superadmins")
+        .select("id, name")
+        .in("id", uniq(list.map((r) => r.decided_by))),
+    ]);
+    const byId = <T extends { id: string }>(rows: T[] | null) =>
+      new Map((rows ?? []).map((r) => [r.id, r]));
+    const cMap = byId(clients.data as { id: string; company_name: string }[] | null);
+    const pMap = byId(
+      portfolios.data as { id: string; name: string; lender_name: string | null }[] | null,
+    );
+    const aMap = byId(
+      agents.data as { id: string; name: string; email: string; role: string }[] | null,
+    );
+    const sMap = byId(supers.data as { id: string; name: string }[] | null);
+
+    // Size of each file: lookups on the portfolio's accounts. One count per portfolio.
+    const counts = new Map<string, number>();
+    await Promise.all(
+      uniq(list.map((r) => r.portfolio_id)).map(async (pid) => {
+        const { count } = await (
+          admin as unknown as {
+            from: (t: string) => {
+              select: (
+                c: string,
+                o: { count: "exact"; head: true },
+              ) => {
+                eq: (c: string, v: string) => Promise<{ count: number | null }>;
+              };
+            };
+          }
+        )
+          .from("debtor_traces")
+          .select("id, debtors!inner(portfolio_id)", { count: "exact", head: true })
+          .eq("debtors.portfolio_id", pid);
+        counts.set(pid, count ?? 0);
+      }),
+    );
+
+    return {
+      rows: list.map((r) => {
+        const a = r.requested_by ? aMap.get(r.requested_by) : undefined;
+        const p = pMap.get(r.portfolio_id);
+        return {
+          id: r.id,
+          status: r.status as LookupExportRequestRow["status"],
+          createdAt: r.created_at,
+          note: r.note,
+          clientId: r.client_id,
+          companyName: cMap.get(r.client_id)?.company_name ?? "Unknown company",
+          portfolioId: r.portfolio_id,
+          portfolioName: p?.name ?? "Deleted portfolio",
+          lenderName: p?.lender_name ?? "",
+          requestedByName: a?.name ?? "Unknown",
+          requestedByEmail: a?.email ?? "",
+          requestedByRole: a?.role ?? "",
+          decidedAt: r.decided_at,
+          decidedByName: (r.decided_by && sMap.get(r.decided_by)?.name) || "",
+          decisionNote: r.decision_note,
+          expiresAt: r.expires_at,
+          downloadCount: r.download_count,
+          lastDownloadAt: r.last_download_at,
+          lookups: counts.get(r.portfolio_id) ?? 0,
+        };
+      }),
+    };
+  });
+
+export const decideLookupExportRequest = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        requestId: idSchema,
+        approve: z.boolean(),
+        note: z.string().trim().max(500).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const admin = db();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + EXPORT_APPROVAL_DAYS * 86_400_000).toISOString();
+    // Only a pending request can be decided — the status filter makes a double-click or two
+    // superadmins acting at once a no-op instead of a second decision.
+    const { data: updated, error } = await admin
+      .from("insights_export_requests")
+      .update({
+        status: data.approve ? "approved" : "rejected",
+        decided_by: caller.superadminId,
+        decided_at: now.toISOString(),
+        decision_note: data.note || null,
+        expires_at: data.approve ? expiresAt : null,
+      })
+      .eq("id", data.requestId)
+      .eq("status", "pending")
+      .select("id, client_id, portfolio_id, requested_by")
+      .maybeSingle();
+    if (error) throw new Error(`Could not save the decision (${error.message})`);
+    if (!updated) throw new Error("This request was already decided");
+
+    const [{ data: client }, { data: portfolio }] = await Promise.all([
+      admin.from("clients").select("company_name").eq("id", updated.client_id).maybeSingle(),
+      admin.from("portfolios").select("name").eq("id", updated.portfolio_id).maybeSingle(),
+    ]);
+    const pName = (portfolio as { name: string } | null)?.name ?? "a portfolio";
+    const cName = (client as { company_name: string } | null)?.company_name ?? "a company";
+
+    if (updated.requested_by) {
+      const { error: nErr } = await admin.from("notifications").insert({
+        client_id: updated.client_id,
+        to_agent_id: updated.requested_by,
+        from_name: "SamvadX",
+        message: data.approve
+          ? `Your Insights Excel request for ${pName} was approved — download it from Reports › Insights › Lookup data by Loan ID within ${EXPORT_APPROVAL_DAYS} days.`
+          : `Your Insights Excel request for ${pName} was declined${data.note ? `: ${data.note}` : "."}`,
+      });
+      if (nErr) console.error("[decideLookupExportRequest] notification failed:", nErr);
+    }
+
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: data.approve ? "insights_export_approved" : "insights_export_rejected",
+      clientId: updated.client_id,
+      summary: `${data.approve ? "Approved" : "Declined"} ${cName}'s Insights Excel for ${pName}`,
+      detail: {
+        requestId: data.requestId,
+        portfolioId: updated.portfolio_id,
+        note: data.note ?? null,
+      },
+    });
+    return { ok: true };
+  });
+
+/** Whether a company downloads the lookup-data Excel without asking (the platform's own). */
+export const getCompanyDirectExport = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, clientId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const { data: row } = await db()
+      .from("profilex_settings")
+      .select("direct_export")
+      .eq("client_id", data.clientId)
+      .maybeSingle();
+    return { direct: !!(row as { direct_export?: boolean } | null)?.direct_export };
+  });
+
+export const setCompanyDirectExport = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, clientId: idSchema, direct: z.boolean() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const admin = db();
+    // Update, then insert only if the company has no settings row yet — an upsert would reset
+    // the row's other columns (enabled, rate card) to defaults on a company that has none.
+    const { data: existing } = await admin
+      .from("profilex_settings")
+      .update({ direct_export: data.direct })
+      .eq("client_id", data.clientId)
+      .select("client_id");
+    if (!existing?.length) {
+      const { error } = await admin
+        .from("profilex_settings")
+        .insert({ client_id: data.clientId, direct_export: data.direct, rate_card: {} });
+      if (error) throw new Error(`Could not save (${error.message})`);
+    }
+    const { data: client } = await admin
+      .from("clients")
+      .select("company_name")
+      .eq("id", data.clientId)
+      .maybeSingle();
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "insights_direct_export_changed",
+      clientId: data.clientId,
+      summary: `${data.direct ? "Allowed" : "Removed"} direct Insights Excel download for ${(client as { company_name: string } | null)?.company_name ?? "a company"}`,
+      detail: { direct: data.direct },
+    });
     return { ok: true };
   });

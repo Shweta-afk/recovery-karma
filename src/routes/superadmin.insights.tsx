@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PROFILEX_SERVICES } from "@/lib/profilex/catalogue";
+import { ExportRequestsCard } from "@/components/profilex/export-requests-card";
 
 export const Route = createFileRoute("/superadmin/insights")({
   head: () => ({ meta: [{ title: "Insights Activity · SamvadX Platform" }] }),
@@ -137,6 +138,8 @@ function SuperadminInsightsPage() {
           </Select>
         </div>
       </div>
+
+      <ExportRequestsCard />
 
       {!loading && report && totals && (
         <>

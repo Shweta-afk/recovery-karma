@@ -346,6 +346,18 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   // real table, matching the schema's original intent.
   // payments.debtor_id is also a UUID FK. A payment that cannot be attributed to a debtor
   // has no place in the financial audit trail, so an ad-hoc call records the outcome on the
+  // The number actually rung — the primary, or an alt number the agent picked (often one
+  // Insights found). Lets the Insights outcome report say whether a found number connected.
+  // Its own best-effort update, like the extras above: a missing column
+  // (migrations/20260927_insights_outcome_report.sql) must never lose the disposition.
+  if (!isAdHoc && d.phone) {
+    const { error: phoneErr } = await supabase
+      .from("call_logs")
+      .update({ dialed_phone: d.phone })
+      .eq("id", logId);
+    if (phoneErr) console.warn(`[dispositions] couldn't set dialed_phone:`, phoneErr.message);
+  }
+
   // call log only — the amount still reaches reporting via promise_amount.
   if (d.outcome === "paid" && d.paidAmount && !isAdHoc) {
     const { error: payErr } = await supabase.from("payments").insert({

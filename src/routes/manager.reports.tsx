@@ -23,6 +23,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { DateRangeFilter } from "@/components/date-range-filter";
+import { InsightsReports } from "@/components/profilex/insights-reports";
+import type { InsightsPeriod } from "@/lib/profilex/period";
 import {
   EMPTY_RANGE,
   inDateRange,
@@ -101,6 +103,7 @@ function ManagerReportsPage() {
   // time window (this month vs last) or a current-state view (promises still open), not a slice
   // of the call log.
   const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
+  const [insightsPeriod, setInsightsPeriod] = useState<InsightsPeriod>("this-month");
 
   useEffect(() => {
     const load = () => setDisps(activeTeam ? getTeamDispositions(activeTeam.id) : []);
@@ -391,7 +394,18 @@ function ManagerReportsPage() {
             )}
           </TabsTrigger>
           <TabsTrigger value="detail">Call Log</TabsTrigger>
+          <TabsTrigger value="insights">Insights</TabsTrigger>
         </TabsList>
+
+        {/* ── INSIGHTS TAB ── what each lookup found and what happened on the account after.
+            Scoped to this manager's team by RLS, so there is no manager filter here. */}
+        <TabsContent value="insights" className="mt-4 space-y-4">
+          <InsightsReports
+            period={insightsPeriod}
+            onPeriodChange={setInsightsPeriod}
+            showManagerFilter={false}
+          />
+        </TabsContent>
 
         {/* ── MONTHLY TREND TAB ── */}
         <TabsContent value="trend" className="mt-4">

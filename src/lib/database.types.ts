@@ -138,6 +138,7 @@ export interface Database {
           created_at: string | null;
           contact_name: string | null;
           contact_phone: string | null;
+          dialed_phone: string | null;
           provider_call_id: string | null;
           sentiment: string | null;
           audited_by: string | null;
@@ -173,6 +174,7 @@ export interface Database {
           created_at?: string | null;
           contact_name?: string | null;
           contact_phone?: string | null;
+          dialed_phone?: string | null;
           provider_call_id?: string | null;
           sentiment?: string | null;
           audited_by?: string | null;
@@ -208,6 +210,7 @@ export interface Database {
           created_at?: string | null;
           contact_name?: string | null;
           contact_phone?: string | null;
+          dialed_phone?: string | null;
           provider_call_id?: string | null;
           sentiment?: string | null;
           audited_by?: string | null;
@@ -568,6 +571,54 @@ export interface Database {
           created_at?: string;
           resolved_at?: string | null;
           resolved_by?: string | null;
+        };
+        Relationships: [];
+      };
+      insights_export_requests: {
+        Row: {
+          id: string;
+          client_id: string;
+          portfolio_id: string;
+          requested_by: string | null;
+          note: string | null;
+          status: string;
+          decided_by: string | null;
+          decided_at: string | null;
+          decision_note: string | null;
+          expires_at: string | null;
+          download_count: number;
+          last_download_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          portfolio_id: string;
+          requested_by?: string | null;
+          note?: string | null;
+          status?: string;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          decision_note?: string | null;
+          expires_at?: string | null;
+          download_count?: number;
+          last_download_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          portfolio_id?: string;
+          requested_by?: string | null;
+          note?: string | null;
+          status?: string;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          decision_note?: string | null;
+          expires_at?: string | null;
+          download_count?: number;
+          last_download_at?: string | null;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -1074,6 +1125,7 @@ export interface Database {
           updated_at: string;
           updated_by: string | null;
           enabled_services: string[];
+          direct_export: boolean;
         };
         Insert: {
           client_id: string;
@@ -1085,6 +1137,7 @@ export interface Database {
           updated_at?: string;
           updated_by?: string | null;
           enabled_services?: string[];
+          direct_export?: boolean;
         };
         Update: {
           client_id?: string;
@@ -1096,6 +1149,7 @@ export interface Database {
           updated_at?: string;
           updated_by?: string | null;
           enabled_services?: string[];
+          direct_export?: boolean;
         };
         Relationships: [];
       };

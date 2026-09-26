@@ -43,6 +43,9 @@ import {
   type DerivedFrom,
   type ProfilexService,
 } from "./profilex/catalogue";
+import { toOutcomeRow, type OutcomeRpcRow } from "./profilex/outcome";
+import { buildLoanLookupData, type LoanTraceInput } from "./profilex/loan-lookup-data";
+import { fetchAllRows } from "./fetch-all-rows";
 
 // This project has no generated Supabase `Database` types, so every `.from(...)` resolves to
 // `never` and each column read is a type error (the older stores simply live with ~300 of
@@ -1034,6 +1037,294 @@ export const getProfilexUsageDetail = createServerFn({ method: "POST" })
     });
     if (error) throw new Error(`Could not load Insights detail log (${error.message})`);
     return { since, rows: (rows as UsageDetailRow[] | null) ?? [] };
+  });
+
+/**
+ * Every lookup with what happened on the account afterwards — see
+ * migrations/20260927_insights_outcome_report.sql and src/lib/profilex/outcome.ts. Same
+ * RLS-scoping rule as the two reports above: asCaller(), never db(). The raw provider responses
+ * are reduced to a summary here, server-side, so kilobytes per lookup never reach the browser.
+ */
+export const getInsightsOutcomeReport = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        since: isoDateSchema.optional(),
+        until: isoDateSchema.optional(),
+        managerId: idSchema.optional(),
+        portfolioId: idSchema.optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "manager" && caller.role !== "admin") {
+      throw new Error("Only managers or admins can view Insights reports");
+    }
+    const asUser = asCaller(data.accessToken);
+    const since = data.since ?? istMonthStart().toISOString();
+    const { data: rows, error } = await asUser.rpc("insights_outcome_report", {
+      p_since: since,
+      p_until: data.until ?? null,
+      p_manager_id: data.managerId ?? null,
+      p_portfolio_id: data.portfolioId ?? null,
+      p_limit: OUTCOME_REPORT_LIMIT,
+    });
+    if (error) {
+      throw new Error(
+        /insights_outcome_report/.test(error.message)
+          ? "The outcome report isn't set up yet — run migrations/20260927_insights_outcome_report.sql"
+          : `Could not load the Insights outcome report (${error.message})`,
+      );
+    }
+    const list = ((rows as OutcomeRpcRow[] | null) ?? []).map(toOutcomeRow);
+    return { since, rows: list, truncated: list.length >= OUTCOME_REPORT_LIMIT };
+  });
+
+const OUTCOME_REPORT_LIMIT = 5000;
+
+/** Portfolios the caller can see, for the "Lookup data by Loan ID" picker. RLS-scoped. */
+export const listInsightsPortfolios = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "manager" && caller.role !== "admin") {
+      throw new Error("Only managers or admins can view Insights reports");
+    }
+    const { data: rows, error } = await asCaller(data.accessToken)
+      .from("portfolios")
+      .select("id, name, lender_name, product_type, closed_at")
+      .order("uploaded_at", { ascending: false });
+    if (error) throw new Error(`Could not load portfolios (${error.message})`);
+    return {
+      portfolios: ((rows ?? []) as Row[]).map((p) => ({
+        id: String(p.id),
+        name: String(p.name ?? ""),
+        lender: String(p.lender_name ?? ""),
+        product: String(p.product_type ?? ""),
+        closed: !!p.closed_at,
+      })),
+    };
+  });
+
+/** Every lookup on one portfolio, merged per loan — see src/lib/profilex/loan-lookup-data.ts.
+ * Read as the caller so RLS decides which accounts are included (a manager: their own team's).
+ * All lookups ever run on the portfolio, not a period: this is the portfolio's saved Insights
+ * data, not an activity report. */
+async function loadPortfolioLookupData(accessToken: string, portfolioId: string) {
+  const asUser = asCaller(accessToken);
+  const read = (extraCol: "extra_named" | "extra") =>
+    fetchAllRows<Row>((from, to) =>
+      asUser
+        .from("debtor_traces")
+        .select(
+          `id, debtor_id, service_id, state, provider_status, billable, cost, created_at, response,
+           debtors!inner(name, loan_reference, phone_primary, email, portfolio_id, ${extraCol})`,
+        )
+        .eq("debtors.portfolio_id", portfolioId)
+        .in("state", ["done", "failed"])
+        .order("created_at", { ascending: false })
+        .range(from, to),
+    );
+  // extra_named is a computed column (20260923_debtors_extra_preview.sql); fall back to the
+  // full bag if this runs against a database without it, like debtor-extra.ts does.
+  let res = await read("extra_named");
+  if (res.error && /extra_named/.test(res.error.message)) res = await read("extra");
+  if (res.error) throw new Error(`Could not load lookup data (${res.error.message})`);
+
+  const traces: LoanTraceInput[] = res.data.map((t) => {
+    const d = (t.debtors ?? {}) as Row;
+    const extra = (d.extra_named ?? d.extra ?? {}) as Record<string, unknown>;
+    return {
+      traceId: String(t.id),
+      debtorId: String(t.debtor_id),
+      serviceId: String(t.service_id),
+      state: String(t.state),
+      providerStatus: (t.provider_status as string | null) ?? null,
+      billable: !!t.billable,
+      cost: Number(t.cost ?? 0),
+      createdAt: String(t.created_at),
+      response: t.response,
+      loanReference: String(d.loan_reference ?? ""),
+      name: String(d.name ?? ""),
+      phonePrimary: String(d.phone_primary ?? ""),
+      email: (d.email as string | null) ?? null,
+      bankExtra: Object.fromEntries(
+        ["address", "city", "state", "dob", "employer"].map((k) => [k, String(extra[k] ?? "")]),
+      ),
+    };
+  });
+  return buildLoanLookupData(traces);
+}
+
+async function requireReportCaller(accessToken: string) {
+  const caller = await verifyCaller(accessToken);
+  if (!caller) throw new Error("Not authenticated");
+  if (caller.role !== "manager" && caller.role !== "admin") {
+    throw new Error("Only managers or admins can view Insights reports");
+  }
+  return caller;
+}
+
+/** The on-screen view: one row per loan. The per-lookup "All fields" detail is deliberately NOT
+ * returned here — it only leaves the server through getPortfolioLookupExport, which is gated. */
+export const getPortfolioLookupData = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, portfolioId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await requireReportCaller(data.accessToken);
+    const { rows } = await loadPortfolioLookupData(data.accessToken, data.portfolioId);
+    return { rows };
+  });
+
+// ── Lookup-data Excel: request-only unless the company is exempt ─────────────────────────────
+// migrations/20260927_insights_export_requests.sql. A company asks, a superadmin approves
+// (superadmin-actions.server.ts), and the approval opens that portfolio's download for
+// EXPORT_APPROVAL_DAYS. profilex_settings.direct_export skips the request (the platform's own
+// company). All reads/writes use the service role, after the caller checks here.
+
+export const EXPORT_APPROVAL_DAYS = 7;
+
+export interface LookupExportRequest {
+  id: string;
+  status: "pending" | "approved" | "rejected";
+  note: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  expiresAt: string | null;
+  downloadCount: number;
+}
+
+export interface LookupExportStatus {
+  /** The company may download without asking. */
+  direct: boolean;
+  /** Latest request for this portfolio, if any. */
+  request: LookupExportRequest | null;
+  canDownload: boolean;
+}
+
+async function readDirectExport(clientId: string): Promise<boolean> {
+  const { data, error } = await db()
+    .from("profilex_settings")
+    .select("direct_export")
+    .eq("client_id", clientId)
+    .maybeSingle();
+  // Column missing (code ahead of the migration) reads as "must request" — fail closed.
+  if (error || !data) return false;
+  return !!data.direct_export;
+}
+
+async function exportStatus(clientId: string, portfolioId: string): Promise<LookupExportStatus> {
+  const direct = await readDirectExport(clientId);
+  const { data } = await db()
+    .from("insights_export_requests")
+    .select("id, status, note, created_at, decided_at, decision_note, expires_at, download_count")
+    .eq("client_id", clientId)
+    .eq("portfolio_id", portfolioId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const r = data as Row | null;
+  const request: LookupExportRequest | null = r
+    ? {
+        id: String(r.id),
+        status: r.status as LookupExportRequest["status"],
+        note: (r.note as string | null) ?? null,
+        createdAt: String(r.created_at),
+        decidedAt: (r.decided_at as string | null) ?? null,
+        decisionNote: (r.decision_note as string | null) ?? null,
+        expiresAt: (r.expires_at as string | null) ?? null,
+        downloadCount: Number(r.download_count ?? 0),
+      }
+    : null;
+  const approvedNow =
+    request?.status === "approved" &&
+    !!request.expiresAt &&
+    new Date(request.expiresAt).getTime() > Date.now();
+  return { direct, request, canDownload: direct || approvedNow };
+}
+
+/** The portfolio must be one the caller can see — checked as the caller, so RLS decides. */
+async function requireVisiblePortfolio(accessToken: string, portfolioId: string): Promise<void> {
+  const { data, error } = await asCaller(accessToken)
+    .from("portfolios")
+    .select("id")
+    .eq("id", portfolioId)
+    .maybeSingle();
+  if (error) throw new Error(`Could not check the portfolio (${error.message})`);
+  if (!data) throw new Error("Portfolio not found");
+}
+
+export const getLookupExportStatus = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, portfolioId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }): Promise<LookupExportStatus> => {
+    const caller = await requireReportCaller(data.accessToken);
+    await requireVisiblePortfolio(data.accessToken, data.portfolioId);
+    return exportStatus(caller.clientId, data.portfolioId);
+  });
+
+export const requestLookupExport = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        portfolioId: idSchema,
+        note: z.string().trim().max(500).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }): Promise<LookupExportStatus> => {
+    const caller = await requireReportCaller(data.accessToken);
+    await requireVisiblePortfolio(data.accessToken, data.portfolioId);
+    const current = await exportStatus(caller.clientId, data.portfolioId);
+    if (current.canDownload || current.request?.status === "pending") return current;
+    const { error } = await db()
+      .from("insights_export_requests")
+      .insert({
+        client_id: caller.clientId,
+        portfolio_id: data.portfolioId,
+        requested_by: caller.agentId,
+        note: data.note || null,
+      });
+    // 23505: someone else's request landed first (one pending per portfolio) — that's fine.
+    if (error && !/duplicate key|23505/.test(error.message)) {
+      throw new Error(`Could not send the request (${error.message})`);
+    }
+    return exportStatus(caller.clientId, data.portfolioId);
+  });
+
+/** The full Excel data (per-loan rows + every field of every lookup). Refused unless the company
+ * is exempt or holds an approved, unexpired request for this portfolio; each download is
+ * counted on the request. */
+export const getPortfolioLookupExport = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, portfolioId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireReportCaller(data.accessToken);
+    await requireVisiblePortfolio(data.accessToken, data.portfolioId);
+    const status = await exportStatus(caller.clientId, data.portfolioId);
+    if (!status.canDownload) {
+      throw new Error("This download needs approval — request it first");
+    }
+    const result = await loadPortfolioLookupData(data.accessToken, data.portfolioId);
+    if (!status.direct && status.request) {
+      await db()
+        .from("insights_export_requests")
+        .update({
+          download_count: status.request.downloadCount + 1,
+          last_download_at: new Date().toISOString(),
+        })
+        .eq("id", status.request.id);
+    }
+    return result;
   });
 
 // ── Admin > Insights: lookups typed in by hand ───────────────────────────────────────────────
