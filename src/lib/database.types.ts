@@ -535,6 +535,42 @@ export interface Database {
         };
         Relationships: [];
       };
+      insight_requests: {
+        Row: {
+          id: string;
+          client_id: string;
+          debtor_id: string;
+          requested_by: string | null;
+          status: string;
+          note: string | null;
+          created_at: string;
+          resolved_at: string | null;
+          resolved_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          debtor_id: string;
+          requested_by?: string | null;
+          status?: string;
+          note?: string | null;
+          created_at?: string;
+          resolved_at?: string | null;
+          resolved_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          debtor_id?: string;
+          requested_by?: string | null;
+          status?: string;
+          note?: string | null;
+          created_at?: string;
+          resolved_at?: string | null;
+          resolved_by?: string | null;
+        };
+        Relationships: [];
+      };
       insights_manual_lookups: {
         Row: {
           id: string;

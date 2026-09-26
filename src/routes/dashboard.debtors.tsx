@@ -32,6 +32,27 @@ import { useAuth } from "@/lib/auth";
 import { AssignedAgentLine } from "@/components/assigned-agent";
 import { DebtorProfile } from "@/components/debtor-profile";
 import { ListPager, usePaged } from "@/components/list-pager";
+import {
+  INSIGHT_FLAGS_UPDATED,
+  getInsightFlag,
+  refreshInsightFlags,
+  type InsightFlag,
+} from "@/lib/insight-request-store";
+
+/** Card tint by Insights state: amber = an agent has asked a manager for a lookup that hasn't
+ *  been run yet, emerald = a lookup has already come back, plain = neither. */
+const INSIGHT_FLAG_META: Record<InsightFlag, { card: string; dot: string; label: string }> = {
+  requested: {
+    card: "border-amber-400/60 bg-amber-50 dark:bg-amber-500/10",
+    dot: "bg-amber-500",
+    label: "Insights requested",
+  },
+  traced: {
+    card: "border-emerald-400/60 bg-emerald-50 dark:bg-emerald-500/10",
+    dot: "bg-emerald-500",
+    label: "Insights run",
+  },
+};
 
 /** Filter value standing for "nobody owns this account". A sentinel rather than `undefined`
  * so the dropdown can round-trip it as a plain string alongside real agent emails; the "@" makes
@@ -116,6 +137,14 @@ function DebtorsPage() {
   const [sortOpen, setSortOpen] = useState(false);
   const [selected, setSelected] = useState<Debtor | null>(null);
   const [uploadedDebtors, setUploadedDebtors] = useState<Debtor[]>([]);
+  // Bumped whenever the Insights flags change so the cards re-read getInsightFlag().
+  const [, setFlagsVersion] = useState(0);
+  useEffect(() => {
+    const onFlags = () => setFlagsVersion((n) => n + 1);
+    window.addEventListener(INSIGHT_FLAGS_UPDATED, onFlags);
+    refreshInsightFlags();
+    return () => window.removeEventListener(INSIGHT_FLAGS_UPDATED, onFlags);
+  }, []);
 
   // Load only the debtors this screen actually needs, not every debtor the signed-in user can
   // see. The old version called refreshPortfolios(), which — measured directly against
@@ -524,6 +553,14 @@ function DebtorsPage() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            <div className="hidden md:flex items-center gap-3 mr-1">
+              {(Object.keys(INSIGHT_FLAG_META) as InsightFlag[]).map((f) => (
+                <span key={f} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <span className={cn("h-2 w-2 rounded-full", INSIGHT_FLAG_META[f].dot)} />
+                  {INSIGHT_FLAG_META[f].label}
+                </span>
+              ))}
+            </div>
             <span className="text-xs text-muted-foreground">
               {filtered.length} debtor{filtered.length !== 1 ? "s" : ""}
             </span>
@@ -591,6 +628,7 @@ function DebtorsPage() {
               key={d.id}
               d={d}
               index={i}
+              flag={getInsightFlag(d.id)}
               onView={() => setSelected(d)}
               assignedTo={
                 isSupervisor ? (d.assignedAgentId ? agentLabel(d.assignedAgentId) : "") : undefined
@@ -646,11 +684,13 @@ function DebtorsPage() {
 function DebtorCard({
   d,
   index,
+  flag,
   onView,
   assignedTo,
 }: {
   d: Debtor;
   index: number;
+  flag: InsightFlag | null;
   onView: () => void;
   /** Resolved owner name, shown to supervisors so a filtered list says whose it is. Undefined
    * for agents, whose whole book is their own and would just repeat their name on every card. */
@@ -658,10 +698,14 @@ function DebtorCard({
 }) {
   const b = bucketOf(d.dpd);
   const bucketMeta = BUCKET_META[b];
+  const flagMeta = flag ? INSIGHT_FLAG_META[flag] : null;
 
   return (
     <Card
-      className="animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both cursor-pointer hover:shadow-md transition-shadow duration-200"
+      className={cn(
+        "animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both cursor-pointer hover:shadow-md transition-shadow duration-200",
+        flagMeta?.card,
+      )}
       style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}
       onClick={onView}
     >
@@ -699,6 +743,13 @@ function DebtorCard({
             <span className="text-foreground text-xs">{d.language}</span>
           </div>
         </div>
+
+        {flagMeta && (
+          <div className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-foreground/80">
+            <span className={cn("h-2 w-2 rounded-full", flagMeta.dot)} />
+            {flagMeta.label}
+          </div>
+        )}
 
         <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
           <span className="text-[11px] text-muted-foreground truncate">{d.portfolio}</span>

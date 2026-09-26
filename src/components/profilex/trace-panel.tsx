@@ -1,8 +1,9 @@
 // The Trace tab on a debtor profile. One component for both roles — DebtorProfile is shared
 // between the agent view (dashboard.debtors.tsx) and the manager view (manager.queue.tsx), so
 // the role gate lives here: managers and admins get the Run buttons, agents get the same
-// results read-only. That is the whole shape of the feature — the manager spends, the agent
-// working the account sees what came back.
+// results read-only plus a "Request from manager" button in place of Run. That is the whole
+// shape of the feature — the manager spends, the agent working the account asks for it and sees
+// what came back.
 import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Search, IndianRupee, ChevronRight, Wallet } from "lucide-react";
+import { Loader2, Search, IndianRupee, ChevronRight, Wallet, Send, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { normalisePhone } from "@/lib/profilex/billing";
 import { flatten } from "@/lib/profilex/flatten";
@@ -41,6 +42,14 @@ import {
   refreshTracesWhenAuthed,
   type TraceRecord,
 } from "@/lib/profilex-store";
+import {
+  INSIGHT_FLAGS_UPDATED,
+  dismissInsightRequest,
+  getOpenRequest,
+  markDebtorTraced,
+  refreshOpenRequest,
+  requestInsights,
+} from "@/lib/insight-request-store";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -329,6 +338,8 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
   const [, bump] = useState(0);
   const [running, setRunning] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<ProfilexService | null>(null);
+  // Agent side: the service whose "Request from manager" is in flight.
+  const [requesting, setRequesting] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Whether the org has ProfileX switched on at all. Until this is known the Run buttons stay
   // hidden: showing a manager a button that can only throw "lookups are turned off" reads as a
@@ -362,8 +373,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
     }
   }, [isManager]);
 
+  // Loaded for agents too: they get the same list of services as a manager, just with a
+  // request button instead of Run, so they need to know which ones the company's plan includes.
   useEffect(() => {
-    if (!canRun) return;
     supabase.auth
       .getSession()
       .then(({ data: { session } }) =>
@@ -378,16 +390,43 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
       })
       .catch(() => setEnabled(false));
     loadWallet();
-  }, [canRun, loadWallet]);
+  }, [loadWallet]);
 
   useEffect(() => {
     const stop = refreshTracesWhenAuthed(debtorId, setLoadError);
+    refreshOpenRequest(debtorId).catch(() => {});
     window.addEventListener(TRACES_UPDATED, rerender);
+    window.addEventListener(INSIGHT_FLAGS_UPDATED, rerender);
     return () => {
       stop();
       window.removeEventListener(TRACES_UPDATED, rerender);
+      window.removeEventListener(INSIGHT_FLAGS_UPDATED, rerender);
     };
   }, [debtorId, rerender]);
+
+  const openRequest = getOpenRequest(debtorId);
+
+  async function sendRequest(service: ProfilexService) {
+    setRequesting(service.id);
+    try {
+      await requestInsights(debtorId, service.label);
+      toast.success("Request sent to your manager");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send the request");
+    } finally {
+      setRequesting(null);
+    }
+  }
+
+  async function dismissRequest() {
+    if (!openRequest) return;
+    try {
+      await dismissInsightRequest(debtorId, openRequest.id);
+      toast.success("Request dismissed");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not dismiss the request");
+    }
+  }
 
   // Recomputed every render rather than memoised: the store is a module-level cache, so its
   // contents change without any prop or state this component could key a useMemo on — the
@@ -419,6 +458,8 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
         data: { accessToken: session.access_token, debtorId, serviceId: service.id },
       });
       if (result.trace) mergeTrace(result.trace);
+      // Close any open agent request on this debtor (the DB then notifies the agent).
+      markDebtorTraced(debtorId).catch(() => {});
       // A cached hit cost nothing — no wallet change, no need to re-fetch.
       if (!result.cached && result.cost > 0) loadWallet();
       toast.success(
@@ -464,13 +505,18 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
     );
   }
 
-  if (!canRun && latest.size === 0) {
+  // An agent only falls back to an empty state when there is nothing they could request either
+  // (Insights off, or no services on the plan). Otherwise they get the service list below.
+  const agentCanRequest = !canRun && enabled === true && allowed.length > 0;
+  if (!canRun && latest.size === 0 && !agentCanRequest) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
         <Search className="h-8 w-8 text-muted-foreground/40" />
         <p className="text-sm font-medium text-foreground">Nothing looked up yet</p>
         <p className="text-xs text-muted-foreground max-w-xs">
-          Ask your manager to look up {debtorName}. Anything they find shows up here.
+          {enabled === null
+            ? "Loading…"
+            : `Insights isn't available for your company yet. Anything your manager looks up on ${debtorName} shows up here.`}
         </p>
       </div>
     );
@@ -478,6 +524,37 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
 
   return (
     <div className="space-y-4">
+      {openRequest && (
+        <div className="flex items-start justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+          <div className="min-w-0">
+            <p className="font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+              <Send className="h-3.5 w-3.5" />
+              {canRun
+                ? `${openRequest.requestedByName ?? "An agent"} requested Insights`
+                : "Requested from your manager"}
+              {openRequest.note && <span className="font-normal">· {openRequest.note}</span>}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {new Date(openRequest.createdAt).toLocaleString("en-IN")}
+              {canRun
+                ? " · closes automatically when you run a lookup"
+                : " · you'll get a notification when results are in"}
+            </p>
+          </div>
+          {canRun && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-[11px] flex-shrink-0"
+              onClick={dismissRequest}
+            >
+              <X className="h-3 w-3 mr-1" />
+              Dismiss
+            </Button>
+          )}
+        </div>
+      )}
+
       {isManager && enabled === true && walletBalance !== null && (
         <div
           className={cn(
@@ -507,9 +584,11 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
         const needsSource = missingSource(service);
         // Runnable only if Insights is on AND the company's plan includes this service. A result
         // already on file still shows after a service is removed from the plan — it was paid for.
-        const runnable = canRun && enabled === true && allowed.includes(service.id);
-        // Agents only ever see what has already been paid for.
-        if (!runnable && !trace) return null;
+        const onPlan = enabled === true && allowed.includes(service.id);
+        const runnable = canRun && onPlan;
+        // Agents see the same list, but can only ask their manager to run it.
+        const requestable = !canRun && onPlan;
+        if (!runnable && !requestable && !trace) return null;
 
         return (
           <div key={service.id} className="rounded-lg border border-border p-3">
@@ -536,6 +615,29 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
                   )}
                 </Button>
               )}
+              {requestable && (
+                <Button
+                  size="sm"
+                  variant={openRequest ? "outline" : trace ? "outline" : "default"}
+                  disabled={requesting !== null || !!openRequest}
+                  onClick={() => sendRequest(service)}
+                  className="flex-shrink-0 h-7 text-xs"
+                  title={
+                    openRequest ? "Already requested — waiting on your manager" : service.blurb
+                  }
+                >
+                  {requesting === service.id ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : openRequest ? (
+                    <>
+                      <Check className="h-3 w-3 mr-1" />
+                      Requested
+                    </>
+                  ) : (
+                    "Request to manager"
+                  )}
+                </Button>
+              )}
             </div>
 
             {runnable && (needsSource || showCost) && (
@@ -555,7 +657,9 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
                 </p>
               </div>
             ) : (
-              runnable && <p className="text-xs text-muted-foreground italic">Not looked up yet.</p>
+              (runnable || requestable) && (
+                <p className="text-xs text-muted-foreground italic">Not looked up yet.</p>
+              )
             )}
           </div>
         );
