@@ -70,6 +70,21 @@ const UNASSIGNED = "@unassigned";
 
 export const Route = createFileRoute("/dashboard/debtors")({
   head: () => ({ meta: [{ title: "Debtor Profiles · SamvadX" }] }),
+  // Deep links from the manager dashboard's Insights Requests card: `insights` pre-sets the
+  // Insights filter, `debtor` opens that debtor's profile once the list has loaded.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { debtor?: string; insights?: InsightFlag | "none" } => {
+    const out: { debtor?: string; insights?: InsightFlag | "none" } = {};
+    if (typeof search.debtor === "string" && search.debtor) out.debtor = search.debtor;
+    if (
+      search.insights === "requested" ||
+      search.insights === "traced" ||
+      search.insights === "none"
+    )
+      out.insights = search.insights;
+    return out;
+  },
   component: DebtorsPage,
 });
 
@@ -142,7 +157,8 @@ function DebtorsPage() {
   // anything else = that agent's account email.
   const [assignee, setAssignee] = useState<string>("all");
   const [assigneeDropOpen, setAssigneeDropOpen] = useState(false);
-  const [insightFilter, setInsightFilter] = useState<InsightFilter>("all");
+  const linkSearch = Route.useSearch();
+  const [insightFilter, setInsightFilter] = useState<InsightFilter>(linkSearch.insights ?? "all");
   const [insightDropOpen, setInsightDropOpen] = useState(false);
   const [sort, setSort] = useState<SortKey>("dpd_desc");
   const [sortOpen, setSortOpen] = useState(false);
@@ -250,6 +266,19 @@ function DebtorsPage() {
 
   // Only the debtors assigned to this agent from uploaded portfolios — no mock data
   const allDebtors = uploadedDebtors;
+
+  // ?debtor=<id>: open that profile once it shows up in the loaded book. Only once per link, so
+  // closing the sheet doesn't immediately reopen it.
+  const openedFromLink = useRef<string | null>(null);
+  useEffect(() => {
+    const id = linkSearch.debtor;
+    if (!id || openedFromLink.current === id) return;
+    const d = allDebtors.find((x) => x.id === id);
+    if (d) {
+      openedFromLink.current = id;
+      setSelected(d);
+    }
+  }, [linkSearch.debtor, allDebtors]);
   const allPortfolioNames = useMemo(
     () => Array.from(new Set(allDebtors.map((d) => d.portfolio))).sort(),
     [allDebtors],

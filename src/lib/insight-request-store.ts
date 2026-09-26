@@ -125,3 +125,51 @@ export async function markDebtorTraced(debtorId: string): Promise<void> {
     .eq("debtor_id", debtorId)
     .eq("status", "open");
 }
+
+// ── Open requests across the whole book (manager dashboard) ──────────────────
+
+export const INSIGHT_REQUESTS_UPDATED = "insight-requests-updated";
+
+export interface OpenInsightRequest extends InsightRequest {
+  /** Requester's account email — the id the team store keys agents by, so the dashboard can
+   *  scope the list to the active team. */
+  requestedByEmail: string | null;
+  debtorName: string;
+  loanReference: string | null;
+}
+
+let openList: OpenInsightRequest[] = [];
+
+export function getOpenRequests(): OpenInsightRequest[] {
+  return openList;
+}
+
+/** Every open request the caller can see — RLS (insight_requests_select) already limits it to
+ *  debtors they can see, so a manager gets their teams' requests and an admin the company's. */
+export async function refreshOpenRequests(): Promise<void> {
+  const { data, error } = await supabase
+    .from("insight_requests")
+    .select(
+      "id, debtor_id, requested_by, note, created_at, debtor:debtors(name, loan_reference), requester:agents!insight_requests_requested_by_fkey(name, email)",
+    )
+    .eq("status", "open")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error || !data) return;
+  openList = (data as Record<string, unknown>[]).map((row) => {
+    const debtor = row.debtor as { name?: string; loan_reference?: string | null } | null;
+    const requester = row.requester as { name?: string; email?: string } | null;
+    return {
+      id: String(row.id),
+      debtorId: String(row.debtor_id),
+      requestedBy: (row.requested_by as string | null) ?? null,
+      requestedByName: requester?.name ?? null,
+      requestedByEmail: requester?.email ?? null,
+      note: (row.note as string | null) ?? null,
+      createdAt: String(row.created_at),
+      debtorName: debtor?.name || "(unknown)",
+      loanReference: debtor?.loan_reference ?? null,
+    };
+  });
+  window.dispatchEvent(new CustomEvent(INSIGHT_REQUESTS_UPDATED));
+}

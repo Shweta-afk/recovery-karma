@@ -21,6 +21,8 @@ import {
   UserCog,
   FileBarChart2,
   HandCoins,
+  Search,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -71,6 +73,13 @@ import { useStorageSync } from "@/lib/storage-sync";
 import { downloadCsv } from "@/lib/csv-export";
 import { rankColor } from "@/lib/rank-color";
 import { AgentDashboardContent } from "./dashboard.index";
+import {
+  INSIGHT_FLAGS_UPDATED,
+  INSIGHT_REQUESTS_UPDATED,
+  getOpenRequests,
+  refreshOpenRequests,
+  type OpenInsightRequest,
+} from "@/lib/insight-request-store";
 
 export const Route = createFileRoute("/manager/")({
   head: () => ({
@@ -484,6 +493,106 @@ function ActivityFeed({ recent }: { recent: DispositionRecord[] }) {
         })}
       </div>
     </ScrollArea>
+  );
+}
+
+/* ─── Insights requests — agents asking the manager to run a lookup ────────── */
+
+function InsightRequestsCard({ teamAgentIds }: { teamAgentIds: Set<string> }) {
+  const navigate = useNavigate();
+  const [all, setAll] = useState<OpenInsightRequest[]>(() => getOpenRequests());
+
+  useEffect(() => {
+    const reload = () => setAll(getOpenRequests());
+    const refetch = () => refreshOpenRequests().catch(() => {});
+    window.addEventListener(INSIGHT_REQUESTS_UPDATED, reload);
+    // A request sent, dismissed or fulfilled anywhere in this tab changes the flags.
+    window.addEventListener(INSIGHT_FLAGS_UPDATED, refetch);
+    refetch();
+    // New requests from agents arrive from other browsers; the notification bell is the
+    // real-time signal, this just keeps the card from going stale while the dashboard is open.
+    const poll = setInterval(refetch, 60000);
+    return () => {
+      window.removeEventListener(INSIGHT_REQUESTS_UPDATED, reload);
+      window.removeEventListener(INSIGHT_FLAGS_UPDATED, refetch);
+      clearInterval(poll);
+    };
+  }, []);
+
+  // Same team scoping as every other card here. RLS already limits rows to debtors this manager
+  // can see; this narrows to the team picked in the switcher.
+  const requests = all.filter((r) => r.requestedByEmail && teamAgentIds.has(r.requestedByEmail));
+
+  return (
+    <Card>
+      <CardHeader className="border-b border-border pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Search className="h-4 w-4 text-amber-500" />
+          Insights Requests
+          {requests.length > 0 && (
+            <Badge className="bg-amber-500 hover:bg-amber-500 text-white text-[10px]">
+              {requests.length}
+            </Badge>
+          )}
+          {requests.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                navigate({ to: "/dashboard/debtors", search: { insights: "requested" } })
+              }
+              className="ml-auto text-xs font-normal text-muted-foreground hover:text-foreground"
+            >
+              View all on Debtors →
+            </button>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {requests.length === 0 ? (
+          <p className="py-6 text-center text-xs text-muted-foreground">
+            No open requests — when an agent asks for Insights on a debtor, it shows up here.
+          </p>
+        ) : (
+          <ScrollArea className={cn(requests.length > 5 && "h-[260px]")}>
+            <div className="divide-y divide-border">
+              {requests.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() =>
+                    navigate({
+                      to: "/dashboard/debtors",
+                      search: { debtor: r.debtorId, insights: "requested" },
+                    })
+                  }
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-accent/50"
+                >
+                  <span className="h-2 w-2 flex-shrink-0 rounded-full bg-amber-500" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-foreground">
+                      {r.debtorName}
+                      {r.loanReference && (
+                        <span className="ml-1.5 font-normal text-muted-foreground">
+                          {r.loanReference}
+                        </span>
+                      )}
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {r.requestedByName ?? "An agent"}
+                      {r.note && ` · ${r.note}`}
+                    </p>
+                  </div>
+                  <span className="flex-shrink-0 text-[10px] text-muted-foreground">
+                    {timeAgo(r.createdAt)}
+                  </span>
+                  <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1360,6 +1469,8 @@ function ManagerDashboardPage() {
               <StatCard key={s.label} stat={s} index={i} />
             ))}
           </div>
+
+          <InsightRequestsCard teamAgentIds={teamAgentIds} />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
             <Card className="lg:col-span-3">
