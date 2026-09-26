@@ -39,6 +39,15 @@ import {
   type InsightFlag,
 } from "@/lib/insight-request-store";
 
+/** Insights filter: a flag, "none" = never looked up and not requested, "all" = no filter. */
+type InsightFilter = InsightFlag | "none" | "all";
+
+const INSIGHT_FILTER_OPTIONS: { key: Exclude<InsightFilter, "all">; label: string }[] = [
+  { key: "requested", label: "Insights requested" },
+  { key: "traced", label: "Insights run" },
+  { key: "none", label: "Not looked up" },
+];
+
 /** Card tint by Insights state: amber = an agent has asked a manager for a lookup that hasn't
  *  been run yet, emerald = a lookup has already come back, plain = neither. */
 const INSIGHT_FLAG_META: Record<InsightFlag, { card: string; dot: string; label: string }> = {
@@ -133,12 +142,15 @@ function DebtorsPage() {
   // anything else = that agent's account email.
   const [assignee, setAssignee] = useState<string>("all");
   const [assigneeDropOpen, setAssigneeDropOpen] = useState(false);
+  const [insightFilter, setInsightFilter] = useState<InsightFilter>("all");
+  const [insightDropOpen, setInsightDropOpen] = useState(false);
   const [sort, setSort] = useState<SortKey>("dpd_desc");
   const [sortOpen, setSortOpen] = useState(false);
   const [selected, setSelected] = useState<Debtor | null>(null);
   const [uploadedDebtors, setUploadedDebtors] = useState<Debtor[]>([]);
-  // Bumped whenever the Insights flags change so the cards re-read getInsightFlag().
-  const [, setFlagsVersion] = useState(0);
+  // Bumped whenever the Insights flags change so the cards and the Insights filter re-read
+  // getInsightFlag() (a module cache, so nothing else would re-run them).
+  const [flagsVersion, setFlagsVersion] = useState(0);
   useEffect(() => {
     const onFlags = () => setFlagsVersion((n) => n + 1);
     window.addEventListener(INSIGHT_FLAGS_UPDATED, onFlags);
@@ -276,18 +288,41 @@ function DebtorsPage() {
       if (bucket !== "all" && bucketOf(d.dpd) !== bucket) return false;
       if (portfolio !== "all" && d.portfolio !== portfolio) return false;
       if (assignee !== "all" && (d.assignedAgentId ?? UNASSIGNED) !== assignee) return false;
+      if (insightFilter !== "all" && (getInsightFlag(d.id) ?? "none") !== insightFilter)
+        return false;
       if (q && !d.name.toLowerCase().includes(q) && !displayId(d).toLowerCase().includes(q))
         return false;
       return true;
     });
     return sortDebtors(list, sort);
-  }, [search, contactedRange, bucket, portfolio, assignee, sort, allDebtors]);
+  }, [
+    search,
+    contactedRange,
+    bucket,
+    portfolio,
+    assignee,
+    insightFilter,
+    sort,
+    allDebtors,
+    flagsVersion,
+  ]);
+
+  // Per-option counts for the Insights dropdown, over the whole book.
+  const insightCounts = useMemo(() => {
+    const counts: Record<Exclude<InsightFilter, "all">, number> = {
+      requested: 0,
+      traced: 0,
+      none: 0,
+    };
+    for (const d of allDebtors) counts[getInsightFlag(d.id) ?? "none"]++;
+    return counts;
+  }, [allDebtors, flagsVersion]);
 
   // Paged rendering (list-pager.tsx) — a book of ~3,000 accounts used to render ~3,000 cards.
   // Counts and Export above still use the whole `filtered` list.
   const debtorsPaged = usePaged(
     filtered,
-    JSON.stringify([search, contactedRange, bucket, portfolio, assignee, sort]),
+    JSON.stringify([search, contactedRange, bucket, portfolio, assignee, insightFilter, sort]),
   );
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -334,6 +369,7 @@ function DebtorsPage() {
                 setPortfolioDropOpen(false);
                 setSortOpen(false);
                 setAssigneeDropOpen(false);
+                setInsightDropOpen(false);
               }}
               className={cn(
                 "flex items-center gap-1.5 h-8 rounded-lg border px-2.5 text-xs transition-all",
@@ -393,6 +429,7 @@ function DebtorsPage() {
                 setBucketDropOpen(false);
                 setSortOpen(false);
                 setAssigneeDropOpen(false);
+                setInsightDropOpen(false);
               }}
               className={cn(
                 "flex items-center gap-1.5 h-8 rounded-lg border px-2.5 text-xs transition-all",
@@ -453,6 +490,7 @@ function DebtorsPage() {
                   setBucketDropOpen(false);
                   setPortfolioDropOpen(false);
                   setSortOpen(false);
+                  setInsightDropOpen(false);
                 }}
                 className={cn(
                   "flex items-center gap-1.5 h-8 rounded-lg border px-2.5 text-xs transition-all",
@@ -513,6 +551,80 @@ function DebtorsPage() {
             </div>
           )}
 
+          {/* Insights dropdown — requested / already run / never looked up. */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                setInsightDropOpen((o) => !o);
+                setBucketDropOpen(false);
+                setPortfolioDropOpen(false);
+                setAssigneeDropOpen(false);
+                setSortOpen(false);
+              }}
+              className={cn(
+                "flex items-center gap-1.5 h-8 rounded-lg border px-2.5 text-xs transition-all",
+                insightFilter !== "all"
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+              )}
+            >
+              {insightFilter === "all"
+                ? "Insights"
+                : INSIGHT_FILTER_OPTIONS.find((o) => o.key === insightFilter)?.label}
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </button>
+            {insightDropOpen && (
+              <div className="absolute left-0 top-full mt-1 z-30 w-52 rounded-lg border border-border bg-card shadow-lg py-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInsightFilter("all");
+                    setInsightDropOpen(false);
+                  }}
+                  className={cn(
+                    "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between",
+                    insightFilter === "all"
+                      ? "font-medium text-foreground"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  <span>All</span>
+                  <span className="opacity-50">{allDebtors.length}</span>
+                </button>
+                {INSIGHT_FILTER_OPTIONS.map((o) => (
+                  <button
+                    key={o.key}
+                    type="button"
+                    onClick={() => {
+                      setInsightFilter(o.key);
+                      setInsightDropOpen(false);
+                    }}
+                    className={cn(
+                      "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between gap-2",
+                      insightFilter === o.key
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "h-2 w-2 rounded-full",
+                          o.key === "none"
+                            ? "border border-border bg-card"
+                            : INSIGHT_FLAG_META[o.key].dot,
+                        )}
+                      />
+                      {o.label}
+                    </span>
+                    <span className="opacity-50">{insightCounts[o.key]}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Sort dropdown */}
           <div className="relative">
             <button
@@ -522,6 +634,7 @@ function DebtorsPage() {
                 setBucketDropOpen(false);
                 setPortfolioDropOpen(false);
                 setAssigneeDropOpen(false);
+                setInsightDropOpen(false);
               }}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 h-8 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-all"
             >
