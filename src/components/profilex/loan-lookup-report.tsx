@@ -43,9 +43,8 @@ import {
 import { serviceLabel } from "@/lib/profilex-store";
 import {
   COMPARE_LABEL,
-  DETAIL_EXPORT_HEADERS,
   LOAN_EXPORT_HEADERS,
-  detailExportRow,
+  buildServiceSheets,
   loanExportRow,
   type Compare,
   type LoanLookupRow,
@@ -235,11 +234,16 @@ export function LoanLookupReport() {
       for (const r of allRows) {
         if (ids.has(r.debtorId)) byLoan.addRow(loanExportRow(r, serviceLabel));
       }
-      const all = wb.addWorksheet("All fields");
-      all.addRow([...DETAIL_EXPORT_HEADERS]).font = { bold: true };
-      all.views = [{ state: "frozen", ySplit: 1 }];
-      for (const d of details) {
-        if (ids.has(d.debtorId)) all.addRow(detailExportRow(d, serviceLabel));
+      // Then one sheet per service with every field ProfileX returned as its own column.
+      const sheets = buildServiceSheets(
+        details.filter((d) => ids.has(d.debtorId)),
+        serviceLabel,
+      );
+      for (const sh of sheets) {
+        const ws = wb.addWorksheet(sh.name);
+        ws.addRow(sh.columns).font = { bold: true };
+        ws.views = [{ state: "frozen", ySplit: 1, xSplit: 2 }];
+        for (const r of sh.rows) ws.addRow(r);
       }
       const buf = await wb.xlsx.writeBuffer();
       const url = URL.createObjectURL(
@@ -560,8 +564,9 @@ export function LoanLookupReport() {
           <p className="text-[11px] text-muted-foreground">
             "New numbers" leave out the loan's primary number. Match / Differs compares the lookup
             with the bank file's own name, DOB, employer, email and city; a blank means one side had
-            nothing to compare. The Excel's second sheet has every field of every lookup; it needs
-            SamvadX's approval unless your company has direct download.
+            nothing to compare. The Excel has a sheet per lookup type with every field ProfileX
+            returned as its own column (plus the raw response); it needs SamvadX's approval unless
+            your company has direct download.
           </p>
         </>
       )}

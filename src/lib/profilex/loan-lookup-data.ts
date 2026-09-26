@@ -6,10 +6,11 @@
 // skip-tracing bundle nests the same blocks the standalone services return (vrePanAdvance,
 // vrePhoneToPrefill, getAlternateAddress…), so one walker covers both, and a service added to the
 // catalogue later contributes without a code change here. Everything not picked out below still
-// reaches the export through flatten() on the "All fields" sheet.
+// reaches the export: every field ProfileX returned gets its own column on that service's sheet
+// (buildServiceSheets), plus the raw JSON, so nothing paid for is left out of the file.
 
 import { extractPhones, normalisePhone } from "./billing";
-import { flatten } from "./flatten";
+import { humanise } from "./flatten";
 import { lookupResult } from "./outcome";
 
 type Json = Record<string, unknown>;
@@ -66,16 +67,58 @@ export interface LoanLookupRow {
   compare: { name: Compare; dob: Compare; employer: Compare; email: Compare; city: Compare };
 }
 
-/** One lookup's every field, for the "All fields" sheet. */
+/** One lookup with every field it returned, for the per-service sheets. */
 export interface LoanLookupDetail {
   debtorId: string;
   loanReference: string;
   name: string;
+  phonePrimary: string;
   serviceId: string;
   result: string;
   createdAt: string;
   cost: number;
-  fields: string;
+  /** Every non-empty value in the response's `data`, flattened to label/value. */
+  fields: { label: string; value: string }[];
+  /** The whole stored response, verbatim — the envelope keys flatten() skips included. */
+  raw: string;
+}
+
+/**
+ * Every scalar in a response with its full path as the label — "Vre Pan Advance › Pincode",
+ * "Email 2 › Email" — so each becomes a distinct Excel column. flatten() (the on-screen list)
+ * labels by the leaf key alone, which is readable in a card but makes two blocks' "Status" or a
+ * list's emails collide as columns. Keys that are ids (a UAN keying uan_details) become "#1",
+ * "#2" by position, so the same field lines up in one column across borrowers. Booleans and
+ * zeros are kept; only null/empty is skipped.
+ */
+export function flattenPaths(
+  node: unknown,
+  path: string[] = [],
+  out: { label: string; value: string }[] = [],
+  depth = 0,
+): { label: string; value: string }[] {
+  if (node === null || node === undefined || depth > 10) return out;
+  if (Array.isArray(node)) {
+    node.forEach((v, i) => {
+      const p = path.length
+        ? [...path.slice(0, -1), `${path[path.length - 1]} ${i + 1}`]
+        : [String(i + 1)];
+      flattenPaths(v, p, out, depth + 1);
+    });
+    return out;
+  }
+  if (typeof node === "object") {
+    let idN = 0;
+    for (const [k, v] of Object.entries(node as Json)) {
+      const seg = /^\d{6,}$/.test(k) ? `#${++idN}` : humanise(k);
+      flattenPaths(v, [...path, seg], out, depth + 1);
+    }
+    return out;
+  }
+  const value = String(node).trim();
+  if (!value || value === "null" || value === "undefined") return out;
+  out.push({ label: path.join(" › ") || "Value", value });
+  return out;
 }
 
 const str = (v: unknown): string =>
@@ -343,16 +386,13 @@ export function buildLoanLookupData(traces: LoanTraceInput[]): {
         debtorId: t.debtorId,
         loanReference: t.loanReference,
         name: t.name,
+        phonePrimary: t.phonePrimary,
         serviceId: t.serviceId,
         result: result === "found" ? "Found" : result === "not_found" ? "Not found" : result,
         createdAt: t.createdAt,
         cost: t.billable ? t.cost : 0,
-        fields:
-          result === "found"
-            ? flatten(data)
-                .map((l) => `${l.label}: ${l.value}`)
-                .join("\n")
-            : "",
+        fields: flattenPaths(data),
+        raw: t.response == null ? "" : JSON.stringify(t.response),
       });
     }
   }
@@ -462,28 +502,84 @@ export function loanExportRow(
   ];
 }
 
-/** "All fields" sheet: one row per lookup with every field it returned. */
-export const DETAIL_EXPORT_HEADERS = [
+export interface SheetData {
+  name: string;
+  columns: string[];
+  rows: (string | number)[][];
+}
+
+/** Excel sheet names: ≤31 chars, none of []:*?/\ — and unique within the workbook. */
+function sheetName(label: string, used: Set<string>): string {
+  const base =
+    label
+      .replace(/[[\]:*?/\\]/g, " ")
+      .trim()
+      .slice(0, 28) || "Lookup";
+  let name = base;
+  for (let n = 2; used.has(name.toLowerCase()); n++) name = `${base} ${n}`;
+  used.add(name.toLowerCase());
+  return name;
+}
+
+const FIXED_COLUMNS = [
   "Loan Account Number",
   "Customer Name",
-  "Service",
+  "Primary Number",
+  "Lookup Date (IST)",
   "Result",
-  "Date (IST)",
   "Cost (INR)",
-  "All Fields Returned",
-] as const;
+];
 
-export function detailExportRow(
-  d: LoanLookupDetail,
+/**
+ * One sheet per service, one row per lookup, and EVERY field that service returned as its own
+ * column — the union across all of its lookups, in first-seen order — then the raw response.
+ * A label that repeats within one response (two UANs' details under the same labels) gets
+ * " (2)", " (3)" so no value overwrites another.
+ */
+export function buildServiceSheets(
+  details: LoanLookupDetail[],
   serviceLabel: (id: string) => string,
-): (string | number)[] {
-  return [
-    d.loanReference,
-    d.name,
-    serviceLabel(d.serviceId),
-    d.result,
-    ist(d.createdAt),
-    d.cost,
-    clip(d.fields),
-  ];
+): SheetData[] {
+  const byService = new Map<string, LoanLookupDetail[]>();
+  for (const d of details) {
+    const list = byService.get(d.serviceId);
+    if (list) list.push(d);
+    else byService.set(d.serviceId, [d]);
+  }
+  const used = new Set(["by loan id"]);
+  const sheets: SheetData[] = [];
+  for (const [serviceId, list] of byService) {
+    const columns: string[] = [];
+    const seen = new Set<string>();
+    const perLookup = list.map((d) => {
+      const counts = new Map<string, number>();
+      const values = new Map<string, string>();
+      for (const f of d.fields) {
+        const n = (counts.get(f.label) ?? 0) + 1;
+        counts.set(f.label, n);
+        const label = n === 1 ? f.label : `${f.label} (${n})`;
+        values.set(label, f.value);
+        if (!seen.has(label)) {
+          seen.add(label);
+          columns.push(label);
+        }
+      }
+      return values;
+    });
+    sheets.push({
+      name: sheetName(serviceLabel(serviceId), used),
+      columns: [...FIXED_COLUMNS, ...columns, "Raw Response (JSON)"],
+      rows: list.map((d, i) => [
+        d.loanReference,
+        d.name,
+        d.phonePrimary,
+        ist(d.createdAt),
+        d.result,
+        d.cost,
+        ...columns.map((c) => clip(perLookup[i].get(c) ?? "")),
+        clip(d.raw),
+      ]),
+    });
+  }
+  return sheets.sort((a, b) => b.rows.length - a.rows.length);
 }

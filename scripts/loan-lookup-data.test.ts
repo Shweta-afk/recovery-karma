@@ -145,14 +145,66 @@ describe("dateKey", () => {
   });
 });
 
-describe("export rows", () => {
-  test("one cell per header on both sheets", async () => {
-    const { LOAN_EXPORT_HEADERS, DETAIL_EXPORT_HEADERS, loanExportRow, detailExportRow } =
+describe("export", () => {
+  test("By Loan ID row has one cell per header", async () => {
+    const { LOAN_EXPORT_HEADERS, loanExportRow } =
       await import("../src/lib/profilex/loan-lookup-data");
-    const { rows, details } = buildLoanLookupData([trace()]);
+    const { rows } = buildLoanLookupData([trace()]);
     const row = loanExportRow(rows[0], (id) => id);
     expect(row.length).toBe(LOAN_EXPORT_HEADERS.length);
     expect(row[LOAN_EXPORT_HEADERS.indexOf("New Numbers Found")]).toBe("7905207727");
-    expect(detailExportRow(details[0], (id) => id).length).toBe(DETAIL_EXPORT_HEADERS.length);
+  });
+
+  test("a sheet per service with every returned field as its own column", async () => {
+    const { buildServiceSheets } = await import("../src/lib/profilex/loan-lookup-data");
+    const { details } = buildLoanLookupData([trace(), skipTrace]);
+    const sheets = buildServiceSheets(details, (id) =>
+      id === "skip-tracing" ? "Skip Tracing" : "Alt Phone",
+    );
+    expect(sheets.map((s) => s.name).sort()).toEqual(["Alt Phone", "Skip Tracing"]);
+    const skip = sheets.find((s) => s.name === "Skip Tracing")!;
+    const col = (c: string) => skip.columns.indexOf(c);
+    const row = skip.rows[0];
+    // deep bundle fields each get a column
+    expect(row[col("Vre PAN To Fathers Name › Father Name")]).toBe("KANHAIYALAL");
+    expect(row[col("Vre PAN Advance › Pincode")]).toBe("400083");
+    expect(row[col("Vre Phone To Prefill › Email 1 › Email")]).toBe("raj@example.com");
+    expect(row[col("Vre Phone To Prefill › Email 2 › Email")]).toBe("rk@mail.com");
+    expect(row[col("Vre Employment Latest › Summary › Is Employed")]).toBe("true");
+    // the raw response is kept whole, envelope included
+    expect(String(row[skip.columns.length - 1])).toContain('"vrePanAdvance"');
+    // every row is as wide as the header
+    for (const s of sheets) for (const r of s.rows) expect(r.length).toBe(s.columns.length);
+  });
+
+  test("id-keyed blocks (one per UAN) line up by position across borrowers", async () => {
+    const { buildServiceSheets } = await import("../src/lib/profilex/loan-lookup-data");
+    const emp = (debtorId: string, uan: string, name: string) =>
+      trace({
+        debtorId,
+        traceId: debtorId,
+        serviceId: "employment-history",
+        response: { data: { status: "1", uan_details: { [uan]: { basic_details: { name } } } } },
+      });
+    const { details } = buildLoanLookupData([
+      emp("d1", "101190326985", "A"),
+      emp("d2", "101190326986", "B"),
+    ]);
+    const [sheet] = buildServiceSheets(details, (id) => id);
+    const c = sheet.columns.indexOf("UAN Details › #1 › Basic Details › Name");
+    expect(c).toBeGreaterThan(-1);
+    expect(sheet.rows.map((r) => r[c]).sort()).toEqual(["A", "B"]);
+    expect(sheet.columns.filter((x) => x.includes("Basic Details › Name")).length).toBe(1);
+  });
+
+  test("sheet names are Excel-safe and unique", async () => {
+    const { buildServiceSheets } = await import("../src/lib/profilex/loan-lookup-data");
+    const { details } = buildLoanLookupData([trace(), { ...skipTrace }]);
+    const sheets = buildServiceSheets(details, () => "Very long: service/name [with] bad*chars?");
+    for (const s of sheets) {
+      expect(s.name.length).toBeLessThanOrEqual(31);
+      expect(/[[\]:*?/\\]/.test(s.name)).toBe(false);
+    }
+    expect(new Set(sheets.map((s) => s.name)).size).toBe(sheets.length);
   });
 });
