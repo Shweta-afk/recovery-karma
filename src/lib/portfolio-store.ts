@@ -226,7 +226,9 @@ export async function refreshPortfolios(): Promise<void> {
   ] = await Promise.all([
     supabase
       .from("portfolios")
-      .select("id, name, lender_name, product_type, uploaded_at, settings, team_id, manager_id"),
+      .select("id, name, lender_name, product_type, uploaded_at, settings, team_id, manager_id")
+      // Deleted-but-kept portfolios (deletePortfolio) are hidden from every portfolio list.
+      .is("deleted_at", null),
     fetchDebtorsShared(),
     supabase.from("agents").select("id, email"),
   ]);
@@ -1117,6 +1119,17 @@ export async function closePortfolio(id: string): Promise<void> {
     .eq("id", id);
   if (error) throw error;
   await refreshPortfolios();
+}
+
+/** Deletes a portfolio from Portfolio Overview. The `delete_portfolio` RPC
+ * (migrations/20260928_delete_portfolio.sql) decides: a portfolio nobody has worked yet is
+ * removed for real ("deleted"); one with any call/payment/Insights history is closed and hidden
+ * instead ("hidden"), keeping that history for Reports. */
+export async function deletePortfolio(id: string): Promise<"deleted" | "hidden"> {
+  const { data, error } = await supabase.rpc("delete_portfolio", { p_portfolio_id: id });
+  if (error) throw error;
+  await refreshPortfolios();
+  return data === "deleted" ? "deleted" : "hidden";
 }
 
 /** Creates a standalone debtor row for a manual dial to a number that isn't in any uploaded

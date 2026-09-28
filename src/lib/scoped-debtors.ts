@@ -325,7 +325,8 @@ const PORTFOLIO_META_COLUMNS =
 
 export async function refreshVisiblePortfolioMeta(): Promise<void> {
   const [{ data, error }, { emailById }] = await Promise.all([
-    supabase.from("portfolios").select(PORTFOLIO_META_COLUMNS),
+    // Deleted-but-kept portfolios (deletePortfolio) are hidden from every portfolio list.
+    supabase.from("portfolios").select(PORTFOLIO_META_COLUMNS).is("deleted_at", null),
     loadAgentEmails(),
   ]);
   if (error || !data) return;

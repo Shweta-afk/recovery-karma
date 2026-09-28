@@ -9,6 +9,7 @@ import {
   dpd2bucket,
   applyBulkPaidFile,
   closePortfolio,
+  deletePortfolio,
   PRODUCT_LABEL_TO_ENUM,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
@@ -262,6 +263,8 @@ function EditPortfolioDialog({
   const [addingManual, setAddingManual] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   // Re-seed local state whenever a different portfolio is opened for editing
   useEffect(() => {
@@ -279,6 +282,7 @@ function EditPortfolioDialog({
     setAddMode("csv");
     setRemoveMissing(false);
     setDeleteConfirmOpen(false);
+    setRemoveConfirmOpen(false);
     setManualName("");
     setManualPhone("");
     setManualLoanRef("");
@@ -390,6 +394,25 @@ function EditPortfolioDialog({
       toast.error(e instanceof Error ? e.message : "Failed to archive portfolio");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    setRemoveConfirmOpen(false);
+    setRemoving(true);
+    try {
+      const outcome = await deletePortfolio(portfolio.id);
+      toast.success(`"${portfolio.name}" deleted`, {
+        description:
+          outcome === "deleted"
+            ? "Nobody had worked it yet, so it and its accounts were removed permanently."
+            : "It had call/payment history, so it was closed and hidden instead — that history stays in Reports.",
+      });
+      onArchived();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to delete portfolio");
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -915,6 +938,25 @@ function EditPortfolioDialog({
               )}
               Close Portfolio
             </Button>
+            <p className="pt-2 text-[11px] text-muted-foreground">
+              Delete removes {portfolio.name} from Portfolio Overview entirely. If nobody has
+              called, paid or run a lookup on any of its accounts yet, it is deleted permanently;
+              otherwise it is closed and hidden, and its history stays in Reports.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setRemoveConfirmOpen(true)}
+              disabled={removing}
+              className="gap-1.5"
+            >
+              {removing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              Delete Portfolio
+            </Button>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
@@ -960,6 +1002,29 @@ function EditPortfolioDialog({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete}>Yes, close portfolio</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={removeConfirmOpen} onOpenChange={setRemoveConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete "{portfolio.name}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It disappears from Portfolio Overview and its accounts stop being called. If none of
+              its accounts has been worked yet, the portfolio and its {portfolio.rows.length}{" "}
+              account{portfolio.rows.length === 1 ? "" : "s"} are deleted permanently and this
+              cannot be undone. Otherwise it is only hidden, and call, payment and Insights history
+              is kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRemove}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Yes, delete portfolio
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1417,6 +1482,9 @@ function PortfolioRecoveryChart({ portfolios }: { portfolios: Portfolio[] }) {
   );
 }
 
+/** Sentinel for the portfolio picker's "no filter" option — Radix Select cannot hold "". */
+const ALL_PORTFOLIOS = "__all__";
+
 function PortfolioOverviewPage() {
   const { user } = useAuth();
   const managerId = user?.email ?? user?.id ?? "";
@@ -1427,6 +1495,7 @@ function PortfolioOverviewPage() {
   const agents = useMemo(() => withSelf(teamAgents, managerId), [teamAgents, managerId]);
 
   const [statusFilter, setStatusFilter] = useState<Portfolio["status"] | "all">("all");
+  const [portfolioFilter, setPortfolioFilter] = useState<string>(ALL_PORTFOLIOS);
   const [selected, setSelected] = useState<Portfolio | null>(null);
   const [reassignTarget, setReassignTarget] = useState<UploadedPortfolio | null>(null);
   const [editTarget, setEditTarget] = useState<UploadedPortfolio | null>(null);
@@ -1485,15 +1554,29 @@ function PortfolioOverviewPage() {
   }, [managerId, activeTeam?.id]);
   useStorageSync(render);
 
-  const allPortfolios = useMemo(() => rawPortfolios.map(toPortfolio), [rawPortfolios]);
+  // Open portfolios always listed above closed ones; the order within each group is kept.
+  const allPortfolios = useMemo(
+    () =>
+      rawPortfolios
+        .map(toPortfolio)
+        .sort((a, b) => Number(a.status === "closed") - Number(b.status === "closed")),
+    [rawPortfolios],
+  );
 
   // Keep the open detail drawer in sync after a per-account transfer or bulk reassignment
   useEffect(() => {
     setSelected((prev) => (prev ? (allPortfolios.find((p) => p.id === prev.id) ?? prev) : prev));
   }, [allPortfolios]);
 
-  const filtered =
-    statusFilter === "all" ? allPortfolios : allPortfolios.filter((p) => p.status === statusFilter);
+  // Falls back to "all" once the picked portfolio is gone (deleted, or a team switch).
+  const pickedPortfolio = allPortfolios.some((p) => p.id === portfolioFilter)
+    ? portfolioFilter
+    : ALL_PORTFOLIOS;
+  const filtered = allPortfolios.filter(
+    (p) =>
+      (statusFilter === "all" || p.status === statusFilter) &&
+      (pickedPortfolio === ALL_PORTFOLIOS || p.id === pickedPortfolio),
+  );
 
   const totalAccounts = allPortfolios.reduce((s, p) => s + p.totalAccounts, 0);
   const totalOutstanding = allPortfolios.reduce((s, p) => s + p.totalOutstanding, 0);
@@ -1577,7 +1660,7 @@ function PortfolioOverviewPage() {
 
           {/* Filter row */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {(["all", "active", "stale", "completed", "closed"] as const).map((s) => (
                 <button
                   key={s}
@@ -1599,6 +1682,23 @@ function PortfolioOverviewPage() {
                 </button>
               ))}
             </div>
+            <Select value={pickedPortfolio} onValueChange={setPortfolioFilter}>
+              <SelectTrigger className="h-8 w-64 text-xs">
+                <SelectValue placeholder="All portfolios" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_PORTFOLIOS}>All portfolios</SelectItem>
+                <SelectSeparator />
+                {allPortfolios.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                    {p.status === "closed" && (
+                      <span className="ml-1.5 text-[10px] text-muted-foreground">Closed</span>
+                    )}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Portfolio table */}
