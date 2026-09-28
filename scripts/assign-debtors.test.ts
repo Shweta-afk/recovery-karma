@@ -35,7 +35,12 @@ const supabase = {
               eq: () => Promise.resolve({ data: agentRows, error: agentError }),
               range: () => Promise.resolve({ data: agentRows, error: agentError }),
             })
-          : Object.assign(empty, { eq: () => empty, range: () => empty, in: () => empty }),
+          : Object.assign(empty, {
+              eq: () => empty,
+              range: () => empty,
+              in: () => empty,
+              is: () => empty,
+            }),
       update: (payload: unknown) => ({
         eq: (col: string, val: string) => {
           writes.push({ table, op: "update", payload, filter: `${col}=${val}` });
