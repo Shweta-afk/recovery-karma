@@ -16,6 +16,16 @@ import type { DialTarget } from "@/lib/dialer/engine";
 import { createSimProvider } from "@/lib/telephony/sim-provider";
 import type { CallRecord, TelephonyEvent } from "@/lib/telephony/types";
 import { legToCallLog, collectLoggableLegs } from "@/lib/dialer/leg-disposition";
+import {
+  channelAllocationError,
+  channelLimitMessage,
+  evaluateCall,
+  istMinutes,
+  normalisePhone,
+  withinCallWindow,
+  type TelephonySettingsRow,
+} from "@/lib/telephony/guard-rules";
+import { skycrmDispositionFor, skycrmProvider } from "@/lib/telephony/skycrm-provider";
 
 let passed = 0;
 let failed = 0;
@@ -230,6 +240,79 @@ ok("failed not logged", legToCallLog(leg({ state: "failed" })) === null);
     collectLoggableLegs(legs, new Set()).length === 2,
   );
   ok("collect skips already-logged", collectLoggableLegs(legs, new Set(["a"])).length === 1);
+}
+
+
+console.log("guard: call rules");
+{
+  const at = (iso: string) => new Date(iso);
+  ok("IST offset: 03:00Z is 08:30 IST", istMinutes(at("2026-09-26T03:00:00Z")) === 8 * 60 + 30);
+  ok("IST wraps past midnight", istMinutes(at("2026-09-26T20:00:00Z")) === 60 + 30);
+  ok("08:30 IST inside 08:00–19:00", withinCallWindow("08:00", "19:00", at("2026-09-26T03:00:00Z")));
+  ok("07:59 IST outside", !withinCallWindow("08:00", "19:00", at("2026-09-26T02:29:00Z")));
+  ok("19:00 IST outside (end exclusive)", !withinCallWindow("08:00", "19:00:00", at("2026-09-26T13:30:00Z")));
+  ok("normalise +91 form", normalisePhone("+91 98765-43210") === "9876543210");
+  ok("normalise 0-prefixed", normalisePhone("09876543210") === "9876543210");
+
+  const settings: TelephonySettingsRow = {
+    enabled: true,
+    seat_limit: 5,
+    channel_limit: 10,
+    inbound_did: null,
+    inbound_queue: null,
+    call_window_start: "08:00:00",
+    call_window_end: "19:00:00",
+  };
+  const noon = at("2026-09-26T06:30:00Z"); // 12:00 IST
+  const base = { settings, provider: "skycrm", agentExtension: "8006", onDoNotCall: false, now: noon };
+  const code = (d: ReturnType<typeof evaluateCall>) => (d.ok ? "ok" : d.code);
+  ok("allowed call passes", code(evaluateCall(base)) === "ok");
+  ok("do-not-call blocks", code(evaluateCall({ ...base, onDoNotCall: true })) === "do_not_call");
+  ok("do-not-call blocks even on sim with no row",
+    code(evaluateCall({ ...base, settings: null, provider: "sim", onDoNotCall: true })) === "do_not_call");
+  ok("disabled company blocks", code(evaluateCall({ ...base, settings: { ...settings, enabled: false } })) === "telephony_disabled");
+  ok("real provider with no settings row blocks", code(evaluateCall({ ...base, settings: null })) === "telephony_disabled");
+  ok("sim with no settings row keeps working", code(evaluateCall({ ...base, settings: null, provider: "sim" })) === "ok");
+  ok("outside window blocks", code(evaluateCall({ ...base, now: at("2026-09-26T14:00:00Z") })) === "outside_window");
+  ok("skycrm needs an extension", code(evaluateCall({ ...base, agentExtension: null })) === "no_extension");
+  ok("sim doesn't need an extension", code(evaluateCall({ ...base, provider: "sim", agentExtension: null })) === "ok");
+  ok("company channel limit message", !!channelLimitMessage("ERROR: CHANNEL_LIMIT_COMPANY")?.includes("company"));
+  ok("global channel limit message", !!channelLimitMessage("CHANNEL_LIMIT_GLOBAL")?.includes("platform"));
+  ok("unrelated DB error is not a channel message", channelLimitMessage("timeout") === null);
+  ok("allocation within 60 ok", channelAllocationError(40, 20) === null);
+  ok("allocation over 60 rejected", channelAllocationError(45, 20) !== null);
+}
+
+console.log("skycrm: webhook parsing + disposition mapping");
+{
+  const outbound = skycrmProvider.parseStatusWebhook({
+    status: "Outbound Call", phone: "9146918685", direction: "Outbound",
+    callid: "1756471568.293338", extension: "8006",
+  });
+  ok("outbound event → ringing", outbound.status === "ringing");
+  ok("outbound carries extension + vendor id", outbound.agentHandle === "8006" && outbound.vendorCallId === "1756471568.293338");
+  const answered = skycrmProvider.parseStatusWebhook({
+    status: "Answered", phone: "+9191XXXXXXXX", direction: "Inbound", callid: "1.2", extension: "8594",
+  });
+  ok("answered → connected, inbound", answered.status === "connected" && answered.direction === "inbound");
+  const incoming = skycrmProvider.parseStatusWebhook({
+    status: "Incomming Call", phone: "+919876543210", direction: "Inbound", callid: "1.3", extension: "",
+  });
+  ok("unanswered inbound has no agent yet", incoming.status === "ringing" && incoming.agentHandle === undefined);
+  const cdr = skycrmProvider.parseStatusWebhook({
+    callid: "1755844832.234718", src: "1234567890", dst: "8006", billsec: "6",
+    disposition: "ANSWERED", direction: "Inbound", recordfile: "10.128.11.67/Recording/x.wav",
+  });
+  ok("CDR answered → completed", cdr.status === "completed");
+  ok("CDR finds extension in dst", cdr.agentHandle === "8006" && cdr.remotePhone === "1234567890");
+  ok("CDR duration", cdr.durationSeconds === 6);
+  ok("recordfile is a path, not a URL", cdr.recordingPath === "10.128.11.67/Recording/x.wav" && cdr.recordingUrl === undefined);
+  const busy = skycrmProvider.parseStatusWebhook({ callid: "9", src: "8006", dst: "9876543210", billsec: "0", disposition: "BUSY", direction: "Outbound" });
+  ok("CDR busy → busy, extension from src", busy.status === "busy" && busy.agentHandle === "8006");
+  throws("webhook without callid rejected", () => skycrmProvider.parseStatusWebhook({ status: "Answered" }));
+  ok("no answer → Non-Contacted", skycrmDispositionFor("no_answer") === "Non-Contacted");
+  ok("wrong number → Non-Contacted", skycrmDispositionFor("wrong_number") === "Non-Contacted");
+  ok("promised → Contacted", skycrmDispositionFor("promised") === "Contacted");
 }
 
 async function simE2E() {

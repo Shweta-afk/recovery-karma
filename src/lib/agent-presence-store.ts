@@ -14,6 +14,8 @@
  * look the same.
  */
 import { supabase, getMyAgentRow } from "./supabase";
+import { setQueuePresence } from "./telephony-actions.server";
+import { getAccessToken } from "./access-token";
 import { istDayKey } from "./monthly-trend";
 import type { AgentStatus } from "./call-queue/types";
 
@@ -51,6 +53,7 @@ export async function setAgentStatus(status: AgentStatus): Promise<void> {
   if (!me?.client_id) return;
 
   await closeOpenStatus();
+  void syncInboundQueue(status);
 
   const { data, error } = await supabase
     .from("agent_status_log")
@@ -62,6 +65,17 @@ export async function setAgentStatus(status: AgentStatus): Promise<void> {
     return;
   }
   openIntervalId = data.id as string;
+}
+
+/** Available agents take inbound calls; any other status pauses their softphone's queue. */
+async function syncInboundQueue(status: AgentStatus): Promise<void> {
+  try {
+    await setQueuePresence({
+      data: { accessToken: await getAccessToken(), available: status === "available" },
+    });
+  } catch (err) {
+    console.warn("[presence] inbound queue update failed:", err);
+  }
 }
 
 /**

@@ -5,6 +5,8 @@ import { createJsonCache } from "./json-cache";
 // Type-only (erased) — the valid call_logs.outcome union, shared with fetch-debtors.
 import type { CallLogOutcome } from "./fetch-debtors";
 import type { DialMode } from "./call-queue/types";
+import { addDoNotCall, reportDisposition } from "./telephony-actions.server";
+import { getAccessToken } from "./access-token";
 
 export type CallOutcome =
   | "paid"
@@ -24,6 +26,8 @@ export type CallSentiment = "happy" | "neutral" | "frustrated" | "rude";
 
 export interface DispositionRecord {
   id: string;
+  /** Add this debtor's number to the company's do-not-call list on save */
+  doNotCall?: boolean;
   debtorId: string;
   debtorName: string;
   phone: string;
@@ -342,10 +346,6 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     }
   }
 
-  // Financial audit trail — separate from the call log so payments reporting has its own
-  // real table, matching the schema's original intent.
-  // payments.debtor_id is also a UUID FK. A payment that cannot be attributed to a debtor
-  // has no place in the financial audit trail, so an ad-hoc call records the outcome on the
   // The number actually rung — the primary, or an alt number the agent picked (often one
   // Insights found). Lets the Insights outcome report say whether a found number connected.
   // Its own best-effort update, like the extras above: a missing column
@@ -358,6 +358,10 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     if (phoneErr) console.warn(`[dispositions] couldn't set dialed_phone:`, phoneErr.message);
   }
 
+  // Financial audit trail — separate from the call log so payments reporting has its own
+  // real table, matching the schema's original intent.
+  // payments.debtor_id is also a UUID FK. A payment that cannot be attributed to a debtor
+  // has no place in the financial audit trail, so an ad-hoc call records the outcome on the
   // call log only — the amount still reaches reporting via promise_amount.
   if (d.outcome === "paid" && d.paidAmount && !isAdHoc) {
     const { error: payErr } = await supabase.from("payments").insert({
@@ -372,7 +376,40 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     if (payErr) throw payErr;
   }
 
+  if (d.providerCallId) void mirrorToProvider(d);
+  if (d.doNotCall) await markDoNotCall(d, isAdHoc);
   await refreshDispositions();
+}
+
+async function markDoNotCall(d: DispositionRecord, isAdHoc: boolean): Promise<void> {
+  await addDoNotCall({
+    data: {
+      accessToken: await getAccessToken(),
+      ...(isAdHoc ? { phone: d.phone } : { debtorId: d.debtorId }),
+      reason: "Borrower asked not to be called",
+    },
+  });
+}
+
+/** Copy the outcome into the telephony vendor's own records (SkyCRM disposition_api). No-op
+ *  for other providers; never blocks or fails the save. */
+async function mirrorToProvider(d: DispositionRecord): Promise<void> {
+  try {
+    await reportDisposition({
+      data: {
+        accessToken: await getAccessToken(),
+        providerCallId: d.providerCallId as string,
+        outcome: d.outcome,
+        remark: d.notes,
+        callbackAt:
+          d.outcome === "callback" && d.callbackDate
+            ? `${d.callbackDate} ${d.callbackTime ?? "00:00"}:00`
+            : undefined,
+      },
+    });
+  } catch (err) {
+    console.warn("[dispositions] provider disposition sync failed:", err);
+  }
 }
 
 /** Insert a call outcome into call_logs directly (no disposition form). Used to auto-log

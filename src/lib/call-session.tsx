@@ -35,6 +35,7 @@ const EMPTY_DISPOSITION: DispositionForm = {
   settlementDate: "",
   settlementWaiver: "",
   escalate: false,
+  doNotCall: false,
   notes: "",
   followUpDate: "",
   attachLoanId: "",

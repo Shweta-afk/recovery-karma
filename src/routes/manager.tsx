@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { CallSessionProvider } from "@/lib/call-session";
 import { GlobalCallBar } from "@/components/global-call-bar";
 import { ManualDialDock } from "@/components/manual-dial-dock";
+import { IncomingCallPopup } from "@/components/incoming-call-popup";
 import { TeamPickerScreen } from "@/components/team-picker-screen";
 import { useAuth } from "@/lib/auth";
 import { useActiveTeam } from "@/lib/active-team-store";
@@ -55,6 +56,7 @@ function ManagerLayout() {
           <TeamPickerScreen teams={teams} managerName={user.name} onPick={setActiveTeam} />
         </AppShell>
         <GlobalCallBar />
+        <IncomingCallPopup />
         <ManualDialDock />
       </CallSessionProvider>
     );
@@ -74,6 +76,7 @@ function ManagerLayout() {
         <Outlet />
       </AppShell>
       <GlobalCallBar />
+      <IncomingCallPopup />
       {/* Always-available manual dialer, bottom-left — see manual-dial-dock.tsx. */}
       <ManualDialDock />
     </CallSessionProvider>

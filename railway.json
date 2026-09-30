@@ -5,6 +5,7 @@
   },
   "deploy": {
     "startCommand": "node .output/server/index.mjs",
+    "numReplicas": 1,
     "restartPolicyType": "on_failure",
     "restartPolicyMaxRetries": 5,
     "healthcheckPath": "/login",

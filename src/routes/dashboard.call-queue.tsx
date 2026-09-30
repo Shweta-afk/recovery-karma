@@ -499,6 +499,7 @@ export function CallQueueContent({
       settlementDate: "",
       settlementWaiver: "",
       escalate: false,
+      doNotCall: false,
       notes: "",
       followUpDate: "",
       attachLoanId: "",
@@ -653,6 +654,7 @@ export function CallQueueContent({
         wrapSeconds: secondsBetween(activeCall?.endedAt, now.toISOString()),
         recordingUrl: activeCall?.recordingUrl,
         // Lets the recording be attached later, once the provider publishes it.
+        doNotCall: disposition.doNotCall,
         providerCallId: activeCall?.providerCallId,
         time: now.toISOString(),
       };

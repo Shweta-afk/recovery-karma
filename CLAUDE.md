@@ -302,6 +302,40 @@ code — always go through this.
 | Simulator         | `sim` (default) | Local dev — no real calls, drives the same dialer engine/state machine so the UI behaves identically to production                                                 |
 | Exotel            | —               | **Removed 2026-09-19** (`exotel-provider.ts` deleted, `exotel` no longer a valid `TELEPHONY_PROVIDER`). Old notes elsewhere in this file about Exotel are history. |
 | KooKoo (Ozonetel) | `kookoo`        | Implemented (`kookoo-provider.ts`) but not the active choice — evaluated as an alternative, not currently used in production                                       |
+| SkyCRM-ACD        | `skycrm`        | **Chosen 2026-09-26** (MSA with Intellect Infotrade signed, effective 2026-09-25). `skycrm-provider.ts`. Not yet switched on in production — see "SkyCRM" below. |
+
+### SkyCRM (2026-09-26) — one account shared by every company
+
+- **Every dial goes through `prepareCall` (`telephony/guard.server.ts`)**, with the rules in pure
+  `guard-rules.ts` (tested in `scripts/telephony-check.ts`). It checks, in order: the company's
+  `do_not_call` list, whether `telephony_settings` is enabled, the IST calling window (never wider
+  than 08:00–19:00, the RBI rule for recovery calls, also enforced by a CHECK constraint), and
+  that SkyCRM agents have an extension. It then reserves a channel through the
+  `telephony_reserve_channel` RPC, which runs under an advisory lock and caps each company at its
+  `channel_limit` and the platform at 60. A company with no settings row can still use `sim`;
+  a real provider requires the row.
+- **`telephony_calls` is the server-only call ledger**: one row per dial, written before the
+  provider is called. `call_logs` can't do this job because it's written at disposition time,
+  after the call. SkyCRM hangup needs extension + phone, which are read back from the ledger, so
+  hangup works after a restart. Webhooks are matched by SkyCRM `callid`, else by "the open call
+  on this extension" (`webhook-reconcile.server.ts`).
+- **`ingestCallStatusEvent` in `telephony/server.ts` must stay free of provider/DB imports.**
+  `server.ts` is imported by browser code, and anything an exported plain function references
+  ships in the client bundle. This leaked SkyCRM's JWT code once during development; check with
+  `grep -rl dialing_phone .output/public` after a build.
+- **One server instance only** (`railway.json` pins `numReplicas: 1`). Dialer runs, the dial rate
+  limiter and the call-status cache live in process memory (`telephony/server.ts`,
+  `rate-limit.server.ts`); a second replica would split them silently. Move them to the database
+  before raising it. Runs are evicted 10 min after stop / 2 h idle (`sweepRuns`), and each webhook
+  touches only the runs holding that call.
+- Webhook events are idempotent against the ledger: `vendor_callid` is unique (simultaneous
+  inbound events can't double-insert), and a ringing/connected event arriving after the call ended
+  is dropped rather than reopening it (`webhook-reconcile.server.ts`).
+- SkyCRM's API reads **form-encoded** bodies only. Its `recordfile` is a path on the vendor's
+  private network, not a URL. Playback needs `download-audio` (returns a zip), which isn't built.
+- `agents.agent_extension` is unique platform-wide, and only a superadmin sets it (the
+  company page's Telephony card; a trigger blocks self-edits). Presence `available` joins and
+  unpauses the company's inbound queue; any other status pauses it.
 
 **Tata SmartFlo was evaluated, went live briefly, then was fully removed on 2026-08-06** ("nothing we did was working and aligning with our goals" — user's call). If you see "Tata" or "SmartFlo" referenced anywhere outside this note, it's stale.
 
@@ -428,32 +462,6 @@ lookup, call log/feedback, payment etc. per IST month; admins download a month a
 phone + service (other debtor rows, then the archive) at ₹0 instead of re-buying it after a
 re-upload. The schedule is deliberately NOT a migration — see `docs/MONTHLY_ARCHIVE.md`.
 
-**Dead accounts are stripped, not deleted (2026-09-23).** 60 IST days after a portfolio closes,
-each account with no open PTP/callback or retention request is written to an Excel file in the
-private `dead-accounts` Storage bucket (ledger: `dead_account_files`), then its `extra` and
-`email` are cleared and `debtors.archived_at` is set (`src/lib/dead-account-archive.server.ts`,
-rules in `dead-accounts-shared.ts`). Never delete debtor rows instead: call_logs/payments/disputes/
-settlements reference them with no cascade and Reports' past months read payments. Runs from
-Admin → Archive History ("Archive now") and daily via `POST /api/cron/archive` (needs
-`ARCHIVE_CRON_SECRET`; 503 without it).
-
-Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the
-`profilex_settings` table, **not** `org-settings-store.ts`, which is localStorage-only and so
-unreadable by the server): manager/admin role gate, per-client monthly budget in IST, a
-found/not-found cache TTL, and a partial unique index that stops a double-click paying twice.
-`debtor_traces` has a SELECT policy only — every write goes through the service-role action, so an
-agent cannot create a trace and a manager cannot forge one. Agents see results read-only via the
-same `debtors_select` visibility the rest of the app uses.
-
-**No Razorpay.** Payment links are provided by the lending bank directly; an agent
-pastes/enters the bank's link manually, then shares it via WhatsApp/SMS/logs it. The
-`razorpay_payment_id`/`razorpay_link_id` DB columns are just generic text storage for that —
-not FK'd to an actual Razorpay integration. `RAZORPAY_KEY_ID`/`SECRET` in `.env.example` are
-vestigial; don't build against them without confirming this has changed.
-
-**WhatsApp/SMS now go through Exotel — this section was stale until 2026-08-27.**
-`messages-store.ts`'s `sendMessage()` calls `sendWhatsAppMessage` / SMS in
-`telephony/server.ts`, which hit Exotel's real API before the row is written; `status` records
 **Insights outcome report + lookup feedback (2026-09-27).** `insights_outcome_report` RPC
 (`migrations/20260927_insights_outcome_report.sql`, applied live) gives one row per lookup with the
 calls/contacts/PTPs/payments on that account AFTER it — attribution by time, not causation; logic
@@ -486,6 +494,32 @@ on the superadmin company page. Enforced server-side: the "All fields" data only
 `getPortfolioLookupData` (the on-screen view) returns per-loan rows only. `insights_export_requests`
 is server-only (RLS on, no policies, no `authenticated` grant).
 
+**Dead accounts are stripped, not deleted (2026-09-23).** 60 IST days after a portfolio closes,
+each account with no open PTP/callback or retention request is written to an Excel file in the
+private `dead-accounts` Storage bucket (ledger: `dead_account_files`), then its `extra` and
+`email` are cleared and `debtors.archived_at` is set (`src/lib/dead-account-archive.server.ts`,
+rules in `dead-accounts-shared.ts`). Never delete debtor rows instead: call_logs/payments/disputes/
+settlements reference them with no cascade and Reports' past months read payments. Runs from
+Admin → Archive History ("Archive now") and daily via `POST /api/cron/archive` (needs
+`ARCHIVE_CRON_SECRET`; 503 without it).
+
+Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the
+`profilex_settings` table, **not** `org-settings-store.ts`, which is localStorage-only and so
+unreadable by the server): manager/admin role gate, per-client monthly budget in IST, a
+found/not-found cache TTL, and a partial unique index that stops a double-click paying twice.
+`debtor_traces` has a SELECT policy only — every write goes through the service-role action, so an
+agent cannot create a trace and a manager cannot forge one. Agents see results read-only via the
+same `debtors_select` visibility the rest of the app uses.
+
+**No Razorpay.** Payment links are provided by the lending bank directly; an agent
+pastes/enters the bank's link manually, then shares it via WhatsApp/SMS/logs it. The
+`razorpay_payment_id`/`razorpay_link_id` DB columns are just generic text storage for that —
+not FK'd to an actual Razorpay integration. `RAZORPAY_KEY_ID`/`SECRET` in `.env.example` are
+vestigial; don't build against them without confirming this has changed.
+
+**WhatsApp/SMS now go through Exotel — this section was stale until 2026-08-27.**
+`messages-store.ts`'s `sendMessage()` calls `sendWhatsAppMessage` / SMS in
+`telephony/server.ts`, which hit Exotel's real API before the row is written; `status` records
 whether the provider accepted it, and a failure is stored as `"failed"` rather than optimistic
 "sent". `INTERAKT_API_KEY` remains unused — Interakt was never the gateway.
 

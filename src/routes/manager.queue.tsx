@@ -510,6 +510,7 @@ function ManagerQueuePage() {
         dpd: debtor.dpd,
         dialMode: activeCall.dialMode ?? "single",
         recordingUrl: activeCall.recordingUrl,
+        doNotCall: disposition.doNotCall,
         providerCallId: activeCall.providerCallId,
         time: now.toISOString(),
       };

@@ -1,31 +1,17 @@
 // SkyCRM-ACD implementation of TelephonyProvider (voice + inbound queue control).
-// Vendor: Intellect Info Trade, "SKYCRM - ACD (Auto Call Dialer)", API spec v1.2.
-// Docs: SKYCRM_API_Ver1.2 PDF (not public). Base host: https://vs.skycrm.app
-//
+// Vendor: Intellect Info Trade, "SKYCRM - ACD (Auto Call Dialer)", API spec v1.2 (PDF, not public).
 // Server-side only — never import from client code (needs SKYCRM_SECRET / SKYCRM_USER / PASS).
 //
-// ─── SCAFFOLD, NOT WIRED ──────────────────────────────────────────────────────
-// This is the POC adapter agreed with the vendor: we drive their existing REST APIs (the
-// "build your own telephony layer" phase) while agents run a SIP softphone (X-Lite / Zoiper)
-// for AUDIO only. WebRTC / browser-only calling is a LATER phase the vendor unlocks after this
-// POC — when it lands, only the audio endpoint changes (softphone → browser webphone); this
-// call-control surface stays. Do NOT assume this is verified against the live account yet: it
-// is written from the v1.2 spec + a read-only probe of vs.skycrm.app on 2026-08-26. Every
-// vendor integrated here has had at least one live-account gotcha its docs didn't mention.
+// Click-to-call: dialing_phone rings the agent's extension (a SIP softphone — Zoiper/X-Lite — until
+// the SIP.js webphone lands), then bridges the debtor. Proven end-to-end on the vendor test env
+// 2026-09-11 (dial, two-way audio, hangup, CDR, queue register/pause, inbound via DID).
 //
-// ─── Two things about this vendor that differ from Exotel ──────────────────────
-// 1. AUTH is a per-request HS256 JWT (not Basic auth). The token is minted from a shared
-//    SECRET_KEY + a payload of {username, password, extension, exp}. Because `extension` is
-//    baked into the token and each agent has a different extension (8006, 8009, ...), a token
-//    is minted PER CALL for the target extension — there is no single long-lived token.
-//    Confirmed against the live host: the correct secret is `!@82Sa)-P2b33#2,saL` (the leading
-//    space shown in the PDF is formatting, not part of the key).
-// 2. CORRELATION is awkward. `dialing_phone` returns only a success message — NO vendor call
-//    id. The vendor `callid` (e.g. "1725258585.139609") only appears asynchronously, via the
-//    `dial_response` poll or the webhook's Outbound-Call event, and it is NOT correlated to the
-//    `per_id` we sent. Meanwhile `hangup_phone` keys off phone_number+extension+per_id, NOT the
-//    callid. So our own `per_id` (== our call_logs row id) is the only handle we control at
-//    dial time. See `pendingCalls` below and the caveats on startCall/hangup/parseStatusWebhook.
+// Vendor quirks that differ from other providers:
+// 1. AUTH is a per-request HS256 JWT minted from a shared secret + {username, password, extension,
+//    exp}. The extension is inside the token, so a token is minted per request per extension.
+//    The secret lives only in SKYCRM_SECRET — never paste it into code or comments.
+// 2. BODIES MUST BE FORM-ENCODED (see post() below).
+// 3. HTTP 200 does not mean success — the body's `status` field does.
 
 import { createHmac } from "node:crypto";
 import type {
@@ -36,6 +22,7 @@ import type {
   SendSmsResult,
   CallStatusEvent,
   CallStatus,
+  HangupContext,
 } from "./types";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -44,8 +31,8 @@ const env = (key: string): string | undefined =>
   typeof process !== "undefined" ? process.env?.[key] : undefined;
 
 const SKYCRM_BASE_URL = env("SKYCRM_BASE_URL") ?? "https://vs.skycrm.app";
-/** HS256 signing secret from the vendor. The v1.2 PDF renders it with a leading space inside
- * the quotes — that space is NOT part of the key (verified against the live host). */
+/** HS256 signing secret from the vendor. If copying it from the PDF, drop the leading space the
+ * PDF renders inside the quotes — it is not part of the key. */
 const SKYCRM_SECRET = env("SKYCRM_SECRET");
 /** Service-account username/password the vendor issues. Same credentials work in both CRMs
  * per the spec's Login-api note. */
@@ -174,26 +161,38 @@ async function post(
   return data;
 }
 
-// ─── Correlation state (process-local, POC only) ────────────────────────────────
-// dialing_phone gives us no call id, and hangup_phone needs phone_number+extension+per_id
-// (which hangup(providerCallId) doesn't carry). Keep just enough to reconstruct a hangup.
-// ⚠️ In-memory: does NOT survive a restart and is NOT shared across instances. A production
-// version should persist {phone, extension} on the call_logs row keyed by per_id and read it
-// back in hangup — not rely on this map. Fine for a single-instance POC.
-const pendingCalls = new Map<string, { phone: string; extension: string }>();
+// ─── Correlation ────────────────────────────────────────────────────────────────
+// dialing_phone returns no call id, so server.ts reserves a telephony_calls ledger row first and
+// passes its id as `requestId`; we send it as per_id and hand it back as providerCallId.
+// hangup_phone keys off phone + extension (not a call id), which server.ts reads back from that
+// ledger row and passes as HangupContext — so a hangup still works after a restart or on another
+// instance. Webhook events carry SkyCRM's own `callid` plus the extension and phone, and
+// server.ts matches them to the ledger (callid once known, else the open call on that extension).
 
 // ─── Status mapping ─────────────────────────────────────────────────────────────
-// Webhook `status` values (spec §21): "Incomming Call", "Answered", "Outbound Call". The CDR
-// event (§21.5) carries the terminal disposition + billsec + recordfile.
+// Live events (spec §21): "Incomming Call" / "Outbound Call" → ringing, "Answered" → connected.
+// The CDR event (§21.5) is the only terminal signal; its `disposition` is Asterisk's
+// (ANSWERED / NO ANSWER / BUSY / FAILED / CONGESTION) or SkyCRM's "Missed Call".
 
-const SKYCRM_STATUS_MAP: Record<string, CallStatus> = {
+const LIVE_STATUS: Record<string, CallStatus> = {
   "incomming call": "ringing",
+  "incoming call": "ringing",
   "outbound call": "ringing",
   answered: "connected",
-  // CDR dispositions (§10/§11): ANSWERED / "Missed Call" etc.
-  answered_cdr: "completed",
-  "missed call": "no_answer",
+  answer: "connected",
 };
+
+const CDR_DISPOSITION: Record<string, CallStatus> = {
+  answered: "completed",
+  "no answer": "no_answer",
+  "missed call": "no_answer",
+  busy: "busy",
+  failed: "failed",
+  congestion: "failed",
+};
+
+/** SkyCRM extensions are short (8006, 8597); phone numbers are 10+ digits. */
+const looksLikeExtension = (v: string | undefined) => !!v && /^\d{3,6}$/.test(v.trim());
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
@@ -201,119 +200,109 @@ export const skycrmProvider: TelephonyProvider = {
   name: "skycrm",
 
   async startCall(req: StartCallRequest): Promise<StartCallResult> {
-    // agentNumber == the agent's SkyCRM extension; debtorNumber == phone_number; callLogId
-    // is reused as per_id (the vendor's "lead id for tracking"). callerId is not a SkyCRM
-    // concept (the caller ID is the extension's DID, set on their switch) — ignored here.
+    // agentNumber is the agent's SkyCRM extension (server.ts resolves it from agents.agent_extension).
+    // callerId is not a SkyCRM concept — the DID is set per extension on their switch.
     const extension = req.agentNumber;
+    const perId = req.requestId || req.callLogId;
     await post(
       "dialing_phone",
-      {
-        phone_number: req.debtorNumber,
-        extension,
-        prefix: SKYCRM_PREFIX,
-        per_id: req.callLogId,
-      },
+      { phone_number: req.debtorNumber, extension, prefix: SKYCRM_PREFIX, per_id: perId },
       extension,
     );
-
-    // dialing_phone returns no vendor call id. We hand back our own callLogId (== per_id) as the
-    // correlation handle — it is what hangup and our call_logs row both key on. The vendor's real
-    // `callid` is learned later (dial_response poll / webhook Outbound event) and, if we ever need
-    // it, must be reconciled onto the row then. See parseStatusWebhook's correlation note.
-    pendingCalls.set(req.callLogId, { phone: req.debtorNumber, extension });
-    return { providerCallId: req.callLogId };
+    return { providerCallId: perId };
   },
 
-  async hangup(providerCallId: string): Promise<void> {
-    // providerCallId is our callLogId (== per_id). hangup_phone needs the phone + extension too,
-    // recovered from the pendingCalls map populated at dial time. If it's missing (restart /
-    // other instance / inbound leg), we can't reconstruct the vendor's required params — log and
-    // no-op rather than throw, since the call may already have ended.
-    const pending = pendingCalls.get(providerCallId);
-    if (!pending) {
+  async hangup(providerCallId: string, ctx?: HangupContext): Promise<void> {
+    const extension = ctx?.agentHandle?.trim();
+    const phone = ctx?.remotePhone?.trim();
+    if (!extension || !phone) {
       console.warn(
-        `[skycrm-provider] hangup: no pending-call record for per_id=${providerCallId} ` +
-          "(restart / cross-instance / inbound leg?) — cannot reconstruct hangup params, skipping.",
+        "[skycrm-provider] hangup: no extension/phone for this call (no ledger row?) — skipping.",
       );
       return;
     }
     try {
-      await post(
-        "hangup_phone",
-        {
-          phone_number: pending.phone,
-          extension: pending.extension,
-          prefix: SKYCRM_PREFIX,
-          per_id: providerCallId,
-        },
-        pending.extension,
-      );
+      if (ctx?.direction === "inbound") {
+        await post("incoming_hangup1", { phone_number: phone, extension }, extension);
+      } else {
+        await post(
+          "hangup_phone",
+          { phone_number: phone, extension, prefix: SKYCRM_PREFIX, per_id: providerCallId },
+          extension,
+        );
+      }
     } catch (err) {
-      // Best-effort — mirror exotelProvider.hangup; the call may already be down.
+      // Best-effort: the call may already be down, and the CDR webhook will still close it.
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[skycrm-provider] hangup warning: ${msg}`);
-    } finally {
-      pendingCalls.delete(providerCallId);
     }
   },
 
   async sendSms(_req: SendSmsRequest): Promise<SendSmsResult> {
-    // SkyCRM v1.2 exposes no SMS endpoint (voice + inbound-queue control only). SMS stays on the
-    // existing provider — don't silently pretend it sent.
+    // SkyCRM v1.2 exposes no SMS endpoint (voice + inbound-queue control only).
     throw new Error("SMS is not supported by this telephony provider.");
   },
 
   parseStatusWebhook(payload: unknown): CallStatusEvent {
-    // Webhook events (spec §21): {status, phone, direction, source, destination, queue, callid,
-    // extension, income_date, message}; the CDR event adds {billsec, disposition, recordfile}.
     const p = payload as Record<string, unknown>;
-    const pick = <T>(...keys: string[]): T | undefined => {
+    const pick = (...keys: string[]): string | undefined => {
       for (const k of keys) {
         const v = p[k];
-        if (v !== undefined && v !== null && v !== "") return v as T;
+        if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
       }
       return undefined;
     };
 
-    // ⚠️ Correlation gap: the webhook carries the vendor `callid` but NOT our per_id, while at
-    // dial time we only knew our per_id (dialing_phone returned no callid). So for OUTBOUND calls
-    // there is no shared key here yet — reconciling callid↔per_id needs either the dial_response
-    // poll (which returns both request_id and callid) or a vendor change to echo per_id in the
-    // webhook. For the POC this is a known limitation to resolve against the live account.
-    const callid = pick<string>("callid");
-    if (!callid) {
-      throw new Error("Invalid telephony webhook: no callid to correlate on");
+    if (pick("event") === "ivrdtmf") {
+      throw new Error("IVR keypress events are not used yet");
     }
+    const callid = pick("callid");
+    if (!callid) throw new Error("Invalid telephony webhook: no callid to correlate on");
 
-    const rawStatus = (pick<string>("status") ?? "").toLowerCase();
-    const disposition = (pick<string>("disposition") ?? "").toLowerCase();
-    // A CDR event (has billsec/disposition/recordfile) is our terminal signal.
+    const direction = (pick("direction") ?? "").toLowerCase().startsWith("in")
+      ? ("inbound" as const)
+      : ("outbound" as const);
+    const disposition = (pick("disposition") ?? "").toLowerCase();
     const isCdr = pick("billsec") !== undefined || disposition !== "";
+
     let status: CallStatus;
+    let agentHandle = pick("extension");
+    let remotePhone = pick("phone");
     if (isCdr) {
-      status =
-        disposition === "answered" ? "completed" : (SKYCRM_STATUS_MAP[disposition] ?? "no_answer");
+      status = CDR_DISPOSITION[disposition] ?? "no_answer";
+      // CDR has no extension/phone fields: the extension is whichever of src/dst is short.
+      const src = pick("src");
+      const dst = pick("dst");
+      if (!agentHandle) agentHandle = looksLikeExtension(dst) ? dst : looksLikeExtension(src) ? src : undefined;
+      if (!remotePhone) remotePhone = agentHandle === dst ? src : dst;
     } else {
-      status = SKYCRM_STATUS_MAP[rawStatus] ?? "failed";
+      status = LIVE_STATUS[(pick("status") ?? "").toLowerCase()] ?? "failed";
     }
 
-    const billsec = pick<string | number>("billsec");
+    const billsec = pick("billsec");
     return {
+      // Placeholder: server.ts swaps in our providerCallId after matching the ledger.
       providerCallId: callid,
-      // No per_id echoed — leave customIdentifier undefined until correlation is solved.
-      customIdentifier: undefined,
+      vendorCallId: callid,
       status,
+      direction,
+      agentHandle: looksLikeExtension(agentHandle) ? agentHandle : undefined,
+      remotePhone,
       durationSeconds: billsec === undefined ? undefined : Number(billsec) || 0,
-      recordingUrl: pick<string>("recordfile", "recordingUrl"),
+      recordingPath: pick("recordfile"),
     };
   },
 };
 
+/** Our call outcome → SkyCRM's two top-level dispositions (it accepts only these two). A wrong
+ *  number reached someone, but not the borrower, so it counts as not contacted. */
+export function skycrmDispositionFor(outcome: string): "Contacted" | "Non-Contacted" {
+  return ["no_answer", "voicemail", "wrong_number"].includes(outcome) ? "Non-Contacted" : "Contacted";
+}
+
 // ─── Auxiliary SkyCRM calls (not part of TelephonyProvider) ─────────────────────
-// Needed to "build our own telephony layer" for the POC, but outside the voice interface —
-// the dialer engine / server routes call these directly, the way messages-store.ts calls
-// sendWhatsApp on the Exotel provider. All are POC scaffolds: shapes come from the v1.2 spec,
-// unverified against the live account.
+// Called directly by skycrm-actions.server.ts (queue presence, disposition sync). Queue register/
+// pause/unpause were proven on the test env 2026-09-11; disposition_api was not.
 
 /** Verify credentials / that a token is accepted. GET /login_user_ajax2?token=<jwt>.
  * Returns the parsed body; a signature-valid token with bad creds yields status 301
@@ -366,10 +355,5 @@ export function sendDisposition(args: {
   return post("disposition_api", { extension, ...rest }, extension);
 }
 
-// TODO (POC, once the live test env + credentials land): wire the remaining differentiators the
-// v1.2 spec exposes but this scaffold doesn't yet — call monitor (listen/whisper/barge via
-// call_monitor_api + call_monitor_hangup_api), mute/hold (mute_calls / hold_calls),
-// transfer/swap/conference (call_transfer / call_swaping / conf_hangup), the dial_response poll
-// (to recover the vendor callid ↔ per_id correlation), CDR + recording pull (cdr_report /
-// download-audio), and break events (break_events2). None are needed for a basic outbound +
-// inbound POC loop; add them as the workflow requires.
+// Not wired yet (spec §13–20): call monitor (listen/whisper/barge), mute/hold, transfer/swap/
+// conference, missed-call list and recording download (download-audio returns a zip by CDR id).

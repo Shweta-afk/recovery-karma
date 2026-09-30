@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { Building2, Clock, Shield, Plug, Save } from "lucide-react";
+import { Building2, Shield, Plug, Save } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { getOrgSettings, saveOrgSettings, type OrgSettings } from "@/lib/org-set
 import { getMyClient, updateCompanyName } from "@/lib/client-store";
 import { ProfilexSettingsCard } from "@/components/profilex/profilex-settings-card";
 import { CompanyWalletCard, ManagerWalletsCard } from "@/components/profilex/wallets-card";
+import { CallingHoursCard, DoNotCallCard } from "@/components/telephony/do-not-call-card";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({ meta: [{ title: "Settings · SamvadX Admin" }] }),
@@ -148,60 +149,17 @@ function AdminSettingsPage() {
         </SettingRow>
       </SectionCard>
 
-      {/* Said plainly and near the top, because the previous copy on this page made specific
-          regulatory claims ("RBI/TRAI guardrails enforced across every team", "DNC-listed
-          accounts are automatically skipped org-wide") that nothing in the app implements. An
-          admin reasonably concluded DNC screening was active. In a collections product that is
-          a compliance exposure, not a cosmetic bug. */}
-      <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
-        <Shield className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
-        <p className="text-[12px] text-muted-foreground">
-          <span className="font-semibold text-foreground">
-            Only Company Name is saved for your organisation.
-          </span>{" "}
-          Calling hours, DNC/DND enforcement and contact limits below are stored in{" "}
-          <span className="font-medium text-foreground">this browser only</span>, are not shared
-          with your team, and are <span className="font-medium text-foreground">not enforced</span>{" "}
-          by the dialer or the call queue. Treat them as notes until enforcement is built.
-        </p>
-      </div>
+      <CallingHoursCard />
+      <DoNotCallCard canRemove />
 
-      <SectionCard
-        icon={Clock}
-        title="Working Hours"
-        description="Saved preference. NOT yet applied to portfolios or the dialer."
-      >
-        <SettingRow label="Calling hours">
-          <div className="flex items-center gap-2">
-            <Input
-              type="time"
-              value={cfg.callStartTime}
-              onChange={(e) => set("callStartTime", e.target.value)}
-              className="w-28 h-8 text-xs"
-            />
-            <span className="text-xs text-muted-foreground">to</span>
-            <Input
-              type="time"
-              value={cfg.callEndTime}
-              onChange={(e) => set("callEndTime", e.target.value)}
-              className="w-28 h-8 text-xs"
-            />
-          </div>
-        </SettingRow>
-      </SectionCard>
-
+      {/* Kept labelled as unenforced: nothing reads these yet. The previous copy on this page
+          claimed RBI/TRAI guardrails were enforced when they weren't — don't repeat that. */}
       <SectionCard
         icon={Shield}
-        title="Compliance"
-        description="Saved preferences. NOT yet enforced anywhere in the app — see the notice below."
+        title="Other contact rules"
+        description="Saved in this browser only. NOT enforced yet."
         badge="Not enforced"
       >
-        <SettingRow
-          label="Enforce DNC registry"
-          hint="Records the intent to skip DNC-listed accounts. There is no DNC list connected, so nothing is skipped today."
-        >
-          <Switch checked={cfg.enforceDnc} onCheckedChange={(v) => set("enforceDnc", v)} />
-        </SettingRow>
         <SettingRow label="Enforce DND mobile numbers">
           <Switch checked={cfg.enforceDnd} onCheckedChange={(v) => set("enforceDnd", v)} />
         </SettingRow>
