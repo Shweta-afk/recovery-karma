@@ -246,12 +246,16 @@ function DebtorsPage() {
 
     // A plain agent — their own book only, scoped by assigned_agent_id. Same scope shape Call
     // Queue uses, so the two pages share one fetch when both are open for the same agent.
+    // Ended (closed or past end date) portfolios are skipped, matching the supervisor branch
+    // above and Call Queue — otherwise an agent saw portfolios their manager's view had dropped.
     const scope: DebtorScope = { kind: "agents", agentIds: [agentId] };
     const render = () => {
       if (cancelled) return;
       const result: Debtor[] = [];
-      for (const p of getScopedPortfolios(scope))
+      for (const p of getScopedPortfolios(scope)) {
+        if (isPortfolioEnded(p)) continue;
         for (const r of p.rows) result.push(toDebtor(r, p));
+      }
       setUploadedDebtors(result);
     };
     render();
