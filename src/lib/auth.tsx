@@ -1,7 +1,12 @@
 import { clearLocalCaches } from "@/lib/clear-local-caches";
 import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import { supabase } from "./supabase";
-import { enforceSingleSession, verifySubdomainAccess } from "./session-actions.server";
+import {
+  checkLoginOtpRequired,
+  enforceSingleSession,
+  verifySubdomainAccess,
+} from "./session-actions.server";
+import { roleNeedsEmailOtp, tokenHasEmailOtp } from "./login-otp";
 
 export type Role = "agent" | "manager" | "admin" | "superadmin";
 
@@ -40,13 +45,22 @@ export interface AuthUser {
   companyStatus?: "pending" | "approved" | "rejected";
 }
 
+export interface LoginResult {
+  error: string | null;
+  user: AuthUser | null;
+  /** Set when the password was right but the account is an admin/superadmin: a code has been
+   *  emailed to `otpEmail`, and the sign-in only completes through verifyLoginOtp(). */
+  otpRequired?: boolean;
+  otpEmail?: string;
+}
+
 interface AuthCtx {
   user: AuthUser | null;
   loading: boolean;
-  login: (
-    email: string,
-    password: string,
-  ) => Promise<{ error: string | null; user: AuthUser | null }>;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  /** Second step for admins/superadmins — see login-otp.ts. */
+  verifyLoginOtp: (email: string, code: string) => Promise<LoginResult>;
+  resendLoginOtp: (email: string) => Promise<{ error: string | null }>;
   logout: () => Promise<void>;
   /** Set when this tab was force-signed-out because the account logged in on another device.
    *  login.tsx reads it to show a one-time banner; login() clears it on the next attempt. */
@@ -261,10 +275,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // withTimeout only bounds the network call inside fetchAgentProfile; this wrapper makes
     // that guarantee unconditional regardless of which caller invokes it, so a rejection can
     // never leave `loading` stuck true — the failure mode becomes "signed out", not "hung".
-    async function resolveSession(session: { user: { id: string } } | null) {
+    async function resolveSession(session: { user: { id: string }; access_token: string } | null) {
       try {
         const profile = session?.user ? await fetchAgentProfile(session.user.id) : null;
         if (cancelled) return;
+        // A saved admin session that never passed the emailed code (e.g. signed in before this
+        // was required) has no admin powers in the database or server actions, so the app
+        // would just look empty. Send them back through the login screen instead.
+        if (
+          profile &&
+          roleNeedsEmailOtp(profile.role) &&
+          !tokenHasEmailOtp(session?.access_token)
+        ) {
+          await forceSignOutLocally(
+            "For security, admin accounts now confirm each sign-in with a code sent to your email. Please sign in again.",
+          );
+          return;
+        }
         setUser(profile);
       } catch (err) {
         console.error("[auth] failed to resolve session:", err);
@@ -343,10 +370,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const login = async (
-    email: string,
-    password: string,
-  ): Promise<{ error: string | null; user: AuthUser | null }> => {
+  const login = async (email: string, password: string): Promise<LoginResult> => {
     setLoading(true);
     setSignedOutReason(null);
     loggingInRef.current = true;
@@ -363,7 +387,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // assigned subdomain, only that company's own users may sign in here at all. Checked
     // BEFORE enforceSingleSession/profile fetch and, unlike those, is NOT best-effort — a
     // rejection here signs the browser back out immediately rather than letting the wrong
-    // company's user proceed.
+    // company's user proceed. Also runs before any sign-in code is emailed.
     if (data.session?.access_token) {
       try {
         const subdomainCheck = await verifySubdomainAccess({
@@ -381,13 +405,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error("[auth] verifySubdomainAccess failed (continuing sign-in anyway):", err);
       }
     }
+
+    // Admins and superadmins: the password alone is not a sign-in. Drop the password session
+    // and email a one-time code; verifyLoginOtp() finishes the job with an email-verified
+    // session, which is the only kind auth_role()/verifyCaller grant admin powers to (see
+    // login-otp.ts). Fails closed — if the check itself errors, ask for a code.
+    if (data.session?.access_token) {
+      let otpRequired = true;
+      try {
+        const check = await checkLoginOtpRequired({
+          data: { accessToken: data.session.access_token },
+        });
+        otpRequired = check.required;
+      } catch (err) {
+        console.error("[auth] checkLoginOtpRequired failed (asking for a code):", err);
+      }
+      if (otpRequired) {
+        const otpEmail = data.user?.email ?? email.trim().toLowerCase();
+        // Local only: the password session's refresh token is revoked server-side once the
+        // code is verified (enforceSingleSession). A global sign-out here would let anyone
+        // who knows the password log the real admin out of every device without the code.
+        await supabase.auth.signOut({ scope: "local" });
+        const sent = await sendLoginOtp(otpEmail);
+        setLoading(false);
+        loggingInRef.current = false;
+        if (sent.error) return { error: sent.error, user: null };
+        return { error: null, user: null, otpRequired: true, otpEmail };
+      }
+    }
+
+    return finishSignIn(data.session?.access_token, data.user?.id);
+  };
+
+  /** Emails a sign-in code to an EXISTING account (never creates one). */
+  async function sendLoginOtp(email: string): Promise<{ error: string | null }> {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: false },
+    });
+    return { error: error ? `Couldn't send your sign-in code: ${error.message}` : null };
+  }
+
+  const resendLoginOtp = (email: string) => sendLoginOtp(email);
+
+  const verifyLoginOtp = async (email: string, code: string): Promise<LoginResult> => {
+    setLoading(true);
+    setSignedOutReason(null);
+    loggingInRef.current = true;
+    const { data, error } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
+    if (error || !data.session) {
+      setLoading(false);
+      loggingInRef.current = false;
+      return {
+        error: error?.message ?? "That code didn't work — check it or send a new one.",
+        user: null,
+      };
+    }
+    return finishSignIn(data.session.access_token, data.user?.id);
+  };
+
+  /** The shared tail of every sign-in, password-only or after the emailed code. Expects
+   *  loggingInRef to already be true; clears it and `loading`. */
+  async function finishSignIn(
+    accessToken: string | undefined,
+    authUserId: string | undefined,
+  ): Promise<LoginResult> {
     // Revoke every other session for this account and rotate session_nonce BEFORE reading the
     // profile back below, so that read picks up the fresh nonce rather than the stale one —
     // see enforceSingleSession. Best-effort: a failure here shouldn't block this device's own
     // sign-in, only degrade the single-device guarantee for this one login.
-    if (data.session?.access_token) {
+    if (accessToken) {
       try {
-        await enforceSingleSession({ data: { accessToken: data.session.access_token } });
+        await enforceSingleSession({ data: { accessToken } });
       } catch (err) {
         console.error("[auth] enforceSingleSession failed (continuing sign-in anyway):", err);
       }
@@ -396,7 +485,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // trusting the cache here is how a role promotion made after the last login silently
     // reverted on the user's next sign-in.
     try {
-      const profile = data.user ? await fetchAgentProfile(data.user.id, true) : null;
+      const profile = authUserId ? await fetchAgentProfile(authUserId, true) : null;
       if (profile) setUser(profile);
       return { error: null, user: profile };
     } catch (err) {
@@ -406,7 +495,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       loggingInRef.current = false;
     }
-  };
+  }
 
   const logout = async () => {
     sessionNonceRef.current = null;
@@ -419,7 +508,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <Ctx.Provider value={{ user, loading, login, logout, signedOutReason }}>
+    <Ctx.Provider
+      value={{ user, loading, login, verifyLoginOtp, resendLoginOtp, logout, signedOutReason }}
+    >
       {children}
     </Ctx.Provider>
   );

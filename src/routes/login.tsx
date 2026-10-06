@@ -1,12 +1,19 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
-import { Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Loader2, AlertCircle, Eye, EyeOff, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useAuth, homeRouteForRole, type Role } from "@/lib/auth";
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
+import { useAuth, homeRouteForRole, type Role, type AuthUser } from "@/lib/auth";
+
+// Same as setup.tsx: Supabase's email codes are 8 digits on this project.
+const OTP_LENGTH = 8;
+// Matches Supabase Auth → SMTP "Minimum interval per user" (60s); a shorter cooldown just
+// lets the Resend button fail.
+const RESEND_COOLDOWN_SECONDS = 60;
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -23,13 +30,55 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { login, user, signedOutReason } = useAuth();
+  const { login, verifyLoginOtp, resendLoginOtp, user, signedOutReason } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Admins/superadmins only: after the password, the address a sign-in code was emailed to.
+  const [otpEmail, setOtpEmail] = useState<string | null>(null);
+  const [otp, setOtp] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [resendCooldown]);
+
+  const goHome = (loggedInUser: AuthUser | null) => {
+    setTimeout(() => {
+      const role = loggedInUser?.role ?? user?.role;
+      // Same helper the sidebar logo uses, so the two can never disagree about where a role
+      // lands.
+      navigate({ to: homeRouteForRole(role as Role | undefined) });
+    }, 150);
+  };
+
+  const handleOtpSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!otpEmail || otp.length !== OTP_LENGTH) return;
+    setLoading(true);
+    setError(null);
+    const { error: otpError, user: loggedInUser } = await verifyLoginOtp(otpEmail, otp);
+    if (otpError) {
+      setError(otpError);
+      setOtp("");
+      setLoading(false);
+      return;
+    }
+    goHome(loggedInUser);
+  };
+
+  const handleResend = async () => {
+    if (!otpEmail || resendCooldown > 0 || loading) return;
+    setError(null);
+    const { error: resendError } = await resendLoginOtp(otpEmail);
+    if (resendError) setError(resendError);
+    else setResendCooldown(RESEND_COOLDOWN_SECONDS);
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -37,21 +86,24 @@ function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const { error: loginError, user: loggedInUser } = await login(email, password);
+    const result = await login(email, password);
 
-    if (loginError) {
-      setError(loginError);
+    if (result.error) {
+      setError(result.error);
       setLoading(false);
       return;
     }
 
-    // Redirect based on role
-    setTimeout(() => {
-      const role = loggedInUser?.role ?? user?.role;
-      // Same helper the sidebar logo uses, so the two can never disagree about where a role
-      // lands.
-      navigate({ to: homeRouteForRole(role as Role | undefined) });
-    }, 150);
+    if (result.otpRequired && result.otpEmail) {
+      setOtpEmail(result.otpEmail);
+      setOtp("");
+      setPassword("");
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
+      setLoading(false);
+      return;
+    }
+
+    goHome(result.user);
   };
 
   return (
@@ -90,68 +142,143 @@ function LoginPage() {
           </div>
 
           <Card className="border-border shadow-sm">
-            <CardHeader className="space-y-1">
-              <h2 className="text-xl font-semibold text-foreground">Sign in to your workspace</h2>
-              <p className="text-sm text-muted-foreground">Enter your work email to continue.</p>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email">Work email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="agent@yourcompany.in"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="password"
-                      type={showPassword ? "text" : "password"}
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      autoComplete="current-password"
-                      className="pr-9"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      aria-label={showPassword ? "Hide password" : "Show password"}
-                    >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
+            {otpEmail ? (
+              <>
+                <CardHeader className="space-y-1">
+                  <div className="flex items-center gap-2 text-foreground">
+                    <Mail className="h-5 w-5 text-primary" />
+                    <h2 className="text-xl font-semibold">Check your email</h2>
                   </div>
-                </div>
+                  <p className="text-sm text-muted-foreground">
+                    Admin sign-ins need a one-time code. Enter the {OTP_LENGTH}-digit code we sent
+                    to <span className="font-medium">{otpEmail}</span>.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleOtpSubmit} className="space-y-4">
+                    <div className="flex justify-center">
+                      <InputOTP maxLength={OTP_LENGTH} value={otp} onChange={setOtp} autoFocus>
+                        <InputOTPGroup>
+                          {Array.from({ length: OTP_LENGTH }, (_, i) => (
+                            <InputOTPSlot key={i} index={i} />
+                          ))}
+                        </InputOTPGroup>
+                      </InputOTP>
+                    </div>
 
-                {signedOutReason && !error && (
-                  <Alert className="py-2">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription className="text-sm">{signedOutReason}</AlertDescription>
-                  </Alert>
-                )}
+                    {error && (
+                      <Alert variant="destructive" className="py-2">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">{error}</AlertDescription>
+                      </Alert>
+                    )}
 
-                {error && (
-                  <Alert variant="destructive" className="py-2">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription className="text-sm">{error}</AlertDescription>
-                  </Alert>
-                )}
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={loading || otp.length !== OTP_LENGTH}
+                    >
+                      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify & sign in"}
+                    </Button>
 
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
-                </Button>
-              </form>
-            </CardContent>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOtpEmail(null);
+                          setOtp("");
+                          setError(null);
+                        }}
+                        className="hover:text-foreground hover:underline"
+                      >
+                        Back to sign in
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResend}
+                        disabled={resendCooldown > 0 || loading}
+                        className="hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+                      >
+                        {resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : "Resend code"}
+                      </button>
+                    </div>
+                  </form>
+                </CardContent>
+              </>
+            ) : (
+              <>
+                <CardHeader className="space-y-1">
+                  <h2 className="text-xl font-semibold text-foreground">
+                    Sign in to your workspace
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    Enter your work email to continue.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Work email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="agent@yourcompany.in"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        autoComplete="email"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="password">Password</Label>
+                      <div className="relative">
+                        <Input
+                          id="password"
+                          type={showPassword ? "text" : "password"}
+                          placeholder="••••••••"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          required
+                          autoComplete="current-password"
+                          className="pr-9"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((v) => !v)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          aria-label={showPassword ? "Hide password" : "Show password"}
+                        >
+                          {showPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {signedOutReason && !error && (
+                      <Alert className="py-2">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">{signedOutReason}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {error && (
+                      <Alert variant="destructive" className="py-2">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">{error}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    <Button type="submit" className="w-full" disabled={loading}>
+                      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
+                    </Button>
+                  </form>
+                </CardContent>
+              </>
+            )}
           </Card>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">

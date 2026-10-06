@@ -12,6 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 // Same permissive stand-in the browser client uses — see the note on GenericSchema.
 import type { Database } from "./database.types";
 import type { Role } from "./auth";
+import { roleNeedsEmailOtp, tokenHasEmailOtp } from "./login-otp";
 
 let adminInstance: ReturnType<typeof createClient<Database>> | null = null;
 
@@ -73,6 +74,9 @@ export async function verifyCaller(accessToken: string): Promise<VerifiedCaller 
     error: unknown;
   };
   if (error || !data?.client_id) return null;
+  // An admin's password-only session (no emailed code yet) gets no admin powers here — same
+  // rule auth_role() applies in the database. See login-otp.ts.
+  if (roleNeedsEmailOtp(data.role) && !tokenHasEmailOtp(accessToken)) return null;
 
   return {
     authUserId: user.id,
@@ -116,6 +120,8 @@ export async function verifySuperadminCaller(
     error: unknown;
   };
   if (error || !data) return null;
+  // Superadmins also confirm every sign-in with an emailed code — see login-otp.ts.
+  if (!tokenHasEmailOtp(accessToken)) return null;
 
   return {
     authUserId: user.id,

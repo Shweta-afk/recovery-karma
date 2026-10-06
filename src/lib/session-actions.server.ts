@@ -8,12 +8,37 @@ import { z, tokenSchema, shortText } from "./schemas";
 import { randomBytes } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
+import { roleNeedsEmailOtp } from "./login-otp";
 
 // Matches a single-label subdomain of samvadx.com — "raerae.samvadx.com" -> "raerae". Deliberately
 // does NOT match a bare "samvadx.com", "www.samvadx.com", any *.up.railway.app domain, or
 // "localhost": only an exact one-label samvadx.com subdomain can ever be scoped, so the
 // platform's own domains and local dev are never accidentally restricted.
 const SUBDOMAIN_HOSTNAME_RE = /^([a-z0-9-]+)\.samvadx\.com$/i;
+
+/** Whether this account must confirm the sign-in with an emailed code (admins and
+ * superadmins — see login-otp.ts). Called by login() with the PASSWORD session's token, so it
+ * deliberately does not go through verifyCaller/verifySuperadminCaller: those refuse exactly
+ * this password-only token for an elevated account. Fails closed — on a lookup error the
+ * caller is told a code is required, never waved through. */
+export const checkLoginOtpRequired = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const admin = getSupabaseAdmin();
+    const {
+      data: { user },
+      error: userErr,
+    } = await admin.auth.getUser(data.accessToken);
+    if (userErr || !user) return { required: true as const };
+
+    const [superadmin, agent] = await Promise.all([
+      admin.from("superadmins").select("id").eq("auth_user_id", user.id).maybeSingle(),
+      admin.from("agents").select("role").eq("auth_user_id", user.id).maybeSingle(),
+    ]);
+    if (superadmin.error || agent.error) return { required: true as const };
+    if (superadmin.data) return { required: true as const };
+    return { required: roleNeedsEmailOtp((agent.data as { role?: string } | null)?.role) };
+  });
 
 /** Called once, right after a successful sign-in (see auth.tsx's login()), with the hostname
  * the browser is actually on. If that hostname is a company's assigned subdomain
