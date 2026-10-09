@@ -65,14 +65,17 @@ different Cloudflare D1 backend from an earlier iteration of the project).
 
 ### User roles & routes
 
-| Role    | Entry route  | What they do                                                             |
-| ------- | ------------ | ------------------------------------------------------------------------ |
-| Agent   | `/dashboard` | Work the call queue, log outcomes, view debtor profiles, daily targets   |
-| Manager | `/manager`   | Upload portfolios, assign accounts, audit calls, view team performance   |
-| Admin   | `/admin`     | Assign portfolios to managers, manage teams/users, org settings, reports |
+| Role       | Entry route   | What they do                                                                                                                      |
+| ---------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Agent      | `/dashboard`  | Work the call queue, log outcomes, view debtor profiles, daily targets                                                            |
+| Manager    | `/manager`    | Upload portfolios, assign accounts, audit calls, view team performance                                                            |
+| Admin      | `/admin`      | Assign portfolios to managers, manage teams/users, org settings, reports                                                          |
+| Superadmin | `/superadmin` | SamvadX itself (Axiotta): approve companies, Insights wallets, invoices, platform usage + revenue — see "Superadmin portal" below |
 
-`login.tsx` routes by `role` after auth: `admin` → `/admin`, `manager` → `/manager`, else
-`/dashboard`. Route files live in `src/routes/`; nested routes use dot-notation
+`login.tsx` routes by `role` after auth (`homeRouteForRole` in `src/lib/auth.tsx`): `superadmin` →
+`/superadmin`, `admin` → `/admin`, `manager` → `/manager`, else `/dashboard`. Superadmins live in
+the `superadmins` table, not `agents`, and every superadmin read goes through the service role
+after `verifySuperadminCaller`. Route files live in `src/routes/`; nested routes use dot-notation
 (`dashboard.call-queue.tsx`). `src/routeTree.gen.ts` is auto-generated — never hand-edit it.
 
 ---
@@ -607,22 +610,81 @@ promise_date" as promises would start counting callbacks.
 
 ---
 
+## Superadmin portal (platform owner) — rebuilt 2026-10-09
+
+The view for SamvadX/Axiotta itself, across every company. Pages (sidebar order): **Overview**
+(`/superadmin`, the home page), **Companies** (`/superadmin/companies`), **Insights Wallet**,
+**Insights Activity**, **Invoices**, **Revenue**, **Superadmin Activity**.
+
+⚠️ **Feature usage only — never a company's collections.** No payments, promise amounts,
+recovery figures or anything a company collected from borrowers appears in this portal (product
+decision, 2026-10-09). Calling = calls, contacts, talk time, active callers, seats; Insights =
+lookups, found, billed, ProfileX cost, margin, wallet. Call outcomes are used only to tell a
+contact (any outcome except `no_answer`/`voicemail`) from a non-contact. Counts only, never
+borrower details. Revenue means SamvadX's OWN invoices to companies, which is fine.
+
+**Not the store pattern.** Superadmin pages call server functions directly (no `*-store.ts`) —
+the data is cross-company and only the service role may read it.
+
+- **Usage report** — `getPlatformUsage` (`src/lib/platform-usage.server.ts`) feeds Overview,
+  Companies, the company detail page (with `clientId`) and Revenue. Sums come from the SQL function
+  **`superadmin_usage_totals`** (`migrations/20261009_superadmin_usage_totals.sql`, applied live
+  2026-10-09; EXECUTE for `service_role` only). If the function is missing (PGRST202/42883) the
+  server pages raw rows and sums them with `aggregateUsageRows` instead — same numbers, slower.
+  The response's `source` (`"database"` | `"rows"`) says which ran; `"rows"` in production means
+  the function was lost. The contact rule exists in BOTH the SQL and `NON_CONTACT_OUTCOMES` in
+  `platform-usage.ts` — change them together. "Actual ProfileX cost" is priced in JS per group
+  (catalogue `priceFor`), deliberately not copied into SQL. Rules (health labels, attention list,
+  previous period) are pure in `platform-usage.ts`, tested in `scripts/platform-usage.test.ts`.
+- **Health labels** (Companies): Active; Slowing = calls + lookups below 60% of the previous
+  period (only once that period had ≥10); Dormant = none this period; New = joined < 14 days ago
+  with no usage; Not live = pending/rejected.
+- **Overview "Needs attention"**: pending approvals, companies that went quiet, Insights wallets
+  that run out within 7 days at the current pace (only judged when the range reaches today),
+  seat use ≥ 90% of a cap, pending Excel export requests.
+- **Company detail** (`superadmin.companies.$clientId.tsx`) is four tabs kept in `?tab=`
+  (`overview` | `users` | `billing` | `settings`). Users shows each person's **last sign-in**,
+  read from Supabase Auth (`auth.admin.listUsers` → `last_sign_in_at`) — the app itself records
+  no login history.
+- **Revenue** (`superadmin.revenue.tsx`; pure logic `src/lib/revenue-report.ts`, tested in
+  `scripts/superadmin-reports.test.ts`) reads the `invoices` table: billed (issued in range, not
+  cancelled), received (`paid_at` in range), outstanding/overdue **as of today whatever the
+  dates**, ageing buckets by days past `due_date`, GST by invoice month (the Excel adds the full
+  register with recipient GSTINs for filing), Insights margin per company (flags rate cards below
+  ProfileX cost), seat-upsell list. Says so instead of failing if `invoices` is missing.
+
+**One date filter on every superadmin page**: `SuperadminDateFilter` in
+`src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90
+days, this month, last month). The range is shared across superadmin pages and remembered per
+browser (localStorage, preset stored as a preset so "30 days" keeps rolling). IST maths in
+`src/lib/superadmin-range.ts`; reports clamp to a bounded range (default last 30 days, max 366),
+list pages also allow "All". The **Invoices** list follows it too, so it opens on the last 30 days.
+
+**Every superadmin table downloads as Excel** via `downloadXlsx` (`src/lib/xlsx-export.ts`,
+exceljs loaded on demand). The one exception is the invoices card on a company's Billing tab
+(`components/billing/company-invoices-card.tsx`) — Revenue covers those figures. Excel exports
+leave out the typed-in mobile/UAN of manual Insights lookups on purpose.
+
+---
+
 ## Page-by-page status
 
-| Page                                                                   | Status                                                                                                                                                                                                                                                            |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dashboard/` (Call Queue)                                              | ✅ Real debtors via `portfolio-store.ts`, real dialer. Manual Dial is **no longer on this page** — see `ManualDialDock` below                                                                                                                                     |
-| `dashboard/debtors`                                                    | ✅ Real debtor list + Calls/Payments tabs. Messages/Disputes tabs are intentionally honest empty-states (no write path yet)                                                                                                                                       |
-| `dashboard/history` (Activity History)                                 | ✅ Real `call_logs`, with async recording backfill. Filters by date range and by dial type (`call_logs.dial_mode`)                                                                                                                                                |
-| `dashboard/payments`                                                   | ✅ Real `payments`/`settlement_requests` via `payments-store.ts`                                                                                                                                                                                                  |
-| `dashboard/messages`                                                   | 🟡 Real `messages` table, but Send has no gateway behind it (see above)                                                                                                                                                                                           |
-| `dashboard/reports`                                                    | ✅ Real. **Was wrongly listed here as an unwired placeholder until 2026-08-27** — it has been reading real dispositions/payments/portfolios for a while, and the page says so on screen. Seven reports incl. Time & Effort (see the estimated-time warning below) |
-| Debtor profile → Insights tab (`components/profilex/`)                 | ✅ Real ProfileX lookups; manager/admin run them, agents read-only. Needs `PROFILEX_*` env + the admin toggle                                                                                                                                                     |
-| `manager/portfolio` (Portfolio Overview)                               | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown                                                                                                                                                                            |
-| `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity` | ✅ Real                                                                                                                                                                                                                                                           |
-| `admin/portfolio` (Portfolio Assignment)                               | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only                                                                                                                                                                           |
-| `admin/reports`, `admin/users`, `admin/teams`, `admin/settings`        | ✅ Real                                                                                                                                                                                                                                                           |
-| `admin/index`                                                          | ✅ Real (navigation tiles)                                                                                                                                                                                                                                        |
+| Page                                                                                        | Status                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dashboard/` (Call Queue)                                                                   | ✅ Real debtors via `portfolio-store.ts`, real dialer. Manual Dial is **no longer on this page** — see `ManualDialDock` below                                                                                                                                     |
+| `dashboard/debtors`                                                                         | ✅ Real debtor list + Calls/Payments tabs. Messages/Disputes tabs are intentionally honest empty-states (no write path yet)                                                                                                                                       |
+| `dashboard/history` (Activity History)                                                      | ✅ Real `call_logs`, with async recording backfill. Filters by date range and by dial type (`call_logs.dial_mode`)                                                                                                                                                |
+| `dashboard/payments`                                                                        | ✅ Real `payments`/`settlement_requests` via `payments-store.ts`                                                                                                                                                                                                  |
+| `dashboard/messages`                                                                        | 🟡 Real `messages` table, but Send has no gateway behind it (see above)                                                                                                                                                                                           |
+| `dashboard/reports`                                                                         | ✅ Real. **Was wrongly listed here as an unwired placeholder until 2026-08-27** — it has been reading real dispositions/payments/portfolios for a while, and the page says so on screen. Seven reports incl. Time & Effort (see the estimated-time warning below) |
+| Debtor profile → Insights tab (`components/profilex/`)                                      | ✅ Real ProfileX lookups; manager/admin run them, agents read-only. Needs `PROFILEX_*` env + the admin toggle                                                                                                                                                     |
+| `manager/portfolio` (Portfolio Overview)                                                    | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown                                                                                                                                                                            |
+| `manager/queue`, `manager/audit`, `manager/upload`, `manager/activity`                      | ✅ Real                                                                                                                                                                                                                                                           |
+| `admin/portfolio` (Portfolio Assignment)                                                    | ✅ Real; reuses the same full-screen dashboard as Manager Portfolio Overview, read-only                                                                                                                                                                           |
+| `admin/reports`, `admin/users`, `admin/teams`, `admin/settings`                             | ✅ Real                                                                                                                                                                                                                                                           |
+| `admin/index`                                                                               | ✅ Real (navigation tiles)                                                                                                                                                                                                                                        |
+| `superadmin/` (Overview), `superadmin/companies`, company detail tabs, `superadmin/revenue` | ✅ Real (2026-10-09) — usage via `superadmin_usage_totals`, revenue via `invoices`. See "Superadmin portal" above                                                                                                                                                 |
+| `superadmin/wallet`, `superadmin/insights`, `superadmin/invoices`, `superadmin/activity`    | ✅ Real; shared date filter + Excel added 2026-10-09                                                                                                                                                                                                              |
 
 ---
 
@@ -686,13 +748,13 @@ await saveDisposition({ ...data });
 - `CallOutcome` + its label/color map is defined twice — `src/lib/disposition-store.ts` and
   `src/lib/call-queue/types.ts` — identical unions, two sources of truth to keep in sync by
   hand.
-- **`bun run typecheck` fails: ~313 pre-existing errors on `main`**, almost all
-  `Property 'x' does not exist on type 'never'` from the untyped Supabase client (no generated
-  `Database` types, so `.from()` resolves to `never`). It has gone unnoticed because
-  `bun run build` runs `check:sql` + `test:routes` + `vite build` and **not** `typecheck` — so
-  CI cannot catch a real type error either. Generating Supabase types would fix the whole class.
-  Until then: run `tsc --noEmit | wc -l` before and after a change and compare the count rather
-  than expecting zero.
+- **`bun run typecheck` is clean as of 2026-10-09** (0 errors) now that Supabase `Database`
+  types are generated into `src/lib/database.types.ts` — it used to fail with ~313 `never`
+  errors from the untyped client. Keep it at zero, and **regenerate the types after a migration**
+  (a new function or table is invisible to them until then; `platform-usage.server.ts` casts
+  `rpc` for `superadmin_usage_totals` for that reason). `bun run build` still runs `check:sql` +
+  `test:routes` + `vite build` and **not** `typecheck`, so CI won't catch a type error — run it
+  yourself.
 - `contactHistory` and `paymentHistory` on `Debtor` are only ever populated by the dead
   `MOCK_DEBTORS` array. **Both were un-wired from the UI on 2026-08-27** — the in-call notes
   panel and Contact History tab now read real `call_logs`, and the Payments tab reads real
