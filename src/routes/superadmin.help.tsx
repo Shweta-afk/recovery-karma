@@ -25,6 +25,7 @@ const PAGES: { key: PageGuideKey; to: string }[] = [
   { key: "wallet", to: "/superadmin/wallet" },
   { key: "insights", to: "/superadmin/insights" },
   { key: "invoices", to: "/superadmin/invoices" },
+  { key: "contracts", to: "/superadmin/contracts" },
   { key: "activity", to: "/superadmin/activity" },
 ];
 

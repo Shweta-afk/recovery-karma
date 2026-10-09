@@ -45,6 +45,9 @@ const ACTION_LABEL: Record<string, string> = {
   master_to_company: "Budget allocated",
   actual_topup: "ProfileX top-up recorded",
   actual_charge: "Actual wallet correction",
+  contract_uploaded: "Contract uploaded",
+  contract_change_published: "Contract change published",
+  contract_change_withdrawn: "Contract change withdrawn",
 };
 
 function ActionBadge({ row }: { row: SuperadminActivityRow }) {

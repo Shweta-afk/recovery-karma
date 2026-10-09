@@ -23,6 +23,7 @@ import {
   FileText,
   IndianRupee,
   HelpCircle,
+  FileSignature,
 } from "lucide-react";
 import {
   Sidebar,
@@ -76,6 +77,7 @@ const adminItems = [
   { title: "Insights", url: "/admin/insights", icon: Sparkles },
   { title: "Archive History", url: "/admin/archive", icon: DatabaseBackup },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
+  { title: "Contracts", url: "/admin/contracts", icon: FileSignature },
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];
 
@@ -86,6 +88,7 @@ const superadminItems = [
   { title: "Insights Activity", url: "/superadmin/insights", icon: Sparkles },
   { title: "Invoices", url: "/superadmin/invoices", icon: FileText },
   { title: "Revenue", url: "/superadmin/revenue", icon: IndianRupee },
+  { title: "Contracts", url: "/superadmin/contracts", icon: FileSignature },
   { title: "Superadmin Activity", url: "/superadmin/activity", icon: History },
   { title: "Help", url: "/superadmin/help", icon: HelpCircle },
 ];

@@ -174,6 +174,28 @@ export const GLOSSARY = {
     text: "Companies using 90% or more of their seat limit — a good moment to offer them more seats or a bigger plan.",
   },
 
+  // ── Contracts ────────────────────────────────────────────────────────────
+  platformTerms: {
+    term: "SamvadX platform terms",
+    text: "The terms that apply to every company. Each company's admins see the current version on their Contracts page.",
+  },
+  companyAgreement: {
+    term: "Signed agreement",
+    text: "One company's own signed contract (e.g. its MSA). Only that company's admins can see it.",
+  },
+  contractChange: {
+    term: "Contract change",
+    text: "A short note you publish when a feature is added or changes (e.g. a new Insights lookup and its price). The admins of the companies it applies to get a notification and see it on their Contracts page.",
+  },
+  requiresAcceptance: {
+    term: "Admins must accept",
+    text: "On: one admin of each company must accept the change (they tick a box and type their name); you see who accepted and when. Off: it is shown for information only.",
+  },
+  acceptanceStatus: {
+    term: "Accepted",
+    text: "How many of the companies the change applies to have accepted it. Open a change to see who accepted for each company, or to email the admins who still haven't.",
+  },
+
   excel: {
     term: "Download Excel",
     text: "Saves what the table shows, for the dates you picked, as an Excel file.",
@@ -246,6 +268,15 @@ export const PAGE_GUIDES = {
       "Mark an invoice paid when the money arrives — that is what Revenue counts as received.",
     ],
   },
+  contracts: {
+    title: "Contracts",
+    points: [
+      "Upload SamvadX's platform terms (for everyone) and each company's signed agreement. Older versions are kept.",
+      "When a feature is added or changes, publish a change: the companies' admins are notified in the app and, if you choose, must accept it.",
+      "After publishing, 'Email the admins' opens your email app with their addresses (BCC) and the change filled in.",
+      "Open a published change to see which companies accepted, who, and when — or withdraw it if it was a mistake.",
+    ],
+  },
   activity: {
     title: "Superadmin Activity",
     points: [
@@ -304,6 +335,16 @@ export const HELP_SECTIONS: { title: string; keys: GlossaryKey[] }[] = [
       "gstSummary",
       "losingMoney",
       "seatUpsell",
+    ],
+  },
+  {
+    title: "Contracts",
+    keys: [
+      "platformTerms",
+      "companyAgreement",
+      "contractChange",
+      "requiresAcceptance",
+      "acceptanceStatus",
     ],
   },
   { title: "Downloads", keys: ["excel"] },

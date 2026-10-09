@@ -671,6 +671,26 @@ exceljs loaded on demand). The one exception is the invoices card on a company's
 (`components/billing/company-invoices-card.tsx`) — Revenue covers those figures. Excel exports
 leave out the typed-in mobile/UAN of manual Insights lookups on purpose.
 
+### Contracts (Admin → Contracts, Superadmin → Contracts) — 2026-10-09
+
+Tables `contract_documents` / `contract_changes` / `contract_acceptances`
+(`migrations/20261009_contracts.sql`, server-only like invoices); server `src/lib/contracts.server.ts`,
+rules `src/lib/contracts.ts`. Files live in the private Storage bucket `contracts` (created by the
+server on first upload; the browser uploads straight to a signed upload URL).
+
+- **Documents**: `client_id NULL` = SamvadX platform terms for every company; otherwise one
+  company's signed agreement. Versions are kept; "current" = latest already in effect.
+- **Changes**: a superadmin writes and publishes one when a feature is added or changes, to every
+  company or selected ones. Publishing inserts an in-app notification for each active admin of
+  those companies. With "Admins must accept", one admin per company accepts (ticks a box + types
+  their name) — recorded once per company with name, email and time. An admin-wide banner
+  (`admin.tsx`) shows while anything is waiting. Withdrawn changes are kept, marked Withdrawn.
+- **Email**: there is NO email-sending service in the app (sign-in codes go through Supabase
+  Auth, which can't send other mail). "Email the admins" opens the superadmin's own mail app with
+  the admins in BCC and the change prefilled (`changeMailto`). Sending automatically needs an
+  email provider to be chosen first.
+- Company admins only (`role = 'admin'`); managers/agents don't see contracts.
+
 ---
 
 ## Page-by-page status
