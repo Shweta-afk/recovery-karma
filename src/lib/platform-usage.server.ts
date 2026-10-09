@@ -3,9 +3,12 @@
 // Reads via the service-role client after verifySuperadminCaller, like superadmin-actions.
 // server.ts. The rules live in platform-usage.ts (pure); this file only fetches rows.
 //
-// Only narrow columns over a bounded window (the range + the equally long period before it,
-// at most 2 × 366 days) are read, and aggregated here. Fine at today's volume; if call_logs
-// grows into the millions, move the sums into a SQL function instead of paging rows.
+// The sums come from the database function superadmin_usage_totals
+// (migrations/20261009_superadmin_usage_totals.sql): a few rows per agent and per lookup kind,
+// whatever the call volume. If that function isn't there yet (code deployed ahead of the
+// migration), this falls back to paging the raw rows of the window (the range + the equally
+// long period before it, at most 2 × 366 days) and summing them with aggregateUsageRows —
+// same result, just slower as volume grows.
 //
 // Feature usage only — never payments, promise amounts or anything a company collected.
 
@@ -16,14 +19,17 @@ import { getService, priceFor } from "./profilex/catalogue";
 import { fetchAllRows } from "./fetch-all-rows";
 import { todayIstKey } from "./date-filter";
 import {
+  aggregateUsageRows,
   buildPlatformUsage,
   buildUserActivity,
   type PlatformUsageReport,
   type UsageAgentRow,
   type UsageCallRow,
   type UsageLookupRow,
+  type UsageTotals,
   type UserActivity,
 } from "./platform-usage";
+import type { DateRange } from "./date-filter";
 import {
   boundedRange,
   isDayKey,
@@ -71,6 +77,198 @@ export interface PlatformUsageResponse extends PlatformUsageReport {
   /** Only when a clientId was requested: per-person activity and the company's portfolios. */
   users?: UserActivity[];
   portfolios?: CompanyPortfolioRow[];
+  /** Where the sums came from — "rows" means the SQL function is missing (slower path). */
+  source: "database" | "rows";
+}
+
+type Admin = ReturnType<typeof getSupabaseAdmin>;
+
+/** "What ProfileX actually bills" for `n` lookups of one service + status: the published price
+ *  when billable, else what was stored (retired service ids have no known price). Same rule as
+ *  getInsightsReport. */
+function actualCostOf(
+  serviceId: string,
+  providerStatus: string | null,
+  billable: boolean,
+  n: number,
+  charged: number,
+): number {
+  const service = getService(serviceId);
+  return billable && service ? n * priceFor(service, providerStatus, null) : charged;
+}
+
+interface SqlTotals {
+  calls: {
+    agent_id: string | null;
+    client_id: string | null;
+    is_current: boolean;
+    calls: number;
+    contacts: number;
+    talk_seconds: number | string;
+    last_at: string;
+  }[];
+  lookups: {
+    client_id: string;
+    requested_by: string | null;
+    is_current: boolean;
+    service_id: string;
+    provider_status: string | null;
+    failed: boolean;
+    billable: boolean;
+    n: number;
+    charged: number | string;
+    last_at: string;
+  }[];
+  daily: { day: string; calls: number; lookups: number }[];
+}
+
+/** Sums from superadmin_usage_totals, or null when the function doesn't exist yet. */
+async function totalsFromDatabase(
+  admin: Admin,
+  args: { prevSince: string; since: string; until: string; clientId?: string },
+): Promise<UsageTotals | null> {
+  // Not in the generated Database types until they are regenerated after the migration.
+  const rpc = admin.rpc as unknown as (
+    fn: string,
+    params: Record<string, unknown>,
+  ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
+  const { data, error } = await rpc.call(admin, "superadmin_usage_totals", {
+    p_prev_since: args.prevSince,
+    p_since: args.since,
+    p_until: args.until,
+    p_client_id: args.clientId ?? null,
+  });
+  if (error) {
+    // PGRST202 = function not in the schema cache; 42883 = undefined_function.
+    if (error.code === "PGRST202" || error.code === "42883") {
+      console.warn("[platform-usage] superadmin_usage_totals missing — summing rows instead");
+      return null;
+    }
+    throw new Error(`Could not load usage totals (${error.message})`);
+  }
+  const t = data as SqlTotals;
+  return {
+    calls: t.calls.map((g) => ({
+      agentId: g.agent_id,
+      clientId: g.client_id,
+      current: g.is_current,
+      calls: Number(g.calls),
+      contacts: Number(g.contacts),
+      talkSeconds: Number(g.talk_seconds),
+      lastAt: iso(g.last_at),
+    })),
+    lookups: t.lookups.map((g) => {
+      const n = Number(g.n);
+      const charged = Number(g.charged);
+      return {
+        clientId: g.client_id,
+        requestedBy: g.requested_by,
+        current: g.is_current,
+        lookups: n,
+        found: !g.failed && g.provider_status === "1" ? n : 0,
+        charged,
+        actualCost: actualCostOf(g.service_id, g.provider_status, g.billable, n, charged),
+        lastAt: iso(g.last_at),
+      };
+    }),
+    daily: t.daily.map((d) => ({ day: d.day, calls: Number(d.calls), lookups: Number(d.lookups) })),
+  };
+}
+
+/** The slow path: page the raw rows of the window and sum them in JavaScript. */
+async function totalsFromRows(
+  admin: Admin,
+  args: {
+    prevSince: string;
+    until: string;
+    clientId?: string;
+    agents: UsageAgentRow[];
+    range: DateRange;
+  },
+): Promise<UsageTotals> {
+  const { prevSince, until, clientId, agents, range } = args;
+  const agentIds = agents.map((a) => a.id);
+
+  interface LookupDbRow {
+    client_id: string;
+    service_id: string;
+    state: string;
+    provider_status: string | null;
+    billable: boolean;
+    cost: number;
+    created_at: string;
+    requested_by: string | null;
+  }
+  const loadLookups = (table: "debtor_traces" | "insights_manual_lookups") =>
+    fetchAllRows<LookupDbRow>(async (from, to) => {
+      let q = admin
+        .from(table)
+        .select(
+          "client_id, service_id, state, provider_status, billable, cost, created_at, requested_by",
+        )
+        .gte("created_at", prevSince)
+        .lt("created_at", until);
+      if (clientId) q = q.eq("client_id", clientId);
+      const { data: rows, error } = await q
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to);
+      return { data: rows as unknown as LookupDbRow[] | null, error };
+    });
+
+  interface CallDbRow {
+    agent_id: string | null;
+    created_at: string;
+    outcome: string | null;
+    duration_seconds: number | null;
+  }
+  // Deliberately no promise_amount / payments: the superadmin sees feature usage only.
+  // call_logs has no client_id, so one company's calls are found through its agents.
+  const loadCalls =
+    clientId && agentIds.length === 0
+      ? Promise.resolve({ data: [] as CallDbRow[], error: null })
+      : fetchAllRows<CallDbRow>(async (from, to) => {
+          let q = admin
+            .from("call_logs")
+            .select("agent_id, created_at, outcome, duration_seconds")
+            .gte("created_at", prevSince)
+            .lt("created_at", until);
+          if (clientId) q = q.in("agent_id", agentIds);
+          const { data: rows, error } = await q
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to);
+          return { data: rows as unknown as CallDbRow[] | null, error };
+        });
+
+  const [calls, traces, manual] = await Promise.all([
+    loadCalls,
+    loadLookups("debtor_traces"),
+    loadLookups("insights_manual_lookups"),
+  ]);
+  if (calls.error) throw new Error(`Could not load calls (${calls.error.message})`);
+  if (traces.error) throw new Error(`Could not load Insights lookups (${traces.error.message})`);
+  // Same tolerance as getInsightsReport: a missing manual-lookups table must not blank the page.
+  if (manual.error) console.error("[platform-usage] manual lookups:", manual.error.message);
+
+  const usageCalls = calls.data.map((c): UsageCallRow => ({
+    agentId: c.agent_id,
+    createdAt: iso(c.created_at),
+    outcome: c.outcome,
+    durationSeconds: c.duration_seconds,
+  }));
+  const usageLookups = [...traces.data, ...(manual.error ? [] : manual.data)].map(
+    (r): UsageLookupRow => ({
+      clientId: r.client_id,
+      createdAt: iso(r.created_at),
+      state: r.state,
+      providerStatus: r.provider_status,
+      charged: Number(r.cost),
+      actualCost: actualCostOf(r.service_id, r.provider_status, r.billable, 1, Number(r.cost)),
+      requestedBy: r.requested_by,
+    }),
+  );
+  return aggregateUsageRows(usageCalls, usageLookups, agents, range);
 }
 
 const daySchema = z.string().refine(isDayKey, "Expected YYYY-MM-DD");
@@ -98,8 +296,8 @@ export const getPlatformUsage = createServerFn({ method: "POST" })
     if (rangeDays(range) > MAX_RANGE_DAYS) {
       throw new Error(`Pick a range of at most ${MAX_RANGE_DAYS} days`);
     }
-    const { since } = rangeInstants(previousRange(range));
-    const { until } = rangeInstants(range);
+    const { since: prevSince } = rangeInstants(previousRange(range));
+    const { since, until } = rangeInstants(range);
     const clientId = data.clientId;
 
     const [clientsRes, agentsRes] = await Promise.all([
@@ -125,59 +323,6 @@ export const getPlatformUsage = createServerFn({ method: "POST" })
       is_active: boolean | null;
       auth_user_id: string | null;
     }[];
-    const agentIds = agents.map((a) => a.id);
-
-    interface LookupDbRow {
-      client_id: string;
-      service_id: string;
-      state: string;
-      provider_status: string | null;
-      billable: boolean;
-      cost: number;
-      created_at: string;
-      requested_by: string | null;
-    }
-    const loadLookups = (table: "debtor_traces" | "insights_manual_lookups") =>
-      fetchAllRows<LookupDbRow>(async (from, to) => {
-        let q = admin
-          .from(table)
-          .select(
-            "client_id, service_id, state, provider_status, billable, cost, created_at, requested_by",
-          )
-          .gte("created_at", since)
-          .lt("created_at", until);
-        if (clientId) q = q.eq("client_id", clientId);
-        const { data: rows, error } = await q
-          .order("created_at", { ascending: true })
-          .order("id", { ascending: true })
-          .range(from, to);
-        return { data: rows as unknown as LookupDbRow[] | null, error };
-      });
-
-    interface CallDbRow {
-      agent_id: string | null;
-      created_at: string;
-      outcome: string | null;
-      duration_seconds: number | null;
-    }
-    // Deliberately no promise_amount / payments: the superadmin sees feature usage only.
-    // call_logs has no client_id, so one company's calls are found through its agents.
-    const loadCalls =
-      clientId && agentIds.length === 0
-        ? Promise.resolve({ data: [] as CallDbRow[], error: null })
-        : fetchAllRows<CallDbRow>(async (from, to) => {
-            let q = admin
-              .from("call_logs")
-              .select("agent_id, created_at, outcome, duration_seconds")
-              .gte("created_at", since)
-              .lt("created_at", until);
-            if (clientId) q = q.in("agent_id", agentIds);
-            const { data: rows, error } = await q
-              .order("created_at", { ascending: true })
-              .order("id", { ascending: true })
-              .range(from, to);
-            return { data: rows as unknown as CallDbRow[] | null, error };
-          });
 
     const walletsQuery = admin.from("profilex_company_wallets").select("client_id, balance");
     const portfoliosQuery = clientId
@@ -189,47 +334,24 @@ export const getPlatformUsage = createServerFn({ method: "POST" })
           .order("uploaded_at", { ascending: false })
       : null;
 
-    const [walletsRes, exportsRes, calls, traces, manual, signIns, portfoliosRes] =
-      await Promise.all([
-        clientId ? walletsQuery.eq("client_id", clientId) : walletsQuery,
-        (() => {
-          const q = admin
-            .from("insights_export_requests")
-            .select("id", { count: "exact", head: true })
-            .eq("status", "pending");
-          return clientId ? q.eq("client_id", clientId) : q;
-        })(),
-        loadCalls,
-        loadLookups("debtor_traces"),
-        loadLookups("insights_manual_lookups"),
-        lastSignIns(),
-        portfoliosQuery,
-      ]);
-    if (calls.error) throw new Error(`Could not load calls (${calls.error.message})`);
-    if (traces.error) throw new Error(`Could not load Insights lookups (${traces.error.message})`);
-    // Same tolerance as getInsightsReport: a missing manual-lookups table must not blank the page.
-    if (manual.error) console.error("[platform-usage] manual lookups:", manual.error.message);
+    const [walletsRes, exportsRes, sqlTotals, signIns, portfoliosRes] = await Promise.all([
+      clientId ? walletsQuery.eq("client_id", clientId) : walletsQuery,
+      (() => {
+        const q = admin
+          .from("insights_export_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending");
+        return clientId ? q.eq("client_id", clientId) : q;
+      })(),
+      totalsFromDatabase(admin, { prevSince, since, until, clientId }),
+      lastSignIns(),
+      portfoliosQuery,
+    ]);
     if (walletsRes.error) console.error("[platform-usage] wallets:", walletsRes.error.message);
     if (exportsRes.error)
       console.error("[platform-usage] export requests:", exportsRes.error.message);
     if (portfoliosRes?.error)
       console.error("[platform-usage] portfolios:", portfoliosRes.error.message);
-
-    const toLookup = (r: LookupDbRow): UsageLookupRow => {
-      const service = getService(r.service_id);
-      return {
-        clientId: r.client_id,
-        createdAt: iso(r.created_at),
-        state: r.state,
-        providerStatus: r.provider_status,
-        charged: Number(r.cost),
-        // Same "actual cost" rule as getInsightsReport: published price when billable, else the
-        // stored cost (retired service ids have no known price).
-        actualCost:
-          r.billable && service ? priceFor(service, r.provider_status, null) : Number(r.cost),
-        requestedBy: r.requested_by,
-      };
-    };
 
     const clients = (clientsRes.data ?? []) as {
       id: string;
@@ -250,44 +372,42 @@ export const getPlatformUsage = createServerFn({ method: "POST" })
       lastSignInAt:
         a.auth_user_id && signIns.has(a.auth_user_id) ? iso(signIns.get(a.auth_user_id)!) : null,
     }));
-    const usageCalls = calls.data.map((c): UsageCallRow => ({
-      agentId: c.agent_id,
-      createdAt: iso(c.created_at),
-      outcome: c.outcome,
-      durationSeconds: c.duration_seconds,
-    }));
-    const usageLookups = [...traces.data, ...(manual.error ? [] : manual.data)].map(toLookup);
+    const totals =
+      sqlTotals ??
+      (await totalsFromRows(admin, { prevSince, until, clientId, agents: usageAgents, range }));
 
-    const report: PlatformUsageResponse = buildPlatformUsage(
-      {
-        clients: clients.map((c) => ({
-          id: c.id,
-          companyName: c.company_name,
-          status: c.status,
-          subdomain: c.subdomain,
-          plan: c.plan,
-          createdAt: c.created_at,
-          maxAgents: c.max_agents,
-          maxManagers: c.max_managers,
-        })),
-        agents: usageAgents,
-        calls: usageCalls,
-        lookups: usageLookups,
-        walletByClient: new Map(
-          ((walletsRes.data ?? []) as { client_id: string; balance: number }[]).map((w) => [
-            w.client_id,
-            Number(w.balance),
-          ]),
-        ),
-        pendingExportRequests: exportsRes.count ?? 0,
-      },
-      range,
-      new Date(),
-      today,
-    );
+    const report: PlatformUsageResponse = {
+      ...buildPlatformUsage(
+        {
+          clients: clients.map((c) => ({
+            id: c.id,
+            companyName: c.company_name,
+            status: c.status,
+            subdomain: c.subdomain,
+            plan: c.plan,
+            createdAt: c.created_at,
+            maxAgents: c.max_agents,
+            maxManagers: c.max_managers,
+          })),
+          agents: usageAgents,
+          totals,
+          walletByClient: new Map(
+            ((walletsRes.data ?? []) as { client_id: string; balance: number }[]).map((w) => [
+              w.client_id,
+              Number(w.balance),
+            ]),
+          ),
+          pendingExportRequests: exportsRes.count ?? 0,
+        },
+        range,
+        new Date(),
+        today,
+      ),
+      source: sqlTotals ? "database" : "rows",
+    };
 
     if (clientId) {
-      report.users = buildUserActivity(usageAgents, usageCalls, usageLookups, range);
+      report.users = buildUserActivity(usageAgents, totals);
       report.portfolios = (
         (portfoliosRes?.data ?? []) as {
           id: string;

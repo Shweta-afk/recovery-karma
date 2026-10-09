@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { buildPlatformUsage, buildUserActivity, type UsageInput } from "../src/lib/platform-usage";
+import {
+  aggregateUsageRows,
+  buildPlatformUsage,
+  buildUserActivity,
+  type UsageAgentRow,
+  type UsageCallRow,
+  type UsageInput,
+  type UsageLookupRow,
+} from "../src/lib/platform-usage";
+import type { DateRange } from "../src/lib/date-filter";
 import { shiftDay } from "../src/lib/superadmin-range";
 
 const NOW = new Date("2026-10-09T12:00:00.000Z");
@@ -19,7 +28,25 @@ const client = (id: string, over: Partial<UsageInput["clients"][number]> = {}) =
   ...over,
 });
 
-const base = (over: Partial<UsageInput> = {}): UsageInput => ({
+/** Test input in raw rows; `build` sums them with aggregateUsageRows (the JS twin of the SQL
+ *  function superadmin_usage_totals) before handing them to buildPlatformUsage. */
+type RawInput = Omit<UsageInput, "totals"> & { calls: UsageCallRow[]; lookups: UsageLookupRow[] };
+const build = (input: RawInput, range: DateRange, now: Date) => {
+  const { calls, lookups, ...rest } = input;
+  return buildPlatformUsage(
+    { ...rest, totals: aggregateUsageRows(calls, lookups, input.agents, range) },
+    range,
+    now,
+  );
+};
+const userActivity = (
+  agents: UsageAgentRow[],
+  calls: UsageCallRow[],
+  lookups: UsageLookupRow[],
+  range: DateRange,
+) => buildUserActivity(agents, aggregateUsageRows(calls, lookups, agents, range));
+
+const base = (over: Partial<RawInput> = {}): RawInput => ({
   clients: [],
   agents: [],
   calls: [],
@@ -47,7 +74,7 @@ const lookup = (clientId: string, d: number, found = true, charged = 10, actual 
 
 describe("buildPlatformUsage", () => {
   test("splits calls into current/previous windows and counts contacts", () => {
-    const r = buildPlatformUsage(
+    const r = build(
       base({
         clients: [client("a")],
         agents: [{ id: "ag1", clientId: "a", role: "agent", isActive: true, lastSignInAt: null }],
@@ -72,7 +99,7 @@ describe("buildPlatformUsage", () => {
   });
 
   test("never exposes any collection amounts", () => {
-    const r = buildPlatformUsage(base({ clients: [client("a")] }), lastDays(30), NOW);
+    const r = build(base({ clients: [client("a")] }), lastDays(30), NOW);
     const keys = JSON.stringify(r).toLowerCase();
     for (const banned of ["promise_amount", "collected", "payment", "recovered"]) {
       expect(keys).not.toContain(banned);
@@ -80,7 +107,7 @@ describe("buildPlatformUsage", () => {
   });
 
   test("Insights lookups, found count, billed vs actual cost", () => {
-    const r = buildPlatformUsage(
+    const r = build(
       base({
         clients: [client("a")],
         lookups: [lookup("a", 1), lookup("a", 2, false, 5, 1), lookup("a", 40)],
@@ -111,7 +138,7 @@ describe("buildPlatformUsage", () => {
       ...Array.from({ length: 12 }, () => call("ag-slow", 10)),
       call("ag-dorm", 10),
     ];
-    const r = buildPlatformUsage(
+    const r = build(
       base({
         clients: [
           client("act"),
@@ -139,7 +166,7 @@ describe("buildPlatformUsage", () => {
   });
 
   test("attention list: pending, went quiet, wallet runway, seat cap, export requests", () => {
-    const r = buildPlatformUsage(
+    const r = build(
       base({
         clients: [
           client("pend", { status: "pending" }),
@@ -174,7 +201,7 @@ describe("buildPlatformUsage", () => {
     // 30-day window: ₹70/30 ≈ ₹2.33/day, ₹30 lasts ~12 days — not flagged
     expect(kinds).not.toContain("wallet_running_out:wallet");
 
-    const r7 = buildPlatformUsage(
+    const r7 = build(
       base({
         clients: [client("wallet")],
         lookups: Array.from({ length: 7 }, (_, i) => lookup("wallet", i + 0.5, true, 10, 6)),
@@ -187,7 +214,7 @@ describe("buildPlatformUsage", () => {
   });
 
   test("calls from users with no company are counted as unattributed, not dropped silently", () => {
-    const r = buildPlatformUsage(
+    const r = build(
       base({ clients: [client("a")], calls: [call(null, 1), call("ghost", 1)] }),
       lastDays(7),
       NOW,
@@ -197,7 +224,7 @@ describe("buildPlatformUsage", () => {
   });
 
   test("daily series covers the whole window, keyed by IST day", () => {
-    const r = buildPlatformUsage(
+    const r = build(
       base({
         clients: [client("a")],
         agents: [{ id: "ag", clientId: "a", role: "agent", isActive: true, lastSignInAt: null }],
@@ -222,7 +249,7 @@ describe("buildPlatformUsage", () => {
 
 describe("date ranges", () => {
   test("a past range ignores later rows and never judges wallet runway", () => {
-    const r = buildPlatformUsage(
+    const r = build(
       base({
         clients: [client("w")],
         // Inside the range (Sep), and after it (Oct) — the October ones must not count.
@@ -248,7 +275,7 @@ describe("buildUserActivity", () => {
       { id: "u1", clientId: "a", role: "agent", isActive: true, lastSignInAt: daysAgo(2) },
       { id: "u2", clientId: "a", role: "manager", isActive: true, lastSignInAt: null },
     ];
-    const users = buildUserActivity(
+    const users = userActivity(
       agents,
       [call("u1", 1, "promised", 30), call("u1", 2, "no_answer", 0), call("u1", 10)],
       [{ ...lookup("a", 1), requestedBy: "u2" }],

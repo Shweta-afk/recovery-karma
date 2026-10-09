@@ -5,15 +5,18 @@
 // company collects from its borrowers is the company's business, not the platform's (product
 // decision, 2026-10-09). Call OUTCOMES are only used to tell a contact from a non-contact.
 //
-// Pure: takes rows already fetched by platform-usage.server.ts and returns the report, so the
-// rules (windows, contact rate, health labels, attention list) are testable without a database.
+// Pure: takes usage already summed per agent / per lookup kind (by the database function
+// superadmin_usage_totals, migrations/20261009_superadmin_usage_totals.sql — or, when that is
+// missing, by aggregateUsageRows below) and returns the report, so the rules (periods, contact
+// rate, health labels, attention list) are testable without a database.
 
 import { istDayKey } from "./monthly-trend";
 import type { DateRange } from "./date-filter";
 import { previousRange, rangeDays, rangeInstants, shiftDay } from "./superadmin-range";
 
 /** Outcomes where nobody was reached. Every other logged outcome means the agent spoke to
- *  someone — this is the only thing outcomes are used for here. */
+ *  someone — this is the only thing outcomes are used for here. The SQL function
+ *  superadmin_usage_totals applies the same rule; change both together. */
 const NON_CONTACT_OUTCOMES = new Set(["no_answer", "voicemail"]);
 
 export interface UsageClientRow {
@@ -53,11 +56,44 @@ export interface UsageLookupRow {
   requestedBy?: string | null;
 }
 
+/** Calls summed per (agent, company, period). */
+export interface UsageCallAgg {
+  agentId: string | null;
+  /** The agent's company; null when the agent row is gone or has no company. */
+  clientId: string | null;
+  /** In the reported period (true) or the equally long one before it (false). */
+  current: boolean;
+  calls: number;
+  contacts: number;
+  talkSeconds: number;
+  /** Latest call in the group (ISO, "…Z"). */
+  lastAt: string;
+}
+
+/** Insights lookups summed per (company, requester, period). */
+export interface UsageLookupAgg {
+  clientId: string;
+  requestedBy: string | null;
+  current: boolean;
+  lookups: number;
+  found: number;
+  charged: number;
+  actualCost: number;
+  lastAt: string;
+}
+
+/** Everything the report needs from call_logs and the lookup tables, already summed. */
+export interface UsageTotals {
+  calls: UsageCallAgg[];
+  lookups: UsageLookupAgg[];
+  /** Current period only, IST days that had any usage (missing days are filled in later). */
+  daily: DailyUsage[];
+}
+
 export interface UsageInput {
   clients: UsageClientRow[];
   agents: UsageAgentRow[];
-  calls: UsageCallRow[];
-  lookups: UsageLookupRow[];
+  totals: UsageTotals;
   walletByClient: Map<string, number>;
   pendingExportRequests: number;
 }
@@ -200,18 +236,12 @@ export function buildPlatformUsage(
 ): PlatformUsageReport {
   const windowDays = rangeDays(range);
   const prevRange = previousRange(range);
-  const { since: currentFrom, until } = rangeInstants(range);
-  const { since: previousFrom } = rangeInstants(prevRange);
+  const { until } = rangeInstants(range);
   const untilMs = Math.min(new Date(until).getTime(), now.getTime());
-
-  const clientOfAgent = new Map<string, string>();
-  for (const a of input.agents) if (a.clientId) clientOfAgent.set(a.id, a.clientId);
 
   interface Acc {
     cur: UsageBucket;
     prev: UsageBucket;
-    curCallers: Set<string>;
-    prevCallers: Set<string>;
     lastActivityAt: string | null;
     lastSignInAt: string | null;
   }
@@ -222,8 +252,6 @@ export function buildPlatformUsage(
       a = {
         cur: emptyUsageBucket(),
         prev: emptyUsageBucket(),
-        curCallers: new Set(),
-        prevCallers: new Set(),
         lastActivityAt: null,
         lastSignInAt: null,
       };
@@ -237,56 +265,43 @@ export function buildPlatformUsage(
   for (let day = range.from; day <= range.to; day = shiftDay(day, 1)) {
     daily.set(day, { day, calls: 0, lookups: 0 });
   }
-
-  const totalsCur = emptyUsageBucket();
-  const totalsPrev = emptyUsageBucket();
-  const totalCurCallers = new Set<string>();
-  const totalPrevCallers = new Set<string>();
-  let unattributedCalls = 0;
-
-  for (const c of input.calls) {
-    if (c.createdAt < previousFrom || c.createdAt >= until) continue;
-    const clientId = c.agentId ? clientOfAgent.get(c.agentId) : undefined;
-    const isCurrent = c.createdAt >= currentFrom;
-    if (!clientId) {
-      if (isCurrent) unattributedCalls += 1;
-      continue;
-    }
-    const a = get(clientId);
-    a.lastActivityAt = maxIso(a.lastActivityAt, c.createdAt);
-    const contact = !!c.outcome && !NON_CONTACT_OUTCOMES.has(c.outcome);
-    const seconds = Math.max(0, Number(c.durationSeconds) || 0);
-    for (const [b, callers, total, totalCallers] of isCurrent
-      ? ([[a.cur, a.curCallers, totalsCur, totalCurCallers]] as const)
-      : ([[a.prev, a.prevCallers, totalsPrev, totalPrevCallers]] as const)) {
-      for (const bucket of [b, total]) {
-        bucket.calls += 1;
-        if (contact) bucket.contacts += 1;
-        bucket.talkSeconds += seconds;
-      }
-      callers.add(c.agentId!);
-      totalCallers.add(c.agentId!);
-    }
-    if (isCurrent) {
-      const d = daily.get(istDayKey(c.createdAt));
-      if (d) d.calls += 1;
+  for (const d of input.totals.daily) {
+    const slot = daily.get(d.day);
+    if (slot) {
+      slot.calls += d.calls;
+      slot.lookups += d.lookups;
     }
   }
 
-  for (const l of input.lookups) {
-    if (l.createdAt < previousFrom || l.createdAt >= until) continue;
-    const a = get(l.clientId);
-    a.lastActivityAt = maxIso(a.lastActivityAt, l.createdAt);
-    const isCurrent = l.createdAt >= currentFrom;
-    for (const bucket of isCurrent ? [a.cur, totalsCur] : [a.prev, totalsPrev]) {
-      bucket.lookups += 1;
-      if (l.state !== "failed" && l.providerStatus === "1") bucket.lookupsFound += 1;
-      bucket.insightsCharged += l.charged;
-      bucket.insightsActualCost += l.actualCost;
+  const totalsCur = emptyUsageBucket();
+  const totalsPrev = emptyUsageBucket();
+  let unattributedCalls = 0;
+
+  for (const g of input.totals.calls) {
+    if (!g.clientId) {
+      if (g.current) unattributedCalls += g.calls;
+      continue;
     }
-    if (isCurrent) {
-      const d = daily.get(istDayKey(l.createdAt));
-      if (d) d.lookups += 1;
+    const a = get(g.clientId);
+    a.lastActivityAt = maxIso(a.lastActivityAt, g.lastAt);
+    for (const bucket of g.current ? [a.cur, totalsCur] : [a.prev, totalsPrev]) {
+      bucket.calls += g.calls;
+      bucket.contacts += g.contacts;
+      bucket.talkSeconds += g.talkSeconds;
+      // One group per agent per period, and an agent belongs to one company — so counting
+      // groups counts distinct callers, for the company and for the platform alike.
+      if (g.agentId && g.calls > 0) bucket.activeCallers += 1;
+    }
+  }
+
+  for (const g of input.totals.lookups) {
+    const a = get(g.clientId);
+    a.lastActivityAt = maxIso(a.lastActivityAt, g.lastAt);
+    for (const bucket of g.current ? [a.cur, totalsCur] : [a.prev, totalsPrev]) {
+      bucket.lookups += g.lookups;
+      bucket.lookupsFound += g.found;
+      bucket.insightsCharged += g.charged;
+      bucket.insightsActualCost += g.actualCost;
     }
   }
 
@@ -296,13 +311,8 @@ export function buildPlatformUsage(
     a.lastSignInAt = maxIso(a.lastSignInAt, ag.lastSignInAt);
   }
 
-  totalsCur.activeCallers = totalCurCallers.size;
-  totalsPrev.activeCallers = totalPrevCallers.size;
-
   const companies: CompanyUsage[] = input.clients.map((c) => {
     const a = get(c.id);
-    a.cur.activeCallers = a.curCallers.size;
-    a.prev.activeCallers = a.prevCallers.size;
     const people = input.agents.filter((ag) => ag.clientId === c.id && ag.isActive !== false);
     return {
       clientId: c.id,
@@ -416,13 +426,7 @@ export interface UserActivity {
   lastSignInAt: string | null;
 }
 
-export function buildUserActivity(
-  agents: UsageAgentRow[],
-  calls: UsageCallRow[],
-  lookups: UsageLookupRow[],
-  range: DateRange,
-): UserActivity[] {
-  const { since, until } = rangeInstants(range);
+export function buildUserActivity(agents: UsageAgentRow[], totals: UsageTotals): UserActivity[] {
   const byId = new Map<string, UserActivity>(
     agents.map((a) => [
       a.id,
@@ -437,20 +441,104 @@ export function buildUserActivity(
       },
     ]),
   );
-  for (const c of calls) {
-    const u = c.agentId ? byId.get(c.agentId) : undefined;
-    if (!u || c.createdAt >= until) continue;
-    u.lastActivityAt = maxIso(u.lastActivityAt, c.createdAt);
-    if (c.createdAt < since) continue;
-    u.calls += 1;
-    if (c.outcome && !NON_CONTACT_OUTCOMES.has(c.outcome)) u.contacts += 1;
-    u.talkSeconds += Math.max(0, Number(c.durationSeconds) || 0);
+  for (const g of totals.calls) {
+    const u = g.agentId ? byId.get(g.agentId) : undefined;
+    if (!u) continue;
+    u.lastActivityAt = maxIso(u.lastActivityAt, g.lastAt);
+    if (!g.current) continue;
+    u.calls += g.calls;
+    u.contacts += g.contacts;
+    u.talkSeconds += g.talkSeconds;
   }
-  for (const l of lookups) {
-    const u = l.requestedBy ? byId.get(l.requestedBy) : undefined;
-    if (!u || l.createdAt >= until) continue;
-    u.lastActivityAt = maxIso(u.lastActivityAt, l.createdAt);
-    if (l.createdAt >= since) u.lookups += 1;
+  for (const g of totals.lookups) {
+    const u = g.requestedBy ? byId.get(g.requestedBy) : undefined;
+    if (!u) continue;
+    u.lastActivityAt = maxIso(u.lastActivityAt, g.lastAt);
+    if (g.current) u.lookups += g.lookups;
   }
   return [...byId.values()];
+}
+
+/**
+ * The JavaScript twin of the SQL function superadmin_usage_totals: sums raw rows into
+ * UsageTotals. Used when the function isn't in the database yet (code deployed ahead of the
+ * migration), and by the tests as the reference for what the SQL must return.
+ * Rows outside [previous period start, range end) are ignored.
+ */
+export function aggregateUsageRows(
+  calls: UsageCallRow[],
+  lookups: UsageLookupRow[],
+  agents: UsageAgentRow[],
+  range: DateRange,
+): UsageTotals {
+  const { since, until } = rangeInstants(range);
+  const { since: prevSince } = rangeInstants(previousRange(range));
+  const clientOfAgent = new Map<string, string>();
+  for (const a of agents) if (a.clientId) clientOfAgent.set(a.id, a.clientId);
+
+  const callGroups = new Map<string, UsageCallAgg>();
+  const lookupGroups = new Map<string, UsageLookupAgg>();
+  const daily = new Map<string, DailyUsage>();
+  const day = (iso: string) => {
+    const k = istDayKey(iso);
+    return daily.get(k) ?? daily.set(k, { day: k, calls: 0, lookups: 0 }).get(k)!;
+  };
+
+  for (const c of calls) {
+    if (c.createdAt < prevSince || c.createdAt >= until) continue;
+    const current = c.createdAt >= since;
+    const clientId = (c.agentId && clientOfAgent.get(c.agentId)) || null;
+    const key = `${c.agentId}|${clientId}|${current}`;
+    let g = callGroups.get(key);
+    if (!g) {
+      g = {
+        agentId: c.agentId,
+        clientId,
+        current,
+        calls: 0,
+        contacts: 0,
+        talkSeconds: 0,
+        lastAt: c.createdAt,
+      };
+      callGroups.set(key, g);
+    }
+    g.calls += 1;
+    if (c.outcome && !NON_CONTACT_OUTCOMES.has(c.outcome)) g.contacts += 1;
+    g.talkSeconds += Math.max(0, Number(c.durationSeconds) || 0);
+    g.lastAt = maxIso(g.lastAt, c.createdAt)!;
+    if (current && clientId) day(c.createdAt).calls += 1;
+  }
+
+  for (const l of lookups) {
+    if (l.createdAt < prevSince || l.createdAt >= until) continue;
+    const current = l.createdAt >= since;
+    const requestedBy = l.requestedBy ?? null;
+    const key = `${l.clientId}|${requestedBy}|${current}`;
+    let g = lookupGroups.get(key);
+    if (!g) {
+      g = {
+        clientId: l.clientId,
+        requestedBy,
+        current,
+        lookups: 0,
+        found: 0,
+        charged: 0,
+        actualCost: 0,
+        lastAt: l.createdAt,
+      };
+      lookupGroups.set(key, g);
+    }
+    g.lookups += 1;
+    if (l.state !== "failed" && l.providerStatus === "1") g.found += 1;
+    g.charged += l.charged;
+    g.actualCost += l.actualCost;
+    g.lastAt = maxIso(g.lastAt, l.createdAt)!;
+    if (current) day(l.createdAt).lookups += 1;
+  }
+
+  return {
+    calls: [...callGroups.values()],
+    lookups: [...lookupGroups.values()],
+    daily: [...daily.values()].sort((a, b) => a.day.localeCompare(b.day)),
+  };
 }
