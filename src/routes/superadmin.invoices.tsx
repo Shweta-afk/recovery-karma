@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { PageGuide } from "@/components/superadmin/help";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Building2, FileText, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
@@ -212,6 +213,8 @@ function SuperadminInvoicesPage() {
           → a company → Invoices). The details below are printed on every invoice as the supplier.
         </p>
       </div>
+
+      <PageGuide page="invoices" />
 
       {loading ? (
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />

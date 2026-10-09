@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { PageGuide } from "@/components/superadmin/help";
 import { useEffect, useMemo, useState } from "react";
 import { History, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -128,6 +129,8 @@ function SuperadminActivityPage() {
           page instead.
         </p>
       </div>
+
+      <PageGuide page="activity" />
 
       <Card>
         <CardHeader className="border-b border-border pb-3">

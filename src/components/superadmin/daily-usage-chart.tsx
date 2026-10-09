@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { DailyUsage } from "@/lib/platform-usage";
+import { InfoTip } from "@/components/superadmin/help";
 
 export function DailyUsageChart({
   daily,
@@ -23,7 +24,9 @@ export function DailyUsageChart({
   return (
     <Card className="h-full">
       <CardHeader className="border-b border-border pb-3">
-        <CardTitle className="text-sm font-semibold">Daily usage</CardTitle>
+        <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+          Daily usage <InfoTip k="dailyUsage" />
+        </CardTitle>
         <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
       </CardHeader>
       <CardContent className="pt-4">

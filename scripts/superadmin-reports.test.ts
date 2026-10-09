@@ -141,3 +141,13 @@ describe("buildRevenueReport", () => {
     expect(r.unpaid[0].invoiceNumber).toBe("SX/2");
   });
 });
+
+import { GLOSSARY, HELP_SECTIONS } from "../src/lib/superadmin-glossary";
+
+describe("superadmin help", () => {
+  test("every explanation is on the Help page exactly once", () => {
+    const listed = HELP_SECTIONS.flatMap((s) => s.keys);
+    expect([...listed].sort()).toEqual(Object.keys(GLOSSARY).sort());
+    expect(new Set(listed).size).toBe(listed.length);
+  });
+});

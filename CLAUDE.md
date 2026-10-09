@@ -660,6 +660,12 @@ browser (localStorage, preset stored as a preset so "30 days" keeps rolling). IS
 `src/lib/superadmin-range.ts`; reports clamp to a bounded range (default last 30 days, max 366),
 list pages also allow "All". The **Invoices** list follows it too, so it opens on the last 30 days.
 
+**Built-in help.** Every number and column heading has an ⓘ (hover, or tap on a phone), each
+page has a closable "How to read this page" box, and **Help** (`/superadmin/help`) lists it all.
+The text lives in ONE place, `src/lib/superadmin-glossary.ts` — **when you change what a number
+means (e.g. the Slowing threshold), update its glossary entry too.** A test fails if a glossary
+entry is missing from the Help page.
+
 **Every superadmin table downloads as Excel** via `downloadXlsx` (`src/lib/xlsx-export.ts`,
 exceljs loaded on demand). The one exception is the invoices card on a company's Billing tab
 (`components/billing/company-invoices-card.tsx`) — Revenue covers those figures. Excel exports

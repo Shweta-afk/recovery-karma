@@ -31,6 +31,7 @@ import {
 } from "@/components/superadmin/usage-shared";
 import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
 import { DailyUsageChart } from "@/components/superadmin/daily-usage-chart";
+import { InfoTip, PageGuide } from "@/components/superadmin/help";
 import {
   contactRate,
   type AttentionItem,
@@ -82,6 +83,8 @@ function SuperadminOverviewPage() {
           </Button>
         </div>
       </div>
+
+      <PageGuide page="overview" />
 
       {!report ? (
         <div className="flex items-center gap-2 py-8 text-xs text-muted-foreground">
@@ -196,6 +199,7 @@ function KpiGrid({ report }: { report: PlatformUsageReport }) {
       <Kpi
         icon={<Building2 className={iconCls} />}
         label="Active companies"
+        hint="activeCompanies"
         value={`${report.totals.activeCompanies} / ${report.totals.liveCompanies}`}
         sub="used calling or Insights, of all live"
         trend={
@@ -208,6 +212,7 @@ function KpiGrid({ report }: { report: PlatformUsageReport }) {
       <Kpi
         icon={<Users className={iconCls} />}
         label="Active callers"
+        hint="activeCallers"
         value={fmtInt(cur.activeCallers)}
         sub="users who placed at least one call"
         trend={<Trend current={cur.activeCallers} previous={prev.activeCallers} />}
@@ -215,6 +220,7 @@ function KpiGrid({ report }: { report: PlatformUsageReport }) {
       <Kpi
         icon={<Phone className={iconCls} />}
         label="Calls"
+        hint="calls"
         value={fmtInt(cur.calls)}
         sub={`${fmtInt(prev.calls)} the period before`}
         trend={<Trend current={cur.calls} previous={prev.calls} />}
@@ -222,12 +228,14 @@ function KpiGrid({ report }: { report: PlatformUsageReport }) {
       <Kpi
         icon={<Gauge className={iconCls} />}
         label="Contact rate"
+        hint="contactRate"
         value={fmtPct(curRate)}
         sub={`${fmtInt(cur.contacts)} calls reached someone · was ${fmtPct(prevRate)}`}
       />
       <Kpi
         icon={<Clock className={iconCls} />}
         label="Talk time"
+        hint="talkTime"
         value={fmtTalk(cur.talkSeconds)}
         sub={
           cur.calls > 0
@@ -239,6 +247,7 @@ function KpiGrid({ report }: { report: PlatformUsageReport }) {
       <Kpi
         icon={<Sparkles className={iconCls} />}
         label="Insights lookups"
+        hint="insightsLookups"
         value={fmtInt(cur.lookups)}
         sub={`${fmtPct(cur.lookups ? cur.lookupsFound / cur.lookups : null)} found data`}
         trend={<Trend current={cur.lookups} previous={prev.lookups} />}
@@ -246,6 +255,7 @@ function KpiGrid({ report }: { report: PlatformUsageReport }) {
       <Kpi
         icon={<Wallet className={iconCls} />}
         label="Insights billed"
+        hint="insightsBilled"
         value={fmtMoney(cur.insightsCharged)}
         sub="charged to company wallets"
         trend={<Trend current={cur.insightsCharged} previous={prev.insightsCharged} />}
@@ -253,6 +263,7 @@ function KpiGrid({ report }: { report: PlatformUsageReport }) {
       <Kpi
         icon={<Wallet className={iconCls} />}
         label="Insights margin"
+        hint="insightsMargin"
         value={fmtMoney(margin)}
         sub={`after ${fmtMoney(cur.insightsActualCost)} ProfileX cost`}
         trend={<Trend current={margin} previous={prevMargin} />}
@@ -268,6 +279,7 @@ function AttentionCard({ items }: { items: AttentionItem[] }) {
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
           <AlertTriangle className="h-4 w-4 text-amber-500" />
           Needs attention
+          <InfoTip k="needsAttention" />
           {items.length > 0 && (
             <Badge variant="outline" className="text-[10px]">
               {items.length}
@@ -356,6 +368,7 @@ function TopCompanies({
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
           {icon}
           {title}
+          <InfoTip k="topCompanies" />
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 pt-4">

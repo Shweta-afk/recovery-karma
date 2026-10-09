@@ -13,6 +13,8 @@ import { getAccessToken } from "@/lib/access-token";
 import { EMPTY_RANGE, type DateRange } from "@/lib/date-filter";
 import { getPlatformUsage, type PlatformUsageResponse } from "@/lib/platform-usage.server";
 import { pctChange, type CompanyHealth } from "@/lib/platform-usage";
+import { GLOSSARY, type GlossaryKey } from "@/lib/superadmin-glossary";
+import { InfoTip } from "@/components/superadmin/help";
 import {
   DEFAULT_RANGE_PRESET,
   matchingPreset,
@@ -105,6 +107,7 @@ export function SuperadminDateFilter({
           All
         </button>
       )}
+      <InfoTip k="period" />
       <DateRangeFilter
         value={value}
         onChange={(r) =>
@@ -202,15 +205,11 @@ export const HEALTH_META: Record<
   CompanyHealth,
   { label: string; variant: "default" | "secondary" | "destructive" | "outline"; hint: string }
 > = {
-  active: { label: "Active", variant: "default", hint: "Using calling or Insights this period" },
-  slowing: {
-    label: "Slowing",
-    variant: "outline",
-    hint: "Calls + lookups fell below 60% of the previous period",
-  },
-  dormant: { label: "Dormant", variant: "destructive", hint: "No calls or lookups this period" },
-  new: { label: "New", variant: "secondary", hint: "Joined in the last 14 days, no usage yet" },
-  not_live: { label: "Not live", variant: "secondary", hint: "Pending or rejected" },
+  active: { label: "Active", variant: "default", hint: GLOSSARY.healthActive.text },
+  slowing: { label: "Slowing", variant: "outline", hint: GLOSSARY.healthSlowing.text },
+  dormant: { label: "Dormant", variant: "destructive", hint: GLOSSARY.healthDormant.text },
+  new: { label: "New", variant: "secondary", hint: GLOSSARY.healthNew.text },
+  not_live: { label: "Not live", variant: "secondary", hint: GLOSSARY.healthNotLive.text },
 };
 
 export function HealthBadge({ health }: { health: CompanyHealth }) {
@@ -278,12 +277,15 @@ export function Kpi({
   value,
   sub,
   trend,
+  hint,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   sub?: ReactNode;
   trend?: ReactNode;
+  /** Glossary entry explained by the ⓘ beside the label. */
+  hint?: GlossaryKey;
 }) {
   return (
     <Card>
@@ -291,6 +293,7 @@ export function Kpi({
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
           {icon}
           {label}
+          {hint && <InfoTip k={hint} />}
         </div>
         <div className="flex items-baseline gap-2">
           <span className="text-xl font-semibold text-foreground">{value}</span>
@@ -299,5 +302,15 @@ export function Kpi({
         {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
+  );
+}
+
+/** A label (card title, column heading) with its ⓘ explanation. */
+export function Explained({ k, children }: { k: GlossaryKey; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {children}
+      <InfoTip k={k} />
+    </span>
   );
 }

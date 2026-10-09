@@ -46,6 +46,8 @@ import {
   ExcelButton,
   SuperadminDateFilter,
 } from "@/components/superadmin/usage-shared";
+import { InfoTip, PageGuide } from "@/components/superadmin/help";
+import type { GlossaryKey } from "@/lib/superadmin-glossary";
 
 export const Route = createFileRoute("/superadmin/companies/")({
   head: () => ({
@@ -272,23 +274,27 @@ function SuperadminCompaniesPage() {
     k,
     children,
     right,
-    title,
+    hint,
   }: {
     k: SortKey;
     children: React.ReactNode;
     right?: boolean;
-    title?: string;
+    /** Explained by an ⓘ beside the heading (outside the sort button — no nested buttons). */
+    hint?: GlossaryKey;
   }) => (
-    <th className={`py-2 pr-4 font-medium ${right ? "text-right" : ""}`} title={title}>
-      <button
-        type="button"
-        onClick={() => toggleSort(k)}
-        className={`inline-flex items-center gap-0.5 hover:text-foreground ${sort.key === k ? "text-foreground" : ""}`}
-      >
-        {children}
-        {sort.key === k &&
-          (sort.desc ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
-      </button>
+    <th className={`py-2 pr-4 font-medium ${right ? "text-right" : ""}`}>
+      <span className="inline-flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => toggleSort(k)}
+          className={`inline-flex items-center gap-0.5 hover:text-foreground ${sort.key === k ? "text-foreground" : ""}`}
+        >
+          {children}
+          {sort.key === k &&
+            (sort.desc ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
+        </button>
+        {hint && <InfoTip k={hint} />}
+      </span>
     </th>
   );
 
@@ -307,6 +313,8 @@ function SuperadminCompaniesPage() {
         </div>
         <SuperadminDateFilter value={range} onChange={setRange} />
       </div>
+
+      <PageGuide page="companies" />
 
       {!rowsLoading && pending.length > 0 && (
         <Card className="border-amber-400/40">
@@ -439,32 +447,34 @@ function SuperadminCompaniesPage() {
                 <thead>
                   <tr className="border-b border-border text-left text-muted-foreground">
                     <Th k="name">Company</Th>
-                    <Th k="health">Health</Th>
-                    <Th k="lastActivity" title="Latest call, lookup or sign-in by anyone there">
+                    <Th k="health" hint="health">
+                      Health
+                    </Th>
+                    <Th k="lastActivity" hint="lastActivity">
                       Last activity
                     </Th>
-                    <Th k="calls" right>
+                    <Th k="calls" right hint="calls">
                       Calls
                     </Th>
-                    <Th k="contactRate" right title="Calls where someone was reached">
+                    <Th k="contactRate" right hint="contactRate">
                       Contact rate
                     </Th>
-                    <Th k="talk" right>
+                    <Th k="talk" right hint="talkTime">
                       Talk time
                     </Th>
-                    <Th k="callers" right title="Users who placed at least one call">
+                    <Th k="callers" right hint="activeCallers">
                       Active callers
                     </Th>
-                    <Th k="seats" right title="Agent seats used / cap (managers below)">
+                    <Th k="seats" right hint="seats">
                       Seats
                     </Th>
-                    <Th k="lookups" right>
+                    <Th k="lookups" right hint="insightsLookups">
                       Insights lookups
                     </Th>
-                    <Th k="billed" right title="Charged to the company's Insights wallet">
+                    <Th k="billed" right hint="insightsBilled">
                       Insights billed
                     </Th>
-                    <Th k="wallet" right>
+                    <Th k="wallet" right hint="wallet">
                       Wallet
                     </Th>
                   </tr>

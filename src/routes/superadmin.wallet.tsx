@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { PageGuide } from "@/components/superadmin/help";
 import { useEffect, useState } from "react";
 import { Wallet, PlusCircle, Send, Loader2, AlertTriangle, Landmark } from "lucide-react";
 import { toast } from "sonner";
@@ -196,6 +197,8 @@ function SuperadminWalletPage() {
           with any figure and hand slices of it to companies as their Insights budget.
         </p>
       </div>
+
+      <PageGuide page="wallet" />
 
       {isLow && (
         <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/10 px-4 py-3">

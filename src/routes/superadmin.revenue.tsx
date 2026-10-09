@@ -24,12 +24,14 @@ import { boundedRange, rangeLabel } from "@/lib/superadmin-range";
 import { downloadXlsx, reportFilename, type XlsxSheet } from "@/lib/xlsx-export";
 import {
   ExcelButton,
+  Explained,
   fmtInt,
   fmtMoney,
   Kpi,
   SuperadminDateFilter,
   usePlatformUsage,
 } from "@/components/superadmin/usage-shared";
+import { InfoTip, PageGuide } from "@/components/superadmin/help";
 
 export const Route = createFileRoute("/superadmin/revenue")({
   head: () => ({
@@ -309,6 +311,8 @@ function SuperadminRevenuePage() {
         </div>
       </div>
 
+      <PageGuide page="revenue" />
+
       {!res ? (
         <div className="flex items-center gap-2 py-8 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading revenue…
@@ -336,6 +340,7 @@ function SuperadminRevenuePage() {
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">
               <Sparkles className="h-4 w-4 text-primary" />
               Insights margin by company
+              <InfoTip k="insightsMargin" />
             </CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
               What each company's wallet was charged vs what ProfileX bills us. A negative margin
@@ -357,7 +362,9 @@ function SuperadminRevenuePage() {
                       <th className="py-2 pr-4 font-medium">Company</th>
                       <th className="py-2 pr-4 font-medium text-right">Lookups</th>
                       <th className="py-2 pr-4 font-medium text-right">Billed</th>
-                      <th className="py-2 pr-4 font-medium text-right">ProfileX cost</th>
+                      <th className="py-2 pr-4 font-medium text-right">
+                        <Explained k="profilexCost">ProfileX cost</Explained>
+                      </th>
                       <th className="py-2 pr-4 font-medium text-right">Margin</th>
                     </tr>
                   </thead>
@@ -392,6 +399,7 @@ function SuperadminRevenuePage() {
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">
               <Lock className="h-4 w-4 text-primary" />
               Seat upsell
+              <InfoTip k="seatUpsell" />
             </CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Companies using 90% or more of a seat limit — ready for a bigger plan. Current seats,
@@ -453,9 +461,12 @@ function InsightsRow({ c, margin }: { c: CompanyUsage; margin: number }) {
           {c.companyName}
         </Link>
         {margin < 0 && (
-          <Badge variant="destructive" className="ml-2 text-[10px]">
-            Losing money
-          </Badge>
+          <span className="ml-2 inline-flex items-center gap-1">
+            <Badge variant="destructive" className="text-[10px]">
+              Losing money
+            </Badge>
+            <InfoTip k="losingMoney" />
+          </span>
         )}
       </td>
       <td className="py-2 pr-4 text-right">{fmtInt(c.current.lookups)}</td>
@@ -482,24 +493,28 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
         <Kpi
           icon={<Receipt className={iconCls} />}
           label="Billed"
+          hint="billed"
           value={fmtMoney(revenue.billed.total)}
           sub={`${revenue.billed.count} invoice(s) · GST ${fmtMoney(revenue.billed.gst)}`}
         />
         <Kpi
           icon={<IndianRupee className={iconCls} />}
           label="Received"
+          hint="received"
           value={fmtMoney(revenue.received.total)}
           sub={`${revenue.received.count} invoice(s) marked paid in this period`}
         />
         <Kpi
           icon={<TrendingUp className={iconCls} />}
           label="Outstanding now"
+          hint="outstanding"
           value={fmtMoney(revenue.outstanding.total)}
           sub={`${revenue.outstanding.count} unpaid invoice(s)`}
         />
         <Kpi
           icon={<CalendarClock className={iconCls} />}
           label="Overdue now"
+          hint="overdue"
           value={fmtMoney(revenue.overdue.total)}
           sub={`${revenue.overdue.count} past their due date`}
         />
@@ -511,6 +526,7 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">
               <CalendarClock className="h-4 w-4 text-primary" />
               How long it's been owed
+              <InfoTip k="ageing" />
             </CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Unpaid invoices by days past their due date, as of {revenue.today}.
@@ -570,8 +586,12 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
                       <th className="py-2 pr-4 font-medium">Company</th>
                       <th className="py-2 pr-4 font-medium text-right">Billed</th>
                       <th className="py-2 pr-4 font-medium text-right">Received</th>
-                      <th className="py-2 pr-4 font-medium text-right">Outstanding</th>
-                      <th className="py-2 pr-4 font-medium text-right">Oldest overdue</th>
+                      <th className="py-2 pr-4 font-medium text-right">
+                        <Explained k="outstanding">Outstanding</Explained>
+                      </th>
+                      <th className="py-2 pr-4 font-medium text-right">
+                        <Explained k="oldestOverdue">Oldest overdue</Explained>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -612,6 +632,7 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
           <CardTitle className="flex items-center gap-2 text-sm font-semibold">
             <FileText className="h-4 w-4 text-primary" />
             GST summary by month
+            <InfoTip k="gstSummary" />
           </CardTitle>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Invoices issued in each month (by invoice date), cancelled invoices excluded from the

@@ -22,6 +22,7 @@ import {
   DatabaseBackup,
   FileText,
   IndianRupee,
+  HelpCircle,
 } from "lucide-react";
 import {
   Sidebar,
@@ -86,6 +87,7 @@ const superadminItems = [
   { title: "Invoices", url: "/superadmin/invoices", icon: FileText },
   { title: "Revenue", url: "/superadmin/revenue", icon: IndianRupee },
   { title: "Superadmin Activity", url: "/superadmin/activity", icon: History },
+  { title: "Help", url: "/superadmin/help", icon: HelpCircle },
 ];
 
 export function AppSidebar({ role }: { role: Role }) {

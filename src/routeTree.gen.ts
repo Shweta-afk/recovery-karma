@@ -46,6 +46,7 @@ import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
 import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
 import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
 import { Route as SuperadminActivityRouteImport } from './routes/superadmin.activity'
+import { Route as SuperadminHelpRouteImport } from './routes/superadmin.help'
 import { Route as SuperadminInsightsRouteImport } from './routes/superadmin.insights'
 import { Route as SuperadminInvoicesRouteImport } from './routes/superadmin.invoices'
 import { Route as SuperadminRevenueRouteImport } from './routes/superadmin.revenue'
@@ -238,6 +239,11 @@ const SuperadminActivityRoute = SuperadminActivityRouteImport.update({
   path: '/activity',
   getParentRoute: () => SuperadminRoute,
 } as any)
+const SuperadminHelpRoute = SuperadminHelpRouteImport.update({
+  id: '/help',
+  path: '/help',
+  getParentRoute: () => SuperadminRoute,
+} as any)
 const SuperadminInsightsRoute = SuperadminInsightsRouteImport.update({
   id: '/insights',
   path: '/insights',
@@ -305,6 +311,7 @@ export interface FileRoutesByFullPath {
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
+  '/superadmin/help': typeof SuperadminHelpRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
   '/superadmin/invoices': typeof SuperadminInvoicesRoute
   '/superadmin/revenue': typeof SuperadminRevenueRoute
@@ -346,6 +353,7 @@ export interface FileRoutesByTo {
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
+  '/superadmin/help': typeof SuperadminHelpRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
   '/superadmin/invoices': typeof SuperadminInvoicesRoute
   '/superadmin/revenue': typeof SuperadminRevenueRoute
@@ -392,6 +400,7 @@ export interface FileRoutesById {
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
+  '/superadmin/help': typeof SuperadminHelpRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
   '/superadmin/invoices': typeof SuperadminInvoicesRoute
   '/superadmin/revenue': typeof SuperadminRevenueRoute
@@ -439,6 +448,7 @@ export interface FileRouteTypes {
     | '/manager/reports'
     | '/manager/upload'
     | '/superadmin/activity'
+    | '/superadmin/help'
     | '/superadmin/insights'
     | '/superadmin/invoices'
     | '/superadmin/revenue'
@@ -480,6 +490,7 @@ export interface FileRouteTypes {
     | '/manager/reports'
     | '/manager/upload'
     | '/superadmin/activity'
+    | '/superadmin/help'
     | '/superadmin/insights'
     | '/superadmin/invoices'
     | '/superadmin/revenue'
@@ -525,6 +536,7 @@ export interface FileRouteTypes {
     | '/manager/reports'
     | '/manager/upload'
     | '/superadmin/activity'
+    | '/superadmin/help'
     | '/superadmin/insights'
     | '/superadmin/invoices'
     | '/superadmin/revenue'
@@ -811,6 +823,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SuperadminActivityRouteImport
       parentRoute: typeof SuperadminRoute
     }
+    '/superadmin/help': {
+      id: '/superadmin/help'
+      path: '/help'
+      fullPath: '/superadmin/help'
+      preLoaderRoute: typeof SuperadminHelpRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
     '/superadmin/insights': {
       id: '/superadmin/insights'
       path: '/insights'
@@ -935,6 +954,7 @@ const ManagerRouteWithChildren =
 
 interface SuperadminRouteChildren {
   SuperadminActivityRoute: typeof SuperadminActivityRoute
+  SuperadminHelpRoute: typeof SuperadminHelpRoute
   SuperadminInsightsRoute: typeof SuperadminInsightsRoute
   SuperadminInvoicesRoute: typeof SuperadminInvoicesRoute
   SuperadminRevenueRoute: typeof SuperadminRevenueRoute
@@ -946,6 +966,7 @@ interface SuperadminRouteChildren {
 
 const SuperadminRouteChildren: SuperadminRouteChildren = {
   SuperadminActivityRoute: SuperadminActivityRoute,
+  SuperadminHelpRoute: SuperadminHelpRoute,
   SuperadminInsightsRoute: SuperadminInsightsRoute,
   SuperadminInvoicesRoute: SuperadminInvoicesRoute,
   SuperadminRevenueRoute: SuperadminRevenueRoute,

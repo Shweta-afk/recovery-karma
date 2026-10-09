@@ -44,6 +44,7 @@ import {
 import { CompanyInsightsSettingsCard } from "@/components/profilex/company-insights-settings-card";
 import { CompanyInvoicesCard } from "@/components/billing/company-invoices-card";
 import { DailyUsageChart } from "@/components/superadmin/daily-usage-chart";
+import { InfoTip, PageGuide } from "@/components/superadmin/help";
 import {
   comparisonLabel,
   ExcelButton,
@@ -53,6 +54,7 @@ import {
   fmtPct,
   fmtTalk,
   HealthBadge,
+  Explained,
   Kpi,
   SuperadminDateFilter,
   Trend,
@@ -389,6 +391,8 @@ function SuperadminCompanyDetailPage() {
         </button>
       )}
 
+      <PageGuide page="company" />
+
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -413,6 +417,7 @@ function SuperadminCompanyDetailPage() {
                 <Kpi
                   icon={<Phone className="h-3.5 w-3.5" />}
                   label="Calls"
+                  hint="calls"
                   value={fmtInt(company.current.calls)}
                   sub={`${fmtInt(company.previous.calls)} the period before`}
                   trend={
@@ -422,12 +427,14 @@ function SuperadminCompanyDetailPage() {
                 <Kpi
                   icon={<Gauge className="h-3.5 w-3.5" />}
                   label="Contact rate"
+                  hint="contactRate"
                   value={fmtPct(contactRate(company.current))}
                   sub={`${fmtInt(company.current.contacts)} calls reached someone`}
                 />
                 <Kpi
                   icon={<Clock className="h-3.5 w-3.5" />}
                   label="Talk time"
+                  hint="talkTime"
                   value={fmtTalk(company.current.talkSeconds)}
                   sub={`${company.current.activeCallers} active caller(s)`}
                   trend={
@@ -440,12 +447,14 @@ function SuperadminCompanyDetailPage() {
                 <Kpi
                   icon={<Users className="h-3.5 w-3.5" />}
                   label="Last activity"
+                  hint="lastActivity"
                   value={fmtAgo(company.lastActivityAt)}
                   sub={`last sign-in ${fmtAgo(company.lastSignInAt)}`}
                 />
                 <Kpi
                   icon={<Sparkles className="h-3.5 w-3.5" />}
                   label="Insights lookups"
+                  hint="insightsLookups"
                   value={fmtInt(company.current.lookups)}
                   sub={`${fmtPct(company.current.lookups ? company.current.lookupsFound / company.current.lookups : null)} found data`}
                   trend={
@@ -455,6 +464,7 @@ function SuperadminCompanyDetailPage() {
                 <Kpi
                   icon={<Wallet className="h-3.5 w-3.5" />}
                   label="Insights billed"
+                  hint="insightsBilled"
                   value={fmtMoney(company.current.insightsCharged)}
                   sub={`margin ${fmtMoney(company.current.insightsCharged - company.current.insightsActualCost)}`}
                   trend={
@@ -467,12 +477,14 @@ function SuperadminCompanyDetailPage() {
                 <Kpi
                   icon={<Wallet className="h-3.5 w-3.5" />}
                   label="Insights wallet"
+                  hint="wallet"
                   value={fmtMoney(company.walletBalance)}
                   sub="current balance"
                 />
                 <Kpi
                   icon={<Lock className="h-3.5 w-3.5" />}
                   label="Seats"
+                  hint="seats"
                   value={`${company.agentSeats.used}${company.agentSeats.max ? ` / ${company.agentSeats.max}` : ""}`}
                   sub={`agents · ${company.managerSeats.used}${company.managerSeats.max ? ` / ${company.managerSeats.max}` : ""} managers`}
                 />
@@ -488,6 +500,7 @@ function SuperadminCompanyDetailPage() {
                   <CardTitle className="flex items-center gap-2 text-sm font-semibold">
                     <FolderOpen className="h-4 w-4 text-primary" />
                     Portfolios
+                    <InfoTip k="portfolios" />
                     <Badge variant="secondary" className="text-[10px]">
                       {openPortfolios.length} open
                     </Badge>
@@ -579,12 +592,20 @@ function SuperadminCompanyDetailPage() {
                     <thead>
                       <tr className="border-b border-border text-left text-muted-foreground">
                         <th className="py-2 pr-4 font-medium">Name</th>
-                        <th className="py-2 pr-4 font-medium">Last sign-in</th>
-                        <th className="py-2 pr-4 font-medium">Last call/lookup</th>
+                        <th className="py-2 pr-4 font-medium">
+                          <Explained k="lastSignIn">Last sign-in</Explained>
+                        </th>
+                        <th className="py-2 pr-4 font-medium">
+                          <Explained k="lastCallLookup">Last call/lookup</Explained>
+                        </th>
                         <th className="py-2 pr-4 font-medium text-right">Calls</th>
-                        <th className="py-2 pr-4 font-medium text-right">Contacts</th>
+                        <th className="py-2 pr-4 font-medium text-right">
+                          <Explained k="contacts">Contacts</Explained>
+                        </th>
                         <th className="py-2 pr-4 font-medium text-right">Talk time</th>
-                        <th className="py-2 pr-4 font-medium text-right">Lookups</th>
+                        <th className="py-2 pr-4 font-medium text-right">
+                          <Explained k="insightsLookups">Lookups</Explained>
+                        </th>
                         <th className="py-2 pr-4 font-medium">Role</th>
                       </tr>
                     </thead>
@@ -657,6 +678,7 @@ function SuperadminCompanyDetailPage() {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Lock className="h-4 w-4 text-primary" />
                 Seat limits
+                <InfoTip k="seats" />
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-0.5">
                 How many managers and agents this company's admin may invite. Leave blank for
@@ -719,6 +741,7 @@ function SuperadminCompanyDetailPage() {
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Wallet className="h-4 w-4 text-primary" />
                   Wallet activity
+                  <InfoTip k="wallet" />
                   {company && (
                     <Badge variant="secondary" className="text-[10px]">
                       Balance {fmtMoney(company.walletBalance)}

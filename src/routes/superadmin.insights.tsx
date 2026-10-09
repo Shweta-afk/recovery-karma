@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { PageGuide } from "@/components/superadmin/help";
 import { useEffect, useState } from "react";
 import { Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -119,6 +120,8 @@ function SuperadminInsightsPage() {
         </p>
         <SuperadminDateFilter value={range} onChange={setRange} allowAll className="mt-3" />
       </div>
+
+      <PageGuide page="insights" />
 
       <ExportRequestsCard />
 
