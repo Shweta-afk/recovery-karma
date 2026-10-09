@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 34 tables.
+// Generated from 43 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -88,6 +88,7 @@ export interface Database {
           provider_agent_id: string | null;
           agent_code: string | null;
           session_nonce: string | null;
+          agent_extension: string | null;
         };
         Insert: {
           id?: string;
@@ -103,6 +104,7 @@ export interface Database {
           provider_agent_id?: string | null;
           agent_code?: string | null;
           session_nonce?: string | null;
+          agent_extension?: string | null;
         };
         Update: {
           id?: string;
@@ -118,6 +120,70 @@ export interface Database {
           provider_agent_id?: string | null;
           agent_code?: string | null;
           session_nonce?: string | null;
+          agent_extension?: string | null;
+        };
+        Relationships: [];
+      };
+      billing_profile: {
+        Row: {
+          id: string;
+          legal_name: string;
+          gstin: string | null;
+          pan: string | null;
+          address: string;
+          state_code: string | null;
+          email: string | null;
+          phone: string | null;
+          invoice_prefix: string;
+          sac_insights: string | null;
+          sac_setup: string | null;
+          payment_terms_days: number;
+          bank_name: string | null;
+          bank_account: string | null;
+          bank_ifsc: string | null;
+          terms: string | null;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          legal_name?: string;
+          gstin?: string | null;
+          pan?: string | null;
+          address?: string;
+          state_code?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          invoice_prefix?: string;
+          sac_insights?: string | null;
+          sac_setup?: string | null;
+          payment_terms_days?: number;
+          bank_name?: string | null;
+          bank_account?: string | null;
+          bank_ifsc?: string | null;
+          terms?: string | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          legal_name?: string;
+          gstin?: string | null;
+          pan?: string | null;
+          address?: string;
+          state_code?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          invoice_prefix?: string;
+          sac_insights?: string | null;
+          sac_setup?: string | null;
+          payment_terms_days?: number;
+          bank_name?: string | null;
+          bank_account?: string | null;
+          bank_ifsc?: string | null;
+          terms?: string | null;
+          updated_at?: string;
+          updated_by?: string | null;
         };
         Relationships: [];
       };
@@ -138,7 +204,6 @@ export interface Database {
           created_at: string | null;
           contact_name: string | null;
           contact_phone: string | null;
-          dialed_phone: string | null;
           provider_call_id: string | null;
           sentiment: string | null;
           audited_by: string | null;
@@ -157,6 +222,7 @@ export interface Database {
           callback_time: string | null;
           ring_seconds: number | null;
           wrap_seconds: number | null;
+          dialed_phone: string | null;
         };
         Insert: {
           id?: string;
@@ -174,7 +240,6 @@ export interface Database {
           created_at?: string | null;
           contact_name?: string | null;
           contact_phone?: string | null;
-          dialed_phone?: string | null;
           provider_call_id?: string | null;
           sentiment?: string | null;
           audited_by?: string | null;
@@ -193,6 +258,7 @@ export interface Database {
           callback_time?: string | null;
           ring_seconds?: number | null;
           wrap_seconds?: number | null;
+          dialed_phone?: string | null;
         };
         Update: {
           id?: string;
@@ -210,7 +276,6 @@ export interface Database {
           created_at?: string | null;
           contact_name?: string | null;
           contact_phone?: string | null;
-          dialed_phone?: string | null;
           provider_call_id?: string | null;
           sentiment?: string | null;
           audited_by?: string | null;
@@ -229,6 +294,40 @@ export interface Database {
           callback_time?: string | null;
           ring_seconds?: number | null;
           wrap_seconds?: number | null;
+          dialed_phone?: string | null;
+        };
+        Relationships: [];
+      };
+      client_billing: {
+        Row: {
+          client_id: string;
+          legal_name: string;
+          gstin: string | null;
+          address: string;
+          state_code: string | null;
+          email: string | null;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          client_id: string;
+          legal_name?: string;
+          gstin?: string | null;
+          address?: string;
+          state_code?: string | null;
+          email?: string | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          client_id?: string;
+          legal_name?: string;
+          gstin?: string | null;
+          address?: string;
+          state_code?: string | null;
+          email?: string | null;
+          updated_at?: string;
+          updated_by?: string | null;
         };
         Relationships: [];
       };
@@ -502,6 +601,36 @@ export interface Database {
         };
         Relationships: [];
       };
+      do_not_call: {
+        Row: {
+          id: string;
+          client_id: string;
+          phone: string;
+          debtor_id: string | null;
+          reason: string | null;
+          added_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          phone: string;
+          debtor_id?: string | null;
+          reason?: string | null;
+          added_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          phone?: string;
+          debtor_id?: string | null;
+          reason?: string | null;
+          added_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       escalations: {
         Row: {
           id: string;
@@ -676,6 +805,105 @@ export interface Database {
           error?: string | null;
           created_at?: string;
           completed_at?: string | null;
+        };
+        Relationships: [];
+      };
+      invoice_counters: {
+        Row: {
+          fy: string;
+          last_seq: number;
+        };
+        Insert: {
+          fy: string;
+          last_seq?: number;
+        };
+        Update: {
+          fy?: string;
+          last_seq?: number;
+        };
+        Relationships: [];
+      };
+      invoices: {
+        Row: {
+          id: string;
+          client_id: string;
+          invoice_number: string;
+          fy: string;
+          kind: string;
+          issue_date: string;
+          due_date: string;
+          description: string;
+          sac: string | null;
+          lines: Json;
+          place_of_supply: string;
+          taxable_amount: number;
+          cgst: number;
+          sgst: number;
+          igst: number;
+          total: number;
+          supplier: Json;
+          recipient: Json;
+          wallet_ledger_id: string | null;
+          status: string;
+          paid_at: string | null;
+          notes: string | null;
+          disclaimer: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          invoice_number: string;
+          fy: string;
+          kind: string;
+          issue_date: string;
+          due_date: string;
+          description: string;
+          sac?: string | null;
+          lines: Json;
+          place_of_supply: string;
+          taxable_amount: number;
+          cgst?: number;
+          sgst?: number;
+          igst?: number;
+          total: number;
+          supplier: Json;
+          recipient: Json;
+          wallet_ledger_id?: string | null;
+          status?: string;
+          paid_at?: string | null;
+          notes?: string | null;
+          disclaimer?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          invoice_number?: string;
+          fy?: string;
+          kind?: string;
+          issue_date?: string;
+          due_date?: string;
+          description?: string;
+          sac?: string | null;
+          lines?: Json;
+          place_of_supply?: string;
+          taxable_amount?: number;
+          cgst?: number;
+          sgst?: number;
+          igst?: number;
+          total?: number;
+          supplier?: Json;
+          recipient?: Json;
+          wallet_ledger_id?: string | null;
+          status?: string;
+          paid_at?: string | null;
+          notes?: string | null;
+          disclaimer?: string | null;
+          created_by?: string | null;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -1009,6 +1237,7 @@ export interface Database {
           replaces_portfolio_id: string | null;
           closed_at: string | null;
           end_date: string | null;
+          deleted_at: string | null;
         };
         Insert: {
           id?: string;
@@ -1027,6 +1256,7 @@ export interface Database {
           replaces_portfolio_id?: string | null;
           closed_at?: string | null;
           end_date?: string | null;
+          deleted_at?: string | null;
         };
         Update: {
           id?: string;
@@ -1045,6 +1275,7 @@ export interface Database {
           replaces_portfolio_id?: string | null;
           closed_at?: string | null;
           end_date?: string | null;
+          deleted_at?: string | null;
         };
         Relationships: [];
       };
@@ -1447,6 +1678,99 @@ export interface Database {
           name?: string;
           manager_id?: string | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      telephony_calls: {
+        Row: {
+          id: string;
+          client_id: string;
+          agent_id: string | null;
+          provider: string;
+          provider_call_id: string | null;
+          ref_id: string | null;
+          direction: string;
+          agent_handle: string | null;
+          remote_phone: string | null;
+          vendor_callid: string | null;
+          status: string;
+          started_at: string;
+          answered_at: string | null;
+          ended_at: string | null;
+          duration_seconds: number | null;
+          recording_path: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          agent_id?: string | null;
+          provider: string;
+          provider_call_id?: string | null;
+          ref_id?: string | null;
+          direction: string;
+          agent_handle?: string | null;
+          remote_phone?: string | null;
+          vendor_callid?: string | null;
+          status?: string;
+          started_at?: string;
+          answered_at?: string | null;
+          ended_at?: string | null;
+          duration_seconds?: number | null;
+          recording_path?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          agent_id?: string | null;
+          provider?: string;
+          provider_call_id?: string | null;
+          ref_id?: string | null;
+          direction?: string;
+          agent_handle?: string | null;
+          remote_phone?: string | null;
+          vendor_callid?: string | null;
+          status?: string;
+          started_at?: string;
+          answered_at?: string | null;
+          ended_at?: string | null;
+          duration_seconds?: number | null;
+          recording_path?: string | null;
+        };
+        Relationships: [];
+      };
+      telephony_settings: {
+        Row: {
+          client_id: string;
+          enabled: boolean;
+          seat_limit: number | null;
+          channel_limit: number;
+          inbound_did: string | null;
+          inbound_queue: string | null;
+          call_window_start: string;
+          call_window_end: string;
+          updated_at: string;
+        };
+        Insert: {
+          client_id: string;
+          enabled?: boolean;
+          seat_limit?: number | null;
+          channel_limit?: number;
+          inbound_did?: string | null;
+          inbound_queue?: string | null;
+          call_window_start?: string;
+          call_window_end?: string;
+          updated_at?: string;
+        };
+        Update: {
+          client_id?: string;
+          enabled?: boolean;
+          seat_limit?: number | null;
+          channel_limit?: number;
+          inbound_did?: string | null;
+          inbound_queue?: string | null;
+          call_window_start?: string;
+          call_window_end?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };

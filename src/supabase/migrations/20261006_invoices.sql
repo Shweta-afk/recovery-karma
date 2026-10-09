@@ -133,6 +133,12 @@ ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.invoices TO service_role;
 -- No authenticated grant and no policy: superadmin-only for now (see header).
 
+-- Supabase's default privileges auto-grant new public tables to anon/authenticated (until its
+-- 2026-10-30 change). RLS with no policy already returns nothing, but revoke too so company
+-- users hold no privilege at all on billing data — checked live 2026-10-09.
+REVOKE ALL ON public.billing_profile, public.client_billing, public.invoice_counters,
+  public.invoices FROM anon, authenticated;
+
 -- ── Issue one invoice: number + row in a single transaction ──────────────────
 -- Called only by the superadmin server action (service role). Taking the next number and
 -- inserting the row together means a failed insert rolls the counter back too — GST expects
@@ -149,7 +155,7 @@ CREATE OR REPLACE FUNCTION issue_invoice(
   DECLARE
     seq INTEGER;
     fy_short TEXT := substr(p_fy, 3, 2) || substr(p_fy, 6, 2);
-    row invoices;
+    inv invoices;
   BEGIN
     INSERT INTO invoice_counters (fy, last_seq) VALUES (p_fy, 1)
       ON CONFLICT (fy) DO UPDATE SET last_seq = invoice_counters.last_seq + 1
@@ -164,9 +170,9 @@ CREATE OR REPLACE FUNCTION issue_invoice(
       p_issue_date, p_due_date, p_description, p_lines, p_sac, p_place_of_supply, p_taxable, p_cgst,
       p_sgst, p_igst, p_total, p_supplier, p_recipient, p_wallet_ledger_id, p_notes,
       p_disclaimer, p_superadmin_id
-    ) RETURNING * INTO row;
+    ) RETURNING * INTO inv;
 
-    RETURN row;
+    RETURN inv;
   END; $$;
 
 REVOKE ALL ON FUNCTION issue_invoice(UUID, TEXT, TEXT, TEXT, DATE, DATE, TEXT, JSONB, TEXT, TEXT, NUMERIC,
