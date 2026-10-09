@@ -13,16 +13,6 @@ import {
   Wallet,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,9 +23,14 @@ import {
   fmtTalk,
   HealthBadge,
   Trend,
+  comparisonLabel,
+  ExcelButton,
+  Kpi,
+  SuperadminDateFilter,
   usePlatformUsage,
-  WindowPicker,
 } from "@/components/superadmin/usage-shared";
+import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
+import { DailyUsageChart } from "@/components/superadmin/daily-usage-chart";
 import {
   contactRate,
   type AttentionItem,
@@ -57,7 +52,7 @@ export const Route = createFileRoute("/superadmin/")({
 });
 
 function SuperadminOverviewPage() {
-  const { windowDays, setWindowDays, report, loading, reload } = usePlatformUsage();
+  const { range, setRange, report, loading, reload } = usePlatformUsage();
 
   return (
     <div className="space-y-6">
@@ -68,12 +63,13 @@ function SuperadminOverviewPage() {
             <Badge variant="secondary">Superadmin</Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            How companies are using SamvadX calling and Insights — last {windowDays} days, compared
-            with the {windowDays} days before.
+            How companies are using SamvadX calling and Insights
+            {report ? ` — ${comparisonLabel(report)}.` : "."}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <WindowPicker value={windowDays} onChange={setWindowDays} />
+        <div className="flex flex-wrap items-center gap-2">
+          <SuperadminDateFilter value={range} onChange={setRange} />
+          <ExcelButton disabled={!report} onExport={() => exportOverview(report!)} />
           <Button
             size="sm"
             variant="outline"
@@ -96,7 +92,7 @@ function SuperadminOverviewPage() {
           <KpiGrid report={report} />
           <div className="grid gap-6 lg:grid-cols-5">
             <div className="lg:col-span-3">
-              <DailyChart report={report} />
+              <DailyUsageChart daily={report.daily} />
             </div>
             <div className="lg:col-span-2">
               <AttentionCard items={report.attention} />
@@ -136,34 +132,56 @@ function SuperadminOverviewPage() {
   );
 }
 
-function Kpi({
-  icon,
-  label,
-  value,
-  sub,
-  trend,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  sub?: ReactNode;
-  trend?: ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent className="space-y-1 p-4">
-        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-          {icon}
-          {label}
-        </div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-xl font-semibold text-foreground">{value}</span>
-          {trend}
-        </div>
-        {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
-      </CardContent>
-    </Card>
-  );
+async function exportOverview(report: PlatformUsageReport) {
+  const { current: cur, previous: prev } = report.totals;
+  const kpi = (label: string, c: number | string, p: number | string) => [label, c, p];
+  const rate = (b: typeof cur) => (b.calls ? Math.round((b.contacts / b.calls) * 100) : "");
+  await downloadXlsx(reportFilename("overview", report.range), [
+    {
+      name: "Summary",
+      headers: [
+        "Measure",
+        `${report.range.from} to ${report.range.to}`,
+        `${report.previousRange.from} to ${report.previousRange.to}`,
+      ],
+      rows: [
+        kpi("Active companies", report.totals.activeCompanies, report.totals.activeCompaniesPrev),
+        kpi("Live companies", report.totals.liveCompanies, ""),
+        kpi("Active callers", cur.activeCallers, prev.activeCallers),
+        kpi("Calls", cur.calls, prev.calls),
+        kpi("Contacts", cur.contacts, prev.contacts),
+        kpi("Contact rate %", rate(cur), rate(prev)),
+        kpi("Talk minutes", Math.round(cur.talkSeconds / 60), Math.round(prev.talkSeconds / 60)),
+        kpi("Insights lookups", cur.lookups, prev.lookups),
+        kpi("Insights lookups found", cur.lookupsFound, prev.lookupsFound),
+        kpi(
+          "Insights billed (₹)",
+          +cur.insightsCharged.toFixed(2),
+          +prev.insightsCharged.toFixed(2),
+        ),
+        kpi(
+          "ProfileX cost (₹)",
+          +cur.insightsActualCost.toFixed(2),
+          +prev.insightsActualCost.toFixed(2),
+        ),
+        kpi(
+          "Insights margin (₹)",
+          +(cur.insightsCharged - cur.insightsActualCost).toFixed(2),
+          +(prev.insightsCharged - prev.insightsActualCost).toFixed(2),
+        ),
+      ],
+    },
+    {
+      name: "Daily usage",
+      headers: ["Day (IST)", "Calls", "Insights lookups"],
+      rows: report.daily.map((d) => [d.day, d.calls, d.lookups]),
+    },
+    {
+      name: "Needs attention",
+      headers: ["Company", "Issue", "Detail"],
+      rows: report.attention.map((a) => [a.companyName ?? "", a.kind, a.message]),
+    },
+  ]);
 }
 
 function KpiGrid({ report }: { report: PlatformUsageReport }) {
@@ -243,55 +261,6 @@ function KpiGrid({ report }: { report: PlatformUsageReport }) {
   );
 }
 
-function DailyChart({ report }: { report: PlatformUsageReport }) {
-  const data = report.daily.map((d) => ({ ...d, label: d.day.slice(5).replace("-", "/") }));
-  return (
-    <Card className="h-full">
-      <CardHeader className="border-b border-border pb-3">
-        <CardTitle className="text-sm font-semibold">Daily usage</CardTitle>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Calls and Insights lookups per day (IST), every company combined.
-        </p>
-      </CardHeader>
-      <CardContent className="pt-4">
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-            <XAxis
-              dataKey="label"
-              tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }}
-              interval="preserveStartEnd"
-              minTickGap={16}
-            />
-            <YAxis
-              allowDecimals={false}
-              tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }}
-            />
-            <Tooltip
-              contentStyle={{
-                fontSize: 11,
-                background: "var(--color-popover)",
-                border: "1px solid var(--color-border)",
-                borderRadius: 6,
-              }}
-              labelStyle={{ color: "var(--color-foreground)" }}
-              cursor={{ fill: "var(--color-accent)", opacity: 0.4 }}
-            />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="calls" name="Calls" fill="oklch(0.58 0.18 258)" radius={[2, 2, 0, 0]} />
-            <Bar
-              dataKey="lookups"
-              name="Insights lookups"
-              fill="oklch(0.7 0.15 162)"
-              radius={[2, 2, 0, 0]}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </CardContent>
-    </Card>
-  );
-}
-
 function AttentionCard({ items }: { items: AttentionItem[] }) {
   return (
     <Card className="h-full">
@@ -349,6 +318,9 @@ function AttentionRow({ item }: { item: AttentionItem }) {
     <Link
       to="/superadmin/companies/$clientId"
       params={{ clientId: item.clientId! }}
+      search={
+        item.kind === "seat_cap" || item.kind === "wallet_running_out" ? { tab: "billing" } : {}
+      }
       className={cls}
     >
       {body}

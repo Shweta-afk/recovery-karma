@@ -11,7 +11,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { supabase } from "@/lib/supabase";
+import { getAccessToken } from "@/lib/access-token";
+import { openRangeInstants } from "@/lib/superadmin-range";
+import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
+import {
+  ExcelButton,
+  SuperadminDateFilter,
+  useSuperadminRange,
+} from "@/components/superadmin/usage-shared";
 import {
   getCompanies,
   getSuperadminActivity,
@@ -67,20 +74,19 @@ function SuperadminActivityPage() {
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [companyFilter, setCompanyFilter] = useState<string>("all");
   const [rows, setRows] = useState<SuperadminActivityRow[]>([]);
+  const [range, setRange] = useSuperadminRange();
 
   const load = async (clientId?: string) => {
     setLoading(true);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) throw new Error("Your session expired — sign in again");
+      const accessToken = await getAccessToken();
+      const { since, until } = openRangeInstants(range);
       const [companiesRes, activityRes] = await Promise.all([
         // Only needed once for the filter dropdown, but cheap enough to just re-fetch — avoids
         // a second effect/loading state for something this small.
-        getCompanies({ data: { accessToken: session.access_token } }),
+        getCompanies({ data: { accessToken } }),
         getSuperadminActivity({
-          data: { accessToken: session.access_token, clientId, limit: 300 },
+          data: { accessToken, clientId, limit: 1000, since, until },
         }),
       ]);
       setCompanies(companiesRes.rows);
@@ -95,7 +101,7 @@ function SuperadminActivityPage() {
   useEffect(() => {
     load(companyFilter === "all" ? undefined : companyFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyFilter]);
+  }, [companyFilter, range]);
 
   const moneyTotal = useMemo(
     () =>
@@ -115,11 +121,11 @@ function SuperadminActivityPage() {
           <Badge variant="secondary">Superadmin</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          Every action a superadmin has taken across the platform — company approvals,
-          subdomains, seat limits, role changes, Insights settings, and every money movement
-          (e.g. how much budget was assigned to each company). Automatic per-lookup ProfileX
-          debits are left out; those live on the{" "}
-          <span className="font-medium text-foreground">Insights Activity</span> page instead.
+          Every action a superadmin has taken across the platform — company approvals, subdomains,
+          seat limits, role changes, Insights settings, and every money movement (e.g. how much
+          budget was assigned to each company). Automatic per-lookup ProfileX debits are left out;
+          those live on the <span className="font-medium text-foreground">Insights Activity</span>{" "}
+          page instead.
         </p>
       </div>
 
@@ -130,11 +136,12 @@ function SuperadminActivityPage() {
             History
             {companyFilter !== "all" && rows.length > 0 && (
               <span className="text-xs font-normal text-muted-foreground">
-                · ₹{moneyTotal.toFixed(2)} allocated to this company
+                · ₹{moneyTotal.toFixed(2)} allocated to this company in this period
               </span>
             )}
           </CardTitle>
-          <div className="pt-2">
+          <div className="flex flex-wrap items-center gap-2 pt-2">
+            <SuperadminDateFilter value={range} onChange={setRange} allowAll />
             <Select value={companyFilter} onValueChange={setCompanyFilter}>
               <SelectTrigger className="h-8 w-64 text-xs">
                 <SelectValue placeholder="All companies" />
@@ -148,6 +155,25 @@ function SuperadminActivityPage() {
                 ))}
               </SelectContent>
             </Select>
+            <ExcelButton
+              disabled={loading || rows.length === 0}
+              onExport={() =>
+                downloadXlsx(reportFilename("superadmin-activity", range), [
+                  {
+                    name: "Superadmin activity",
+                    headers: ["When", "Type", "By", "Company", "Details", "Amount (₹)"],
+                    rows: rows.map((r) => [
+                      new Date(r.createdAt).toLocaleString("en-IN"),
+                      ACTION_LABEL[r.action] ?? r.action,
+                      r.actorName ?? "",
+                      r.companyName ?? "",
+                      r.summary,
+                      r.amount !== null ? +r.amount.toFixed(2) : "",
+                    ]),
+                  },
+                ])
+              }
+            />
           </div>
         </CardHeader>
         <CardContent className="pt-4">
@@ -157,7 +183,7 @@ function SuperadminActivityPage() {
             </div>
           ) : rows.length === 0 ? (
             <p className="py-6 text-center text-xs text-muted-foreground">
-              No superadmin activity yet.
+              No superadmin activity in this period.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -174,7 +200,10 @@ function SuperadminActivityPage() {
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <tr key={`${row.kind}-${row.id}`} className="border-b border-border last:border-0">
+                    <tr
+                      key={`${row.kind}-${row.id}`}
+                      className="border-b border-border last:border-0"
+                    >
                       <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">
                         {new Date(row.createdAt).toLocaleString()}
                       </td>
@@ -184,9 +213,7 @@ function SuperadminActivityPage() {
                       <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">
                         {row.actorName ?? "—"}
                       </td>
-                      <td className="py-2 pr-4 text-muted-foreground">
-                        {row.companyName ?? "—"}
-                      </td>
+                      <td className="py-2 pr-4 text-muted-foreground">{row.companyName ?? "—"}</td>
                       <td className="py-2 pr-4 text-foreground max-w-md">{row.summary}</td>
                       <td className="py-2 pr-4 text-right font-medium text-foreground whitespace-nowrap">
                         {row.amount !== null ? `₹${row.amount.toFixed(2)}` : "—"}

@@ -21,6 +21,7 @@ import {
   Sparkles,
   DatabaseBackup,
   FileText,
+  IndianRupee,
 } from "lucide-react";
 import {
   Sidebar,
@@ -83,6 +84,7 @@ const superadminItems = [
   { title: "Insights Wallet", url: "/superadmin/wallet", icon: Wallet },
   { title: "Insights Activity", url: "/superadmin/insights", icon: Sparkles },
   { title: "Invoices", url: "/superadmin/invoices", icon: FileText },
+  { title: "Revenue", url: "/superadmin/revenue", icon: IndianRupee },
   { title: "Superadmin Activity", url: "/superadmin/activity", icon: History },
 ];
 

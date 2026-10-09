@@ -6,7 +6,6 @@ import {
   ArrowUp,
   Building2,
   Check,
-  FileDown,
   Loader2,
   Search,
   ShieldCheck,
@@ -25,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getAccessToken } from "@/lib/access-token";
-import { downloadCsv } from "@/lib/csv-export";
+import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
 import {
   getCompanies,
   approveCompany,
@@ -43,7 +42,9 @@ import {
   HealthBadge,
   Trend,
   usePlatformUsage,
-  WindowPicker,
+  comparisonLabel,
+  ExcelButton,
+  SuperadminDateFilter,
 } from "@/components/superadmin/usage-shared";
 
 export const Route = createFileRoute("/superadmin/companies/")({
@@ -102,7 +103,7 @@ const seatsLabel = (s: { used: number; max: number | null }) =>
 
 function SuperadminCompaniesPage() {
   const navigate = useNavigate();
-  const { windowDays, setWindowDays, report, loading: usageLoading, reload } = usePlatformUsage();
+  const { range, setRange, report, loading: usageLoading, reload } = usePlatformUsage();
 
   const [rows, setRows] = useState<CompanyRow[]>([]);
   const [rowsLoading, setRowsLoading] = useState(true);
@@ -206,62 +207,65 @@ function SuperadminCompaniesPage() {
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: key !== "name" }));
 
-  const exportCsv = () => {
-    downloadCsv(
-      `samvadx-company-usage-${windowDays}d-${new Date().toISOString().slice(0, 10)}.csv`,
-      [
-        "Company",
-        "Company ID",
-        "Status",
-        "Health",
-        "Subdomain",
-        "Plan",
-        "Last activity",
-        "Last sign-in",
-        `Calls (${windowDays}d)`,
-        "Calls (previous period)",
-        "Contacts",
-        "Contact rate %",
-        "Talk minutes",
-        "Active callers",
-        "Agent seats used",
-        "Agent seat cap",
-        "Manager seats used",
-        "Manager seat cap",
-        `Insights lookups (${windowDays}d)`,
-        "Insights lookups (previous period)",
-        "Lookups found",
-        "Insights billed (₹)",
-        "ProfileX cost (₹)",
-        "Insights wallet (₹)",
-      ],
-      companies.map((c) => [
-        c.companyName,
-        c.clientId,
-        c.status,
-        HEALTH_META[c.health].label,
-        c.subdomain ?? "",
-        c.plan ?? "",
-        c.lastActivityAt ?? "",
-        c.lastSignInAt ?? "",
-        c.current.calls,
-        c.previous.calls,
-        c.current.contacts,
-        c.current.calls ? Math.round((c.current.contacts / c.current.calls) * 100) : "",
-        Math.round(c.current.talkSeconds / 60),
-        c.current.activeCallers,
-        c.agentSeats.used,
-        c.agentSeats.max ?? "",
-        c.managerSeats.used,
-        c.managerSeats.max ?? "",
-        c.current.lookups,
-        c.previous.lookups,
-        c.current.lookupsFound,
-        c.current.insightsCharged.toFixed(2),
-        c.current.insightsActualCost.toFixed(2),
-        c.walletBalance.toFixed(2),
-      ]),
-    );
+  const exportExcel = async () => {
+    if (!report) return;
+    await downloadXlsx(reportFilename("company-usage", report.range), [
+      {
+        name: "Company usage",
+        headers: [
+          "Company",
+          "Company ID",
+          "Status",
+          "Health",
+          "Subdomain",
+          "Plan",
+          "Last activity",
+          "Last sign-in",
+          "Calls",
+          "Calls (previous period)",
+          "Contacts",
+          "Contact rate %",
+          "Talk minutes",
+          "Active callers",
+          "Agent seats used",
+          "Agent seat cap",
+          "Manager seats used",
+          "Manager seat cap",
+          "Insights lookups",
+          "Insights lookups (previous period)",
+          "Lookups found",
+          "Insights billed (₹)",
+          "ProfileX cost (₹)",
+          "Insights wallet (₹)",
+        ],
+        rows: companies.map((c) => [
+          c.companyName,
+          c.clientId,
+          c.status,
+          HEALTH_META[c.health].label,
+          c.subdomain ?? "",
+          c.plan ?? "",
+          c.lastActivityAt ?? "",
+          c.lastSignInAt ?? "",
+          c.current.calls,
+          c.previous.calls,
+          c.current.contacts,
+          c.current.calls ? Math.round((c.current.contacts / c.current.calls) * 100) : "",
+          Math.round(c.current.talkSeconds / 60),
+          c.current.activeCallers,
+          c.agentSeats.used,
+          c.agentSeats.max ?? "",
+          c.managerSeats.used,
+          c.managerSeats.max ?? "",
+          c.current.lookups,
+          c.previous.lookups,
+          c.current.lookupsFound,
+          +c.current.insightsCharged.toFixed(2),
+          +c.current.insightsActualCost.toFixed(2),
+          +c.walletBalance.toFixed(2),
+        ]),
+      },
+    ]);
   };
 
   const Th = ({
@@ -297,11 +301,11 @@ function SuperadminCompaniesPage() {
             <Badge variant="secondary">Superadmin</Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Every company on the platform and how much it uses calling and Insights — last{" "}
-            {windowDays} days vs the {windowDays} days before.
+            Every company on the platform and how much it uses calling and Insights
+            {report ? ` — ${comparisonLabel(report)}.` : "."}
           </p>
         </div>
-        <WindowPicker value={windowDays} onChange={setWindowDays} />
+        <SuperadminDateFilter value={range} onChange={setRange} />
       </div>
 
       {!rowsLoading && pending.length > 0 && (
@@ -409,16 +413,7 @@ function SuperadminCompaniesPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1 text-xs"
-                disabled={!report || companies.length === 0}
-                onClick={exportCsv}
-              >
-                <FileDown className="h-3 w-3" />
-                Download CSV
-              </Button>
+              <ExcelButton disabled={!report || companies.length === 0} onExport={exportExcel} />
             </div>
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">

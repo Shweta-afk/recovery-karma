@@ -18,6 +18,10 @@ import {
   setActualWalletThreshold,
   type CompanyRow,
 } from "@/lib/superadmin-actions.server";
+import { WalletHistoryCard } from "@/components/superadmin/wallet-history-card";
+import { ExcelButton } from "@/components/superadmin/usage-shared";
+import { downloadXlsx } from "@/lib/xlsx-export";
+import { todayIstKey } from "@/lib/date-filter";
 
 export const Route = createFileRoute("/superadmin/wallet")({
   head: () => ({ meta: [{ title: "Insights Wallet · SamvadX Platform" }] }),
@@ -344,10 +348,29 @@ function SuperadminWalletPage() {
 
       <Card>
         <CardHeader className="border-b border-border pb-3">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <Send className="h-4 w-4 text-primary" />
-            Allocate to a company
-          </CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Send className="h-4 w-4 text-primary" />
+              Allocate to a company
+            </CardTitle>
+            <ExcelButton
+              label="Download budgets"
+              disabled={loading || companies.length === 0}
+              onExport={() =>
+                downloadXlsx(`samvadx-insights-budgets-${todayIstKey()}.xlsx`, [
+                  {
+                    name: "Company budgets",
+                    headers: ["Company", "Status", "Insights budget (₹)"],
+                    rows: companies.map((c) => [
+                      c.companyName,
+                      c.status,
+                      +c.walletBalance.toFixed(2),
+                    ]),
+                  },
+                ])
+              }
+            />
+          </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             Each company's admin can then top up their own managers, but never past this budget.
           </p>
@@ -412,6 +435,8 @@ function SuperadminWalletPage() {
           )}
         </CardContent>
       </Card>
+
+      <WalletHistoryCard />
     </div>
   );
 }

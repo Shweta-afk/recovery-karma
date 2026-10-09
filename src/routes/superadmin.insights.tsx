@@ -1,11 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Sparkles, Loader2, FileDown } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabase } from "@/lib/supabase";
+import { getAccessToken } from "@/lib/access-token";
 import {
   getInsightsActivity,
   getInsightsReport,
@@ -13,20 +12,14 @@ import {
   type InsightsBucket,
   type InsightsReport,
 } from "@/lib/superadmin-actions.server";
-import { downloadCsv } from "@/lib/csv-export";
+import { describeRange, isRangeActive } from "@/lib/date-filter";
+import { openRangeInstants, rangeLabel } from "@/lib/superadmin-range";
+import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
 import {
-  INSIGHTS_PERIODS,
-  periodLabel,
-  periodSince,
-  type InsightsPeriod,
-} from "@/lib/profilex/period";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  ExcelButton,
+  SuperadminDateFilter,
+  useSuperadminRange,
+} from "@/components/superadmin/usage-shared";
 import { PROFILEX_SERVICES } from "@/lib/profilex/catalogue";
 import { ExportRequestsCard } from "@/components/profilex/export-requests-card";
 
@@ -72,7 +65,7 @@ const bucketCells = (b: InsightsBucket): number[] => [
 
 function SuperadminInsightsPage() {
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<InsightsPeriod>("this-month");
+  const [range, setRange] = useSuperadminRange();
   const [report, setReport] = useState<InsightsReport | null>(null);
   const [rows, setRows] = useState<InsightsActivityRow[]>([]);
 
@@ -81,14 +74,11 @@ function SuperadminInsightsPage() {
     setLoading(true);
     (async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session) throw new Error("Your session expired — sign in again");
-        const since = periodSince(period);
+        const accessToken = await getAccessToken();
+        const { since, until } = openRangeInstants(range);
         const [rep, act] = await Promise.all([
-          getInsightsReport({ data: { accessToken: session.access_token, since } }),
-          getInsightsActivity({ data: { accessToken: session.access_token, since } }),
+          getInsightsReport({ data: { accessToken, since, until } }),
+          getInsightsActivity({ data: { accessToken, since, until, limit: 1000 } }),
         ]);
         if (cancelled) return;
         setReport(rep);
@@ -102,11 +92,15 @@ function SuperadminInsightsPage() {
     return () => {
       cancelled = true;
     };
-  }, [period]);
+  }, [range]);
 
   const totals = report?.totals;
   const totalDelta = totals ? totals.realCost - totals.companyCost : 0;
-  const label = periodLabel(period);
+  const label = !isRangeActive(range)
+    ? "All time"
+    : range.from && range.to
+      ? rangeLabel(range.from > range.to ? { from: range.to, to: range.from } : range)
+      : describeRange(range);
 
   return (
     <div className="space-y-6">
@@ -121,22 +115,9 @@ function SuperadminInsightsPage() {
           Every ProfileX lookup across every company (debtor lookups and admins' manual ones), with
           two costs side by side: what that company's own wallet was charged (its rate card) versus
           what ProfileX actually charged (their real published price). Totals cover the whole
-          period; the list below shows the 200 most recent.
+          period; the list below shows up to the 1,000 most recent.
         </p>
-        <div className="mt-3 w-44">
-          <Select value={period} onValueChange={(v) => setPeriod(v as InsightsPeriod)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {INSIGHTS_PERIODS.map((p) => (
-                <SelectItem key={p.value} value={p.value}>
-                  {p.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <SuperadminDateFilter value={range} onChange={setRange} allowAll className="mt-3" />
       </div>
 
       <ExportRequestsCard />
@@ -195,19 +176,17 @@ function SuperadminInsightsPage() {
                   from what ProfileX really bills for the same lookups.
                 </p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  downloadCsv(
-                    `insights-by-company-${period}.csv`,
-                    ["Company", ...BUCKET_HEADERS],
-                    report.byCompany.map((c) => [c.companyName, ...bucketCells(c)]),
-                  )
+              <ExcelButton
+                onExport={() =>
+                  downloadXlsx(reportFilename("insights-by-company", range), [
+                    {
+                      name: "By company",
+                      headers: ["Company", ...BUCKET_HEADERS],
+                      rows: report.byCompany.map((c) => [c.companyName, ...bucketCells(c)]),
+                    },
+                  ])
                 }
-              >
-                <FileDown className="h-3.5 w-3.5 mr-1.5" /> Export
-              </Button>
+              />
             </CardHeader>
             <CardContent className="pt-4">
               <div className="overflow-x-auto">
@@ -280,19 +259,20 @@ function SuperadminInsightsPage() {
                   {label}. Where the money goes, and which lookups return nothing.
                 </p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  downloadCsv(
-                    `insights-by-service-${period}.csv`,
-                    ["Service", ...BUCKET_HEADERS],
-                    report.byService.map((r) => [serviceLabel(r.serviceId), ...bucketCells(r)]),
-                  )
+              <ExcelButton
+                onExport={() =>
+                  downloadXlsx(reportFilename("insights-by-service", range), [
+                    {
+                      name: "By service",
+                      headers: ["Service", ...BUCKET_HEADERS],
+                      rows: report.byService.map((r) => [
+                        serviceLabel(r.serviceId),
+                        ...bucketCells(r),
+                      ]),
+                    },
+                  ])
                 }
-              >
-                <FileDown className="h-3.5 w-3.5 mr-1.5" /> Export
-              </Button>
+              />
             </CardHeader>
             <CardContent className="pt-4">
               <div className="overflow-x-auto">
@@ -341,10 +321,46 @@ function SuperadminInsightsPage() {
 
       <Card>
         <CardHeader className="border-b border-border pb-3">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
-            Recent lookups
-          </CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Recent lookups
+            </CardTitle>
+            <ExcelButton
+              disabled={loading || rows.length === 0}
+              onExport={() =>
+                // The typed-in mobile/UAN of a manual lookup is left out on purpose: the
+                // download is a usage record, not a list of people's numbers.
+                downloadXlsx(reportFilename("insights-lookups", range), [
+                  {
+                    name: "Lookups",
+                    headers: [
+                      "When",
+                      "Company",
+                      "Run by",
+                      "Service",
+                      "Result",
+                      "Manual",
+                      "Company charged (₹)",
+                      "Actual ProfileX cost (₹)",
+                      "Delta (₹)",
+                    ],
+                    rows: rows.map((r) => [
+                      new Date(r.createdAt).toLocaleString("en-IN"),
+                      r.companyName ?? "",
+                      r.managerName ?? "",
+                      serviceLabel(r.serviceId),
+                      stateBadge(r).label,
+                      r.manual ? "Yes" : "No",
+                      +r.cost.toFixed(2),
+                      +r.realCost.toFixed(2),
+                      +(r.realCost - r.cost).toFixed(2),
+                    ]),
+                  },
+                ])
+              }
+            />
+          </div>
           {!loading && (
             <p className="text-xs text-muted-foreground mt-0.5">
               Latest {rows.length} lookups · {label}

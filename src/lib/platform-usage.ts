@@ -9,9 +9,8 @@
 // rules (windows, contact rate, health labels, attention list) are testable without a database.
 
 import { istDayKey } from "./monthly-trend";
-
-export const USAGE_WINDOWS = [7, 30, 90] as const;
-export type UsageWindow = (typeof USAGE_WINDOWS)[number];
+import type { DateRange } from "./date-filter";
+import { previousRange, rangeDays, rangeInstants, shiftDay } from "./superadmin-range";
 
 /** Outcomes where nobody was reached. Every other logged outcome means the agent spoke to
  *  someone — this is the only thing outcomes are used for here. */
@@ -50,6 +49,8 @@ export interface UsageLookupRow {
   charged: number;
   /** What ProfileX actually bills us for it. */
   actualCost: number;
+  /** The agents.id who ran it, when known — only used for the per-user breakdown. */
+  requestedBy?: string | null;
 }
 
 export interface UsageInput {
@@ -111,10 +112,11 @@ export interface AttentionItem {
 }
 
 export interface PlatformUsageReport {
-  windowDays: UsageWindow;
+  /** The IST days reported on (bounded), and the equally long period before it. */
+  range: DateRange;
+  previousRange: DateRange;
+  rangeDays: number;
   generatedAt: string;
-  currentFrom: string;
-  previousFrom: string;
   totals: {
     current: UsageBucket;
     previous: UsageBucket;
@@ -185,14 +187,22 @@ function healthOf(
   return "active";
 }
 
+/**
+ * @param range bounded IST days (see superadmin-range.ts boundedRange)
+ * @param today today's IST day — wallet runway is only judged when the range reaches today,
+ *              since "runs out in N days" means nothing about a past month.
+ */
 export function buildPlatformUsage(
   input: UsageInput,
-  windowDays: UsageWindow,
+  range: DateRange,
   now: Date = new Date(),
+  today: string = istDayKey(now.toISOString()),
 ): PlatformUsageReport {
-  const nowMs = now.getTime();
-  const currentFrom = new Date(nowMs - windowDays * DAY_MS).toISOString();
-  const previousFrom = new Date(nowMs - 2 * windowDays * DAY_MS).toISOString();
+  const windowDays = rangeDays(range);
+  const prevRange = previousRange(range);
+  const { since: currentFrom, until } = rangeInstants(range);
+  const { since: previousFrom } = rangeInstants(prevRange);
+  const untilMs = Math.min(new Date(until).getTime(), now.getTime());
 
   const clientOfAgent = new Map<string, string>();
   for (const a of input.agents) if (a.clientId) clientOfAgent.set(a.id, a.clientId);
@@ -224,8 +234,7 @@ export function buildPlatformUsage(
 
   // Daily series over the current window, every IST day present even when empty.
   const daily = new Map<string, DailyUsage>();
-  for (let t = nowMs - windowDays * DAY_MS; t <= nowMs; t += DAY_MS) {
-    const day = istDayKey(new Date(t).toISOString());
+  for (let day = range.from; day <= range.to; day = shiftDay(day, 1)) {
     daily.set(day, { day, calls: 0, lookups: 0 });
   }
 
@@ -236,7 +245,7 @@ export function buildPlatformUsage(
   let unattributedCalls = 0;
 
   for (const c of input.calls) {
-    if (c.createdAt < previousFrom) continue;
+    if (c.createdAt < previousFrom || c.createdAt >= until) continue;
     const clientId = c.agentId ? clientOfAgent.get(c.agentId) : undefined;
     const isCurrent = c.createdAt >= currentFrom;
     if (!clientId) {
@@ -265,7 +274,7 @@ export function buildPlatformUsage(
   }
 
   for (const l of input.lookups) {
-    if (l.createdAt < previousFrom) continue;
+    if (l.createdAt < previousFrom || l.createdAt >= until) continue;
     const a = get(l.clientId);
     a.lastActivityAt = maxIso(a.lastActivityAt, l.createdAt);
     const isCurrent = l.createdAt >= currentFrom;
@@ -302,7 +311,7 @@ export function buildPlatformUsage(
       subdomain: c.subdomain,
       plan: c.plan,
       createdAt: c.createdAt,
-      health: healthOf(c.status, c.createdAt, a.cur, a.prev, nowMs),
+      health: healthOf(c.status, c.createdAt, a.cur, a.prev, untilMs),
       current: a.cur,
       previous: a.prev,
       // Seats count the same way setCompanyLimits enforces them: agents vs managers.
@@ -334,11 +343,11 @@ export function buildPlatformUsage(
         kind: "went_quiet",
         clientId: c.clientId,
         companyName: c.companyName,
-        message: `No calls or lookups in the last ${windowDays} days (${usageEvents(c.previous)} the ${windowDays} days before)`,
+        message: `No calls or lookups in this period (${usageEvents(c.previous)} in the ${windowDays} days before)`,
       });
     }
     const dailySpend = c.current.insightsCharged / windowDays;
-    if (dailySpend > 0) {
+    if (range.to >= today && dailySpend > 0) {
       const runway = c.walletBalance / dailySpend;
       if (runway < WALLET_RUNWAY_DAYS) {
         attention.push({
@@ -377,10 +386,10 @@ export function buildPlatformUsage(
 
   const live = companies.filter((c) => c.status === "approved");
   return {
-    windowDays,
+    range,
+    previousRange: prevRange,
+    rangeDays: windowDays,
     generatedAt: now.toISOString(),
-    currentFrom,
-    previousFrom,
     totals: {
       current: totalsCur,
       previous: totalsPrev,
@@ -393,4 +402,55 @@ export function buildPlatformUsage(
     attention,
     unattributedCalls,
   };
+}
+
+/** One person's use of calling and Insights within a range — the company detail Users tab. */
+export interface UserActivity {
+  agentId: string;
+  calls: number;
+  contacts: number;
+  talkSeconds: number;
+  lookups: number;
+  /** Latest call or lookup by this person in this period or the equally long one before it. */
+  lastActivityAt: string | null;
+  lastSignInAt: string | null;
+}
+
+export function buildUserActivity(
+  agents: UsageAgentRow[],
+  calls: UsageCallRow[],
+  lookups: UsageLookupRow[],
+  range: DateRange,
+): UserActivity[] {
+  const { since, until } = rangeInstants(range);
+  const byId = new Map<string, UserActivity>(
+    agents.map((a) => [
+      a.id,
+      {
+        agentId: a.id,
+        calls: 0,
+        contacts: 0,
+        talkSeconds: 0,
+        lookups: 0,
+        lastActivityAt: null,
+        lastSignInAt: a.lastSignInAt,
+      },
+    ]),
+  );
+  for (const c of calls) {
+    const u = c.agentId ? byId.get(c.agentId) : undefined;
+    if (!u || c.createdAt >= until) continue;
+    u.lastActivityAt = maxIso(u.lastActivityAt, c.createdAt);
+    if (c.createdAt < since) continue;
+    u.calls += 1;
+    if (c.outcome && !NON_CONTACT_OUTCOMES.has(c.outcome)) u.contacts += 1;
+    u.talkSeconds += Math.max(0, Number(c.durationSeconds) || 0);
+  }
+  for (const l of lookups) {
+    const u = l.requestedBy ? byId.get(l.requestedBy) : undefined;
+    if (!u || l.createdAt >= until) continue;
+    u.lastActivityAt = maxIso(u.lastActivityAt, l.createdAt);
+    if (l.createdAt >= since) u.lookups += 1;
+  }
+  return [...byId.values()];
 }

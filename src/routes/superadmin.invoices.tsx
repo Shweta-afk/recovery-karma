@@ -26,6 +26,14 @@ import {
 } from "@/lib/invoice-actions.server";
 import { InvoiceTable } from "@/components/billing/invoice-list";
 import { formatRupees } from "@/components/billing/invoice-document";
+import { inDayRange } from "@/lib/date-filter";
+import { INVOICE_KIND_LABEL } from "@/lib/invoice-math";
+import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
+import {
+  ExcelButton,
+  SuperadminDateFilter,
+  useSuperadminRange,
+} from "@/components/superadmin/usage-shared";
 
 export const Route = createFileRoute("/superadmin/invoices")({
   head: () => ({ meta: [{ title: "Invoices · SamvadX Platform" }] }),
@@ -139,6 +147,54 @@ function SuperadminInvoicesPage() {
     () => invoices.filter((i) => i.status === "unpaid").reduce((s, i) => s + i.total, 0),
     [invoices],
   );
+
+  // The shared superadmin date filter, applied to the invoice date. Outstanding above stays
+  // "everything unpaid right now" whatever the dates.
+  const [range, setRange] = useSuperadminRange();
+  const shown = useMemo(
+    () => invoices.filter((i) => inDayRange(i.issueDate, range)),
+    [invoices, range],
+  );
+  const exportInvoices = () =>
+    downloadXlsx(reportFilename("invoices", range), [
+      {
+        name: "Invoices",
+        headers: [
+          "Invoice no.",
+          "Invoice date",
+          "Due date",
+          "Type",
+          "Company",
+          "Recipient (legal name)",
+          "Recipient GSTIN",
+          "Place of supply",
+          "Taxable value (₹)",
+          "CGST (₹)",
+          "SGST (₹)",
+          "IGST (₹)",
+          "Total (₹)",
+          "Status",
+          "Paid on",
+        ],
+        rows: shown.map((i) => [
+          i.invoiceNumber,
+          i.issueDate,
+          i.dueDate,
+          INVOICE_KIND_LABEL[i.kind] ?? i.kind,
+          i.companyName ?? "",
+          i.recipient.legalName,
+          i.recipient.gstin ?? "",
+          i.placeOfSupply,
+          i.taxable,
+          i.cgst,
+          i.sgst,
+          i.igst,
+          i.total,
+          i.status,
+          i.paidAt ? new Date(i.paidAt).toLocaleDateString("en-IN") : "",
+        ]),
+      },
+    ]);
 
   return (
     <div className="space-y-6">
@@ -326,18 +382,26 @@ function SuperadminInvoicesPage() {
 
           <Card>
             <CardHeader className="border-b border-border pb-3">
-              <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                <FileText className="h-4 w-4 text-primary" />
-                All invoices
-              </CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                  <FileText className="h-4 w-4 text-primary" />
+                  All invoices
+                </CardTitle>
+                <ExcelButton disabled={shown.length === 0} onExport={exportInvoices} />
+              </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Outstanding (unpaid, incl. GST):{" "}
+                Outstanding (unpaid, incl. GST, all dates):{" "}
                 <span className="font-medium text-foreground">{formatRupees(outstanding)}</span>
+                {" · "}
+                <Link to="/superadmin/revenue" className="text-primary hover:underline">
+                  Revenue report
+                </Link>
               </p>
+              <SuperadminDateFilter value={range} onChange={setRange} allowAll className="pt-2" />
             </CardHeader>
             <CardContent className="pt-4">
               <InvoiceTable
-                invoices={invoices}
+                invoices={shown}
                 companyName={(i) => i.companyName}
                 onSetStatus={onSetStatus}
               />

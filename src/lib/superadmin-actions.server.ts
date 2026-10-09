@@ -825,6 +825,9 @@ export const getWalletLedger = createServerFn({ method: "POST" })
         clientId: idSchema.optional(),
         scope: shortText(40).optional(),
         limit: limitSchema.optional(),
+        /** Optional [since, until) bounds — the superadmin date filter. */
+        since: isoDateSchema.optional(),
+        until: isoDateSchema.optional(),
       })
       .parse(d),
   )
@@ -840,6 +843,9 @@ export const getWalletLedger = createServerFn({ method: "POST" })
       .limit(data.limit ?? 200);
     if (data.clientId) query = query.eq("client_id", data.clientId);
     if (data.scope) query = query.eq("scope", data.scope);
+    if (data.since) query = query.gte("created_at", data.since);
+    if (data.until) query = query.lt("created_at", data.until);
+    if (data.until) query = query.lt("created_at", data.until);
 
     const { data: ledger, error } = await query;
     if (error) throw new Error(`Could not load the wallet ledger (${error.message})`);
@@ -938,6 +944,8 @@ export const getSuperadminActivity = createServerFn({ method: "POST" })
         accessToken: tokenSchema,
         clientId: idSchema.optional(),
         limit: limitSchema.optional(),
+        since: isoDateSchema.optional(),
+        until: isoDateSchema.optional(),
       })
       .parse(d),
   )
@@ -953,6 +961,8 @@ export const getSuperadminActivity = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false })
       .limit(limit);
     if (data.clientId) actionQuery = actionQuery.eq("client_id", data.clientId);
+    if (data.since) actionQuery = actionQuery.gte("created_at", data.since);
+    if (data.until) actionQuery = actionQuery.lt("created_at", data.until);
 
     let moneyQuery = admin
       .from("profilex_wallet_ledger")
@@ -961,6 +971,8 @@ export const getSuperadminActivity = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false })
       .limit(limit);
     if (data.clientId) moneyQuery = moneyQuery.eq("client_id", data.clientId);
+    if (data.since) moneyQuery = moneyQuery.gte("created_at", data.since);
+    if (data.until) moneyQuery = moneyQuery.lt("created_at", data.until);
 
     const [{ data: actions, error: actionErr }, { data: money, error: moneyErr }] =
       await Promise.all([actionQuery, moneyQuery]);
@@ -1095,6 +1107,7 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
         clientId: idSchema.optional(),
         limit: limitSchema.optional(),
         since: isoDateSchema.optional(),
+        until: isoDateSchema.optional(),
       })
       .parse(d),
   )
@@ -1122,6 +1135,7 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
       .limit(data.limit ?? 200);
     if (data.clientId) manualQuery = manualQuery.eq("client_id", data.clientId);
     if (data.since) manualQuery = manualQuery.gte("created_at", data.since);
+    if (data.until) manualQuery = manualQuery.lt("created_at", data.until);
 
     const [{ data: traces, error }, { data: manualTraces, error: manualErr }] = await Promise.all([
       query,
@@ -1245,7 +1259,13 @@ const emptyBucket = (): InsightsBucket => ({
  *  Debtor lookups and admins' manual lookups are both included. */
 export const getInsightsReport = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
-    z.object({ accessToken: tokenSchema, since: isoDateSchema.optional() }).parse(d),
+    z
+      .object({
+        accessToken: tokenSchema,
+        since: isoDateSchema.optional(),
+        until: isoDateSchema.optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }): Promise<InsightsReport> => {
     const caller = await verifySuperadminCaller(data.accessToken);
@@ -1268,6 +1288,7 @@ export const getInsightsReport = createServerFn({ method: "POST" })
           .from(table)
           .select("client_id, service_id, state, provider_status, billable, cost")
           .gte("created_at", since)
+          .lt("created_at", data.until ?? "9999-12-31T00:00:00Z")
           .order("created_at", { ascending: true })
           .order("id", { ascending: true })
           .range(from, to);

@@ -1,96 +1,201 @@
-// Shared pieces of the superadmin Overview and Companies pages — both read the same
-// getPlatformUsage report, so the window picker, the fetch hook and the small badges live here.
+// Shared pieces of the superadmin portal: the one date filter every page uses, the
+// getPlatformUsage fetch hook, and the small badges/formatters the usage tables share.
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowDownRight, ArrowUpRight, FileSpreadsheet, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { DateRangeFilter } from "@/components/date-range-filter";
+import { cn } from "@/lib/utils";
 import { getAccessToken } from "@/lib/access-token";
-import { getPlatformUsage } from "@/lib/platform-usage.server";
+import { EMPTY_RANGE, type DateRange } from "@/lib/date-filter";
+import { getPlatformUsage, type PlatformUsageResponse } from "@/lib/platform-usage.server";
+import { pctChange, type CompanyHealth } from "@/lib/platform-usage";
 import {
-  pctChange,
-  USAGE_WINDOWS,
-  type CompanyHealth,
-  type PlatformUsageReport,
-  type UsageWindow,
-} from "@/lib/platform-usage";
+  DEFAULT_RANGE_PRESET,
+  matchingPreset,
+  presetRange,
+  RANGE_PRESETS,
+  rangeLabel,
+  type RangePreset,
+} from "@/lib/superadmin-range";
 
-const WINDOW_KEY = "superadmin-usage-window";
+const RANGE_KEY = "superadmin-date-range";
 
-function readWindow(): UsageWindow {
+/** What is remembered: a preset (so "30 days" keeps rolling forward) or explicit days. */
+type StoredRange = { preset: RangePreset } | { from: string; to: string };
+
+function readStoredRange(): DateRange {
   try {
-    const n = Number(localStorage.getItem(WINDOW_KEY));
-    return (USAGE_WINDOWS as readonly number[]).includes(n) ? (n as UsageWindow) : 30;
+    const raw = localStorage.getItem(RANGE_KEY);
+    if (raw) {
+      const v = JSON.parse(raw) as StoredRange;
+      if ("preset" in v && RANGE_PRESETS.some((p) => p.value === v.preset)) {
+        return presetRange(v.preset);
+      }
+      if ("from" in v && typeof v.from === "string" && typeof v.to === "string") {
+        return { from: v.from, to: v.to };
+      }
+    }
   } catch {
-    return 30;
+    // Unreadable storage just means the default range.
   }
+  return presetRange(DEFAULT_RANGE_PRESET);
 }
 
-/** The report for the chosen window; the window is remembered per browser and shared by the
- *  Overview and Companies pages. */
-export function usePlatformUsage() {
-  const [windowDays, setWindowDaysState] = useState<UsageWindow>(30);
-  const [report, setReport] = useState<PlatformUsageReport | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => setWindowDaysState(readWindow()), []);
-
-  const setWindowDays = (w: UsageWindow) => {
-    setWindowDaysState(w);
+/** The date range for a superadmin page — one range remembered per browser and shared by
+ *  every superadmin page, so moving between pages keeps the period you were looking at. */
+export function useSuperadminRange() {
+  const [range, setRangeState] = useState<DateRange>(() => presetRange(DEFAULT_RANGE_PRESET));
+  // Read after mount: localStorage doesn't exist during SSR.
+  useEffect(() => setRangeState(readStoredRange()), []);
+  const setRange = useCallback((next: DateRange) => {
+    setRangeState(next);
     try {
-      localStorage.setItem(WINDOW_KEY, String(w));
+      const preset = matchingPreset(next);
+      localStorage.setItem(RANGE_KEY, JSON.stringify(preset ? { preset } : next));
     } catch {
       // Remembering the choice is a convenience only.
     }
-  };
+  }, []);
+  return [range, setRange] as const;
+}
+
+/** Preset chips + the same From/To date control admins use. With `allowAll`, clearing the
+ *  dates means "all dates" (list pages); reports always need a bounded range. */
+export function SuperadminDateFilter({
+  value,
+  onChange,
+  allowAll = false,
+  className,
+}: {
+  value: DateRange;
+  onChange: (r: DateRange) => void;
+  allowAll?: boolean;
+  className?: string;
+}) {
+  const active = matchingPreset(value);
+  const chip = (selected: boolean) =>
+    cn(
+      "h-7 rounded-md border px-2 text-[11px] font-medium transition-colors",
+      selected
+        ? "border-primary bg-primary text-primary-foreground"
+        : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+    );
+  return (
+    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+      {RANGE_PRESETS.map((p) => (
+        <button
+          key={p.value}
+          type="button"
+          className={chip(active === p.value)}
+          onClick={() => onChange(presetRange(p.value))}
+        >
+          {p.label}
+        </button>
+      ))}
+      {allowAll && (
+        <button
+          type="button"
+          className={chip(!value.from && !value.to)}
+          onClick={() => onChange(EMPTY_RANGE)}
+        >
+          All
+        </button>
+      )}
+      <DateRangeFilter
+        value={value}
+        onChange={(r) =>
+          // A report can't be "all dates": clearing falls back to the default preset.
+          onChange(!allowAll && !r.from && !r.to ? presetRange(DEFAULT_RANGE_PRESET) : r)
+        }
+        showIcon={false}
+      />
+    </div>
+  );
+}
+
+/** "1 Oct – 9 Oct 2026 (vs 22 Sep – 30 Sep 2026)" for a loaded usage report. */
+export const comparisonLabel = (r: { range: DateRange; previousRange: DateRange }) =>
+  `${rangeLabel(r.range)}, compared with ${rangeLabel(r.previousRange)}`;
+
+/** "Download Excel" button that shows a spinner while the workbook is built. */
+export function ExcelButton({
+  onExport,
+  disabled,
+  label = "Download Excel",
+}: {
+  onExport: () => Promise<void>;
+  disabled?: boolean;
+  label?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-8 gap-1 text-xs"
+      disabled={disabled || busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await onExport();
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Could not build the Excel file");
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <FileSpreadsheet className="h-3 w-3" />
+      )}
+      {label}
+    </Button>
+  );
+}
+
+/** The usage report for the shared superadmin range (optionally one company). */
+export function usePlatformUsage(clientId?: string) {
+  const [range, setRange] = useSuperadminRange();
+  const [report, setReport] = useState<PlatformUsageResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  // Only the latest request may write: changing the range quickly (or the stored range
+  // arriving just after mount) must not let an older, slower response win.
+  const requestId = useRef(0);
 
   const load = useCallback(async () => {
+    const id = ++requestId.current;
     setLoading(true);
     try {
       const accessToken = await getAccessToken();
-      setReport(await getPlatformUsage({ data: { accessToken, windowDays } }));
+      const res = await getPlatformUsage({
+        data: {
+          accessToken,
+          from: range.from || undefined,
+          to: range.to || undefined,
+          clientId,
+        },
+      });
+      if (id === requestId.current) setReport(res);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not load platform usage");
+      if (id === requestId.current) {
+        toast.error(e instanceof Error ? e.message : "Could not load platform usage");
+      }
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
-  }, [windowDays]);
+  }, [range, clientId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  return { windowDays, setWindowDays, report, loading, reload: load };
-}
-
-export function WindowPicker({
-  value,
-  onChange,
-}: {
-  value: UsageWindow;
-  onChange: (w: UsageWindow) => void;
-}) {
-  return (
-    <Select value={String(value)} onValueChange={(v) => onChange(Number(v) as UsageWindow)}>
-      <SelectTrigger className="h-8 w-40 text-xs">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {USAGE_WINDOWS.map((w) => (
-          <SelectItem key={w} value={String(w)} className="text-xs">
-            Last {w} days
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
+  return { range, setRange, report, loading, reload: load };
 }
 
 export const HEALTH_META: Record<
@@ -164,4 +269,35 @@ export function fmtAgo(iso: string | null, now = Date.now()) {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return days < 60 ? `${days}d ago` : new Date(iso).toLocaleDateString("en-IN");
+}
+
+/** One headline number with an optional trend and a line of context. */
+export function Kpi({
+  icon,
+  label,
+  value,
+  sub,
+  trend,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  sub?: ReactNode;
+  trend?: ReactNode;
+}) {
+  return (
+    <Card>
+      <CardContent className="space-y-1 p-4">
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          {icon}
+          {label}
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xl font-semibold text-foreground">{value}</span>
+          {trend}
+        </div>
+        {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+      </CardContent>
+    </Card>
+  );
 }
