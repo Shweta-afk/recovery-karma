@@ -22,7 +22,6 @@ import { Route as WebphoneTestRouteImport } from './routes/webphone-test'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminArchiveRouteImport } from './routes/admin.archive'
 import { Route as AdminInsightsRouteImport } from './routes/admin.insights'
-import { Route as AdminInvoicesRouteImport } from './routes/admin.invoices'
 import { Route as AdminLiveCallsRouteImport } from './routes/admin.live-calls'
 import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
@@ -116,11 +115,6 @@ const AdminArchiveRoute = AdminArchiveRouteImport.update({
 const AdminInsightsRoute = AdminInsightsRouteImport.update({
   id: '/insights',
   path: '/insights',
-  getParentRoute: () => AdminRoute,
-} as any)
-const AdminInvoicesRoute = AdminInvoicesRouteImport.update({
-  id: '/invoices',
-  path: '/invoices',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminLiveCallsRoute = AdminLiveCallsRouteImport.update({
@@ -284,7 +278,6 @@ export interface FileRoutesByFullPath {
   '/webphone-test': typeof WebphoneTestRoute
   '/admin/archive': typeof AdminArchiveRoute
   '/admin/insights': typeof AdminInsightsRoute
-  '/admin/invoices': typeof AdminInvoicesRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -325,7 +318,6 @@ export interface FileRoutesByTo {
   '/webphone-test': typeof WebphoneTestRoute
   '/admin/archive': typeof AdminArchiveRoute
   '/admin/insights': typeof AdminInsightsRoute
-  '/admin/invoices': typeof AdminInvoicesRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -371,7 +363,6 @@ export interface FileRoutesById {
   '/webphone-test': typeof WebphoneTestRoute
   '/admin/archive': typeof AdminArchiveRoute
   '/admin/insights': typeof AdminInsightsRoute
-  '/admin/invoices': typeof AdminInvoicesRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -418,7 +409,6 @@ export interface FileRouteTypes {
     | '/webphone-test'
     | '/admin/archive'
     | '/admin/insights'
-    | '/admin/invoices'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -459,7 +449,6 @@ export interface FileRouteTypes {
     | '/webphone-test'
     | '/admin/archive'
     | '/admin/insights'
-    | '/admin/invoices'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -504,7 +493,6 @@ export interface FileRouteTypes {
     | '/webphone-test'
     | '/admin/archive'
     | '/admin/insights'
-    | '/admin/invoices'
     | '/admin/live-calls'
     | '/admin/portfolio'
     | '/admin/reports'
@@ -641,13 +629,6 @@ declare module '@tanstack/react-router' {
       path: '/insights'
       fullPath: '/admin/insights'
       preLoaderRoute: typeof AdminInsightsRouteImport
-      parentRoute: typeof AdminRoute
-    }
-    '/admin/invoices': {
-      id: '/admin/invoices'
-      path: '/invoices'
-      fullPath: '/admin/invoices'
-      preLoaderRoute: typeof AdminInvoicesRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/live-calls': {
@@ -859,7 +840,6 @@ declare module '@tanstack/react-router' {
 interface AdminRouteChildren {
   AdminArchiveRoute: typeof AdminArchiveRoute
   AdminInsightsRoute: typeof AdminInsightsRoute
-  AdminInvoicesRoute: typeof AdminInvoicesRoute
   AdminLiveCallsRoute: typeof AdminLiveCallsRoute
   AdminPortfolioRoute: typeof AdminPortfolioRoute
   AdminReportsRoute: typeof AdminReportsRoute
@@ -872,7 +852,6 @@ interface AdminRouteChildren {
 const AdminRouteChildren: AdminRouteChildren = {
   AdminArchiveRoute: AdminArchiveRoute,
   AdminInsightsRoute: AdminInsightsRoute,
-  AdminInvoicesRoute: AdminInvoicesRoute,
   AdminLiveCallsRoute: AdminLiveCallsRoute,
   AdminPortfolioRoute: AdminPortfolioRoute,
   AdminReportsRoute: AdminReportsRoute,

@@ -1,7 +1,7 @@
 // Superadmin-only actions for GST tax invoices (migrations/20261006_invoices.sql). Everything
 // here runs on the service-role client behind verifySuperadminCaller, like the rest of
-// superadmin-actions.server.ts. Company admins never call these: they read their own
-// company's `invoices` rows directly, through RLS (src/lib/invoice-store.ts).
+// superadmin-actions.server.ts. Invoices are superadmin-only for now (2026-10-09): company
+// users have no read access to `invoices` at all — see the migration header to open it up.
 //
 // Arithmetic (GST split, numbering, financial year) is in the pure invoice-math.ts.
 

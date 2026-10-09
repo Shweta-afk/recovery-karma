@@ -73,7 +73,6 @@ const adminItems = [
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
   { title: "Insights", url: "/admin/insights", icon: Sparkles },
   { title: "Archive History", url: "/admin/archive", icon: DatabaseBackup },
-  { title: "Invoices", url: "/admin/invoices", icon: FileText },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];

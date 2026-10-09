@@ -211,7 +211,7 @@ export function CompanyInvoicesCard({ clientId }: { clientId: string }) {
         </CardTitle>
         <p className="mt-0.5 text-xs text-muted-foreground">
           GST tax invoices for Insights wallet top-ups and the setup fee. Amounts are before GST;
-          18% GST is added. The company's admins can see and download these.
+          18% GST is added. Only superadmins can see invoices for now.
         </p>
       </CardHeader>
       <CardContent className="space-y-6 pt-4">

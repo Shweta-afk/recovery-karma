@@ -13,11 +13,16 @@
 -- Access:
 --   * billing_profile, client_billing, invoice_counters — server-only (superadmin actions,
 --     service role). Company users never read them directly.
---   * invoices — written only by the service role; a company's ADMINS may read their own
---     company's rows (auth_role() = 'admin' — which since 20261006_admin_email_otp.sql also
---     means "signed in with the emailed code"). Managers and agents see none.
+--   * invoices — server-only too, FOR NOW: superadmin-only while invoicing is still being
+--     developed (user, 2026-10-09). Company users have no grant and no policy, so they can't
+--     read a single row. To open them to company admins later, add:
+--       GRANT SELECT ON public.invoices TO authenticated;
+--       CREATE POLICY invoices_select ON invoices FOR SELECT TO authenticated
+--         USING (client_id = auth_client_id() AND auth_role() = 'admin');
+--     (auth_role() = 'admin' also means "signed in with the emailed code" since
+--     20261006_admin_email_otp.sql) and bring back an Admin → Invoices page.
 --
--- check:sql server-only: billing_profile, client_billing, invoice_counters
+-- check:sql server-only: billing_profile, client_billing, invoice_counters, invoices
 
 -- ── Supplier (Axiotta) — exactly one row ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS billing_profile (
@@ -125,12 +130,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS invoices_topup_once
   ON invoices (wallet_ledger_id) WHERE wallet_ledger_id IS NOT NULL AND status <> 'cancelled';
 
 ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
-GRANT SELECT ON public.invoices TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.invoices TO service_role;
-
-DROP POLICY IF EXISTS invoices_select ON invoices;
-CREATE POLICY invoices_select ON invoices FOR SELECT TO authenticated
-  USING (client_id = auth_client_id() AND auth_role() = 'admin');
+-- No authenticated grant and no policy: superadmin-only for now (see header).
 
 -- ── Issue one invoice: number + row in a single transaction ──────────────────
 -- Called only by the superadmin server action (service role). Taking the next number and
