@@ -10,8 +10,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller, verifySuperadminCaller } from "./supabase-admin.server";
 import { logSuperadminActivity } from "./superadmin-actions.server";
 import { isDayKey } from "./superadmin-range";
+import { emailConfigured, sendEmails } from "./email.server";
 import {
+  CONTRACTS_VISIBLE_TO_COMPANIES,
   changeAppliesTo,
+  changeEmail,
   isPendingFor,
   type ContractAcceptance,
   type ContractChange,
@@ -108,6 +111,8 @@ async function requireSuperadmin(accessToken: string) {
 
 /** Company admins only (verifyCaller already requires the emailed sign-in code for admins). */
 async function requireCompanyAdmin(accessToken: string) {
+  // Superadmin-only for now — see CONTRACTS_VISIBLE_TO_COMPANIES.
+  if (!CONTRACTS_VISIBLE_TO_COMPANIES) throw new Error("Contracts aren't available yet");
   const caller = await verifyCaller(accessToken);
   if (!caller || caller.role !== "admin") throw new Error("Only company admins can do this");
   return caller;
@@ -158,6 +163,10 @@ export interface SuperadminContractChange extends ContractChange {
 }
 
 export interface SuperadminContractsView {
+  /** CONTRACTS_VISIBLE_TO_COMPANIES — the page explains what that means. */
+  companiesCanSee: boolean;
+  /** Whether Resend is configured (RESEND_API_KEY + EMAIL_FROM on the server). */
+  emailConfigured: boolean;
   companies: { id: string; name: string; adminEmails: string[] }[];
   documents: ContractDocument[];
   changes: SuperadminContractChange[];
@@ -209,6 +218,8 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
     );
 
     return {
+      companiesCanSee: CONTRACTS_VISIBLE_TO_COMPANIES,
+      emailConfigured: emailConfigured(),
       companies: live.map((c) => ({
         id: c.id,
         name: c.company_name,
@@ -364,12 +375,14 @@ export const publishContractChange = createServerFn({ method: "POST" })
       .single();
     if (error || !row) throw new Error(`Could not publish the change (${error?.message})`);
 
-    // Tell every active admin of the companies it applies to, in the app (the bell).
-    const admins = await adminsOf(clientIds);
-    const message = data.requiresAcceptance
-      ? `Contract update: "${data.title}" (effective ${data.effectiveDate}). Please review and accept it under Contracts.`
-      : `Contract update: "${data.title}" (effective ${data.effectiveDate}). See Contracts for details.`;
+    // Tell every active admin of the companies it applies to — in the app (the bell) and by
+    // email when Resend is set up. Nobody is told while contracts are superadmin-only.
+    const admins = CONTRACTS_VISIBLE_TO_COMPANIES ? await adminsOf(clientIds) : [];
+    let emailed: number | null = null;
     if (admins.length) {
+      const message = data.requiresAcceptance
+        ? `Contract update: "${data.title}" (effective ${data.effectiveDate}). Please review and accept it under Contracts.`
+        : `Contract update: "${data.title}" (effective ${data.effectiveDate}). See Contracts for details.`;
       const { error: nErr } = await admin.from("notifications").insert(
         admins.map((a) => ({
           client_id: a.client_id,
@@ -378,8 +391,10 @@ export const publishContractChange = createServerFn({ method: "POST" })
           message,
         })),
       );
-      // The change itself is published; a failed notification must not undo it.
+      // The change itself is published; a failed notification or email must not undo it.
       if (nErr) console.error("[publishContractChange] notifications failed:", nErr);
+      const { subject, text } = changeEmail(data);
+      emailed = await sendEmails(admins.map((a) => ({ to: a.email, subject, text })));
     }
 
     await logSuperadminActivity({
@@ -391,11 +406,16 @@ export const publishContractChange = createServerFn({ method: "POST" })
         changeId: (row as { id: string }).id,
         requiresAcceptance: data.requiresAcceptance,
         notifiedAdmins: admins.length,
+        emailedAdmins: emailed ?? 0,
       },
     });
     return {
       id: (row as { id: string }).id,
+      /** False while contracts are superadmin-only: nobody was notified or emailed. */
+      companiesCanSee: CONTRACTS_VISIBLE_TO_COMPANIES,
       notifiedAdmins: admins.length,
+      /** Emails Resend accepted; null when email isn't set up (use the mailto fallback). */
+      emailedAdmins: emailed,
       adminEmails: admins.map((a) => a.email),
     };
   });

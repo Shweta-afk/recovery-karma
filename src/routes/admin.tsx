@@ -6,6 +6,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { FileSignature } from "lucide-react";
 import { getAccessToken } from "@/lib/access-token";
 import { getMyPendingContractCount } from "@/lib/contracts.server";
+import { CONTRACTS_VISIBLE_TO_COMPANIES } from "@/lib/contracts";
 
 export const Route = createFileRoute("/admin")({
   component: AdminLayout,
@@ -81,7 +82,7 @@ function AdminLayout() {
 
   return (
     <AppShell>
-      <PendingContractsBanner />
+      {CONTRACTS_VISIBLE_TO_COMPANIES && <PendingContractsBanner />}
       <Outlet />
     </AppShell>
   );

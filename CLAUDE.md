@@ -685,10 +685,14 @@ server on first upload; the browser uploads straight to a signed upload URL).
   those companies. With "Admins must accept", one admin per company accepts (ticks a box + types
   their name) — recorded once per company with name, email and time. An admin-wide banner
   (`admin.tsx`) shows while anything is waiting. Withdrawn changes are kept, marked Withdrawn.
-- **Email**: there is NO email-sending service in the app (sign-in codes go through Supabase
-  Auth, which can't send other mail). "Email the admins" opens the superadmin's own mail app with
-  the admins in BCC and the change prefilled (`changeMailto`). Sending automatically needs an
-  email provider to be chosen first.
+- **Email** goes through **Resend** (`src/lib/email.server.ts`, REST API, no SDK), one email per
+  admin. Off until `RESEND_API_KEY` and `EMAIL_FROM` are set on Railway (EMAIL_FROM's domain must
+  be verified in Resend). Supabase can't send these — its email is sign-in only, Pro included.
+  Without Resend, "Email the admins" opens the superadmin's own mail app instead (`changeMailto`).
+- ⚠️ **Superadmin-only for now** (user, 2026-10-09): `CONTRACTS_VISIBLE_TO_COMPANIES = false` in
+  `src/lib/contracts.ts` hides the admin link and banner, makes the company-admin actions refuse,
+  and makes publishing notify/email nobody. Flipping it to `true` opens everything to admins; a
+  test pins it to `false` so it can't flip by accident — change the test with it.
 - Company admins only (`role = 'admin'`); managers/agents don't see contracts.
 
 ---

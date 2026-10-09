@@ -10,6 +10,7 @@ import {
   Send,
   Upload,
   Undo2,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -141,6 +142,18 @@ function SuperadminContractsPage() {
 
       <PageGuide page="contracts" />
 
+      {view && !view.companiesCanSee && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-400/50 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+          <EyeOff className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <div>
+            <span className="font-semibold">Only superadmins can see Contracts for now.</span> You
+            can upload contracts and publish changes, but company admins can't see them yet, so
+            publishing doesn't notify or email anyone and nobody can accept. Everything you add here
+            is kept and appears for companies once Contracts is opened to them.
+          </div>
+        </div>
+      )}
+
       {!view ? (
         <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
@@ -151,7 +164,7 @@ function SuperadminContractsPage() {
             <PublishChangeCard view={view} onPublished={load} />
             <UploadDocumentCard view={view} onUploaded={load} />
           </div>
-          <ChangesCard changes={view.changes} onChanged={load} />
+          <ChangesCard changes={view.changes} onChanged={load} canEmail={view.companiesCanSee} />
           <Card>
             <CardHeader className="border-b border-border pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-semibold">
@@ -196,8 +209,9 @@ function PublishChangeCard({
   const [saving, setSaving] = useState(false);
   const [lastPublished, setLastPublished] = useState<{
     title: string;
-    mailto: string;
-    notified: number;
+    message: string;
+    /** Manual email fallback — only when companies can see it and Resend isn't set up. */
+    mailto: string | null;
   } | null>(null);
 
   const canPublish =
@@ -209,7 +223,10 @@ function PublishChangeCard({
       audience === "all"
         ? "every company"
         : `${selected.size} compan${selected.size === 1 ? "y" : "ies"}`;
-    if (!window.confirm(`Publish "${title.trim()}" to ${who}? Their admins are notified now.`)) {
+    const consequence = view.companiesCanSee
+      ? "Their admins are notified now."
+      : "Companies can't see contracts yet, so nobody is notified.";
+    if (!window.confirm(`Publish "${title.trim()}" to ${who}? ${consequence}`)) {
       return;
     }
     setSaving(true);
@@ -226,16 +243,24 @@ function PublishChangeCard({
           documentId: documentId === "none" ? undefined : documentId,
         },
       });
-      toast.success(`Published — ${res.notifiedAdmins} admin(s) notified in the app`);
+      const message = !res.companiesCanSee
+        ? "Saved. Companies can't see contracts yet, so nobody was notified."
+        : res.emailedAdmins === null
+          ? `${res.notifiedAdmins} admin(s) notified in the app. Automatic email isn't set up — use "Email the admins".`
+          : `${res.notifiedAdmins} admin(s) notified in the app and ${res.emailedAdmins} emailed.`;
+      toast.success("Published");
       setLastPublished({
         title: title.trim(),
-        notified: res.notifiedAdmins,
-        mailto: changeMailto(res.adminEmails, {
-          title: title.trim(),
-          body: body.trim(),
-          effectiveDate,
-          requiresAcceptance,
-        }),
+        message,
+        mailto:
+          res.companiesCanSee && res.emailedAdmins === null
+            ? changeMailto(res.adminEmails, {
+                title: title.trim(),
+                body: body.trim(),
+                effectiveDate,
+                requiresAcceptance,
+              })
+            : null,
       });
       setTitle("");
       setBody("");
@@ -363,20 +388,21 @@ function PublishChangeCard({
           onClick={publish}
         >
           {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-          Publish and notify admins
+          {view.companiesCanSee ? "Publish and notify admins" : "Publish"}
         </Button>
 
         {lastPublished && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
             <span>
-              "{lastPublished.title}" published — {lastPublished.notified} admin(s) notified in the
-              app.
+              "{lastPublished.title}" published. {lastPublished.message}
             </span>
-            <Button asChild size="sm" variant="outline" className="h-7 gap-1 text-[11px]">
-              <a href={lastPublished.mailto}>
-                <Mail className="h-3 w-3" /> Email the admins
-              </a>
-            </Button>
+            {lastPublished.mailto && (
+              <Button asChild size="sm" variant="outline" className="h-7 gap-1 text-[11px]">
+                <a href={lastPublished.mailto}>
+                  <Mail className="h-3 w-3" /> Email the admins
+                </a>
+              </Button>
+            )}
           </div>
         )}
       </CardContent>
@@ -535,9 +561,12 @@ function UploadDocumentCard({
 function ChangesCard({
   changes,
   onChanged,
+  canEmail,
 }: {
   changes: SuperadminContractChange[];
   onChanged: () => Promise<void>;
+  /** Offer "Email the admins" only once companies can actually see contracts. */
+  canEmail: boolean;
 }) {
   return (
     <Card>
@@ -557,7 +586,9 @@ function ChangesCard({
             No changes published yet.
           </p>
         ) : (
-          changes.map((c) => <ChangeRow key={c.id} change={c} onChanged={onChanged} />)
+          changes.map((c) => (
+            <ChangeRow key={c.id} change={c} onChanged={onChanged} canEmail={canEmail} />
+          ))
         )}
       </CardContent>
     </Card>
@@ -567,9 +598,11 @@ function ChangesCard({
 function ChangeRow({
   change,
   onChanged,
+  canEmail,
 }: {
   change: SuperadminContractChange;
   onChanged: () => Promise<void>;
+  canEmail: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
@@ -632,7 +665,7 @@ function ChangeRow({
             {change.documentId && (
               <DownloadContractButton documentId={change.documentId} label="Attached document" />
             )}
-            {!change.withdrawnAt && (
+            {canEmail && !change.withdrawnAt && (
               <Button asChild size="sm" variant="outline" className="h-7 gap-1 text-[11px]">
                 <a href={mailtoWaiting}>
                   <Mail className="h-3 w-3" />

@@ -1,6 +1,17 @@
 // Contracts — shared types and the pure rules behind Admin → Contracts and Superadmin → Contracts
 // (tables: migrations/20261009_contracts.sql; server: contracts.server.ts).
 
+/**
+ * Company side switch. While false (user's decision, 2026-10-09: "visible to superadmin for now,
+ * not on client side"), contracts are superadmin-only:
+ *  - no Contracts link or pending-acceptance banner for company admins, and /admin/contracts says
+ *    it isn't available;
+ *  - the company-admin server actions refuse;
+ *  - publishing a change records it but notifies and emails nobody.
+ * Flip to true to open it to company admins — nothing else needs to change.
+ */
+export const CONTRACTS_VISIBLE_TO_COMPANIES = false;
+
 export interface ContractDocument {
   id: string;
   /** null = SamvadX platform terms, the same for every company. */
@@ -71,17 +82,11 @@ export function currentDocument<T extends Pick<ContractDocument, "effectiveDate"
   );
 }
 
-/**
- * A mailto: link that opens the superadmin's own email app with the admins in BCC and the change
- * prefilled — how "email the admins" works without an email-sending service in the app. Admins
- * are BCC'd so companies never see each other's addresses.
- */
-export function changeMailto(
-  emails: string[],
+/** The email a company admin gets about a change — used for the automatic email (Resend) and the
+ *  manual mailto fallback alike, so both say the same thing. */
+export function changeEmail(
   change: Pick<ContractChange, "title" | "body" | "effectiveDate" | "requiresAcceptance">,
-): string {
-  const unique = [...new Set(emails.map((e) => e.trim()).filter(Boolean))];
-  const subject = `SamvadX contract update: ${change.title}`;
+): { subject: string; text: string } {
   const lines = [
     "Hello,",
     "",
@@ -98,7 +103,21 @@ export function changeMailto(
     "Thank you,",
     "Team SamvadX",
   ];
-  const params = new URLSearchParams({ bcc: unique.join(","), subject, body: lines.join("\n") });
+  return { subject: `SamvadX contract update: ${change.title}`, text: lines.join("\n") };
+}
+
+/**
+ * A mailto: link that opens the superadmin's own email app with the admins in BCC and the change
+ * prefilled — the fallback when automatic email (Resend) isn't set up. Admins are BCC'd so
+ * companies never see each other's addresses.
+ */
+export function changeMailto(
+  emails: string[],
+  change: Pick<ContractChange, "title" | "body" | "effectiveDate" | "requiresAcceptance">,
+): string {
+  const unique = [...new Set(emails.map((e) => e.trim()).filter(Boolean))];
+  const { subject, text } = changeEmail(change);
+  const params = new URLSearchParams({ bcc: unique.join(","), subject, body: text });
   // URLSearchParams encodes spaces as "+", which mail apps show literally — use %20.
   return `mailto:?${params.toString().replace(/\+/g, "%20")}`;
 }

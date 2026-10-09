@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth";
+import { CONTRACTS_VISIBLE_TO_COMPANIES } from "@/lib/contracts";
 import { getAccessToken } from "@/lib/access-token";
 import {
   acceptContractChange,
@@ -23,8 +24,22 @@ import {
 
 export const Route = createFileRoute("/admin/contracts")({
   head: () => ({ meta: [{ title: "Contracts · SamvadX" }] }),
-  component: AdminContractsPage,
+  component: () =>
+    CONTRACTS_VISIBLE_TO_COMPANIES ? <AdminContractsPage /> : <ContractsNotAvailable />,
 });
+
+/** Shown while contracts are superadmin-only (CONTRACTS_VISIBLE_TO_COMPANIES = false). */
+function ContractsNotAvailable() {
+  return (
+    <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 text-center">
+      <ScrollText className="h-8 w-8 text-muted-foreground" />
+      <h1 className="text-lg font-semibold text-foreground">Contracts</h1>
+      <p className="max-w-sm text-sm text-muted-foreground">
+        This page isn't available yet. Contact SamvadX for a copy of your agreement.
+      </p>
+    </div>
+  );
+}
 
 /** Tells the admin-wide banner (admin.tsx) to recount after an acceptance. */
 export const CONTRACTS_UPDATED_EVENT = "contracts-updated";

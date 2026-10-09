@@ -1,4 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { CONTRACTS_VISIBLE_TO_COMPANIES } from "@/lib/contracts";
 import {
   LayoutDashboard,
   PhoneCall,
@@ -77,7 +78,10 @@ const adminItems = [
   { title: "Insights", url: "/admin/insights", icon: Sparkles },
   { title: "Archive History", url: "/admin/archive", icon: DatabaseBackup },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
-  { title: "Contracts", url: "/admin/contracts", icon: FileSignature },
+  // Superadmin-only for now — see CONTRACTS_VISIBLE_TO_COMPANIES.
+  ...(CONTRACTS_VISIBLE_TO_COMPANIES
+    ? [{ title: "Contracts", url: "/admin/contracts", icon: FileSignature }]
+    : []),
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];
 
