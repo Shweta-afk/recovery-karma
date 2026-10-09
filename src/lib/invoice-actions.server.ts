@@ -1,0 +1,497 @@
+// Superadmin-only actions for GST tax invoices (migrations/20261006_invoices.sql). Everything
+// here runs on the service-role client behind verifySuperadminCaller, like the rest of
+// superadmin-actions.server.ts. Company admins never call these: they read their own
+// company's `invoices` rows directly, through RLS (src/lib/invoice-store.ts).
+//
+// Arithmetic (GST split, numbering, financial year) is in the pure invoice-math.ts.
+
+import { createServerFn } from "@tanstack/react-start";
+import { z, tokenSchema, idSchema, amountSchema, noteSchema } from "./schemas";
+import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
+import { logSuperadminActivity } from "./superadmin-actions.server";
+import { todayIstKey } from "./date-filter";
+import {
+  GSTIN_RE,
+  INVOICE_KIND_LABEL,
+  INVOICE_PREFIX_RE,
+  addDaysIso,
+  financialYear,
+  gstBreakdown,
+  invoiceDisclaimer,
+  normaliseGstin,
+  stateFromGstin,
+  stateName,
+  toInvoiceRecord,
+  round2,
+  sumLines,
+  type InvoiceLine,
+  type InvoiceParty,
+  type InvoiceRecord,
+} from "./invoice-math";
+
+function db() {
+  return getSupabaseAdmin();
+}
+
+async function requireSuperadmin(accessToken: string) {
+  const caller = await verifySuperadminCaller(accessToken);
+  if (!caller) throw new Error("Not authenticated as superadmin");
+  return caller;
+}
+
+const optText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .transform((v) => (v === "" ? null : v))
+    .nullable()
+    .optional();
+
+const stateCodeSchema = z
+  .string()
+  .regex(/^\d{2}$/)
+  .refine((c) => !!stateName(c), "unknown GST state code");
+
+const gstinSchema = z
+  .string()
+  .transform(normaliseGstin)
+  .refine(
+    (g) => g === "" || GSTIN_RE.test(g),
+    "GSTIN should be 15 characters, e.g. 27AAPFU0939F1ZV",
+  )
+  .transform((g) => (g === "" ? null : g))
+  .nullable()
+  .optional();
+
+/** Throws if a GSTIN's own state code disagrees with the state picked beside it — the most
+ *  likely data-entry slip, and one that silently flips CGST/SGST vs IGST. */
+function checkGstinState(gstin: string | null | undefined, stateCode: string | null | undefined) {
+  if (!gstin || !stateCode) return;
+  const fromGstin = stateFromGstin(gstin);
+  if (fromGstin && fromGstin !== stateCode) {
+    throw new Error(
+      `GSTIN ${gstin} is registered in ${stateName(fromGstin)}, but the state is set to ${stateName(stateCode)}`,
+    );
+  }
+}
+
+// ── Supplier (Axiotta) details ──────────────────────────────────────────────
+
+export interface BillingProfile extends InvoiceParty {
+  invoicePrefix: string;
+  sacInsights: string | null;
+  sacSetup: string | null;
+  paymentTermsDays: number;
+}
+
+async function loadBillingProfile(): Promise<BillingProfile> {
+  const { data, error } = await db()
+    .from("billing_profile")
+    .select("*")
+    .eq("id", "main")
+    .maybeSingle();
+  if (error) throw new Error(`Could not load billing details (${error.message})`);
+  return {
+    legalName: data?.legal_name ?? "",
+    gstin: data?.gstin ?? null,
+    pan: data?.pan ?? null,
+    address: data?.address ?? "",
+    stateCode: data?.state_code ?? null,
+    email: data?.email ?? null,
+    phone: data?.phone ?? null,
+    bankName: data?.bank_name ?? null,
+    bankAccount: data?.bank_account ?? null,
+    bankIfsc: data?.bank_ifsc ?? null,
+    terms: data?.terms ?? null,
+    invoicePrefix: data?.invoice_prefix ?? "SX",
+    sacInsights: data?.sac_insights ?? null,
+    sacSetup: data?.sac_setup ?? null,
+    paymentTermsDays: data?.payment_terms_days ?? 15,
+  };
+}
+
+export const getBillingProfile = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    await requireSuperadmin(data.accessToken);
+    return loadBillingProfile();
+  });
+
+export const saveBillingProfile = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        legalName: z.string().trim().min(1).max(200),
+        gstin: gstinSchema,
+        pan: optText(10),
+        address: z.string().trim().min(1).max(500),
+        stateCode: stateCodeSchema,
+        email: optText(200),
+        phone: optText(40),
+        bankName: optText(120),
+        bankAccount: optText(40),
+        bankIfsc: optText(20),
+        terms: optText(1000),
+        invoicePrefix: z.string().trim().toUpperCase().regex(INVOICE_PREFIX_RE),
+        sacInsights: optText(10),
+        sacSetup: optText(10),
+        paymentTermsDays: z.number().int().min(0).max(365),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    checkGstinState(data.gstin, data.stateCode);
+    const { error } = await db()
+      .from("billing_profile")
+      .upsert({
+        id: "main",
+        legal_name: data.legalName,
+        gstin: data.gstin ?? null,
+        pan: data.pan ?? null,
+        address: data.address,
+        state_code: data.stateCode,
+        email: data.email ?? null,
+        phone: data.phone ?? null,
+        bank_name: data.bankName ?? null,
+        bank_account: data.bankAccount ?? null,
+        bank_ifsc: data.bankIfsc ?? null,
+        terms: data.terms ?? null,
+        invoice_prefix: data.invoicePrefix,
+        sac_insights: data.sacInsights ?? null,
+        sac_setup: data.sacSetup ?? null,
+        payment_terms_days: data.paymentTermsDays,
+        updated_at: new Date().toISOString(),
+        updated_by: caller.superadminId,
+      });
+    if (error) throw new Error(`Could not save billing details (${error.message})`);
+    void logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "billing_profile_set",
+      summary: "Updated SamvadX's invoice (supplier) details",
+    });
+    return { ok: true as const };
+  });
+
+// ── Per-company billing details, invoices, and top-ups not yet invoiced ─────
+
+export interface CompanyBillingDetails {
+  legalName: string;
+  gstin: string | null;
+  address: string;
+  stateCode: string | null;
+  email: string | null;
+}
+
+export interface UninvoicedTopup {
+  ledgerId: string;
+  amount: number;
+  note: string | null;
+  createdAt: string;
+}
+
+export const getCompanyBilling = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, clientId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await requireSuperadmin(data.accessToken);
+    const admin = db();
+    const [details, invoices, topups] = await Promise.all([
+      admin.from("client_billing").select("*").eq("client_id", data.clientId).maybeSingle(),
+      admin
+        .from("invoices")
+        .select("*")
+        .eq("client_id", data.clientId)
+        .order("issue_date", { ascending: false })
+        .order("created_at", { ascending: false }),
+      admin
+        .from("profilex_wallet_ledger")
+        .select("id, amount, note, created_at")
+        .eq("scope", "master_to_company")
+        .eq("client_id", data.clientId)
+        .order("created_at", { ascending: false }),
+    ]);
+    if (details.error) throw new Error(`Could not load billing details (${details.error.message})`);
+    if (invoices.error) throw new Error(`Could not load invoices (${invoices.error.message})`);
+    if (topups.error) throw new Error(`Could not load top-ups (${topups.error.message})`);
+
+    const records = (invoices.data ?? []).map(toInvoiceRecord);
+    // A cancelled invoice frees its top-up to be invoiced again (e.g. after fixing a GSTIN).
+    const invoiced = new Set(
+      records
+        .filter((r) => r.status !== "cancelled" && r.walletLedgerId)
+        .map((r) => r.walletLedgerId),
+    );
+    const uninvoiced: UninvoicedTopup[] = (topups.data ?? [])
+      .filter((t) => !invoiced.has(t.id))
+      .map((t) => ({
+        ledgerId: t.id,
+        amount: Number(t.amount),
+        note: t.note,
+        createdAt: t.created_at,
+      }));
+
+    const d = details.data;
+    const billing: CompanyBillingDetails = {
+      legalName: d?.legal_name ?? "",
+      gstin: d?.gstin ?? null,
+      address: d?.address ?? "",
+      stateCode: d?.state_code ?? null,
+      email: d?.email ?? null,
+    };
+    return { billing, invoices: records, uninvoicedTopups: uninvoiced };
+  });
+
+export const saveCompanyBilling = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        legalName: z.string().trim().min(1).max(200),
+        gstin: gstinSchema,
+        address: z.string().trim().min(1).max(500),
+        stateCode: stateCodeSchema,
+        email: optText(200),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    checkGstinState(data.gstin, data.stateCode);
+    const { error } = await db()
+      .from("client_billing")
+      .upsert({
+        client_id: data.clientId,
+        legal_name: data.legalName,
+        gstin: data.gstin ?? null,
+        address: data.address,
+        state_code: data.stateCode,
+        email: data.email ?? null,
+        updated_at: new Date().toISOString(),
+        updated_by: caller.superadminId,
+      });
+    if (error) throw new Error(`Could not save billing details (${error.message})`);
+    void logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "company_billing_set",
+      clientId: data.clientId,
+      summary: `Updated ${data.legalName}'s invoice (recipient) details`,
+    });
+    return { ok: true as const };
+  });
+
+// ── Issue an invoice ────────────────────────────────────────────────────────
+
+export const createInvoice = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .discriminatedUnion("kind", [
+        z.object({
+          accessToken: tokenSchema,
+          clientId: idSchema,
+          kind: z.literal("insights_topup"),
+          walletLedgerId: idSchema,
+          notes: noteSchema.optional(),
+        }),
+        z.object({
+          accessToken: tokenSchema,
+          clientId: idSchema,
+          kind: z.literal("setup"),
+          // The charged rows — normally SETUP_LINE_ITEMS with an amount each (before GST).
+          lines: z
+            .array(
+              z.object({ description: z.string().trim().min(1).max(200), amount: amountSchema }),
+            )
+            .min(1)
+            .max(20),
+          notes: noteSchema.optional(),
+        }),
+      ])
+      .parse(d),
+  )
+  .handler(async ({ data }): Promise<InvoiceRecord> => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const admin = db();
+
+    const supplier = await loadBillingProfile();
+    if (!supplier.legalName || !supplier.address || !supplier.stateCode || !supplier.gstin) {
+      throw new Error(
+        "Fill in SamvadX's own billing details (legal name, GSTIN, address, state) on Superadmin → Invoices first",
+      );
+    }
+
+    const { data: cb, error: cbErr } = await admin
+      .from("client_billing")
+      .select("*")
+      .eq("client_id", data.clientId)
+      .maybeSingle();
+    if (cbErr) throw new Error(`Could not load the company's billing details (${cbErr.message})`);
+    if (!cb?.legal_name || !cb.address || !cb.state_code) {
+      throw new Error("Fill in this company's billing details (legal name, address, state) first");
+    }
+    const recipient: InvoiceParty = {
+      legalName: cb.legal_name,
+      gstin: cb.gstin,
+      address: cb.address,
+      stateCode: cb.state_code,
+      email: cb.email,
+    };
+
+    let taxableAmount: number;
+    let description: string;
+    let lines: InvoiceLine[];
+    let sac: string | null;
+    let walletLedgerId: string | null = null;
+    if (data.kind === "insights_topup") {
+      const { data: led, error: ledErr } = await admin
+        .from("profilex_wallet_ledger")
+        .select("id, scope, client_id, amount, created_at")
+        .eq("id", data.walletLedgerId)
+        .maybeSingle();
+      if (ledErr) throw new Error(`Could not load that top-up (${ledErr.message})`);
+      if (!led || led.scope !== "master_to_company" || led.client_id !== data.clientId) {
+        throw new Error("That top-up isn't an Insights allocation to this company");
+      }
+      taxableAmount = Number(led.amount);
+      walletLedgerId = led.id;
+      const credited = new Date(led.created_at).toLocaleDateString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+      description = `Insights prepaid wallet top-up (credited ${credited})`;
+      lines = [{ description, amount: taxableAmount }];
+      sac = supplier.sacInsights;
+    } else {
+      lines = data.lines.map((l) => ({ description: l.description, amount: round2(l.amount) }));
+      taxableAmount = sumLines(lines);
+      description = "SamvadX platform setup";
+      sac = supplier.sacSetup;
+    }
+
+    const gst = gstBreakdown(taxableAmount, supplier.stateCode, cb.state_code);
+    const issueDate = todayIstKey();
+    const fy = financialYear(issueDate);
+    const {
+      invoicePrefix,
+      sacInsights: _a,
+      sacSetup: _b,
+      paymentTermsDays,
+      ...supplierParty
+    } = supplier;
+
+    const { data: row, error } = await admin.rpc("issue_invoice", {
+      p_client_id: data.clientId,
+      p_prefix: invoicePrefix,
+      p_fy: fy,
+      p_kind: data.kind,
+      p_issue_date: issueDate,
+      p_due_date: addDaysIso(issueDate, paymentTermsDays),
+      p_description: description,
+      p_lines: lines,
+      p_sac: sac,
+      p_place_of_supply: cb.state_code,
+      p_taxable: gst.taxable,
+      p_cgst: gst.cgst,
+      p_sgst: gst.sgst,
+      p_igst: gst.igst,
+      p_total: gst.total,
+      p_supplier: supplierParty,
+      p_recipient: recipient,
+      p_wallet_ledger_id: walletLedgerId,
+      p_notes: data.notes || null,
+      p_disclaimer: invoiceDisclaimer(data.kind, supplier.legalName).join("\n"),
+      p_superadmin_id: caller.superadminId,
+    });
+    if (error) {
+      if (/invoices_topup_once/.test(error.message)) {
+        throw new Error("That top-up has already been invoiced");
+      }
+      throw new Error(`Could not create the invoice (${error.message})`);
+    }
+    const invoice = toInvoiceRecord(row as Parameters<typeof toInvoiceRecord>[0]);
+
+    void logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "invoice_issued",
+      clientId: data.clientId,
+      summary: `Issued ${INVOICE_KIND_LABEL[data.kind]} invoice ${invoice.invoiceNumber} to ${recipient.legalName} for ₹${gst.total.toLocaleString("en-IN")}`,
+      detail: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, total: gst.total },
+    });
+    return invoice;
+  });
+
+// ── Status ──────────────────────────────────────────────────────────────────
+
+export const setInvoiceStatus = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        invoiceId: idSchema,
+        status: z.enum(["unpaid", "paid", "cancelled"]),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const admin = db();
+    const { data: prior, error: pErr } = await admin
+      .from("invoices")
+      .select("client_id, invoice_number, status")
+      .eq("id", data.invoiceId)
+      .maybeSingle();
+    if (pErr || !prior) throw new Error("Invoice not found");
+    // A cancelled invoice stays cancelled: its number is spent, and its top-up may already be
+    // on a replacement invoice. Issue a new one instead of reviving it.
+    if (prior.status === "cancelled") throw new Error("A cancelled invoice can't be reopened");
+    const { error } = await admin
+      .from("invoices")
+      .update({
+        status: data.status,
+        paid_at: data.status === "paid" ? new Date().toISOString() : null,
+      })
+      .eq("id", data.invoiceId);
+    if (error) throw new Error(`Could not update the invoice (${error.message})`);
+    void logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "invoice_status_set",
+      clientId: prior.client_id,
+      summary: `Marked invoice ${prior.invoice_number} ${data.status}`,
+      detail: { from: prior.status, to: data.status },
+    });
+    return { ok: true as const };
+  });
+
+// ── All invoices (superadmin overview) ─────────────────────────────────────
+
+export interface InvoiceListRow extends InvoiceRecord {
+  companyName: string | null;
+}
+
+export const listAllInvoices = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }): Promise<InvoiceListRow[]> => {
+    await requireSuperadmin(data.accessToken);
+    const admin = db();
+    const [{ data: rows, error }, { data: clients }] = await Promise.all([
+      admin
+        .from("invoices")
+        .select("*")
+        .order("issue_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(1000),
+      admin.from("clients").select("id, company_name"),
+    ]);
+    if (error) throw new Error(`Could not load invoices (${error.message})`);
+    const nameById = new Map((clients ?? []).map((c) => [c.id, c.company_name]));
+    return (rows ?? []).map((r) => ({
+      ...toInvoiceRecord(r),
+      companyName: nameById.get(r.client_id) ?? null,
+    }));
+  });

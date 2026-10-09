@@ -1,288 +1,423 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { Building2, Loader2, ShieldCheck, Check, X, AlertTriangle } from "lucide-react";
-import { toast } from "sonner";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  AlertTriangle,
+  Building2,
+  Clock,
+  Gauge,
+  Loader2,
+  Phone,
+  PhoneCall,
+  RefreshCw,
+  Sparkles,
+  Users,
+  Wallet,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { supabase } from "@/lib/supabase";
 import {
-  getCompanies,
-  approveCompany,
-  rejectCompany,
-  type CompanyRow,
-} from "@/lib/superadmin-actions.server";
+  fmtInt,
+  fmtMoney,
+  fmtPct,
+  fmtTalk,
+  HealthBadge,
+  Trend,
+  usePlatformUsage,
+  WindowPicker,
+} from "@/components/superadmin/usage-shared";
+import {
+  contactRate,
+  type AttentionItem,
+  type CompanyUsage,
+  type PlatformUsageReport,
+} from "@/lib/platform-usage";
 
 export const Route = createFileRoute("/superadmin/")({
   head: () => ({
     meta: [
-      { title: "Companies · SamvadX Platform" },
+      { title: "Overview · SamvadX Platform" },
       {
         name: "description",
-        content: "Every company on SamvadX, its users, and its ProfileX Insights budget.",
+        content: "How every company on SamvadX is using calling and Insights.",
       },
     ],
   }),
-  component: SuperadminCompaniesPage,
+  component: SuperadminOverviewPage,
 });
 
-const STATUS_BADGE: Record<
-  CompanyRow["status"],
-  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
-> = {
-  pending: { label: "Pending", variant: "outline" },
-  approved: { label: "Approved", variant: "secondary" },
-  rejected: { label: "Rejected", variant: "destructive" },
-};
-
-function SuperadminCompaniesPage() {
-  const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [rows, setRows] = useState<CompanyRow[]>([]);
-  // Deliberately never auto-suggested (e.g. slugified from the company name) — the subdomain
-  // is decided by calling the company and asking what they want, not guessed by the app.
-  // Left blank means "approve without a subdomain yet"; approveCompany already treats an
-  // empty/omitted subdomain as "leave it unset for now".
-  const [subdomainDrafts, setSubdomainDrafts] = useState<Record<string, string>>({});
-  const [actingId, setActingId] = useState<string | null>(null);
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) throw new Error("Your session expired — sign in again");
-      const res = await getCompanies({ data: { accessToken: session.access_token } });
-      setRows(res.rows);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not load companies");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const handleApprove = async (row: CompanyRow) => {
-    setActingId(row.id);
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) throw new Error("Your session expired — sign in again");
-      await approveCompany({
-        data: {
-          accessToken: session.access_token,
-          clientId: row.id,
-          subdomain: subdomainDrafts[row.id],
-        },
-      });
-      toast.success(`${row.companyName} approved`);
-      await load();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not approve this company");
-    } finally {
-      setActingId(null);
-    }
-  };
-
-  const handleReject = async (row: CompanyRow) => {
-    setActingId(row.id);
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) throw new Error("Your session expired — sign in again");
-      await rejectCompany({ data: { accessToken: session.access_token, clientId: row.id } });
-      toast.success(`${row.companyName} rejected`);
-      await load();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not reject this company");
-    } finally {
-      setActingId(null);
-    }
-  };
-
-  const pending = rows.filter((r) => r.status === "pending");
-
-  // Which company names appear more than once — see the warning rendered on each such row
-  // below. Two rows can legitimately share a name (nothing in the schema stops it), and
-  // picking the wrong one by name alone is exactly how a subdomain once ended up on an empty
-  // duplicate "Axiotta Technologies" instead of the real company.
-  const nameCounts = new Map<string, number>();
-  for (const r of rows) nameCounts.set(r.companyName, (nameCounts.get(r.companyName) ?? 0) + 1);
-  const duplicateNames = new Set(
-    [...nameCounts.entries()].filter(([, count]) => count > 1).map(([name]) => name),
-  );
+function SuperadminOverviewPage() {
+  const { windowDays, setWindowDays, report, loading, reload } = usePlatformUsage();
 
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Companies</h1>
-          <Badge variant="secondary">Superadmin</Badge>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">Overview</h1>
+            <Badge variant="secondary">Superadmin</Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            How companies are using SamvadX calling and Insights — last {windowDays} days, compared
+            with the {windowDays} days before.
+          </p>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Every company on the platform, its admins/managers/agents, and its ProfileX Insights
-          budget.
-        </p>
+        <div className="flex items-center gap-2">
+          <WindowPicker value={windowDays} onChange={setWindowDays} />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1 text-xs"
+            disabled={loading}
+            onClick={reload}
+          >
+            <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
-      {!loading && pending.length > 0 && (
-        <Card className="border-amber-400/40">
-          <CardHeader className="border-b border-border pb-3">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-amber-500" />
-              Pending verification ({pending.length})
-            </CardTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Nobody at these companies can sign in until you approve or reject them. Optionally
-              assign a subdomain slug while approving.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4 space-y-2">
-            {pending.map((row) => (
-              <div
-                key={row.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <div className="text-xs font-medium text-foreground truncate">
-                    {row.companyName}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground truncate">
-                    {row.adminEmails.length > 0 ? row.adminEmails.join(", ") : "No admin yet"}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    Created {new Date(row.createdAt).toLocaleString()}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-xs text-muted-foreground">Subdomain</span>
-                  <Input
-                    value={subdomainDrafts[row.id] ?? ""}
-                    onChange={(e) =>
-                      setSubdomainDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))
-                    }
-                    placeholder="acme"
-                    className="h-8 w-32 text-xs"
-                  />
-                  <span className="text-[10px] text-muted-foreground">.samvadx.com</span>
-                  <Button
-                    size="sm"
-                    className="h-8 gap-1 text-xs"
-                    disabled={actingId === row.id}
-                    onClick={() => handleApprove(row)}
-                  >
-                    {actingId === row.id ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Check className="h-3 w-3" />
-                    )}
-                    Approve
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 gap-1 text-xs border-destructive/40 text-destructive hover:text-destructive"
-                    disabled={actingId === row.id}
-                    onClick={() => handleReject(row)}
-                  >
-                    <X className="h-3 w-3" />
-                    Reject
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader className="border-b border-border pb-3">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-primary" />
-            All companies
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-4">
-          {loading ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground py-4">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+      {!report ? (
+        <div className="flex items-center gap-2 py-8 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading usage…
+        </div>
+      ) : (
+        <div className={`space-y-6 ${loading ? "opacity-60" : ""}`}>
+          <KpiGrid report={report} />
+          <div className="grid gap-6 lg:grid-cols-5">
+            <div className="lg:col-span-3">
+              <DailyChart report={report} />
             </div>
-          ) : rows.length === 0 ? (
-            <p className="py-6 text-center text-xs text-muted-foreground">
-              No companies on the platform yet.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border text-left text-muted-foreground">
-                    <th className="py-2 pr-4 font-medium">Company</th>
-                    <th className="py-2 pr-4 font-medium">Status</th>
-                    <th className="py-2 pr-4 font-medium">Subdomain</th>
-                    <th className="py-2 pr-4 font-medium">Plan</th>
-                    <th className="py-2 pr-4 font-medium text-right">Admins</th>
-                    <th className="py-2 pr-4 font-medium text-right">Managers</th>
-                    <th className="py-2 pr-4 font-medium text-right">Agents</th>
-                    <th className="py-2 pr-4 font-medium text-right">Insights budget</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const badge = STATUS_BADGE[r.status];
-                    const isDuplicateName = duplicateNames.has(r.companyName);
-                    return (
-                      <tr
-                        key={r.id}
-                        className="cursor-pointer border-b border-border last:border-0 hover:bg-accent/50"
-                        onClick={() => navigate({ to: `/superadmin/companies/${r.id}` })}
-                      >
-                        <td className="py-2.5 pr-4 font-medium text-foreground">
-                          {r.companyName}
-                          {/* Two companies can share a name — this is exactly what let a
-                              subdomain get set on the wrong "Axiotta Technologies" row once
-                              already. Surface the id + creation date whenever a name collides
-                              so that mistake can't happen silently again. */}
-                          {isDuplicateName && (
-                            <div className="mt-0.5 flex items-center gap-1 text-[10px] font-normal text-amber-600">
-                              <AlertTriangle className="h-3 w-3" />
-                              <span className="font-mono">{r.id.slice(0, 8)}</span>
-                              <span className="text-muted-foreground">
-                                · created {new Date(r.createdAt).toLocaleDateString()}
-                              </span>
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-2.5 pr-4">
-                          <Badge variant={badge.variant} className="text-[10px]">
-                            {badge.label}
-                          </Badge>
-                        </td>
-                        <td className="py-2.5 pr-4 text-muted-foreground">
-                          {r.subdomain ? `${r.subdomain}.samvadx.com` : "—"}
-                        </td>
-                        <td className="py-2.5 pr-4 capitalize text-muted-foreground">{r.plan}</td>
-                        <td className="py-2.5 pr-4 text-right">{r.adminCount}</td>
-                        <td className="py-2.5 pr-4 text-right">{r.managerCount}</td>
-                        <td className="py-2.5 pr-4 text-right">{r.agentCount}</td>
-                        <td className="py-2.5 pr-4 text-right font-medium text-foreground">
-                          ₹{r.walletBalance.toFixed(2)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="lg:col-span-2">
+              <AttentionCard items={report.attention} />
             </div>
+          </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <TopCompanies
+              title="Most calling"
+              icon={<PhoneCall className="h-4 w-4 text-primary" />}
+              companies={report.companies}
+              value={(c) => c.current.calls}
+              previous={(c) => c.previous.calls}
+              detail={(c) =>
+                `${fmtPct(contactRate(c.current))} contact · ${fmtTalk(c.current.talkSeconds)} talk`
+              }
+              empty="No calls in this period."
+            />
+            <TopCompanies
+              title="Most Insights lookups"
+              icon={<Sparkles className="h-4 w-4 text-primary" />}
+              companies={report.companies}
+              value={(c) => c.current.lookups}
+              previous={(c) => c.previous.lookups}
+              detail={(c) => `${fmtMoney(c.current.insightsCharged)} billed`}
+              empty="No Insights lookups in this period."
+            />
+          </div>
+          {report.unattributedCalls > 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              {report.unattributedCalls} call(s) in this period belong to a user no longer linked to
+              any company and are left out of the per-company numbers.
+            </p>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      )}
     </div>
+  );
+}
+
+function Kpi({
+  icon,
+  label,
+  value,
+  sub,
+  trend,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  sub?: ReactNode;
+  trend?: ReactNode;
+}) {
+  return (
+    <Card>
+      <CardContent className="space-y-1 p-4">
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          {icon}
+          {label}
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xl font-semibold text-foreground">{value}</span>
+          {trend}
+        </div>
+        {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function KpiGrid({ report }: { report: PlatformUsageReport }) {
+  const { current: cur, previous: prev } = report.totals;
+  const curRate = contactRate(cur);
+  const prevRate = contactRate(prev);
+  const margin = cur.insightsCharged - cur.insightsActualCost;
+  const prevMargin = prev.insightsCharged - prev.insightsActualCost;
+  const iconCls = "h-3.5 w-3.5";
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <Kpi
+        icon={<Building2 className={iconCls} />}
+        label="Active companies"
+        value={`${report.totals.activeCompanies} / ${report.totals.liveCompanies}`}
+        sub="used calling or Insights, of all live"
+        trend={
+          <Trend
+            current={report.totals.activeCompanies}
+            previous={report.totals.activeCompaniesPrev}
+          />
+        }
+      />
+      <Kpi
+        icon={<Users className={iconCls} />}
+        label="Active callers"
+        value={fmtInt(cur.activeCallers)}
+        sub="users who placed at least one call"
+        trend={<Trend current={cur.activeCallers} previous={prev.activeCallers} />}
+      />
+      <Kpi
+        icon={<Phone className={iconCls} />}
+        label="Calls"
+        value={fmtInt(cur.calls)}
+        sub={`${fmtInt(prev.calls)} the period before`}
+        trend={<Trend current={cur.calls} previous={prev.calls} />}
+      />
+      <Kpi
+        icon={<Gauge className={iconCls} />}
+        label="Contact rate"
+        value={fmtPct(curRate)}
+        sub={`${fmtInt(cur.contacts)} calls reached someone · was ${fmtPct(prevRate)}`}
+      />
+      <Kpi
+        icon={<Clock className={iconCls} />}
+        label="Talk time"
+        value={fmtTalk(cur.talkSeconds)}
+        sub={
+          cur.calls > 0
+            ? `avg ${fmtTalk(cur.talkSeconds / Math.max(1, cur.contacts))} per contact`
+            : undefined
+        }
+        trend={<Trend current={cur.talkSeconds} previous={prev.talkSeconds} />}
+      />
+      <Kpi
+        icon={<Sparkles className={iconCls} />}
+        label="Insights lookups"
+        value={fmtInt(cur.lookups)}
+        sub={`${fmtPct(cur.lookups ? cur.lookupsFound / cur.lookups : null)} found data`}
+        trend={<Trend current={cur.lookups} previous={prev.lookups} />}
+      />
+      <Kpi
+        icon={<Wallet className={iconCls} />}
+        label="Insights billed"
+        value={fmtMoney(cur.insightsCharged)}
+        sub="charged to company wallets"
+        trend={<Trend current={cur.insightsCharged} previous={prev.insightsCharged} />}
+      />
+      <Kpi
+        icon={<Wallet className={iconCls} />}
+        label="Insights margin"
+        value={fmtMoney(margin)}
+        sub={`after ${fmtMoney(cur.insightsActualCost)} ProfileX cost`}
+        trend={<Trend current={margin} previous={prevMargin} />}
+      />
+    </div>
+  );
+}
+
+function DailyChart({ report }: { report: PlatformUsageReport }) {
+  const data = report.daily.map((d) => ({ ...d, label: d.day.slice(5).replace("-", "/") }));
+  return (
+    <Card className="h-full">
+      <CardHeader className="border-b border-border pb-3">
+        <CardTitle className="text-sm font-semibold">Daily usage</CardTitle>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Calls and Insights lookups per day (IST), every company combined.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }}
+              interval="preserveStartEnd"
+              minTickGap={16}
+            />
+            <YAxis
+              allowDecimals={false}
+              tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }}
+            />
+            <Tooltip
+              contentStyle={{
+                fontSize: 11,
+                background: "var(--color-popover)",
+                border: "1px solid var(--color-border)",
+                borderRadius: 6,
+              }}
+              labelStyle={{ color: "var(--color-foreground)" }}
+              cursor={{ fill: "var(--color-accent)", opacity: 0.4 }}
+            />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="calls" name="Calls" fill="oklch(0.58 0.18 258)" radius={[2, 2, 0, 0]} />
+            <Bar
+              dataKey="lookups"
+              name="Insights lookups"
+              fill="oklch(0.7 0.15 162)"
+              radius={[2, 2, 0, 0]}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AttentionCard({ items }: { items: AttentionItem[] }) {
+  return (
+    <Card className="h-full">
+      <CardHeader className="border-b border-border pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          Needs attention
+          {items.length > 0 && (
+            <Badge variant="outline" className="text-[10px]">
+              {items.length}
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2 pt-4">
+        {items.length === 0 ? (
+          <p className="py-6 text-center text-xs text-muted-foreground">
+            Nothing needs you right now.
+          </p>
+        ) : (
+          items.map((item, i) => (
+            <AttentionRow key={`${item.kind}-${item.clientId}-${i}`} item={item} />
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AttentionRow({ item }: { item: AttentionItem }) {
+  const body = (
+    <>
+      <div className="text-xs font-medium text-foreground">
+        {item.companyName ?? "Insights Excel requests"}
+      </div>
+      <div className="text-[11px] text-muted-foreground">{item.message}</div>
+    </>
+  );
+  const cls = "block rounded-lg border border-border px-3 py-2 hover:bg-accent/50";
+  if (item.kind === "export_requests") {
+    return (
+      <Link to="/superadmin/insights" className={cls}>
+        {body}
+      </Link>
+    );
+  }
+  if (item.kind === "pending_approval") {
+    return (
+      <Link to="/superadmin/companies" className={cls}>
+        {body}
+      </Link>
+    );
+  }
+  return (
+    <Link
+      to="/superadmin/companies/$clientId"
+      params={{ clientId: item.clientId! }}
+      className={cls}
+    >
+      {body}
+    </Link>
+  );
+}
+
+function TopCompanies({
+  title,
+  icon,
+  companies,
+  value,
+  previous,
+  detail,
+  empty,
+}: {
+  title: string;
+  icon: ReactNode;
+  companies: CompanyUsage[];
+  value: (c: CompanyUsage) => number;
+  previous: (c: CompanyUsage) => number;
+  detail: (c: CompanyUsage) => string;
+  empty: string;
+}) {
+  const top = companies
+    .filter((c) => value(c) > 0)
+    .sort((a, b) => value(b) - value(a))
+    .slice(0, 5);
+  const max = top.length ? value(top[0]) : 0;
+  return (
+    <Card>
+      <CardHeader className="border-b border-border pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          {icon}
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-4">
+        {top.length === 0 ? (
+          <p className="py-4 text-center text-xs text-muted-foreground">{empty}</p>
+        ) : (
+          top.map((c) => (
+            <Link
+              key={c.clientId}
+              to="/superadmin/companies/$clientId"
+              params={{ clientId: c.clientId }}
+              className="block space-y-1 rounded-md hover:bg-accent/40"
+            >
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-medium text-foreground">{c.companyName}</span>
+                  <HealthBadge health={c.health} />
+                </span>
+                <span className="flex flex-shrink-0 items-center gap-2">
+                  <span className="font-semibold text-foreground">{fmtInt(value(c))}</span>
+                  <Trend current={value(c)} previous={previous(c)} />
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${max ? (value(c) / max) * 100 : 0}%` }}
+                />
+              </div>
+              <div className="text-[10px] text-muted-foreground">{detail(c)}</div>
+            </Link>
+          ))
+        )}
+      </CardContent>
+    </Card>
   );
 }

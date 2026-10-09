@@ -34,7 +34,7 @@ function db() {
  *  non-money half of "whole history of superadmin activities" (money already has a full
  *  history in profilex_wallet_ledger). Fire-and-forget on purpose: a logging failure must
  *  never fail the action it's describing, so this only console.errors, never throws. */
-async function logSuperadminActivity(params: {
+export async function logSuperadminActivity(params: {
   superadminId: string;
   action: string;
   clientId?: string | null;

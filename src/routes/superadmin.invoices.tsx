@@ -1,0 +1,367 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Building2, FileText, Loader2, Save } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { getAccessToken } from "@/lib/access-token";
+import { GST_STATES, normaliseGstin, stateFromGstin, type InvoiceStatus } from "@/lib/invoice-math";
+import {
+  getBillingProfile,
+  listAllInvoices,
+  saveBillingProfile,
+  setInvoiceStatus,
+  type BillingProfile,
+  type InvoiceListRow,
+} from "@/lib/invoice-actions.server";
+import { InvoiceTable } from "@/components/billing/invoice-list";
+import { formatRupees } from "@/components/billing/invoice-document";
+
+export const Route = createFileRoute("/superadmin/invoices")({
+  head: () => ({ meta: [{ title: "Invoices · SamvadX Platform" }] }),
+  component: SuperadminInvoicesPage,
+});
+
+const EMPTY_PROFILE: BillingProfile = {
+  legalName: "",
+  gstin: "",
+  pan: "",
+  address: "",
+  stateCode: null,
+  email: "",
+  phone: "",
+  bankName: "",
+  bankAccount: "",
+  bankIfsc: "",
+  terms: "",
+  invoicePrefix: "SX",
+  sacInsights: "",
+  sacSetup: "",
+  paymentTermsDays: 15,
+};
+
+function SuperadminInvoicesPage() {
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<BillingProfile>(EMPTY_PROFILE);
+  const [saving, setSaving] = useState(false);
+  const [invoices, setInvoices] = useState<InvoiceListRow[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const accessToken = await getAccessToken();
+      const [p, list] = await Promise.all([
+        getBillingProfile({ data: { accessToken } }),
+        listAllInvoices({ data: { accessToken } }),
+      ]);
+      // Inputs want strings, not nulls.
+      setProfile(
+        Object.fromEntries(
+          Object.entries({ ...EMPTY_PROFILE, ...p }).map(([k, v]) => [
+            k,
+            v === null && k !== "stateCode" ? "" : v,
+          ]),
+        ) as unknown as BillingProfile,
+      );
+      setInvoices(list);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not load invoices");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const set = <K extends keyof BillingProfile>(k: K, v: BillingProfile[K]) =>
+    setProfile((p) => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!profile.stateCode) {
+      toast.error("Pick SamvadX's state of registration");
+      return;
+    }
+    setSaving(true);
+    try {
+      const accessToken = await getAccessToken();
+      await saveBillingProfile({
+        data: {
+          accessToken,
+          legalName: profile.legalName,
+          gstin: profile.gstin ? normaliseGstin(profile.gstin) : null,
+          pan: profile.pan || null,
+          address: profile.address,
+          stateCode: profile.stateCode,
+          email: profile.email || null,
+          phone: profile.phone || null,
+          bankName: profile.bankName || null,
+          bankAccount: profile.bankAccount || null,
+          bankIfsc: profile.bankIfsc || null,
+          terms: profile.terms || null,
+          invoicePrefix: profile.invoicePrefix,
+          sacInsights: profile.sacInsights || null,
+          sacSetup: profile.sacSetup || null,
+          paymentTermsDays: Number(profile.paymentTermsDays) || 0,
+        },
+      });
+      toast.success("Billing details saved");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save billing details");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onSetStatus = async (inv: InvoiceListRow, status: InvoiceStatus) => {
+    try {
+      const accessToken = await getAccessToken();
+      await setInvoiceStatus({ data: { accessToken, invoiceId: inv.id, status } });
+      toast.success(`Invoice ${inv.invoiceNumber} marked ${status}`);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update the invoice");
+    }
+  };
+
+  const outstanding = useMemo(
+    () => invoices.filter((i) => i.status === "unpaid").reduce((s, i) => s + i.total, 0),
+    [invoices],
+  );
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Invoices</h1>
+          <Badge variant="secondary">Superadmin</Badge>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          GST tax invoices to companies — Insights wallet top-ups and setup fees. Issue them from
+          each company's page (
+          <Link to="/superadmin/companies" className="text-primary hover:underline">
+            Companies
+          </Link>{" "}
+          → a company → Invoices). The details below are printed on every invoice as the supplier.
+        </p>
+      </div>
+
+      {loading ? (
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      ) : (
+        <>
+          <Card>
+            <CardHeader className="border-b border-border pb-3">
+              <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                <Building2 className="h-4 w-4 text-primary" />
+                SamvadX billing details (supplier)
+              </CardTitle>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Changes apply to invoices issued from now on. Issued invoices keep the details they
+                were issued with.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <Field label="Legal name">
+                  <Input
+                    value={profile.legalName}
+                    onChange={(e) => set("legalName", e.target.value)}
+                    placeholder="Axiotta Technologies Private Limited"
+                    className="h-8 text-xs"
+                  />
+                </Field>
+                <Field label="GSTIN">
+                  <Input
+                    value={profile.gstin ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const st = stateFromGstin(v);
+                      setProfile((p) => ({ ...p, gstin: v, stateCode: st ?? p.stateCode }));
+                    }}
+                    className="h-8 font-mono text-xs uppercase"
+                  />
+                </Field>
+                <Field label="State of registration">
+                  <Select
+                    value={profile.stateCode ?? ""}
+                    onValueChange={(v) => set("stateCode", v)}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Pick a state" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GST_STATES.map((s) => (
+                        <SelectItem key={s.code} value={s.code} className="text-xs">
+                          {s.name} ({s.code})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="PAN">
+                  <Input
+                    value={profile.pan ?? ""}
+                    onChange={(e) => set("pan", e.target.value.toUpperCase())}
+                    className="h-8 font-mono text-xs"
+                  />
+                </Field>
+                <Field label="Email (printed)">
+                  <Input
+                    value={profile.email ?? ""}
+                    onChange={(e) => set("email", e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </Field>
+                <Field label="Phone (printed)">
+                  <Input
+                    value={profile.phone ?? ""}
+                    onChange={(e) => set("phone", e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </Field>
+                <Field label="Registered address" className="sm:col-span-2 lg:col-span-3">
+                  <Textarea
+                    value={profile.address}
+                    onChange={(e) => set("address", e.target.value)}
+                    rows={2}
+                    className="text-xs"
+                  />
+                </Field>
+                <Field label="Bank name">
+                  <Input
+                    value={profile.bankName ?? ""}
+                    onChange={(e) => set("bankName", e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </Field>
+                <Field label="Account number">
+                  <Input
+                    value={profile.bankAccount ?? ""}
+                    onChange={(e) => set("bankAccount", e.target.value)}
+                    className="h-8 font-mono text-xs"
+                  />
+                </Field>
+                <Field label="IFSC">
+                  <Input
+                    value={profile.bankIfsc ?? ""}
+                    onChange={(e) => set("bankIfsc", e.target.value.toUpperCase())}
+                    className="h-8 font-mono text-xs"
+                  />
+                </Field>
+                <Field label="Invoice number prefix (up to 5 letters/digits)">
+                  <Input
+                    value={profile.invoicePrefix}
+                    onChange={(e) => set("invoicePrefix", e.target.value.toUpperCase())}
+                    maxLength={5}
+                    className="h-8 font-mono text-xs"
+                  />
+                </Field>
+                <Field label="SAC — Insights top-up">
+                  <Input
+                    value={profile.sacInsights ?? ""}
+                    onChange={(e) => set("sacInsights", e.target.value)}
+                    className="h-8 font-mono text-xs"
+                  />
+                </Field>
+                <Field label="SAC — setup fee">
+                  <Input
+                    value={profile.sacSetup ?? ""}
+                    onChange={(e) => set("sacSetup", e.target.value)}
+                    className="h-8 font-mono text-xs"
+                  />
+                </Field>
+                <Field label="Payment due (days after invoice)">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={365}
+                    value={profile.paymentTermsDays}
+                    onChange={(e) => set("paymentTermsDays", Number(e.target.value))}
+                    className="h-8 w-28 text-xs"
+                  />
+                </Field>
+                <Field label="Terms printed on every invoice" className="sm:col-span-2">
+                  <Textarea
+                    value={profile.terms ?? ""}
+                    onChange={(e) => set("terms", e.target.value)}
+                    rows={2}
+                    placeholder="Payable within 15 days. Late payments attract interest at 1.5% per month."
+                    className="text-xs"
+                  />
+                </Field>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Next number looks like{" "}
+                <span className="font-mono">{profile.invoicePrefix || "SX"}/2627/0001</span> and
+                restarts every April. Confirm the SAC codes with your accountant.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1 text-xs"
+                disabled={saving || !profile.legalName.trim() || !profile.address.trim()}
+                onClick={save}
+              >
+                {saving ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Save className="h-3 w-3" />
+                )}
+                Save billing details
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="border-b border-border pb-3">
+              <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                <FileText className="h-4 w-4 text-primary" />
+                All invoices
+              </CardTitle>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Outstanding (unpaid, incl. GST):{" "}
+                <span className="font-medium text-foreground">{formatRupees(outstanding)}</span>
+              </p>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <InvoiceTable
+                invoices={invoices}
+                companyName={(i) => i.companyName}
+                onSetStatus={onSetStatus}
+              />
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className={`block space-y-1 ${className ?? ""}`}>
+      <span className="text-[11px] text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}

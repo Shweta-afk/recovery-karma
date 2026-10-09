@@ -173,3 +173,28 @@
     -moz-osx-font-smoothing: grayscale;
   }
 }
+
+/* Invoice printing (src/components/billing/invoice-document.tsx). "Print / Save PDF" portals a
+   copy of the invoice straight under <body> and sets body.printing-invoice; in print, every
+   other top-level node is hidden so only the invoice lands on the page. */
+.invoice-print-root {
+  display: none;
+}
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  body.printing-invoice > *:not(.invoice-print-root) {
+    display: none !important;
+  }
+  body.printing-invoice > .invoice-print-root {
+    display: block !important;
+  }
+  /* The app's dark theme sets a dark page background; without this it fills the rest of the
+     sheet below the invoice. */
+  html:has(> body.printing-invoice),
+  body.printing-invoice {
+    background: #fff !important;
+  }
+}

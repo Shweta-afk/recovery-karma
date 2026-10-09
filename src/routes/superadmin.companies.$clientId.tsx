@@ -26,6 +26,7 @@ import {
   type WalletLedgerRow,
 } from "@/lib/superadmin-actions.server";
 import { CompanyInsightsSettingsCard } from "@/components/profilex/company-insights-settings-card";
+import { CompanyInvoicesCard } from "@/components/billing/company-invoices-card";
 
 type EditableRole = "agent" | "manager" | "admin";
 type CompanyStatus = "pending" | "approved" | "rejected";
@@ -235,7 +236,7 @@ function SuperadminCompanyDetailPage() {
     <div className="space-y-6">
       <div>
         <Link
-          to="/superadmin"
+          to="/superadmin/companies"
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-3 w-3" /> All companies
@@ -381,6 +382,8 @@ function SuperadminCompanyDetailPage() {
       </Card>
 
       <CompanyInsightsSettingsCard clientId={clientId} />
+
+      <CompanyInvoicesCard clientId={clientId} />
 
       <Card>
         <CardHeader className="border-b border-border pb-3">

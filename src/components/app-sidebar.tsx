@@ -20,6 +20,7 @@ import {
   Wallet,
   Sparkles,
   DatabaseBackup,
+  FileText,
 } from "lucide-react";
 import {
   Sidebar,
@@ -72,14 +73,17 @@ const adminItems = [
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
   { title: "Insights", url: "/admin/insights", icon: Sparkles },
   { title: "Archive History", url: "/admin/archive", icon: DatabaseBackup },
+  { title: "Invoices", url: "/admin/invoices", icon: FileText },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];
 
 const superadminItems = [
-  { title: "Companies", url: "/superadmin", icon: Building2 },
+  { title: "Overview", url: "/superadmin", icon: LayoutDashboard },
+  { title: "Companies", url: "/superadmin/companies", icon: Building2 },
   { title: "Insights Wallet", url: "/superadmin/wallet", icon: Wallet },
   { title: "Insights Activity", url: "/superadmin/insights", icon: Sparkles },
+  { title: "Invoices", url: "/superadmin/invoices", icon: FileText },
   { title: "Superadmin Activity", url: "/superadmin/activity", icon: History },
 ];
 
