@@ -306,7 +306,7 @@ export interface Database {
           id: string;
           client_id: string;
           debtor_id: string;
-          trace_id: string | null;
+          lookup_id: string | null;
           requested_by: string | null;
           request: Json;
           txn_id: string | null;
@@ -319,7 +319,7 @@ export interface Database {
           id?: string;
           client_id: string;
           debtor_id: string;
-          trace_id?: string | null;
+          lookup_id?: string | null;
           requested_by?: string | null;
           request: Json;
           txn_id?: string | null;
@@ -332,7 +332,7 @@ export interface Database {
           id?: string;
           client_id?: string;
           debtor_id?: string;
-          trace_id?: string | null;
+          lookup_id?: string | null;
           requested_by?: string | null;
           request?: Json;
           txn_id?: string | null;

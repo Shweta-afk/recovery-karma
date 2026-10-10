@@ -1,5 +1,5 @@
-// CIBIL report on a debtor's Insights tab — company admins only (trace-panel.tsx renders it for
-// role "admin"; the server refuses everyone else regardless). The form opens prefilled from the
+// CIBIL report for one borrower — company admins only. Rendered by cibil-admin-section.tsx on
+// Admin → Insights (admins have no debtor-profile screen); the server refuses everyone else. The form opens prefilled from the
 // bank file and earlier lookups; the admin fills whatever is missing (usually PAN) and pulls.
 // Reports are read from cibil_reports through the server, never from debtor_traces.
 import { useCallback, useEffect, useState } from "react";
@@ -167,6 +167,7 @@ export function CibilPanel({ debtorId, debtorName }: { debtorId: string; debtorN
       );
       setShowForm(false);
       await load();
+      window.dispatchEvent(new CustomEvent("cibil-report-pulled"));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "CIBIL report failed");
     } finally {

@@ -37,6 +37,7 @@ import {
   type ReuseCandidate,
 } from "./profilex/billing";
 import {
+  CIBIL_SERVICE,
   LEGACY_SERVICE_IDS,
   getService,
   priceFor,
@@ -1526,6 +1527,8 @@ export const listManualInsights = createServerFn({ method: "POST" })
         "id, service_id, query_key, input, state, provider_status, cost, response, error, created_at",
       )
       .eq("client_id", caller.clientId)
+      // CIBIL pulls share this ledger but have their own list (CIBIL Reports, same page).
+      .neq("service_id", CIBIL_SERVICE)
       .order("created_at", { ascending: false })
       .limit(data.limit ?? 50);
     if (error) throw new Error(`Could not load lookups (${error.message})`);

@@ -1,14 +1,17 @@
 // CIBIL credit reports through PayPrime — the only place that spends money with PayPrime.
 //
 // An Insights service (catalogue id "cibil-report", provider "payprime"), so it shares the
-// company's plan, rate card, debtor_traces ledger, spend/usage reports and superadmin billing with
-// the ProfileX lookups. What is different, and enforced here rather than in the browser:
+// company's plan, rate card, spend reports and superadmin billing with the ProfileX lookups. What
+// is different, and enforced here rather than in the browser:
 //
-//   - Company ADMINS only — not managers, not agents. Both to run and to read.
+//   - Company ADMINS only — not managers, not agents. Both to run and to read. Run from
+//     Admin → Insights (admins have no debtor-profile screen), against a debtor found by search.
+//   - The billing ledger row goes in insights_manual_lookups (RLS: admins only), never
+//     debtor_traces (readable by the assigned agent and their manager), so nobody but an admin can
+//     see that a credit report was pulled. query_key = the debtor id.
 //   - A superadmin must have recorded the company's consent agreement
 //     (profilex_settings.cibil_consent_at), because every request asserts the borrower's consent.
-//   - The report is stored in cibil_reports (server-only), never in debtor_traces.response, which
-//     the assigned agent can read. See migrations/20261010_cibil_reports.sql.
+//   - The report is stored in cibil_reports (server-only). See migrations/20261010_cibil_*.sql.
 //   - The phone is the debtor's own; name/PAN/DOB/address are typed by the admin (prefilled from
 //     the bank file and earlier lookups), since nothing on a debtor row reliably holds a PAN.
 //
@@ -69,7 +72,7 @@ async function consentAt(clientId: string): Promise<string | null> {
 async function loadDebtor(debtorId: string, clientId: string) {
   const { data: debtor, error } = await db()
     .from("debtors")
-    .select("id, client_id, name, email, phone_primary, extra")
+    .select("id, client_id, name, email, phone_primary, loan_reference, extra")
     .eq("id", debtorId)
     .maybeSingle();
   if (error) throw new Error(`Could not load the debtor (${error.message})`);
@@ -266,27 +269,34 @@ export const runCibilReport = createServerFn({ method: "POST" })
     }
 
     // Release an abandoned claim, then claim the in-flight slot — the partial unique index on
-    // debtor_traces (debtor_id, service_id) WHERE state = 'pending' stops a double click paying
-    // twice. Same pattern as runProfilexTrace.
+    // insights_manual_lookups (client_id, service_id, query_key) WHERE state = 'pending' stops a
+    // double click paying twice. Same pattern as runManualInsight.
     await admin
-      .from("debtor_traces")
+      .from("insights_manual_lookups")
       .update({
         state: "failed",
         error: "Abandoned — no response was recorded, so it is not counted as spend.",
         completed_at: new Date().toISOString(),
       })
-      .eq("debtor_id", data.debtorId)
+      .eq("client_id", caller.clientId)
       .eq("service_id", CIBIL_SERVICE)
+      .eq("query_key", data.debtorId)
       .eq("state", "pending")
       .lt("created_at", new Date(Date.now() - 5 * 60_000).toISOString());
 
     const { data: pending, error: claimErr } = await admin
-      .from("debtor_traces")
+      .from("insights_manual_lookups")
       .insert({
         client_id: caller.clientId,
-        debtor_id: data.debtorId,
         service_id: CIBIL_SERVICE,
         requested_by: caller.agentId ?? null,
+        query_key: data.debtorId,
+        // Who it was about — the name/PAN/DOB sent are kept with the report in cibil_reports.
+        input: {
+          debtor_id: data.debtorId,
+          name: String(debtor.name ?? ""),
+          loan_reference: String(debtor.loan_reference ?? ""),
+        },
         state: "pending",
       })
       .select("id")
@@ -325,7 +335,7 @@ export const runCibilReport = createServerFn({ method: "POST" })
       }
     } catch (err) {
       await admin
-        .from("debtor_traces")
+        .from("insights_manual_lookups")
         .update({
           state: "failed",
           error: `Could not reach PayPrime: ${err instanceof Error ? err.message : String(err)}`,
@@ -338,9 +348,9 @@ export const runCibilReport = createServerFn({ method: "POST" })
     const outcome = readCibilOutcome(httpStatus, json);
     const cost = outcome.billable ? priceFor(service, outcome.status, settings.rate_card) : 0;
 
-    // Ledger row: billing fields only. The report never goes in debtor_traces (agent-readable).
+    // Ledger row: billing fields only; the report itself goes in cibil_reports.
     await admin
-      .from("debtor_traces")
+      .from("insights_manual_lookups")
       .update({
         state: outcome.billable ? "done" : "failed",
         http_status: httpStatus,
@@ -379,7 +389,7 @@ export const runCibilReport = createServerFn({ method: "POST" })
       .insert({
         client_id: caller.clientId,
         debtor_id: data.debtorId,
-        trace_id: pending.id,
+        lookup_id: pending.id,
         requested_by: caller.agentId ?? null,
         request: body,
         txn_id: outcome.txnId,
@@ -416,4 +426,100 @@ export const getCibilReportData = createServerFn({ method: "POST" })
     if (error) throw new Error(`Could not load the report (${error.message})`);
     if (!row || row.client_id !== caller.clientId) throw new Error("Report not found");
     return { response: (row.response as Json | null) ?? null };
+  });
+
+export interface CibilDebtorHit {
+  id: string;
+  name: string;
+  loanReference: string;
+  /** Last 4 digits only — enough to tell two borrowers apart. */
+  phoneTail: string;
+  portfolio: string;
+}
+
+/** Find a borrower to pull a report on (Admin → Insights). Searches the admin's own company by
+ *  loan ID, name or mobile number. */
+export const searchCibilDebtors = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, query: z.string().trim().min(2).max(60) }).parse(d),
+  )
+  .handler(async ({ data }): Promise<CibilDebtorHit[]> => {
+    const caller = await requireAdmin(data.accessToken);
+    enforceRateLimit(`cibil-search:${caller.authUserId}`, 60, 60_000);
+    // Only characters a loan ID, name or number can hold — PostgREST's or() filter treats commas,
+    // parentheses and dots as syntax, and % / _ as wildcards.
+    const q = data.query.replace(/[^A-Za-z0-9 \-/]/g, " ").trim();
+    if (q.length < 2) return [];
+    const digits = q.replace(/\D/g, "");
+    const filters = [`loan_reference.ilike.*${q}*`, `name.ilike.*${q}*`];
+    if (digits.length >= 4) filters.push(`phone_primary.ilike.*${digits}*`);
+
+    const { data: rows, error } = await db()
+      .from("debtors")
+      .select("id, name, loan_reference, phone_primary, portfolios(lender_name, product_type)")
+      .eq("client_id", caller.clientId)
+      .is("archived_at", null)
+      .or(filters.join(","))
+      .order("name")
+      .limit(25);
+    if (error) throw new Error(`Search failed (${error.message})`);
+    return ((rows ?? []) as Row[]).map((r) => {
+      const p = r.portfolios as { lender_name?: string; product_type?: string } | null;
+      return {
+        id: String(r.id),
+        name: String(r.name ?? ""),
+        loanReference: String(r.loan_reference ?? ""),
+        phoneTail: String(r.phone_primary ?? "").slice(-4),
+        portfolio: [p?.lender_name, p?.product_type].filter(Boolean).join(" · "),
+      };
+    });
+  });
+
+export interface CibilReportListRow {
+  id: string;
+  debtorId: string;
+  debtorName: string;
+  loanReference: string;
+  createdAt: string;
+  score: number | null;
+  htmlUrl: string | null;
+  requestedByName: string | null;
+}
+
+/** The company's recent CIBIL reports, newest first (Admin → Insights). */
+export const listCibilReports = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const caller = await requireAdmin(data.accessToken);
+    const [settings, consent, res] = await Promise.all([
+      loadSettings(caller.clientId),
+      consentAt(caller.clientId),
+      db()
+        .from("cibil_reports")
+        .select(
+          "id, debtor_id, created_at, score, html_url, agents(name), debtors(name, loan_reference)",
+        )
+        .eq("client_id", caller.clientId)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    ]);
+    const onPlan =
+      settings.enabled && settings.enabled_services.includes(CIBIL_SERVICE) && !!consent;
+    const rows: CibilReportListRow[] = res.error
+      ? []
+      : ((res.data ?? []) as Row[]).map((r) => {
+          const d = r.debtors as { name?: string; loan_reference?: string } | null;
+          const a = r.agents as { name?: string } | null;
+          return {
+            id: String(r.id),
+            debtorId: String(r.debtor_id),
+            debtorName: d?.name ?? "",
+            loanReference: d?.loan_reference ?? "",
+            createdAt: String(r.created_at),
+            score: (r.score as number | null) ?? null,
+            htmlUrl: (r.html_url as string | null) ?? null,
+            requestedByName: a?.name ?? null,
+          };
+        });
+    return { onPlan, rows };
   });

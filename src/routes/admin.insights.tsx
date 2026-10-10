@@ -25,6 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { CibilAdminSection } from "@/components/profilex/cibil-admin-section";
 import { getAccessToken } from "@/lib/access-token";
 import {
   listManualInsights,
@@ -155,8 +156,12 @@ function AdminInsightsPage() {
     void load();
   }, [load]);
 
-  // CIBIL (provider "payprime") runs only against a debtor, from the debtor's Insights tab.
-  const services = useMemo(() => PROFILEX_SERVICES.filter((s) => plan.includes(s.id) && !s.provider), [plan]);
+  // CIBIL (provider "payprime") has its own section below — it runs against a debtor, not a
+  // typed-in value.
+  const services = useMemo(
+    () => PROFILEX_SERVICES.filter((s) => plan.includes(s.id) && !s.provider),
+    [plan],
+  );
   const service = services.find((s) => s.id === serviceId);
 
   useEffect(() => {
@@ -210,6 +215,8 @@ function AdminInsightsPage() {
           company — a "not found" is usually still charged.
         </p>
       </div>
+
+      <CibilAdminSection />
 
       {!enabled || services.length === 0 ? (
         <Card>

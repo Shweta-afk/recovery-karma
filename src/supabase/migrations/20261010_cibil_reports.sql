@@ -24,8 +24,9 @@ CREATE TABLE IF NOT EXISTS cibil_reports (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id     UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
   debtor_id     UUID NOT NULL REFERENCES debtors(id) ON DELETE CASCADE,
-  -- The billing ledger row for this pull.
-  trace_id      UUID REFERENCES debtor_traces(id) ON DELETE SET NULL,
+  -- The billing ledger row for this pull — in insights_manual_lookups, which only admins can read,
+  -- not debtor_traces (see 20261010_cibil_ledger_admin_only.sql).
+  lookup_id     UUID REFERENCES insights_manual_lookups(id) ON DELETE SET NULL,
   requested_by  UUID REFERENCES agents(id) ON DELETE SET NULL,
   -- What was sent (never the API token): name, PAN, DOB, address... as typed by the admin.
   request       JSONB NOT NULL,

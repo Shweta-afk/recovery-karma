@@ -50,7 +50,6 @@ import {
   refreshOpenRequest,
   requestInsights,
 } from "@/lib/insight-request-store";
-import { CibilPanel } from "@/components/profilex/cibil-panel";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -578,10 +577,8 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
         </div>
       )}
 
-      {/* CIBIL (PayPrime) has its own form, its own server action and is admins-only — both to
-          run and to read; the server enforces it, this just doesn't offer it to anyone else. */}
-      {user?.role === "admin" && <CibilPanel debtorId={debtorId} debtorName={debtorName} />}
-
+      {/* CIBIL (provider "payprime") is never shown here: it is admins-only and lives on
+          Admin → Insights (cibil-admin-section.tsx). */}
       {/* manualOnly services (e.g. DIN to Contact) have no debtor field to run against — they
           only ever appear on Admin > Insights, where an admin types the value in. */}
       {PROFILEX_SERVICES.filter((service) => !service.manualOnly && !service.provider).map(
