@@ -25,6 +25,7 @@ import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 import { ALL_SERVICE_IDS, getService, priceFor } from "./profilex/catalogue";
 import { insightsPriceChanges } from "./profilex/price-changes";
 import { fetchAllRows } from "./fetch-all-rows";
+import { APP_PING_BODY, APP_PING_PATH, addressFor, subdomainProblem } from "./company-address";
 import type { Json } from "./database.types";
 
 function db() {
@@ -324,7 +325,38 @@ export const getCompanies = createServerFn({ method: "POST" })
     return { rows };
   });
 
-const SUBDOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+/** Throws unless `slug` may become this company's address: allowed name (company-address.ts),
+ *  and the address already loads THIS app. A company's users are sent to their subdomain as soon
+ *  as it is saved, so saving one before its DNS record and Railway domain exist would lock them
+ *  out. Re-saving the company's current value skips both checks. */
+async function assertSubdomainAssignable(clientId: string, slug: string): Promise<void> {
+  const { data: row } = await db()
+    .from("clients")
+    .select("subdomain")
+    .eq("id", clientId)
+    .maybeSingle();
+  const current = (row as { subdomain: string | null } | null)?.subdomain ?? null;
+  const problem = subdomainProblem(slug, current);
+  if (problem) throw new Error(problem);
+  if (slug === current) return;
+
+  const address = addressFor(slug);
+  let live = false;
+  try {
+    const res = await fetch(`https://${address}${APP_PING_PATH}`, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(8000),
+    });
+    live = res.ok && (await res.text()).trim() === APP_PING_BODY;
+  } catch {
+    live = false;
+  }
+  if (!live) {
+    throw new Error(
+      `${address} doesn't open SamvadX yet. Add it as a domain in Railway and its DNS record in Hostinger first, wait until it loads, then save again.`,
+    );
+  }
+}
 
 /** Approves a pending company, optionally assigning its subdomain slug in the same step (the
  *  DNS/Railway domain itself is provisioned outside the app — this just records the slug once
@@ -345,9 +377,7 @@ export const approveCompany = createServerFn({ method: "POST" })
     if (!caller) throw new Error("Not authenticated as superadmin");
 
     const subdomain = data.subdomain?.trim().toLowerCase() || null;
-    if (subdomain && !SUBDOMAIN_RE.test(subdomain)) {
-      throw new Error("Subdomain must be lowercase letters, numbers and hyphens only");
-    }
+    if (subdomain) await assertSubdomainAssignable(data.clientId, subdomain);
 
     const admin = db();
     const patch: {
@@ -443,9 +473,7 @@ export const setCompanySubdomain = createServerFn({ method: "POST" })
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
     const subdomain = data.subdomain.trim().toLowerCase();
-    if (!SUBDOMAIN_RE.test(subdomain)) {
-      throw new Error("Subdomain must be lowercase letters, numbers and hyphens only");
-    }
+    await assertSubdomainAssignable(data.clientId, subdomain);
     const admin = db();
     const { data: before } = await admin
       .from("clients")

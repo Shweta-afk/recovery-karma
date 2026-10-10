@@ -7,6 +7,7 @@ import {
   verifySubdomainAccess,
 } from "./session-actions.server";
 import { roleNeedsEmailOtp, tokenHasEmailOtp } from "./login-otp";
+import { loginUrlFor, wrongAddressRedirect } from "./company-address";
 
 export type Role = "agent" | "manager" | "admin" | "superadmin";
 
@@ -43,6 +44,10 @@ export interface AuthUser {
    *  Undefined for a superadmin, who has no client_id. AppShell shows a "pending" gate screen
    *  instead of the app for anything other than "approved". */
   companyStatus?: "pending" | "approved" | "rejected";
+  /** The company's own sign-in subdomain (null = the platform address). Undefined = not known,
+   *  e.g. a profile cached before this field existed — never treated as "no subdomain", or a
+   *  stale cache would bounce a company's users off their own address. */
+  companySubdomain?: string | null;
 }
 
 export interface LoginResult {
@@ -52,6 +57,9 @@ export interface LoginResult {
    *  emailed to `otpEmail`, and the sign-in only completes through verifyLoginOtp(). */
   otpRequired?: boolean;
   otpEmail?: string;
+  /** Set when this company signs in at a different address: the login page sends the browser
+   *  to this URL (see company-address.ts). */
+  redirectTo?: string;
 }
 
 interface AuthCtx {
@@ -195,7 +203,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Embeds the agent's own client row via the client_id FK — one query gets both the
             // profile and the company's verification status (20260909_company_verification_and_
             // subdomain.sql), which the "pending" gate screen below needs on every login.
-            .select("name, email, role, agent_phone, session_nonce, clients(status)")
+            .select("name, email, role, agent_phone, session_nonce, clients(status, subdomain)")
             .eq("auth_user_id", authUserId)
             .maybeSingle(),
         ),
@@ -219,7 +227,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Embedded FK selects come back as an object for a to-one relationship, but supabase-js
     // types it defensively as possibly-array — narrow either shape down to one row.
-    const embeddedClient = data.clients as { status?: string } | { status?: string }[] | null;
+    type EmbeddedClient = { status?: string; subdomain?: string | null };
+    const embeddedClient = data.clients as EmbeddedClient | EmbeddedClient[] | null;
     const clientStatus = Array.isArray(embeddedClient) ? embeddedClient[0] : embeddedClient;
 
     const profile: AuthUser = {
@@ -229,6 +238,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role: data.role as Role,
       agentPhone: data.agent_phone as string | null,
       companyStatus: clientStatus?.status as AuthUser["companyStatus"],
+      companySubdomain: clientStatus ? (clientStatus.subdomain ?? null) : undefined,
     };
 
     localStorage.setItem(cacheKey, JSON.stringify({ profile, at: Date.now() }));
@@ -256,6 +266,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSignedOutReason(reason);
     setUser(null);
     window.location.replace("/login");
+  }
+
+  /** Signs this browser out HERE only (the session belongs to this address; the user's other
+   *  devices are untouched) and opens the company's own sign-in page. */
+  async function moveToCompanyAddress(subdomain: string) {
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch (err) {
+      console.error("[auth] signOut before moving address failed (continuing anyway):", err);
+    }
+    clearLocalCaches();
+    window.location.replace(loginUrlFor(subdomain));
   }
 
   useEffect(() => {
@@ -291,6 +313,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             "For security, admin accounts now confirm each sign-in with a code sent to your email. Please sign in again.",
           );
           return;
+        }
+        // A session saved on another company's address, or on the platform address by a
+        // company that now has its own (sign-ins before 2026-10-10 were not routed): move it.
+        // Superadmins may be anywhere; an unknown subdomain (undefined) is never acted on.
+        if (profile && profile.role !== "superadmin" && profile.companySubdomain !== undefined) {
+          const target = wrongAddressRedirect(window.location.hostname, profile.companySubdomain);
+          if (target) {
+            await moveToCompanyAddress(target);
+            return;
+          }
         }
         setUser(profile);
       } catch (err) {
@@ -382,9 +414,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loggingInRef.current = false;
       return { error: error.message, user: null };
     }
-    // Company-subdomain scoping (20260909_subdomain_login_scoping — see
-    // session-actions.server.ts's verifySubdomainAccess): if this hostname is a company's
-    // assigned subdomain, only that company's own users may sign in here at all. Checked
+    // Company addresses (company-address.ts, session-actions.server.ts's
+    // verifySubdomainAccess): each company signs in only at its own address; anyone on the
+    // wrong one is sent to the right one. Checked
     // BEFORE enforceSingleSession/profile fetch and, unlike those, is NOT best-effort — a
     // rejection here signs the browser back out immediately rather than letting the wrong
     // company's user proceed. Also runs before any sign-in code is emailed.
@@ -394,10 +426,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           data: { accessToken: data.session.access_token, hostname: window.location.hostname },
         });
         if (!subdomainCheck.ok) {
-          await supabase.auth.signOut();
+          // Local only: a global sign-out would end this person's real session on their own
+          // company's address, on every device, just for typing the wrong address once.
+          await supabase.auth.signOut({ scope: "local" });
+          clearLocalCaches();
           setLoading(false);
           loggingInRef.current = false;
-          return { error: subdomainCheck.error, user: null };
+          return {
+            error: subdomainCheck.error,
+            user: null,
+            redirectTo: subdomainCheck.redirectTo
+              ? loginUrlFor(subdomainCheck.redirectTo)
+              : undefined,
+          };
         }
       } catch (err) {
         // Fail OPEN here too (matches verifySubdomainAccess's own DB-lookup failure mode) —

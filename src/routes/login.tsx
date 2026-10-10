@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { useAuth, homeRouteForRole, type Role, type AuthUser } from "@/lib/auth";
+import { MOVED_PARAM } from "@/lib/company-address";
 
 // Same as setup.tsx: Supabase's email codes are 8 digits on this project.
 const OTP_LENGTH = 8;
@@ -41,6 +42,17 @@ function LoginPage() {
   const [otpEmail, setOtpEmail] = useState<string | null>(null);
   const [otp, setOtp] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0);
+  // Arrived here from another address (company-address.ts): explain, once, and drop the flag
+  // from the address bar so a bookmark of this page is the clean one.
+  const [movedHere, setMovedHere] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get(MOVED_PARAM) !== "1") return;
+    setMovedHere(true);
+    params.delete(MOVED_PARAM);
+    const rest = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+  }, []);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -90,6 +102,13 @@ function LoginPage() {
 
     if (result.error) {
       setError(result.error);
+      // This company signs in at its own address: show why for a moment, then go there.
+      // Stays "loading" so the form can't be resubmitted on the wrong address meanwhile.
+      if (result.redirectTo) {
+        const target = result.redirectTo;
+        setTimeout(() => window.location.assign(target), 2500);
+        return;
+      }
       setLoading(false);
       return;
     }
@@ -258,7 +277,18 @@ function LoginPage() {
                       </div>
                     </div>
 
-                    {signedOutReason && !error && (
+                    {movedHere && !error && (
+                      <Alert className="py-2">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">
+                          Your company has its own sign-in address — this one,{" "}
+                          {window.location.host}. Please sign in here, and bookmark this page for
+                          next time.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {signedOutReason && !error && !movedHere && (
                       <Alert className="py-2">
                         <AlertCircle className="h-4 w-4" />
                         <AlertDescription className="text-sm">{signedOutReason}</AlertDescription>

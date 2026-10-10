@@ -9,12 +9,7 @@ import { randomBytes } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import { roleNeedsEmailOtp } from "./login-otp";
-
-// Matches a single-label subdomain of samvadx.com — "raerae.samvadx.com" -> "raerae". Deliberately
-// does NOT match a bare "samvadx.com", "www.samvadx.com", any *.up.railway.app domain, or
-// "localhost": only an exact one-label samvadx.com subdomain can ever be scoped, so the
-// platform's own domains and local dev are never accidentally restricted.
-const SUBDOMAIN_HOSTNAME_RE = /^([a-z0-9-]+)\.samvadx\.com$/i;
+import { addressFor, subdomainFromHostname, wrongAddressRedirect } from "./company-address";
 
 /** Whether this account must confirm the sign-in with an emailed code (admins and
  * superadmins — see login-otp.ts). Called by login() with the PASSWORD session's token, so it
@@ -41,13 +36,11 @@ export const checkLoginOtpRequired = createServerFn({ method: "POST" })
   });
 
 /** Called once, right after a successful sign-in (see auth.tsx's login()), with the hostname
- * the browser is actually on. If that hostname is a company's assigned subdomain
- * (clients.subdomain, set by a superadmin — 20260909_company_verification_and_subdomain.sql),
- * only that company's own users may sign in there; anyone else's login is rejected outright,
- * before enforceSingleSession or the profile fetch ever run. A superadmin (no client_id) and
- * any hostname that ISN'T a claimed company subdomain (including axiotta.samvadx.com today,
- * since nothing has claimed "axiotta" as a subdomain) are unaffected — this only restricts
- * logins on a subdomain a superadmin has actually assigned to one specific company. */
+ * the browser is on. Each company signs in only at its own address: <subdomain>.samvadx.com if a
+ * superadmin assigned one, else the platform address — see company-address.ts for the rule and
+ * why it is routing, not data security. A user on the wrong address gets `redirectTo`, the
+ * subdomain they belong on; the browser sends them there. Superadmins may sign in anywhere, and
+ * hosts outside samvadx.com (localhost, previews) are never checked. */
 export const verifySubdomainAccess = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
@@ -57,54 +50,54 @@ export const verifySubdomainAccess = createServerFn({ method: "POST" })
       })
       .parse(d),
   )
-  .handler(async ({ data }) => {
-    const match = SUBDOMAIN_HOSTNAME_RE.exec(data.hostname.trim().toLowerCase());
-    if (!match) return { ok: true as const };
-    const slug = match[1];
+  .handler(
+    async ({ data }): Promise<{ ok: true } | { ok: false; error: string; redirectTo?: string }> => {
+      if (!subdomainFromHostname(data.hostname)) return { ok: true };
 
-    const admin = getSupabaseAdmin();
-    const { data: client, error: clientErr } = await admin
-      .from("clients")
-      .select("id, company_name")
-      .eq("subdomain", slug)
-      .maybeSingle();
-    if (clientErr) {
-      // Fail OPEN on a lookup error rather than locking everyone on this subdomain out over a
-      // transient DB blip — the worst case is the same as before this feature existed.
-      console.error(`[verifySubdomainAccess] lookup failed for subdomain "${slug}":`, clientErr);
-      return { ok: true as const };
-    }
-    if (!client) return { ok: true as const }; // nobody's claimed this subdomain — unscoped
+      const admin = getSupabaseAdmin();
+      const {
+        data: { user },
+        error: userErr,
+      } = await admin.auth.getUser(data.accessToken);
+      if (userErr || !user) {
+        return { ok: false, error: "Your session has expired — please sign in again." };
+      }
 
-    const {
-      data: { user },
-      error: userErr,
-    } = await admin.auth.getUser(data.accessToken);
-    if (userErr || !user) {
-      return { ok: false as const, error: "Your session has expired — please sign in again." };
-    }
+      const [superadmin, agent] = await Promise.all([
+        admin.from("superadmins").select("id").eq("auth_user_id", user.id).maybeSingle(),
+        admin.from("agents").select("client_id").eq("auth_user_id", user.id).maybeSingle(),
+      ]);
+      if (superadmin.error || agent.error) {
+        // Fail OPEN on a lookup error rather than locking people out over a transient DB blip —
+        // this check is routing, not the data boundary (RLS is).
+        console.error("[verifySubdomainAccess] lookup failed:", superadmin.error ?? agent.error);
+        return { ok: true };
+      }
+      if (superadmin.data) return { ok: true };
+      // No company profile at all: nothing to route by; the app shows its own error for this.
+      if (!agent.data?.client_id) return { ok: true };
 
-    // A superadmin isn't scoped to any one client_id, so they're never blocked by a company's
-    // own subdomain — they're expected to be able to reach any company from anywhere.
-    const { data: superadmin } = await admin
-      .from("superadmins")
-      .select("id")
-      .eq("auth_user_id", user.id)
-      .maybeSingle();
-    if (superadmin) return { ok: true as const };
+      const { data: company, error: companyErr } = await admin
+        .from("clients")
+        .select("company_name, subdomain")
+        .eq("id", agent.data.client_id)
+        .maybeSingle();
+      if (companyErr || !company) {
+        console.error("[verifySubdomainAccess] company lookup failed:", companyErr);
+        return { ok: true };
+      }
+      const target = wrongAddressRedirect(data.hostname, company.subdomain);
+      if (!target) return { ok: true };
 
-    const { data: agent } = await admin
-      .from("agents")
-      .select("client_id")
-      .eq("auth_user_id", user.id)
-      .maybeSingle();
-    if (agent?.client_id === client.id) return { ok: true as const };
-
-    return {
-      ok: false as const,
-      error: `This address is only for ${client.company_name}'s team — sign in at your own company's address instead.`,
-    };
-  });
+      return {
+        ok: false,
+        error: company.subdomain
+          ? `${company.company_name} signs in at ${addressFor(target)} — taking you there now.`
+          : `Your company signs in at ${addressFor(target)} — taking you there now.`,
+        redirectTo: target,
+      };
+    },
+  );
 
 export const enforceSingleSession = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>

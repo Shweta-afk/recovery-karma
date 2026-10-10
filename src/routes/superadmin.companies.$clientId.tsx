@@ -63,6 +63,7 @@ import {
 import { contactRate } from "@/lib/platform-usage";
 import { rangeInstants, rangeLabel } from "@/lib/superadmin-range";
 import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
+import { PLATFORM_SUBDOMAIN, addressFor } from "@/lib/company-address";
 
 type EditableRole = "agent" | "manager" | "admin";
 type CompanyStatus = "pending" | "approved" | "rejected";
@@ -876,6 +877,11 @@ function SuperadminCompanyDetailPage() {
                   Save
                 </Button>
               </div>
+              <p className="text-[11px] text-muted-foreground">
+                This company's users can sign in only at this address; without one they use{" "}
+                {addressFor(PLATFORM_SUBDOMAIN)}. The address must already open SamvadX (Railway
+                domain + DNS record) before it can be saved.
+              </p>
             </CardContent>
           </Card>
 

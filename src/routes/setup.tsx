@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { supabase } from "@/lib/supabase";
+import { PLATFORM_SUBDOMAIN, addressFor, subdomainFromHostname } from "@/lib/company-address";
 
 const RESEND_COOLDOWN_SECONDS = 45;
 const PENDING_SETUP_KEY_PREFIX = "samvadx-pending-setup:";
@@ -40,6 +41,15 @@ function SetupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
+
+  // New companies sign up on the platform address, never on an existing company's address:
+  // their users will sign in there until a superadmin assigns their own (company-address.ts).
+  useEffect(() => {
+    const here = subdomainFromHostname(window.location.hostname);
+    if (here && here !== PLATFORM_SUBDOMAIN) {
+      window.location.replace(`https://${addressFor(PLATFORM_SUBDOMAIN)}/setup`);
+    }
+  }, []);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -256,8 +266,9 @@ function SetupPage() {
                   <h2 className="text-xl font-semibold">Verify your email</h2>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Enter the 8-digit code we sent to <span className="font-medium">{adminEmail}</span>,
-                  or click the confirmation link in that same email — either one works.
+                  Enter the 8-digit code we sent to{" "}
+                  <span className="font-medium">{adminEmail}</span>, or click the confirmation link
+                  in that same email — either one works.
                 </p>
               </CardHeader>
               <CardContent>

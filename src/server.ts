@@ -5,6 +5,7 @@ import { renderErrorPage } from "./lib/error-page";
 import { CSP_REPORT_PATH, buildCspReportOnly, handleCspReport } from "./lib/csp";
 import { TELEPHONY_WEBHOOK_PATH, handleTelephonyWebhook } from "./lib/telephony/webhook-handler";
 import { ARCHIVE_CRON_PATH, handleArchiveCron } from "./lib/archive-cron.server";
+import { APP_PING_BODY, APP_PING_PATH } from "./lib/company-address";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -84,6 +85,13 @@ async function handleRequest(request: Request, env: unknown, ctx: unknown): Prom
     // The daily archive schedule (pg_cron + pg_net) — see src/lib/archive-cron.server.ts.
     if (new URL(request.url).pathname === ARCHIVE_CRON_PATH) {
       return await handleArchiveCron(request);
+    }
+    // Proves an address really reaches this app — checked before a company is given a
+    // subdomain (see company-address.ts). Fixed text only; says nothing about anyone.
+    if (new URL(request.url).pathname === APP_PING_PATH) {
+      return new Response(APP_PING_BODY, {
+        headers: { "content-type": "text/plain", "cache-control": "no-store" },
+      });
     }
     const handler = await getServerEntry();
     const response = await handler.fetch(request, env, ctx);

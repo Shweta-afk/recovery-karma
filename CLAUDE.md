@@ -57,6 +57,16 @@ different Cloudflare D1 backend from an earlier iteration of the project).
   returns Railway's `x-railway-fallback` "Application not found" 404. Checking it wastes real
   debugging time (it did on 2026-08-21); use `axiotta.samvadx.com`. Auto-deploys on push to
   `main`, GitHub repo `Shweta-afk/recovery-karma`.
+- **Company addresses (2026-10-10, `src/lib/company-address.ts`).** A company with
+  `clients.subdomain` signs in ONLY at `<subdomain>.samvadx.com`; one without (new/pending) at
+  the platform address `app.samvadx.com`, which is assigned to no company (user's decision —
+  Axiotta's own team has `axiotta` like any other company; Demo held `app` and moves to `demo`). Wrong address → signed out locally and sent to the right one, at login
+  (`verifySubdomainAccess`) and on page load (`auth.tsx`). Superadmins may be anywhere; hosts
+  outside `*.samvadx.com` (localhost, previews) are never checked. `/setup` always runs on the
+  platform address. Saving a subdomain refuses reserved names (`RESERVED_SUBDOMAINS`) and any address that doesn't answer `/api/samvadx-ping` yet — saving one
+  before its Railway domain + Hostinger record exist would lock that company out. This is routing,
+  not data security; RLS is the boundary. A company on its own custom domain (not
+  `*.samvadx.com`) is not handled yet.
 - **⚠️ Railway's env vars can silently drift from `.env.local`/`.env.example`.** This has
   already broken production once: `TELEPHONY_PROVIDER` stayed `"tata"` on Railway for over a
   week after Tata was removed from the code, silently no-op'ing every call in production. When
