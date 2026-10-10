@@ -614,7 +614,7 @@ promise_date" as promises would start counting callbacks.
 
 The view for SamvadX/Axiotta itself, across every company. Pages (sidebar order): **Overview**
 (`/superadmin`, the home page), **Companies** (`/superadmin/companies`), **Insights Wallet**,
-**Insights Activity**, **Invoices**, **Revenue**, **Superadmin Activity**.
+**Insights Activity**, **Invoices**, **Revenue**, **Contracts**, **Superadmin Activity**, **Help**.
 
 ⚠️ **Feature usage only — never a company's collections.** No payments, promise amounts,
 recovery figures or anything a company collected from borrowers appears in this portal (product
@@ -645,13 +645,20 @@ the data is cross-company and only the service role may read it.
 - **Company detail** (`superadmin.companies.$clientId.tsx`) is four tabs kept in `?tab=`
   (`overview` | `users` | `billing` | `settings`). Users shows each person's **last sign-in**,
   read from Supabase Auth (`auth.admin.listUsers` → `last_sign_in_at`) — the app itself records
-  no login history.
+  no login history. **Billing** holds seat limits, the company's **price list**, its invoices
+  (setup + monthly forms prefilled from the price list, top-ups to invoice, and each invoice's
+  payments/credit notes) and its Insights wallet history — see "Billing" below.
 - **Revenue** (`superadmin.revenue.tsx`; pure logic `src/lib/revenue-report.ts`, tested in
-  `scripts/superadmin-reports.test.ts`) reads the `invoices` table: billed (issued in range, not
-  cancelled), received (`paid_at` in range), outstanding/overdue **as of today whatever the
-  dates**, ageing buckets by days past `due_date`, GST by invoice month (the Excel adds the full
-  register with recipient GSTINs for filing), Insights margin per company (flags rate cards below
-  ProfileX cost), seat-upsell list. Says so instead of failing if `invoices` is missing.
+  `scripts/superadmin-reports.test.ts`) reads `invoices`, `invoice_payments` and `credit_notes`:
+  billed (issued in range, not cancelled), credit notes (issued in range) and net billed;
+  received = **payments by the date the money arrived** (`received_on`; an invoice marked paid
+  before payments were recorded counts once on its `paid_at`); outstanding/overdue = what is
+  **still owed today after payments and credit notes, whatever the dates**, with ageing buckets
+  by days past `due_date`; GST by month (invoices by invoice date, less credit notes in the month
+  THEY were issued); Insights margin per company (flags rate cards below ProfileX cost);
+  seat-upsell list. Excel adds the invoice register, credit-note register (recipient GSTINs, for
+  filing), payments received and unpaid invoices. Says so instead of failing if `invoices` is
+  missing.
 
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90
@@ -667,8 +674,8 @@ means (e.g. the Slowing threshold), update its glossary entry too.** A test fail
 entry is missing from the Help page.
 
 **Every superadmin table downloads as Excel** via `downloadXlsx` (`src/lib/xlsx-export.ts`,
-exceljs loaded on demand). The one exception is the invoices card on a company's Billing tab
-(`components/billing/company-invoices-card.tsx`) — Revenue covers those figures. Excel exports
+exceljs loaded on demand). The one exception is the invoice table on a company's Billing tab
+(`components/billing/company-invoices-card.tsx`) — Revenue and the Invoices page cover those. Excel exports
 leave out the typed-in mobile/UAN of manual Insights lookups on purpose.
 
 ### Billing: price lists, three invoice kinds, payments, credit notes — 2026-10-10
@@ -698,9 +705,21 @@ billing ↔ contracts don't import each other). Rules: `invoice-math.ts` (pure, 
 - **Contract templates** (`contract_templates`, `src/lib/contract-template.ts`): text with
   `{{placeholders}}` filled from billing details, price list, seats and Insights prices; a
   generated document stores its frozen text in `contract_documents.body` (file XOR body).
+- **Screens**: company Billing tab = `CompanyPriceListCard` + `CompanyInvoicesCard` (setup form
+  prefilled with "Reset to price list"; monthly form = month picker of the current + 3 previous
+  IST months, seats default to active agents, already-invoiced months disabled). Opening an
+  invoice anywhere (`InvoiceTable` with `onChanged`) shows `InvoiceLedger`: what is still owed,
+  record/remove payments, issue/print credit notes, cancel. The invoice table's status badge and
+  "Still owed" column come from `invoiceBalance` (Paid / Part paid / Overdue / Unpaid /
+  Credited / Cancelled).
 - **Printing**: `PrintButton` (`invoice-document.tsx`) mounts its print copy ONLY while printing —
   several print buttons can be on screen (invoice + credit notes) and print CSS shows every
-  `.invoice-print-root`.
+  `.invoice-print-root`. Credit notes print on the invoice layout (`InvoiceDocument` with
+  `credit`), generated contracts via `ContractBody` (`components/contracts/contract-body.tsx`).
+- **Types**: `database.types.ts` was regenerated after this migration (51 tables), but
+  `billing-actions.server.ts`, `price-list.server.ts`, `contracts.server.ts` and parts of
+  `invoice-actions.server.ts` / `revenue-report.server.ts` still read the new tables through an
+  untyped client cast (written before the regeneration). Safe to replace with the typed client.
 
 ### Contracts (Admin → Contracts, Superadmin → Contracts) — 2026-10-09
 
@@ -745,7 +764,9 @@ server on first upload; the browser uploads straight to a signed upload URL).
 | `admin/reports`, `admin/users`, `admin/teams`, `admin/settings`                             | ✅ Real                                                                                                                                                                                                                                                           |
 | `admin/index`                                                                               | ✅ Real (navigation tiles)                                                                                                                                                                                                                                        |
 | `superadmin/` (Overview), `superadmin/companies`, company detail tabs, `superadmin/revenue` | ✅ Real (2026-10-09) — usage via `superadmin_usage_totals`, revenue via `invoices`. See "Superadmin portal" above                                                                                                                                                 |
-| `superadmin/wallet`, `superadmin/insights`, `superadmin/invoices`, `superadmin/activity`    | ✅ Real; shared date filter + Excel added 2026-10-09                                                                                                                                                                                                              |
+| `superadmin/wallet`, `superadmin/insights`, `superadmin/invoices`, `superadmin/activity`    | ✅ Real; shared date filter + Excel added 2026-10-09. Invoices: payments, credit notes and "Still owed" since 2026-10-10                                                                                                                                          |
+| `superadmin/contracts`, `superadmin/help`                                                   | ✅ Real. Contracts = uploads, templates, drafts, published changes + acceptances; superadmin-only for now (`CONTRACTS_VISIBLE_TO_COMPANIES`). Help = glossary + page guides                                                                                       |
+| `admin/contracts`                                                                           | ⏸ Built but switched off (`CONTRACTS_VISIBLE_TO_COMPANIES = false`) — shows "not available yet"                                                                                                                                                                   |
 
 ---
 
