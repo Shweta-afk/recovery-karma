@@ -11,6 +11,16 @@ import { getSupabaseAdmin, verifyCaller, verifySuperadminCaller } from "./supaba
 import { logSuperadminActivity } from "./superadmin-actions.server";
 import { isDayKey } from "./superadmin-range";
 import { emailConfigured, sendEmails } from "./email.server";
+import { loadSettings } from "./profilex-actions.server";
+import { PROFILEX_SERVICES, priceLine } from "./profilex/catalogue";
+import { todayIstKey } from "./date-filter";
+import {
+  DEFAULT_TEMPLATE_BODY,
+  DEFAULT_TEMPLATE_TITLE,
+  fillTemplate,
+  templateValueMap,
+} from "./contract-template";
+import { loadPriceList } from "./price-list.server";
 import {
   CONTRACTS_VISIBLE_TO_COMPANIES,
   changeAppliesTo,
@@ -43,8 +53,8 @@ interface DocumentRow {
   title: string;
   version_label: string | null;
   effective_date: string;
-  file_path: string;
-  file_name: string;
+  file_path: string | null;
+  file_name: string | null;
   file_size: number | null;
   notes: string | null;
   created_at: string;
@@ -59,6 +69,7 @@ interface ChangeRow {
   document_id: string | null;
   created_at: string;
   withdrawn_at: string | null;
+  status: "draft" | "published";
 }
 interface AcceptanceRow {
   change_id: string;
@@ -68,10 +79,12 @@ interface AcceptanceRow {
   accepted_at: string;
 }
 
+// `body` is left out on purpose: generated documents can be long, and lists only need to know one
+// exists (file_path IS NULL ⇒ generated). getContractDocumentBody reads it when opened.
 const DOC_COLUMNS =
   "id, client_id, title, version_label, effective_date, file_path, file_name, file_size, notes, created_at";
 const CHANGE_COLUMNS =
-  "id, title, body, effective_date, client_ids, requires_acceptance, document_id, created_at, withdrawn_at";
+  "id, title, body, effective_date, client_ids, requires_acceptance, document_id, created_at, withdrawn_at, status";
 
 const toDocument = (r: DocumentRow, companyName: string | null): ContractDocument => ({
   id: r.id,
@@ -82,6 +95,7 @@ const toDocument = (r: DocumentRow, companyName: string | null): ContractDocumen
   effectiveDate: r.effective_date,
   fileName: r.file_name,
   fileSize: r.file_size === null ? null : Number(r.file_size),
+  generated: r.file_path === null,
   notes: r.notes,
   createdAt: r.created_at,
 });
@@ -95,6 +109,7 @@ const toChange = (r: ChangeRow): ContractChange => ({
   documentId: r.document_id,
   createdAt: r.created_at,
   withdrawnAt: r.withdrawn_at,
+  status: r.status ?? "published",
 });
 const toAcceptance = (r: AcceptanceRow): ContractAcceptance => ({
   clientId: r.client_id,
@@ -169,7 +184,18 @@ export interface SuperadminContractsView {
   emailConfigured: boolean;
   companies: { id: string; name: string; adminEmails: string[] }[];
   documents: ContractDocument[];
+  /** Published changes only. */
   changes: SuperadminContractChange[];
+  /** Unpublished drafts (e.g. made when a company's prices changed) — never shown to companies. */
+  drafts: (ContractChange & { companyNames: string[] })[];
+  templates: ContractTemplate[];
+}
+
+export interface ContractTemplate {
+  id: string;
+  title: string;
+  body: string;
+  updatedAt: string;
 }
 
 export const getSuperadminContracts = createServerFn({ method: "POST" })
@@ -177,7 +203,7 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SuperadminContractsView> => {
     await requireSuperadmin(data.accessToken);
     const admin = db();
-    const [clientsRes, docsRes, changesRes, accRes, admins] = await Promise.all([
+    const [clientsRes, docsRes, changesRes, accRes, admins, templatesRes] = await Promise.all([
       admin.from("clients").select("id, company_name, status").order("company_name"),
       contractsDb()
         .from("contract_documents")
@@ -193,6 +219,10 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
         .from("contract_acceptances")
         .select("change_id, client_id, accepted_name, accepted_email, accepted_at"),
       adminsOf(null),
+      contractsDb()
+        .from("contract_templates")
+        .select("id, title, body, updated_at")
+        .order("updated_at", { ascending: false }),
     ]);
     for (const r of [clientsRes, docsRes, changesRes, accRes]) {
       if (r.error) throw new Error(`Could not load contracts (${r.error.message})`);
@@ -228,20 +258,40 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
       documents: ((docsRes.data ?? []) as DocumentRow[]).map((r) =>
         toDocument(r, r.client_id ? (nameById.get(r.client_id) ?? null) : null),
       ),
-      changes: ((changesRes.data ?? []) as ChangeRow[]).map((r) => {
-        const change = toChange(r);
-        return {
-          ...change,
-          companies: live
-            .filter((c) => changeAppliesTo(change, c.id))
-            .map((c) => ({
-              clientId: c.id,
-              companyName: c.company_name,
-              acceptance: accByKey.get(`${change.id}|${c.id}`) ?? null,
-              adminEmails: emailsByClient.get(c.id) ?? [],
-            })),
-        };
-      }),
+      drafts: ((changesRes.data ?? []) as ChangeRow[])
+        .map(toChange)
+        .filter((c) => c.status === "draft")
+        .map((c) => ({
+          ...c,
+          companyNames: c.clientIds ? c.clientIds.map((id) => nameById.get(id) ?? "Unknown") : [],
+        })),
+      // Code deployed ahead of the templates migration: no templates, not an error.
+      templates: templatesRes.error
+        ? []
+        : (
+            (templatesRes.data ?? []) as {
+              id: string;
+              title: string;
+              body: string;
+              updated_at: string;
+            }[]
+          ).map((t) => ({ id: t.id, title: t.title, body: t.body, updatedAt: t.updated_at })),
+      changes: ((changesRes.data ?? []) as ChangeRow[])
+        .filter((r) => (r.status ?? "published") === "published")
+        .map((r) => {
+          const change = toChange(r);
+          return {
+            ...change,
+            companies: live
+              .filter((c) => changeAppliesTo(change, c.id))
+              .map((c) => ({
+                clientId: c.id,
+                companyName: c.company_name,
+                acceptance: accByKey.get(`${change.id}|${c.id}`) ?? null,
+                adminEmails: emailsByClient.get(c.id) ?? [],
+              })),
+          };
+        }),
     };
   });
 
@@ -340,6 +390,39 @@ export const saveContractDocument = createServerFn({ method: "POST" })
     return { id: (row as { id: string }).id };
   });
 
+/** Tells every active admin of the companies a change applies to — in the app (the bell) and
+ *  by email when Resend is set up. Nobody is told while contracts are superadmin-only. A failed
+ *  notification or email never undoes the publish. */
+async function notifyChange(change: {
+  title: string;
+  body: string;
+  effectiveDate: string;
+  requiresAcceptance: boolean;
+  clientIds: string[] | null;
+}) {
+  const admins = CONTRACTS_VISIBLE_TO_COMPANIES ? await adminsOf(change.clientIds) : [];
+  let emailed: number | null = null;
+  if (admins.length) {
+    const message = change.requiresAcceptance
+      ? `Contract update: "${change.title}" (effective ${change.effectiveDate}). Please review and accept it under Contracts.`
+      : `Contract update: "${change.title}" (effective ${change.effectiveDate}). See Contracts for details.`;
+    const { error: nErr } = await db()
+      .from("notifications")
+      .insert(
+        admins.map((a) => ({
+          client_id: a.client_id,
+          to_agent_id: a.id,
+          from_name: "SamvadX",
+          message,
+        })),
+      );
+    if (nErr) console.error("[contracts] notifications failed:", nErr);
+    const { subject, text } = changeEmail(change);
+    emailed = await sendEmails(admins.map((a) => ({ to: a.email, subject, text })));
+  }
+  return { admins, emailed };
+}
+
 export const publishContractChange = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
@@ -357,7 +440,6 @@ export const publishContractChange = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const caller = await requireSuperadmin(data.accessToken);
-    const admin = db();
     const clientIds = data.clientIds ? [...new Set(data.clientIds)] : null;
 
     const { data: row, error } = await contractsDb()
@@ -370,32 +452,20 @@ export const publishContractChange = createServerFn({ method: "POST" })
         requires_acceptance: data.requiresAcceptance,
         document_id: data.documentId ?? null,
         created_by: caller.superadminId,
+        status: "published",
+        published_at: new Date().toISOString(),
       })
       .select("id")
       .single();
     if (error || !row) throw new Error(`Could not publish the change (${error?.message})`);
 
-    // Tell every active admin of the companies it applies to — in the app (the bell) and by
-    // email when Resend is set up. Nobody is told while contracts are superadmin-only.
-    const admins = CONTRACTS_VISIBLE_TO_COMPANIES ? await adminsOf(clientIds) : [];
-    let emailed: number | null = null;
-    if (admins.length) {
-      const message = data.requiresAcceptance
-        ? `Contract update: "${data.title}" (effective ${data.effectiveDate}). Please review and accept it under Contracts.`
-        : `Contract update: "${data.title}" (effective ${data.effectiveDate}). See Contracts for details.`;
-      const { error: nErr } = await admin.from("notifications").insert(
-        admins.map((a) => ({
-          client_id: a.client_id,
-          to_agent_id: a.id,
-          from_name: "SamvadX",
-          message,
-        })),
-      );
-      // The change itself is published; a failed notification or email must not undo it.
-      if (nErr) console.error("[publishContractChange] notifications failed:", nErr);
-      const { subject, text } = changeEmail(data);
-      emailed = await sendEmails(admins.map((a) => ({ to: a.email, subject, text })));
-    }
+    const { admins, emailed } = await notifyChange({
+      title: data.title,
+      body: data.body,
+      effectiveDate: data.effectiveDate,
+      requiresAcceptance: data.requiresAcceptance,
+      clientIds,
+    });
 
     await logSuperadminActivity({
       superadminId: caller.superadminId,
@@ -430,6 +500,7 @@ export const withdrawContractChange = createServerFn({ method: "POST" })
       .from("contract_changes")
       .update({ withdrawn_at: new Date().toISOString(), withdrawn_by: caller.superadminId })
       .eq("id", data.changeId)
+      .eq("status", "published")
       .is("withdrawn_at", null)
       .select("title")
       .maybeSingle();
@@ -472,6 +543,7 @@ async function loadAdminView(clientId: string): Promise<AdminContractsView> {
     contractsDb()
       .from("contract_changes")
       .select(CHANGE_COLUMNS)
+      .eq("status", "published")
       .or(`client_ids.is.null,client_ids.cs.{${clientId}}`)
       .order("created_at", { ascending: false })
       .limit(500),
@@ -552,6 +624,7 @@ export const acceptContractChange = createServerFn({ method: "POST" })
     if (!changeAppliesTo(change, caller.clientId)) {
       throw new Error("That contract change wasn't found");
     }
+    if (change.status !== "published") throw new Error("That contract change wasn't found");
     if (change.withdrawnAt) throw new Error("That change was withdrawn — nothing to accept");
     if (!change.requiresAcceptance) throw new Error("That change doesn't need acceptance");
 
@@ -596,7 +669,8 @@ export const getContractFileUrl = createServerFn({ method: "POST" })
       .eq("id", data.documentId)
       .maybeSingle();
     if (error || !row) throw new Error("That document wasn't found");
-    const doc = row as { client_id: string | null; file_path: string; file_name: string };
+    const doc = row as { client_id: string | null; file_path: string | null; file_name: string };
+    if (!doc.file_path) throw new Error("This document was generated — open it to view or print");
     // A company admin may open the platform terms and their own company's documents only.
     if (companyClientId && doc.client_id !== null && doc.client_id !== companyClientId) {
       throw new Error("That document wasn't found");
@@ -606,4 +680,338 @@ export const getContractFileUrl = createServerFn({ method: "POST" })
       .createSignedUrl(doc.file_path, DOWNLOAD_LINK_SECONDS, { download: doc.file_name });
     if (sErr || !signed) throw new Error(`Could not open the file (${sErr?.message})`);
     return { url: signed.signedUrl };
+  });
+
+// ── Drafts (made automatically when a company's prices change) ──────────────
+
+/**
+ * Records a price change as a DRAFT contract change for one company — reviewed and published
+ * (or discarded) on Superadmin → Contracts; never shown to the company while a draft. Called by
+ * savePriceList and the Insights price save. Returns the draft id, or null if it couldn't be
+ * written (the price change itself must still succeed).
+ */
+export async function createPriceChangeDraft(
+  superadminId: string,
+  clientId: string,
+  changes: string[],
+): Promise<string | null> {
+  const { data: c } = await db()
+    .from("clients")
+    .select("company_name")
+    .eq("id", clientId)
+    .maybeSingle();
+  const company = (c as { company_name: string } | null)?.company_name ?? "this company";
+  const { data, error } = await contractsDb()
+    .from("contract_changes")
+    .insert({
+      title: `Price update for ${company}`,
+      body: [
+        "The following prices change:",
+        "",
+        ...changes.map((ch) => `- ${ch}`),
+        "",
+        "All other terms stay the same.",
+      ].join("\n"),
+      effective_date: todayIstKey(),
+      client_ids: [clientId],
+      requires_acceptance: true,
+      status: "draft",
+      created_by: superadminId,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    console.error("[contracts] could not draft a price-change contract update:", error.message);
+    return null;
+  }
+  return (data as { id: string }).id;
+}
+
+export const updateDraftChange = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        changeId: idSchema,
+        title: z.string().trim().min(1).max(200),
+        body: z.string().trim().min(1).max(5000),
+        effectiveDate: daySchema,
+        requiresAcceptance: z.boolean(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    await requireSuperadmin(data.accessToken);
+    const { data: row, error } = await contractsDb()
+      .from("contract_changes")
+      .update({
+        title: data.title,
+        body: data.body,
+        effective_date: data.effectiveDate,
+        requires_acceptance: data.requiresAcceptance,
+      })
+      .eq("id", data.changeId)
+      .eq("status", "draft")
+      .select("id")
+      .maybeSingle();
+    if (error) throw new Error(`Could not save the draft (${error.message})`);
+    if (!row) throw new Error("That draft was already published or discarded");
+    return { ok: true };
+  });
+
+export const publishDraftChange = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, changeId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const { data: row, error } = await contractsDb()
+      .from("contract_changes")
+      .update({ status: "published", published_at: new Date().toISOString() })
+      .eq("id", data.changeId)
+      .eq("status", "draft")
+      .select(CHANGE_COLUMNS)
+      .maybeSingle();
+    if (error) throw new Error(`Could not publish the draft (${error.message})`);
+    if (!row) throw new Error("That draft was already published or discarded");
+    const change = toChange(row as ChangeRow);
+    const { admins, emailed } = await notifyChange(change);
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "contract_change_published",
+      clientId: change.clientIds?.length === 1 ? change.clientIds[0] : null,
+      summary: `Published contract change "${change.title}"`,
+      detail: { changeId: change.id, notifiedAdmins: admins.length, emailedAdmins: emailed ?? 0 },
+    });
+    return {
+      companiesCanSee: CONTRACTS_VISIBLE_TO_COMPANIES,
+      notifiedAdmins: admins.length,
+      emailedAdmins: emailed,
+      adminEmails: admins.map((a) => a.email),
+    };
+  });
+
+export const discardDraftChange = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, changeId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await requireSuperadmin(data.accessToken);
+    // Deleting is fine for a draft: no company ever saw it.
+    const { data: row, error } = await contractsDb()
+      .from("contract_changes")
+      .delete()
+      .eq("id", data.changeId)
+      .eq("status", "draft")
+      .select("id")
+      .maybeSingle();
+    if (error) throw new Error(`Could not discard the draft (${error.message})`);
+    if (!row) throw new Error("That draft was already published or discarded");
+    return { ok: true };
+  });
+
+// ── Templates and generated documents ───────────────────────────────────────
+
+const fmtLongDate = (day: string) =>
+  new Date(`${day}T12:00:00Z`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+/** Everything a template can mention about one company, read fresh from the database. */
+async function templateValuesFor(clientId: string, effectiveDate: string) {
+  const admin = db();
+  const [clientRes, billingRes, profileRes, prices, insights] = await Promise.all([
+    admin
+      .from("clients")
+      .select("company_name, max_agents, max_managers")
+      .eq("id", clientId)
+      .maybeSingle(),
+    admin
+      .from("client_billing")
+      .select("legal_name, gstin, address")
+      .eq("client_id", clientId)
+      .maybeSingle(),
+    admin
+      .from("billing_profile")
+      .select("legal_name, payment_terms_days")
+      .eq("id", "main")
+      .maybeSingle(),
+    loadPriceList(clientId),
+    loadSettings(clientId),
+  ]);
+  const client = clientRes.data as {
+    company_name: string;
+    max_agents: number | null;
+    max_managers: number | null;
+  } | null;
+  if (!client) throw new Error("That company wasn't found");
+  const billing = billingRes.data as {
+    legal_name: string;
+    gstin: string | null;
+    address: string;
+  } | null;
+  const profile = profileRes.data as {
+    legal_name: string;
+    payment_terms_days: number | null;
+  } | null;
+  const enabled = new Set(insights.enabled_services);
+  return templateValueMap({
+    companyName: client.company_name,
+    companyLegalName: billing?.legal_name ?? "",
+    companyGstin: billing?.gstin ?? null,
+    companyAddress: billing?.address ?? "",
+    supplierLegalName: profile?.legal_name ?? "",
+    effectiveDate: fmtLongDate(effectiveDate),
+    today: fmtLongDate(todayIstKey()),
+    prices,
+    paymentTermsDays: prices.paymentTermsDays ?? profile?.payment_terms_days ?? 15,
+    agentSeatLimit: client.max_agents,
+    managerSeatLimit: client.max_managers,
+    insightsPrices: PROFILEX_SERVICES.filter((s) => enabled.has(s.id)).map((s) => [
+      s.label,
+      priceLine(s, insights.rate_card),
+    ]),
+  });
+}
+
+export const saveContractTemplate = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        /** Omit to create a new template. */
+        templateId: idSchema.optional(),
+        title: z.string().trim().min(1).max(200),
+        body: z.string().trim().min(1).max(50000),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const now = new Date().toISOString();
+    const q = data.templateId
+      ? contractsDb()
+          .from("contract_templates")
+          .update({ title: data.title, body: data.body, updated_at: now })
+          .eq("id", data.templateId)
+      : contractsDb()
+          .from("contract_templates")
+          .insert({ title: data.title, body: data.body, created_by: caller.superadminId });
+    const { data: row, error } = await q.select("id").single();
+    if (error || !row) throw new Error(`Could not save the template (${error?.message})`);
+    return { id: (row as { id: string }).id };
+  });
+
+/** The starter template, for the "New template" button. */
+export const getDefaultContractTemplate = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    await requireSuperadmin(data.accessToken);
+    return { title: DEFAULT_TEMPLATE_TITLE, body: DEFAULT_TEMPLATE_BODY };
+  });
+
+/** Fills a template (saved or still being edited) for one company, without saving anything. */
+export const previewContractTemplate = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        body: z.string().max(50000),
+        effectiveDate: daySchema,
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    await requireSuperadmin(data.accessToken);
+    return fillTemplate(data.body, await templateValuesFor(data.clientId, data.effectiveDate));
+  });
+
+/** Generates a company's document from a template and its current prices, and saves it as a
+ *  new version. The text is frozen: later price changes never rewrite it. */
+export const generateCompanyContract = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        templateId: idSchema,
+        title: z.string().trim().min(1).max(200),
+        versionLabel: z.string().trim().max(40).optional(),
+        effectiveDate: daySchema,
+        notes: z.string().trim().max(2000).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const { data: tpl, error: tErr } = await contractsDb()
+      .from("contract_templates")
+      .select("body")
+      .eq("id", data.templateId)
+      .maybeSingle();
+    if (tErr || !tpl) throw new Error("That template wasn't found");
+    const filled = fillTemplate(
+      (tpl as { body: string }).body,
+      await templateValuesFor(data.clientId, data.effectiveDate),
+    );
+    if (filled.unknown.length) {
+      throw new Error(
+        `The template has blanks SamvadX doesn't know: ${filled.unknown.map((u) => `{{${u}}}`).join(", ")}`,
+      );
+    }
+    const { data: row, error } = await contractsDb()
+      .from("contract_documents")
+      .insert({
+        client_id: data.clientId,
+        title: data.title,
+        version_label: data.versionLabel || null,
+        effective_date: data.effectiveDate,
+        body: filled.text,
+        template_id: data.templateId,
+        notes: data.notes || null,
+        created_by: caller.superadminId,
+      })
+      .select("id")
+      .single();
+    if (error || !row) throw new Error(`Could not save the document (${error?.message})`);
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "contract_generated",
+      clientId: data.clientId,
+      summary: `Generated "${data.title}" from a template`,
+      detail: { documentId: (row as { id: string }).id },
+    });
+    return { id: (row as { id: string }).id };
+  });
+
+/** The text of a generated document. Same access rule as file downloads. */
+export const getContractDocumentBody = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, documentId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const superadmin = await verifySuperadminCaller(data.accessToken);
+    const companyClientId = superadmin
+      ? null
+      : (await requireCompanyAdmin(data.accessToken)).clientId;
+    const { data: row, error } = await contractsDb()
+      .from("contract_documents")
+      .select("client_id, title, version_label, body")
+      .eq("id", data.documentId)
+      .maybeSingle();
+    const doc = row as {
+      client_id: string | null;
+      title: string;
+      version_label: string | null;
+      body: string | null;
+    } | null;
+    if (error || !doc || !doc.body) throw new Error("That document wasn't found");
+    if (companyClientId && doc.client_id !== null && doc.client_id !== companyClientId) {
+      throw new Error("That document wasn't found");
+    }
+    return { title: doc.title, versionLabel: doc.version_label, body: doc.body };
   });

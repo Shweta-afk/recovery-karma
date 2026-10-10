@@ -671,6 +671,37 @@ exceljs loaded on demand). The one exception is the invoices card on a company's
 (`components/billing/company-invoices-card.tsx`) — Revenue covers those figures. Excel exports
 leave out the typed-in mobile/UAN of manual Insights lookups on purpose.
 
+### Billing: price lists, three invoice kinds, payments, credit notes — 2026-10-10
+
+`migrations/20261009_billing_price_lists.sql` (applied live 2026-10-10, when zero invoices
+existed). Server: `invoice-actions.server.ts` (issue/cancel), `billing-actions.server.ts`
+(price lists, payments, credit notes), `price-list.server.ts` (`loadPriceList`, shared so
+billing ↔ contracts don't import each other). Rules: `invoice-math.ts` (pure, tested).
+
+- **Price list per company** (`client_price_lists`, company Billing tab): setup lines, monthly
+  lines, per-agent-seat price, payment terms (NULL = supplier default). Invoices open prefilled
+  from it. Insights prices stay in `profilex_settings.rate_card` — one place each.
+- **Three invoice kinds**: `insights_topup` (from a wallet allocation), `setup`, `monthly`
+  (`period_month`; partial unique index `invoices_monthly_once` = one live invoice per company per
+  month). Due date uses the company's terms, else the supplier's.
+- **Payments** (`invoice_payments`): date received, amount, method, reference; part payments.
+  `invoices.status` is synced — `paid` once payments (less credit notes) cover it. "Mark paid" is
+  gone; `setInvoiceStatus` only cancels, and refuses once a payment or credit note exists.
+  Revenue's "Received" counts payments by `received_on`; an invoice marked paid before this (no
+  payment rows) counts once on its `paid_at`.
+- **Credit notes** (`credit_notes`, `issue_credit_note()`): own number series `<prefix>C/2627/0001`
+  (≤16 chars for GST), same CGST/SGST vs IGST split as the invoice, capped at the taxable value
+  left. They count in the month THEY are issued and reduce what is owed.
+- **Price change → draft contract change**: saving a price list that already had prices, or
+  changing an existing Insights plan's prices/services, drafts a `contract_changes` row
+  (`status='draft'`, never shown to companies) for review on Superadmin → Contracts.
+- **Contract templates** (`contract_templates`, `src/lib/contract-template.ts`): text with
+  `{{placeholders}}` filled from billing details, price list, seats and Insights prices; a
+  generated document stores its frozen text in `contract_documents.body` (file XOR body).
+- **Printing**: `PrintButton` (`invoice-document.tsx`) mounts its print copy ONLY while printing —
+  several print buttons can be on screen (invoice + credit notes) and print CSS shows every
+  `.invoice-print-root`.
+
 ### Contracts (Admin → Contracts, Superadmin → Contracts) — 2026-10-09
 
 Tables `contract_documents` / `contract_changes` / `contract_acceptances`

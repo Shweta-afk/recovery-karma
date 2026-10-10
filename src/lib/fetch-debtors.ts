@@ -306,8 +306,7 @@ export async function fetchAssignedAgent(debtorId: string): Promise<AssignedAgen
   // rendering "Unassigned" for every debtor if that shape ever changes.
   const raw = (data as { agents?: unknown } | null)?.agents;
   const agent = (Array.isArray(raw) ? raw[0] : raw) as
-    | { name?: string; email?: string; agent_code?: string | null }
-    | undefined;
+    { name?: string; email?: string; agent_code?: string | null } | undefined;
   if (!agent?.name && !agent?.email) return null;
 
   return {

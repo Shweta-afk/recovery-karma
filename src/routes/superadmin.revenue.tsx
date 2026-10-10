@@ -18,7 +18,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAccessToken } from "@/lib/access-token";
 import { getRevenueReport, type RevenueReportResponse } from "@/lib/revenue-report.server";
 import { AGEING_BUCKETS, type RevenueReport } from "@/lib/revenue-report";
-import { INVOICE_KIND_LABEL, type InvoiceKind } from "@/lib/invoice-math";
+import {
+  INVOICE_KIND_LABEL,
+  PAYMENT_METHOD_LABEL,
+  type InvoiceKind,
+  type PaymentMethod,
+} from "@/lib/invoice-math";
 import type { CompanyUsage } from "@/lib/platform-usage";
 import { boundedRange, rangeLabel } from "@/lib/superadmin-range";
 import { downloadXlsx, reportFilename, type XlsxSheet } from "@/lib/xlsx-export";
@@ -130,7 +135,13 @@ function SuperadminRevenuePage() {
             ["Billed (incl. GST)", revenue.billed.count, revenue.billed.total],
             ["  of which taxable value", "", revenue.billed.taxable],
             ["  of which GST", "", revenue.billed.gst],
-            ["Received", revenue.received.count, revenue.received.total],
+            ["Credit notes issued", revenue.credited.count, revenue.credited.total],
+            ["Net billed (after credit notes)", "", revenue.netBilled],
+            [
+              "Received (by date the money arrived)",
+              revenue.received.count,
+              revenue.received.total,
+            ],
             [
               `Outstanding as of ${revenue.today}`,
               revenue.outstanding.count,
@@ -150,7 +161,9 @@ function SuperadminRevenuePage() {
             "Company",
             "Billed invoices",
             "Billed (₹)",
-            "Received invoices",
+            "Credit notes",
+            "Credited (₹)",
+            "Payments",
             "Received (₹)",
             "Outstanding invoices",
             "Outstanding (₹)",
@@ -160,6 +173,8 @@ function SuperadminRevenuePage() {
             c.companyName,
             c.billed.count,
             c.billed.total,
+            c.credited.count,
+            c.credited.total,
             c.received.count,
             c.received.total,
             c.outstanding.count,
@@ -173,16 +188,22 @@ function SuperadminRevenuePage() {
             "Month",
             "Invoices",
             "Cancelled",
-            "Taxable value (₹)",
-            "CGST (₹)",
-            "SGST (₹)",
-            "IGST (₹)",
-            "Invoice total (₹)",
+            "Credit notes",
+            "Invoices' taxable value (₹)",
+            "Less credit notes (₹)",
+            "Net taxable value (₹)",
+            "Net CGST (₹)",
+            "Net SGST (₹)",
+            "Net IGST (₹)",
+            "Net total (₹)",
           ],
           rows: revenue.gstMonthly.map((m) => [
             m.month,
             m.invoices,
             m.cancelled,
+            m.creditNotes,
+            m.invoiceTaxable,
+            m.creditTaxable,
             m.taxable,
             m.cgst,
             m.sgst,
@@ -235,7 +256,8 @@ function SuperadminRevenuePage() {
             "Invoice date",
             "Due date",
             "Days overdue",
-            "Total (₹)",
+            "Invoice total (₹)",
+            "Still owed (₹)",
           ],
           rows: revenue.unpaid.map((i) => [
             i.invoiceNumber,
@@ -244,6 +266,50 @@ function SuperadminRevenuePage() {
             i.dueDate,
             Math.max(0, i.daysOverdue),
             i.total,
+            i.due,
+          ]),
+        },
+        {
+          name: "Credit notes",
+          headers: [
+            "Credit note no.",
+            "Date",
+            "Against invoice",
+            "Company",
+            "Recipient (legal name)",
+            "Recipient GSTIN",
+            "Reason",
+            "Taxable value (₹)",
+            "CGST (₹)",
+            "SGST (₹)",
+            "IGST (₹)",
+            "Total (₹)",
+          ],
+          rows: revenue.creditRegister.map((c) => [
+            c.number,
+            c.issueDate,
+            c.invoiceNumber,
+            c.companyName,
+            c.recipientName,
+            c.recipientGstin ?? "",
+            c.reason,
+            c.taxable,
+            c.cgst,
+            c.sgst,
+            c.igst,
+            c.total,
+          ]),
+        },
+        {
+          name: "Payments received",
+          headers: ["Received on", "Company", "Invoice", "Amount (₹)", "Method", "Reference"],
+          rows: revenue.receipts.map((p) => [
+            p.receivedOn,
+            p.companyName,
+            p.invoiceNumber,
+            p.amount,
+            PAYMENT_METHOD_LABEL[p.method as PaymentMethod] ?? p.method,
+            p.reference ?? "",
           ]),
         },
       );
@@ -495,21 +561,25 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
           label="Billed"
           hint="billed"
           value={fmtMoney(revenue.billed.total)}
-          sub={`${revenue.billed.count} invoice(s) · GST ${fmtMoney(revenue.billed.gst)}`}
+          sub={
+            revenue.credited.count
+              ? `${revenue.billed.count} invoice(s) · less ${fmtMoney(revenue.credited.total)} credit notes = ${fmtMoney(revenue.netBilled)}`
+              : `${revenue.billed.count} invoice(s) · GST ${fmtMoney(revenue.billed.gst)}`
+          }
         />
         <Kpi
           icon={<IndianRupee className={iconCls} />}
           label="Received"
           hint="received"
           value={fmtMoney(revenue.received.total)}
-          sub={`${revenue.received.count} invoice(s) marked paid in this period`}
+          sub={`${revenue.received.count} payment(s) that arrived in this period`}
         />
         <Kpi
           icon={<TrendingUp className={iconCls} />}
           label="Outstanding now"
           hint="outstanding"
           value={fmtMoney(revenue.outstanding.total)}
-          sub={`${revenue.outstanding.count} unpaid invoice(s)`}
+          sub={`still owed on ${revenue.outstanding.count} invoice(s), after payments and credit notes`}
         />
         <Kpi
           icon={<CalendarClock className={iconCls} />}
@@ -585,6 +655,7 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
                     <tr className="border-b border-border text-left text-muted-foreground">
                       <th className="py-2 pr-4 font-medium">Company</th>
                       <th className="py-2 pr-4 font-medium text-right">Billed</th>
+                      <th className="py-2 pr-4 font-medium text-right">Credited</th>
                       <th className="py-2 pr-4 font-medium text-right">Received</th>
                       <th className="py-2 pr-4 font-medium text-right">
                         <Explained k="outstanding">Outstanding</Explained>
@@ -608,6 +679,9 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
                           </Link>
                         </td>
                         <td className="py-2 pr-4 text-right">{fmtMoney(c.billed.total)}</td>
+                        <td className="py-2 pr-4 text-right text-muted-foreground">
+                          {c.credited.total ? `− ${fmtMoney(c.credited.total)}` : "—"}
+                        </td>
                         <td className="py-2 pr-4 text-right">{fmtMoney(c.received.total)}</td>
                         <td className="py-2 pr-4 text-right font-medium text-foreground">
                           {fmtMoney(c.outstanding.total)}
@@ -635,9 +709,9 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
             <InfoTip k="gstSummary" />
           </CardTitle>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Invoices issued in each month (by invoice date), cancelled invoices excluded from the
-            amounts. The Excel download adds the full invoice register with recipient GSTINs for
-            filing.
+            Invoices by invoice date, less credit notes in the month they were issued; cancelled
+            invoices are excluded. The Excel download adds the invoice and credit note registers
+            with recipient GSTINs for filing.
           </p>
         </CardHeader>
         <CardContent className="pt-4">
@@ -652,7 +726,8 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
                   <tr className="border-b border-border text-left text-muted-foreground">
                     <th className="py-2 pr-4 font-medium">Month</th>
                     <th className="py-2 pr-4 font-medium text-right">Invoices</th>
-                    <th className="py-2 pr-4 font-medium text-right">Taxable value</th>
+                    <th className="py-2 pr-4 font-medium text-right">Credit notes</th>
+                    <th className="py-2 pr-4 font-medium text-right">Net taxable value</th>
                     <th className="py-2 pr-4 font-medium text-right">CGST</th>
                     <th className="py-2 pr-4 font-medium text-right">SGST</th>
                     <th className="py-2 pr-4 font-medium text-right">IGST</th>
@@ -671,6 +746,9 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
                         )}
                       </td>
                       <td className="py-2 pr-4 text-right">{m.invoices}</td>
+                      <td className="py-2 pr-4 text-right text-muted-foreground">
+                        {m.creditNotes ? `${m.creditNotes} (− ${fmtMoney(m.creditTaxable)})` : "—"}
+                      </td>
                       <td className="py-2 pr-4 text-right">{fmtMoney(m.taxable)}</td>
                       <td className="py-2 pr-4 text-right">{fmtMoney(m.cgst)}</td>
                       <td className="py-2 pr-4 text-right">{fmtMoney(m.sgst)}</td>

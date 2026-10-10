@@ -24,10 +24,14 @@ import {
   toInvoiceRecord,
   round2,
   sumLines,
+  monthLabel,
+  invoiceBalance,
+  type InvoiceBalance,
   type InvoiceLine,
   type InvoiceParty,
   type InvoiceRecord,
 } from "./invoice-math";
+import { loadPriceList } from "./price-list.server";
 
 function db() {
   return getSupabaseAdmin();
@@ -82,6 +86,7 @@ export interface BillingProfile extends InvoiceParty {
   invoicePrefix: string;
   sacInsights: string | null;
   sacSetup: string | null;
+  sacMonthly: string | null;
   paymentTermsDays: number;
 }
 
@@ -107,6 +112,7 @@ async function loadBillingProfile(): Promise<BillingProfile> {
     invoicePrefix: data?.invoice_prefix ?? "SX",
     sacInsights: data?.sac_insights ?? null,
     sacSetup: data?.sac_setup ?? null,
+    sacMonthly: (data as { sac_monthly?: string | null } | null)?.sac_monthly ?? null,
     paymentTermsDays: data?.payment_terms_days ?? 15,
   };
 }
@@ -137,6 +143,7 @@ export const saveBillingProfile = createServerFn({ method: "POST" })
         invoicePrefix: z.string().trim().toUpperCase().regex(INVOICE_PREFIX_RE),
         sacInsights: optText(10),
         sacSetup: optText(10),
+        sacMonthly: optText(10),
         paymentTermsDays: z.number().int().min(0).max(365),
       })
       .parse(d),
@@ -162,6 +169,8 @@ export const saveBillingProfile = createServerFn({ method: "POST" })
         invoice_prefix: data.invoicePrefix,
         sac_insights: data.sacInsights ?? null,
         sac_setup: data.sacSetup ?? null,
+        // Not in the generated types until they're regenerated after the billing migration.
+        ...({ sac_monthly: data.sacMonthly ?? null } as unknown as Record<string, never>),
         payment_terms_days: data.paymentTermsDays,
         updated_at: new Date().toISOString(),
         updated_by: caller.superadminId,
@@ -192,6 +201,37 @@ export interface UninvoicedTopup {
   createdAt: string;
 }
 
+/** An invoice plus what is still owed on it once payments and credit notes are taken off. */
+export interface InvoiceWithBalance extends InvoiceRecord {
+  balance: InvoiceBalance;
+}
+
+/** Payments and credit notes summed per invoice (two small reads, whatever the invoice count). */
+async function withBalances<T extends InvoiceRecord>(
+  records: T[],
+): Promise<(T & { balance: InvoiceBalance })[]> {
+  if (!records.length) return [];
+  const ids = records.map((r) => r.id);
+  // invoice_payments / credit_notes aren't in the generated types until they are regenerated
+  // after migrations/20261009_billing_price_lists.sql.
+  const raw = db() as unknown as import("@supabase/supabase-js").SupabaseClient;
+  const [pay, cn] = await Promise.all([
+    raw.from("invoice_payments").select("invoice_id, amount").in("invoice_id", ids),
+    raw.from("credit_notes").select("invoice_id, total").in("invoice_id", ids),
+  ]);
+  // Code deployed ahead of the migration: no payments/credit notes yet, not an error.
+  const pays = pay.error ? [] : ((pay.data ?? []) as { invoice_id: string; amount: number }[]);
+  const cns = cn.error ? [] : ((cn.data ?? []) as { invoice_id: string; total: number }[]);
+  return records.map((r) => ({
+    ...r,
+    balance: invoiceBalance(
+      r,
+      pays.filter((p) => p.invoice_id === r.id).map((p) => ({ amount: Number(p.amount) })),
+      cns.filter((c) => c.invoice_id === r.id).map((c) => ({ total: Number(c.total) })),
+    ),
+  }));
+}
+
 export const getCompanyBilling = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z.object({ accessToken: tokenSchema, clientId: idSchema }).parse(d),
@@ -199,7 +239,7 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireSuperadmin(data.accessToken);
     const admin = db();
-    const [details, invoices, topups] = await Promise.all([
+    const [details, invoices, topups, priceList, agentsRes, clientRes] = await Promise.all([
       admin.from("client_billing").select("*").eq("client_id", data.clientId).maybeSingle(),
       admin
         .from("invoices")
@@ -213,6 +253,14 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
         .eq("scope", "master_to_company")
         .eq("client_id", data.clientId)
         .order("created_at", { ascending: false }),
+      loadPriceList(data.clientId),
+      admin
+        .from("agents")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", data.clientId)
+        .eq("role", "agent")
+        .neq("is_active", false),
+      admin.from("clients").select("max_agents").eq("id", data.clientId).maybeSingle(),
     ]);
     if (details.error) throw new Error(`Could not load billing details (${details.error.message})`);
     if (invoices.error) throw new Error(`Could not load invoices (${invoices.error.message})`);
@@ -242,7 +290,15 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
       stateCode: d?.state_code ?? null,
       email: d?.email ?? null,
     };
-    return { billing, invoices: records, uninvoicedTopups: uninvoiced };
+    return {
+      billing,
+      invoices: await withBalances(records),
+      uninvoicedTopups: uninvoiced,
+      priceList,
+      /** Active agents now — the default seat count on a monthly invoice. */
+      activeAgents: agentsRes.count ?? 0,
+      agentSeatLimit: (clientRes.data as { max_agents: number | null } | null)?.max_agents ?? null,
+    };
   });
 
 export const saveCompanyBilling = createServerFn({ method: "POST" })
@@ -286,6 +342,26 @@ export const saveCompanyBilling = createServerFn({ method: "POST" })
 
 // ── Issue an invoice ────────────────────────────────────────────────────────
 
+/** A charged row as sent by the browser. A per-unit line's amount is recomputed from
+ *  quantity × rate on the server, so the printed maths can't disagree with the total. */
+const lineSchema = z
+  .object({
+    description: z.string().trim().min(1).max(200),
+    amount: amountSchema,
+    quantity: z.number().int().min(1).max(100_000).optional(),
+    rate: amountSchema.optional(),
+  })
+  .transform((l): InvoiceLine =>
+    l.quantity && l.rate
+      ? {
+          description: l.description,
+          quantity: l.quantity,
+          rate: round2(l.rate),
+          amount: round2(l.quantity * l.rate),
+        }
+      : { description: l.description, amount: round2(l.amount) },
+  );
+
 export const createInvoice = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
@@ -301,13 +377,17 @@ export const createInvoice = createServerFn({ method: "POST" })
           accessToken: tokenSchema,
           clientId: idSchema,
           kind: z.literal("setup"),
-          // The charged rows — normally SETUP_LINE_ITEMS with an amount each (before GST).
-          lines: z
-            .array(
-              z.object({ description: z.string().trim().min(1).max(200), amount: amountSchema }),
-            )
-            .min(1)
-            .max(20),
+          // The charged rows — prefilled from the company's price list (before GST).
+          lines: z.array(lineSchema).min(1).max(20),
+          notes: noteSchema.optional(),
+        }),
+        z.object({
+          accessToken: tokenSchema,
+          clientId: idSchema,
+          kind: z.literal("monthly"),
+          /** "YYYY-MM" — one live monthly invoice per company per month. */
+          periodMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+          lines: z.array(lineSchema).min(1).max(20),
           notes: noteSchema.optional(),
         }),
       ])
@@ -367,8 +447,13 @@ export const createInvoice = createServerFn({ method: "POST" })
       description = `Insights prepaid wallet top-up (credited ${credited})`;
       lines = [{ description, amount: taxableAmount }];
       sac = supplier.sacInsights;
+    } else if (data.kind === "monthly") {
+      lines = data.lines;
+      taxableAmount = sumLines(lines);
+      description = `SamvadX monthly fee — ${monthLabel(data.periodMonth)}`;
+      sac = supplier.sacMonthly ?? supplier.sacSetup;
     } else {
-      lines = data.lines.map((l) => ({ description: l.description, amount: round2(l.amount) }));
+      lines = data.lines;
       taxableAmount = sumLines(lines);
       description = "SamvadX platform setup";
       sac = supplier.sacSetup;
@@ -376,11 +461,14 @@ export const createInvoice = createServerFn({ method: "POST" })
 
     const gst = gstBreakdown(taxableAmount, supplier.stateCode, cb.state_code);
     const issueDate = todayIstKey();
+    // The company's own payment terms when its price list sets them, else SamvadX's default.
+    const companyTerms = (await loadPriceList(data.clientId)).paymentTermsDays;
     const fy = financialYear(issueDate);
     const {
       invoicePrefix,
       sacInsights: _a,
       sacSetup: _b,
+      sacMonthly: _c,
       paymentTermsDays,
       ...supplierParty
     } = supplier;
@@ -391,7 +479,7 @@ export const createInvoice = createServerFn({ method: "POST" })
       p_fy: fy,
       p_kind: data.kind,
       p_issue_date: issueDate,
-      p_due_date: addDaysIso(issueDate, paymentTermsDays),
+      p_due_date: addDaysIso(issueDate, companyTerms ?? paymentTermsDays),
       p_description: description,
       p_lines: lines,
       p_sac: sac,
@@ -407,10 +495,16 @@ export const createInvoice = createServerFn({ method: "POST" })
       p_notes: data.notes || null,
       p_disclaimer: invoiceDisclaimer(data.kind, supplier.legalName).join("\n"),
       p_superadmin_id: caller.superadminId,
-    });
+      p_period_month: data.kind === "monthly" ? data.periodMonth : null,
+    } as never);
     if (error) {
       if (/invoices_topup_once/.test(error.message)) {
         throw new Error("That top-up has already been invoiced");
+      }
+      if (/invoices_monthly_once/.test(error.message)) {
+        throw new Error(
+          "This company already has an invoice for that month — cancel it first to reissue",
+        );
       }
       throw new Error(`Could not create the invoice (${error.message})`);
     }
@@ -434,7 +528,9 @@ export const setInvoiceStatus = createServerFn({ method: "POST" })
       .object({
         accessToken: tokenSchema,
         invoiceId: idSchema,
-        status: z.enum(["unpaid", "paid", "cancelled"]),
+        // Paid/unpaid now follow recorded payments (billing-actions.server.ts recordPayment);
+        // the only manual status change left is cancelling.
+        status: z.literal("cancelled"),
       })
       .parse(d),
   )
@@ -450,12 +546,21 @@ export const setInvoiceStatus = createServerFn({ method: "POST" })
     // A cancelled invoice stays cancelled: its number is spent, and its top-up may already be
     // on a replacement invoice. Issue a new one instead of reviving it.
     if (prior.status === "cancelled") throw new Error("A cancelled invoice can't be reopened");
+    const { data: full, error: fErr } = await admin
+      .from("invoices")
+      .select("*")
+      .eq("id", data.invoiceId)
+      .single();
+    if (fErr || !full) throw new Error("Invoice not found");
+    const [{ balance }] = await withBalances([toInvoiceRecord(full)]);
+    if (balance.paid > 0 || balance.credited > 0) {
+      throw new Error(
+        "This invoice has payments or credit notes against it — issue a credit note instead of cancelling",
+      );
+    }
     const { error } = await admin
       .from("invoices")
-      .update({
-        status: data.status,
-        paid_at: data.status === "paid" ? new Date().toISOString() : null,
-      })
+      .update({ status: data.status, paid_at: null })
       .eq("id", data.invoiceId);
     if (error) throw new Error(`Could not update the invoice (${error.message})`);
     void logSuperadminActivity({
@@ -470,7 +575,7 @@ export const setInvoiceStatus = createServerFn({ method: "POST" })
 
 // ── All invoices (superadmin overview) ─────────────────────────────────────
 
-export interface InvoiceListRow extends InvoiceRecord {
+export interface InvoiceListRow extends InvoiceWithBalance {
   companyName: string | null;
 }
 
@@ -490,8 +595,10 @@ export const listAllInvoices = createServerFn({ method: "POST" })
     ]);
     if (error) throw new Error(`Could not load invoices (${error.message})`);
     const nameById = new Map((clients ?? []).map((c) => [c.id, c.company_name]));
-    return (rows ?? []).map((r) => ({
-      ...toInvoiceRecord(r),
-      companyName: nameById.get(r.client_id) ?? null,
-    }));
+    return withBalances(
+      (rows ?? []).map((r) => ({
+        ...toInvoiceRecord(r),
+        companyName: nameById.get(r.client_id) ?? null,
+      })),
+    );
   });

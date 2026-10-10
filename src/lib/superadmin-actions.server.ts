@@ -23,6 +23,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 import { ALL_SERVICE_IDS, getService, priceFor } from "./profilex/catalogue";
+import { insightsPriceChanges } from "./profilex/price-changes";
 import { fetchAllRows } from "./fetch-all-rows";
 import type { Json } from "./database.types";
 
@@ -1414,6 +1415,9 @@ export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
     }
     const enabledServices = [...new Set(data.enabledServices)];
 
+    // The plan as it was, to describe what changed (for a draft contract update).
+    const before = await loadSettings(data.clientId);
+
     const admin = db();
     const { error } = await admin.from("profilex_settings").upsert(
       {
@@ -1446,7 +1450,21 @@ export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
       detail: { enabled: data.enabled, enabledServices },
     });
 
-    return { ok: true };
+    // Price or service changes to a plan that already had services → draft a contract change
+    // for review on Superadmin → Contracts (never shown to the company while a draft). Setting
+    // up a first plan isn't a "change" — the contract schedule covers it.
+    const changes = insightsPriceChanges(before, {
+      enabled_services: enabledServices,
+      rate_card: data.rateCard,
+    });
+    let draftId: string | null = null;
+    if (changes.length && before.enabled_services.length) {
+      // Imported lazily: contracts.server imports this file (logSuperadminActivity).
+      const { createPriceChangeDraft } = await import("./contracts.server");
+      draftId = await createPriceChangeDraft(caller.superadminId, data.clientId, changes);
+    }
+
+    return { ok: true, draftId };
   });
 
 // ── Lookup-data Excel requests ─────────────────────────────────────────────────────────────────

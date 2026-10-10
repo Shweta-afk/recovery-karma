@@ -20,8 +20,11 @@ export interface ContractDocument {
   title: string;
   versionLabel: string | null;
   effectiveDate: string; // YYYY-MM-DD
-  fileName: string;
+  /** null for a document generated from a template (it has text, not a file). */
+  fileName: string | null;
   fileSize: number | null;
+  /** Generated from a contract template (open it to view/print) rather than uploaded. */
+  generated: boolean;
   notes: string | null;
   createdAt: string;
 }
@@ -44,6 +47,8 @@ export interface ContractChange {
   documentId: string | null;
   createdAt: string;
   withdrawnAt: string | null;
+  /** Drafts (e.g. made automatically when prices change) are never shown to companies. */
+  status: "draft" | "published";
 }
 
 /** Does this change apply to this company? */

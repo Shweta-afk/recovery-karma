@@ -59,7 +59,21 @@ function Party({
   );
 }
 
-export function InvoiceDocument({ invoice }: { invoice: InvoiceRecord }) {
+/** Set when the document is a GST credit note rather than an invoice: same layout, different
+ *  title and numbering, plus the invoice it corrects and why. */
+export interface CreditNoteInfo {
+  againstNumber: string;
+  againstDate: string;
+  reason: string;
+}
+
+export function InvoiceDocument({
+  invoice,
+  credit,
+}: {
+  invoice: InvoiceRecord;
+  credit?: CreditNoteInfo;
+}) {
   const s = invoice.supplier;
   const intra = invoice.cgst > 0 || invoice.sgst > 0;
   const cancelled = invoice.status === "cancelled";
@@ -77,21 +91,30 @@ export function InvoiceDocument({ invoice }: { invoice: InvoiceRecord }) {
         <div>
           {/* Same file as the login screen's logo (public/logo.png, 500×125). */}
           <img src="/logo.png" alt="SamvadX" className="mb-3 h-9 w-auto" />
-          <h1 className="text-xl font-bold tracking-tight">TAX INVOICE</h1>
+          <h1 className="text-xl font-bold tracking-tight">
+            {credit ? "CREDIT NOTE" : "TAX INVOICE"}
+          </h1>
           <p className="text-neutral-500">Original for recipient</p>
         </div>
         <div className="text-right">
           <p>
-            <span className="text-neutral-500">Invoice no.</span>{" "}
+            <span className="text-neutral-500">{credit ? "Credit note no." : "Invoice no."}</span>{" "}
             <span className="font-semibold">{invoice.invoiceNumber}</span>
           </p>
           <p>
-            <span className="text-neutral-500">Invoice date</span>{" "}
+            <span className="text-neutral-500">{credit ? "Date" : "Invoice date"}</span>{" "}
             {formatIsoDate(invoice.issueDate)}
           </p>
-          <p>
-            <span className="text-neutral-500">Due date</span> {formatIsoDate(invoice.dueDate)}
-          </p>
+          {credit ? (
+            <p>
+              <span className="text-neutral-500">Against invoice</span> {credit.againstNumber}{" "}
+              <span className="text-neutral-500">dated</span> {formatIsoDate(credit.againstDate)}
+            </p>
+          ) : (
+            <p>
+              <span className="text-neutral-500">Due date</span> {formatIsoDate(invoice.dueDate)}
+            </p>
+          )}
         </div>
       </div>
 
@@ -99,6 +122,12 @@ export function InvoiceDocument({ invoice }: { invoice: InvoiceRecord }) {
         <Party title="Supplier" p={s} noGstin="—" showPan />
         <Party title="Bill to" p={invoice.recipient} noGstin="Unregistered" />
       </div>
+
+      {credit && (
+        <p className="border-b border-neutral-300 py-3">
+          <span className="text-neutral-500">Reason for credit:</span> {credit.reason}
+        </p>
+      )}
 
       <p className="py-3">
         <span className="text-neutral-500">Place of supply:</span>{" "}
@@ -123,7 +152,9 @@ export function InvoiceDocument({ invoice }: { invoice: InvoiceRecord }) {
               <td className="py-1.5 pr-2">{n + 1}</td>
               <td className="py-1.5 pr-2">{line.description}</td>
               <td className="py-1.5 pr-2">{invoice.sac ?? "—"}</td>
-              <td className="py-1.5 pr-2 text-right">1</td>
+              <td className="py-1.5 pr-2 text-right">
+                {line.quantity && line.rate ? `${line.quantity} × ${formatRupees(line.rate)}` : 1}
+              </td>
               <td className="py-1.5 text-right tabular-nums">{formatRupees(line.amount)}</td>
             </tr>
           ))}
@@ -183,7 +214,7 @@ export function InvoiceDocument({ invoice }: { invoice: InvoiceRecord }) {
       )}
 
       <p className="mt-4 text-center text-[10px] text-neutral-400">
-        This is a computer-generated invoice.
+        This is a computer-generated {credit ? "credit note" : "invoice"}.
       </p>
     </div>
   );
@@ -198,38 +229,63 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** "Print / Save PDF" — the browser's print dialog offers Save as PDF; the PDF file name comes
- * from the document title, so it is set to the invoice number for the duration. */
-export function InvoicePrintButton({ invoice }: { invoice: InvoiceRecord }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+/**
+ * "Print / Save PDF" for any paper-style document (invoice, credit note, contract). The browser's
+ * print dialog offers Save as PDF; the PDF's file name comes from the document title, so it is
+ * set to `fileTitle` while printing.
+ *
+ * The copy that prints is portalled under <body> (see .invoice-print-root in styles.css) ONLY
+ * while this button is printing — several print buttons can be on screen at once (an invoice and
+ * its credit notes), and print CSS shows every print root, so a permanently mounted copy would
+ * print all of them together.
+ */
+export function PrintButton({
+  fileTitle,
+  children,
+  label = "Print / Save PDF",
+}: {
+  fileTitle: string;
+  children: React.ReactNode;
+  label?: string;
+}) {
+  const [printing, setPrinting] = useState(false);
 
-  const print = () => {
+  useEffect(() => {
+    if (!printing) return;
     const prevTitle = document.title;
-    document.title = `Invoice ${invoice.invoiceNumber.replace(/\//g, "-")}`;
+    document.title = fileTitle.replace(/\//g, "-");
     document.body.classList.add("printing-invoice");
     const done = () => {
       document.body.classList.remove("printing-invoice");
       document.title = prevTitle;
       window.removeEventListener("afterprint", done);
+      setPrinting(false);
     };
     window.addEventListener("afterprint", done);
-    window.print();
-  };
+    // Next frame: the portal has rendered, so the dialog captures this document.
+    const raf = requestAnimationFrame(() => window.print());
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("afterprint", done);
+    };
+  }, [printing, fileTitle]);
 
   return (
     <>
-      <Button size="sm" variant="outline" onClick={print}>
+      <Button size="sm" variant="outline" onClick={() => setPrinting(true)} disabled={printing}>
         <Printer className="mr-1.5 h-3.5 w-3.5" />
-        Print / Save PDF
+        {label}
       </Button>
-      {mounted &&
-        createPortal(
-          <div className="invoice-print-root">
-            <InvoiceDocument invoice={invoice} />
-          </div>,
-          document.body,
-        )}
+      {printing &&
+        createPortal(<div className="invoice-print-root">{children}</div>, document.body)}
     </>
+  );
+}
+
+export function InvoicePrintButton({ invoice }: { invoice: InvoiceRecord }) {
+  return (
+    <PrintButton fileTitle={`Invoice ${invoice.invoiceNumber}`}>
+      <InvoiceDocument invoice={invoice} />
+    </PrintButton>
   );
 }

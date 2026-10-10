@@ -139,15 +139,15 @@ export const GLOSSARY = {
   // ── Revenue ──────────────────────────────────────────────────────────────
   billed: {
     term: "Billed",
-    text: "Invoices you issued in the period, including GST. Cancelled invoices are left out.",
+    text: "Invoices you issued in the period, including GST. Cancelled invoices are left out; credit notes are shown separately and taken off in 'net'.",
   },
   received: {
     term: "Received",
-    text: "Invoices marked as paid in the period (by the date they were marked paid).",
+    text: "Money that arrived in the period, by the date it was received (recorded on each invoice with 'Record payment'). Part-payments count as they come in.",
   },
   outstanding: {
     term: "Outstanding now",
-    text: "Every unpaid invoice as of today, whatever dates you picked — what companies owe you right now.",
+    text: "What companies still owe you right now, whatever dates you picked — each unpaid invoice less payments received and credit notes issued.",
   },
   overdue: {
     term: "Overdue now",
@@ -164,6 +164,10 @@ export const GLOSSARY = {
   gstSummary: {
     term: "GST summary by month",
     text: "Taxable value and CGST/SGST/IGST of the invoices issued each month, for GST filing. The Excel download adds every invoice with the customer's GSTIN.",
+  },
+  creditNote: {
+    term: "Credit note",
+    text: "The GST-correct way to reduce or reverse an invoice that was already issued (e.g. a wrong amount). It has its own number, counts in the month it is issued, and reduces what the company owes. Issue one from an opened invoice.",
   },
   losingMoney: {
     term: "Losing money",
@@ -333,6 +337,7 @@ export const HELP_SECTIONS: { title: string; keys: GlossaryKey[] }[] = [
       "ageing",
       "oldestOverdue",
       "gstSummary",
+      "creditNote",
       "losingMoney",
       "seatUpsell",
     ],

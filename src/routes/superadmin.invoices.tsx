@@ -16,12 +16,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getAccessToken } from "@/lib/access-token";
-import { GST_STATES, normaliseGstin, stateFromGstin, type InvoiceStatus } from "@/lib/invoice-math";
+import { GST_STATES, normaliseGstin, stateFromGstin } from "@/lib/invoice-math";
 import {
   getBillingProfile,
   listAllInvoices,
   saveBillingProfile,
-  setInvoiceStatus,
   type BillingProfile,
   type InvoiceListRow,
 } from "@/lib/invoice-actions.server";
@@ -56,6 +55,7 @@ const EMPTY_PROFILE: BillingProfile = {
   invoicePrefix: "SX",
   sacInsights: "",
   sacSetup: "",
+  sacMonthly: "",
   paymentTermsDays: 15,
 };
 
@@ -121,6 +121,7 @@ function SuperadminInvoicesPage() {
           invoicePrefix: profile.invoicePrefix,
           sacInsights: profile.sacInsights || null,
           sacSetup: profile.sacSetup || null,
+          sacMonthly: profile.sacMonthly || null,
           paymentTermsDays: Number(profile.paymentTermsDays) || 0,
         },
       });
@@ -133,19 +134,12 @@ function SuperadminInvoicesPage() {
     }
   };
 
-  const onSetStatus = async (inv: InvoiceListRow, status: InvoiceStatus) => {
-    try {
-      const accessToken = await getAccessToken();
-      await setInvoiceStatus({ data: { accessToken, invoiceId: inv.id, status } });
-      toast.success(`Invoice ${inv.invoiceNumber} marked ${status}`);
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update the invoice");
-    }
-  };
-
   const outstanding = useMemo(
-    () => invoices.filter((i) => i.status === "unpaid").reduce((s, i) => s + i.total, 0),
+    // What is still owed after payments and credit notes, not the face value of unpaid invoices.
+    () =>
+      invoices
+        .filter((i) => i.status !== "cancelled")
+        .reduce((s, i) => s + Math.max(0, i.balance.balance), 0),
     [invoices],
   );
 
@@ -341,6 +335,13 @@ function SuperadminInvoicesPage() {
                     className="h-8 font-mono text-xs"
                   />
                 </Field>
+                <Field label="SAC — monthly fee (blank = same as setup)">
+                  <Input
+                    value={profile.sacMonthly ?? ""}
+                    onChange={(e) => set("sacMonthly", e.target.value)}
+                    className="h-8 font-mono text-xs"
+                  />
+                </Field>
                 <Field label="Payment due (days after invoice)">
                   <Input
                     type="number"
@@ -403,11 +404,7 @@ function SuperadminInvoicesPage() {
               <SuperadminDateFilter value={range} onChange={setRange} allowAll className="pt-2" />
             </CardHeader>
             <CardContent className="pt-4">
-              <InvoiceTable
-                invoices={shown}
-                companyName={(i) => i.companyName}
-                onSetStatus={onSetStatus}
-              />
+              <InvoiceTable invoices={shown} companyName={(i) => i.companyName} onChanged={load} />
             </CardContent>
           </Card>
         </>

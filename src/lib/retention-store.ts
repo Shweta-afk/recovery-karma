@@ -8,12 +8,7 @@
 import { supabase, getMyAgentRow } from "./supabase";
 
 export type RetentionStatus =
-  | "pending_manager"
-  | "approved"
-  | "rejected"
-  | "sent_to_bank"
-  | "carried"
-  | "not_honored";
+  "pending_manager" | "approved" | "rejected" | "sent_to_bank" | "carried" | "not_honored";
 
 export interface RetentionRequest {
   id: string;

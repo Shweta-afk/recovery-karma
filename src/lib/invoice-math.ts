@@ -5,12 +5,15 @@
 // Every amount is in rupees with paise, rounded half-up to 2 decimals at each step the way the
 // invoice prints it, so the stored total always equals the sum of the printed lines.
 
-export type InvoiceKind = "insights_topup" | "setup";
+export type InvoiceKind = "insights_topup" | "setup" | "monthly";
 
-/** One charged row on an invoice. Amounts are before GST. */
+/** One charged row on an invoice. Amounts are before GST. `quantity` × `rate` = `amount` when
+ *  a line is priced per unit (e.g. 18 agent seats × ₹500); otherwise quantity prints as 1. */
 export interface InvoiceLine {
   description: string;
   amount: number;
+  quantity?: number;
+  rate?: number;
 }
 
 /** What the setup fee covers — each is its own charged line on a setup invoice (user, 2026-10-09).
@@ -30,6 +33,7 @@ export function sumLines(lines: InvoiceLine[]): number {
 export const INVOICE_KIND_LABEL: Record<InvoiceKind, string> = {
   insights_topup: "Insights wallet top-up",
   setup: "Setup fee",
+  monthly: "Monthly fee",
 };
 
 export const GST_RATE = 18;
@@ -240,6 +244,8 @@ export interface InvoiceRecord {
   walletLedgerId: string | null;
   status: InvoiceStatus;
   paidAt: string | null;
+  /** "YYYY-MM" — the month a monthly invoice is for; null for other kinds. */
+  periodMonth: string | null;
   notes: string | null;
   /** Printed under "Terms & disclaimer"; one paragraph per entry. */
   disclaimer: string[];
@@ -268,6 +274,7 @@ export function toInvoiceRecord(r: {
   wallet_ledger_id: string | null;
   status: string;
   paid_at: string | null;
+  period_month?: string | null;
   notes: string | null;
   disclaimer?: string | null;
   created_at: string;
@@ -284,9 +291,18 @@ export function toInvoiceRecord(r: {
     // but fall back to one line rather than printing an empty table if one ever lacks them.
     lines:
       Array.isArray(r.lines) && r.lines.length
-        ? (r.lines as { description: string; amount: number | string }[]).map((l) => ({
+        ? (
+            r.lines as {
+              description: string;
+              amount: number | string;
+              quantity?: number | string;
+              rate?: number | string;
+            }[]
+          ).map((l) => ({
             description: String(l.description),
             amount: Number(l.amount),
+            ...(l.quantity != null ? { quantity: Number(l.quantity) } : {}),
+            ...(l.rate != null ? { rate: Number(l.rate) } : {}),
           }))
         : [{ description: r.description, amount: Number(r.taxable_amount) }],
     sac: r.sac,
@@ -301,6 +317,7 @@ export function toInvoiceRecord(r: {
     walletLedgerId: r.wallet_ledger_id,
     status: r.status as InvoiceStatus,
     paidAt: r.paid_at,
+    periodMonth: r.period_month ?? null,
     notes: r.notes,
     disclaimer: r.disclaimer
       ? r.disclaimer.split("\n").filter(Boolean)
@@ -336,13 +353,181 @@ export function invoiceDisclaimer(kind: InvoiceKind, supplierName: string): stri
           // Insights agreement 2.2; MSA 10.2
           "Each lookup is charged to the prepaid balance, including lookups that return no result. Prepaid balance is non-refundable; unused balance carries forward until the service ends.",
         ]
-      : [
-          // MSA 10.1
-          "Setup fees are non-refundable once the service has commenced.",
-        ];
+      : kind === "monthly"
+        ? [
+            // Restates nothing beyond what the invoice itself says — no MSA clause is cited
+            // for monthly fees until the signed MSA's fee schedule is confirmed.
+            "Monthly charges are for the month stated on this invoice, at the prices agreed in the client's commercial schedule.",
+          ]
+        : [
+            // MSA 10.1
+            "Setup fees are non-refundable once the service has commenced.",
+          ];
   return [
     ...specific,
     ...common,
     "This invoice is issued under, and subject to, the SamvadX Master Service Agreement between the parties.",
   ];
+}
+
+// ── Price lists (client_price_lists) ────────────────────────────────────────
+
+/** A company's prices, set once and reused by invoices and the contract schedule. Before GST. */
+export interface PriceList {
+  setupLines: InvoiceLine[];
+  monthlyLines: InvoiceLine[];
+  /** Per agent seat per month; 0 = no per-seat charge. */
+  perSeatFee: number;
+  /** null = the supplier default from billing_profile. */
+  paymentTermsDays: number | null;
+}
+
+export const EMPTY_PRICE_LIST: PriceList = {
+  setupLines: [],
+  monthlyLines: [],
+  perSeatFee: 0,
+  paymentTermsDays: null,
+};
+
+/** "2026-10" → "October 2026" */
+export function monthLabel(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** The lines of a monthly invoice: the fixed monthly lines, then seats × per-seat price. */
+export function monthlyInvoiceLines(
+  prices: PriceList,
+  month: string,
+  seats: number,
+): InvoiceLine[] {
+  const label = monthLabel(month);
+  const lines: InvoiceLine[] = prices.monthlyLines
+    .filter((l) => l.amount > 0)
+    .map((l) => ({ description: `${l.description} — ${label}`, amount: round2(l.amount) }));
+  if (prices.perSeatFee > 0 && seats > 0) {
+    lines.push({
+      description: `Agent seats — ${label}`,
+      quantity: seats,
+      rate: round2(prices.perSeatFee),
+      amount: round2(seats * prices.perSeatFee),
+    });
+  }
+  return lines;
+}
+
+const rupees = (n: number) =>
+  `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+
+/** Plain-language list of what changed between two price lists — the body of the draft
+ *  contract change created when a superadmin saves new prices. Empty when nothing changed. */
+export function priceListChanges(before: PriceList, after: PriceList): string[] {
+  const out: string[] = [];
+  const diffLines = (label: string, a: InvoiceLine[], b: InvoiceLine[]) => {
+    const byName = (ls: InvoiceLine[]) => new Map(ls.map((l) => [l.description.trim(), l.amount]));
+    const was = byName(a);
+    const now = byName(b);
+    for (const [name, amount] of now) {
+      const old = was.get(name);
+      if (old === undefined) out.push(`${label}: added "${name}" at ${rupees(amount)}`);
+      else if (round2(old) !== round2(amount)) {
+        out.push(`${label}: "${name}" ${rupees(old)} → ${rupees(amount)}`);
+      }
+    }
+    for (const [name, amount] of was) {
+      if (!now.has(name)) out.push(`${label}: removed "${name}" (was ${rupees(amount)})`);
+    }
+  };
+  diffLines("Setup fee", before.setupLines, after.setupLines);
+  diffLines("Monthly fee", before.monthlyLines, after.monthlyLines);
+  if (round2(before.perSeatFee) !== round2(after.perSeatFee)) {
+    out.push(
+      `Price per agent seat per month: ${rupees(before.perSeatFee)} → ${rupees(after.perSeatFee)}`,
+    );
+  }
+  if (before.paymentTermsDays !== after.paymentTermsDays) {
+    const t = (d: number | null) => (d === null ? "standard terms" : `${d} days`);
+    out.push(`Payment terms: ${t(before.paymentTermsDays)} → ${t(after.paymentTermsDays)}`);
+  }
+  return out;
+}
+
+// ── Payments and credit notes ───────────────────────────────────────────────
+
+export type PaymentMethod = "bank_transfer" | "upi" | "cheque" | "cash" | "other";
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
+  bank_transfer: "Bank transfer (NEFT/RTGS/IMPS)",
+  upi: "UPI",
+  cheque: "Cheque",
+  cash: "Cash",
+  other: "Other",
+};
+
+export interface InvoicePayment {
+  id: string;
+  invoiceId: string;
+  amount: number;
+  receivedOn: string; // YYYY-MM-DD
+  method: PaymentMethod;
+  reference: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface CreditNoteRecord {
+  id: string;
+  clientId: string;
+  invoiceId: string;
+  creditNoteNumber: string;
+  issueDate: string;
+  reason: string;
+  lines: InvoiceLine[];
+  taxable: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  total: number;
+  supplier: InvoiceParty;
+  recipient: InvoiceParty;
+  createdAt: string;
+}
+
+/** What is still owed on an invoice once credit notes and payments are taken off. */
+export interface InvoiceBalance {
+  /** Total less credit notes — what the company actually owes for this invoice. */
+  net: number;
+  credited: number;
+  paid: number;
+  /** net − paid; ≤ 0 means settled. */
+  balance: number;
+  settled: boolean;
+}
+
+export function invoiceBalance(
+  invoice: Pick<InvoiceRecord, "total" | "status">,
+  payments: Pick<InvoicePayment, "amount">[],
+  credits: Pick<CreditNoteRecord, "total">[],
+): InvoiceBalance {
+  const credited = round2(credits.reduce((s, c) => s + c.total, 0));
+  const net = invoice.status === "cancelled" ? 0 : round2(Math.max(0, invoice.total - credited));
+  // Marked paid before payments were recorded individually: no payment rows, so take it as
+  // paid in full rather than suddenly showing it as owed.
+  const paid =
+    invoice.status === "paid" && payments.length === 0
+      ? net
+      : round2(payments.reduce((s, p) => s + p.amount, 0));
+  const balance = round2(net - paid);
+  return { net, credited, paid, balance, settled: balance <= 0 };
+}
+
+/** Taxable value still available to credit on an invoice. */
+export function creditableTaxable(
+  invoice: Pick<InvoiceRecord, "taxable">,
+  credits: Pick<CreditNoteRecord, "taxable">[],
+): number {
+  return round2(Math.max(0, invoice.taxable - credits.reduce((s, c) => s + c.taxable, 0)));
 }

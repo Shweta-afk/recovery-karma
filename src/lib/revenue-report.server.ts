@@ -11,8 +11,10 @@ import { fetchAllRows } from "./fetch-all-rows";
 import { todayIstKey } from "./date-filter";
 import {
   buildRevenueReport,
+  type RevenueCreditNote,
   type RevenueInvoice,
   type RevenueInvoiceStatus,
+  type RevenuePayment,
   type RevenueReport,
 } from "./revenue-report";
 import { boundedRange, isDayKey } from "./superadmin-range";
@@ -84,6 +86,59 @@ export const getRevenueReport = createServerFn({ method: "POST" })
       }),
       admin.from("clients").select("id, company_name"),
     ]);
+    // Payments and credit notes (migrations/20261009_billing_price_lists.sql) — not in the
+    // generated types yet, and tolerated as empty if that migration isn't applied.
+    const raw = admin as unknown as import("@supabase/supabase-js").SupabaseClient;
+    const [paymentsRes, creditsRes] = await Promise.all([
+      raw.from("invoice_payments").select("invoice_id, amount, received_on, method, reference"),
+      raw
+        .from("credit_notes")
+        .select(
+          "invoice_id, credit_note_number, issue_date, reason, taxable_amount, cgst, sgst, igst, total",
+        ),
+    ]);
+    const paymentsByInvoice = new Map<string, RevenuePayment[]>();
+    for (const p of (paymentsRes.error ? [] : (paymentsRes.data ?? [])) as {
+      invoice_id: string;
+      amount: number | string;
+      received_on: string;
+      method: string;
+      reference: string | null;
+    }[]) {
+      const list = paymentsByInvoice.get(p.invoice_id) ?? [];
+      list.push({
+        amount: Number(p.amount),
+        receivedOn: p.received_on,
+        method: p.method,
+        reference: p.reference,
+      });
+      paymentsByInvoice.set(p.invoice_id, list);
+    }
+    const creditsByInvoice = new Map<string, RevenueCreditNote[]>();
+    for (const c of (creditsRes.error ? [] : (creditsRes.data ?? [])) as {
+      invoice_id: string;
+      credit_note_number: string;
+      issue_date: string;
+      reason: string;
+      taxable_amount: number | string;
+      cgst: number | string;
+      sgst: number | string;
+      igst: number | string;
+      total: number | string;
+    }[]) {
+      const list = creditsByInvoice.get(c.invoice_id) ?? [];
+      list.push({
+        number: c.credit_note_number,
+        issueDate: c.issue_date,
+        reason: c.reason,
+        taxable: Number(c.taxable_amount),
+        cgst: Number(c.cgst),
+        sgst: Number(c.sgst),
+        igst: Number(c.igst),
+        total: Number(c.total),
+      });
+      creditsByInvoice.set(c.invoice_id, list);
+    }
     if (invoices.error) {
       if (isMissingTable(invoices.error as { message?: string; code?: string })) {
         return {
@@ -119,6 +174,8 @@ export const getRevenueReport = createServerFn({ method: "POST" })
       recipientName: r.recipient?.legalName ?? "",
       recipientGstin: r.recipient?.gstin ?? null,
       placeOfSupply: r.place_of_supply,
+      payments: paymentsByInvoice.get(r.id) ?? [],
+      creditNotes: creditsByInvoice.get(r.id) ?? [],
     }));
 
     return { available: true, report: buildRevenueReport(rows, range, today) };

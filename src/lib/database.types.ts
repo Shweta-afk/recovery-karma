@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 43 tables.
+// Generated from 51 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -144,6 +144,7 @@ export interface Database {
           terms: string | null;
           updated_at: string;
           updated_by: string | null;
+          sac_monthly: string | null;
         };
         Insert: {
           id?: string;
@@ -164,6 +165,7 @@ export interface Database {
           terms?: string | null;
           updated_at?: string;
           updated_by?: string | null;
+          sac_monthly?: string | null;
         };
         Update: {
           id?: string;
@@ -184,6 +186,7 @@ export interface Database {
           terms?: string | null;
           updated_at?: string;
           updated_by?: string | null;
+          sac_monthly?: string | null;
         };
         Relationships: [];
       };
@@ -331,6 +334,36 @@ export interface Database {
         };
         Relationships: [];
       };
+      client_price_lists: {
+        Row: {
+          client_id: string;
+          setup_lines: Json;
+          monthly_lines: Json;
+          per_seat_fee: number;
+          payment_terms_days: number | null;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          client_id: string;
+          setup_lines: Json;
+          monthly_lines: Json;
+          per_seat_fee?: number;
+          payment_terms_days?: number | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          client_id?: string;
+          setup_lines?: Json;
+          monthly_lines?: Json;
+          per_seat_fee?: number;
+          payment_terms_days?: number | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [];
+      };
       clients: {
         Row: {
           id: string;
@@ -367,6 +400,234 @@ export interface Database {
           subdomain?: string | null;
           max_agents?: number | null;
           max_managers?: number | null;
+        };
+        Relationships: [];
+      };
+      contract_acceptances: {
+        Row: {
+          id: string;
+          change_id: string;
+          client_id: string;
+          agent_id: string | null;
+          accepted_name: string;
+          accepted_email: string;
+          accepted_at: string;
+        };
+        Insert: {
+          id?: string;
+          change_id: string;
+          client_id: string;
+          agent_id?: string | null;
+          accepted_name: string;
+          accepted_email: string;
+          accepted_at?: string;
+        };
+        Update: {
+          id?: string;
+          change_id?: string;
+          client_id?: string;
+          agent_id?: string | null;
+          accepted_name?: string;
+          accepted_email?: string;
+          accepted_at?: string;
+        };
+        Relationships: [];
+      };
+      contract_changes: {
+        Row: {
+          id: string;
+          title: string;
+          body: string;
+          effective_date: string;
+          client_ids: string[] | null;
+          requires_acceptance: boolean;
+          document_id: string | null;
+          created_by: string | null;
+          created_at: string;
+          withdrawn_at: string | null;
+          withdrawn_by: string | null;
+          status: string;
+          published_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          body: string;
+          effective_date: string;
+          client_ids?: string[] | null;
+          requires_acceptance?: boolean;
+          document_id?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          withdrawn_at?: string | null;
+          withdrawn_by?: string | null;
+          status?: string;
+          published_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          title?: string;
+          body?: string;
+          effective_date?: string;
+          client_ids?: string[] | null;
+          requires_acceptance?: boolean;
+          document_id?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          withdrawn_at?: string | null;
+          withdrawn_by?: string | null;
+          status?: string;
+          published_at?: string | null;
+        };
+        Relationships: [];
+      };
+      contract_documents: {
+        Row: {
+          id: string;
+          client_id: string | null;
+          title: string;
+          version_label: string | null;
+          effective_date: string;
+          file_path: string | null;
+          file_name: string | null;
+          file_size: number | null;
+          notes: string | null;
+          created_by: string | null;
+          created_at: string;
+          body: string | null;
+          template_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          client_id?: string | null;
+          title: string;
+          version_label?: string | null;
+          effective_date: string;
+          file_path?: string | null;
+          file_name?: string | null;
+          file_size?: number | null;
+          notes?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          body?: string | null;
+          template_id?: string | null;
+        };
+        Update: {
+          id?: string;
+          client_id?: string | null;
+          title?: string;
+          version_label?: string | null;
+          effective_date?: string;
+          file_path?: string | null;
+          file_name?: string | null;
+          file_size?: number | null;
+          notes?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          body?: string | null;
+          template_id?: string | null;
+        };
+        Relationships: [];
+      };
+      contract_templates: {
+        Row: {
+          id: string;
+          title: string;
+          body: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          body: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          title?: string;
+          body?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      credit_note_counters: {
+        Row: {
+          fy: string;
+          last_seq: number;
+        };
+        Insert: {
+          fy: string;
+          last_seq: number;
+        };
+        Update: {
+          fy?: string;
+          last_seq?: number;
+        };
+        Relationships: [];
+      };
+      credit_notes: {
+        Row: {
+          id: string;
+          client_id: string;
+          invoice_id: string;
+          credit_note_number: string;
+          fy: string;
+          issue_date: string;
+          reason: string;
+          lines: Json;
+          taxable_amount: number;
+          cgst: number;
+          sgst: number;
+          igst: number;
+          total: number;
+          supplier: Json;
+          recipient: Json;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          invoice_id: string;
+          credit_note_number: string;
+          fy: string;
+          issue_date: string;
+          reason: string;
+          lines: Json;
+          taxable_amount: number;
+          cgst?: number;
+          sgst?: number;
+          igst?: number;
+          total: number;
+          supplier: Json;
+          recipient: Json;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          invoice_id?: string;
+          credit_note_number?: string;
+          fy?: string;
+          issue_date?: string;
+          reason?: string;
+          lines?: Json;
+          taxable_amount?: number;
+          cgst?: number;
+          sgst?: number;
+          igst?: number;
+          total?: number;
+          supplier?: Json;
+          recipient?: Json;
+          created_by?: string | null;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -823,6 +1084,45 @@ export interface Database {
         };
         Relationships: [];
       };
+      invoice_payments: {
+        Row: {
+          id: string;
+          invoice_id: string;
+          client_id: string;
+          amount: number;
+          received_on: string;
+          method: string;
+          reference: string | null;
+          notes: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          invoice_id: string;
+          client_id: string;
+          amount: number;
+          received_on: string;
+          method: string;
+          reference?: string | null;
+          notes?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          invoice_id?: string;
+          client_id?: string;
+          amount?: number;
+          received_on?: string;
+          method?: string;
+          reference?: string | null;
+          notes?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       invoices: {
         Row: {
           id: string;
@@ -850,6 +1150,7 @@ export interface Database {
           disclaimer: string | null;
           created_by: string | null;
           created_at: string;
+          period_month: string | null;
         };
         Insert: {
           id?: string;
@@ -877,6 +1178,7 @@ export interface Database {
           disclaimer?: string | null;
           created_by?: string | null;
           created_at?: string;
+          period_month?: string | null;
         };
         Update: {
           id?: string;
@@ -904,6 +1206,7 @@ export interface Database {
           disclaimer?: string | null;
           created_by?: string | null;
           created_at?: string;
+          period_month?: string | null;
         };
         Relationships: [];
       };

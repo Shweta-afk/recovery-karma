@@ -48,6 +48,7 @@ import {
 } from "@/components/contracts/contract-documents";
 import { ExcelButton } from "@/components/superadmin/usage-shared";
 import { InfoTip, PageGuide } from "@/components/superadmin/help";
+import { DraftsCard, TemplatesCard } from "@/components/contracts/drafts-and-templates";
 
 export const Route = createFileRoute("/superadmin/contracts")({
   head: () => ({ meta: [{ title: "Contracts · SamvadX Platform" }] }),
@@ -160,11 +161,17 @@ function SuperadminContractsPage() {
         </div>
       ) : (
         <div className={`space-y-6 ${loading ? "opacity-60" : ""}`}>
+          <DraftsCard
+            drafts={view.drafts}
+            companiesCanSee={view.companiesCanSee}
+            onChanged={load}
+          />
           <div className="grid gap-6 xl:grid-cols-2">
             <PublishChangeCard view={view} onPublished={load} />
             <UploadDocumentCard view={view} onUploaded={load} />
           </div>
           <ChangesCard changes={view.changes} onChanged={load} canEmail={view.companiesCanSee} />
+          <TemplatesCard view={view} onChanged={load} />
           <Card>
             <CardHeader className="border-b border-border pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-semibold">

@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import { getAccessToken } from "@/lib/access-token";
 import { todayIstKey } from "@/lib/date-filter";
 import { currentDocument, fileSizeLabel, type ContractDocument } from "@/lib/contracts";
-import { getContractFileUrl } from "@/lib/contracts.server";
+import { getContractDocumentBody, getContractFileUrl } from "@/lib/contracts.server";
+import { ContractViewerDialog, ViewContractButton } from "./contract-body";
 
 export async function openContractFile(documentId: string) {
   const accessToken = await getAccessToken();
@@ -19,6 +20,8 @@ export async function openContractFile(documentId: string) {
   window.location.assign(url);
 }
 
+/** Opens an uploaded document's file. If the document turns out to be generated from a template
+ *  (e.g. one attached to a contract change), shows it in the viewer instead. */
 export function DownloadContractButton({
   documentId,
   label = "Download",
@@ -27,26 +30,45 @@ export function DownloadContractButton({
   label?: string;
 }) {
   const [busy, setBusy] = useState(false);
+  const [viewer, setViewer] = useState<{ title: string; body: string } | null>(null);
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      className="h-7 gap-1 text-[11px]"
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          await openContractFile(documentId);
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Could not open the file");
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-      {label}
-    </Button>
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 gap-1 text-[11px]"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await openContractFile(documentId);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : "";
+            if (/generated/i.test(msg)) {
+              try {
+                const accessToken = await getAccessToken();
+                const doc = await getContractDocumentBody({ data: { accessToken, documentId } });
+                setViewer({ title: doc.title, body: doc.body });
+              } catch (e2) {
+                toast.error(e2 instanceof Error ? e2.message : "Could not open the document");
+              }
+            } else {
+              toast.error(msg || "Could not open the file");
+            }
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+        {label}
+      </Button>
+      <ContractViewerDialog
+        title={viewer?.title ?? ""}
+        body={viewer?.body ?? null}
+        onClose={() => setViewer(null)}
+      />
+    </>
   );
 }
 
@@ -118,7 +140,8 @@ export function ContractDocumentList({
                       {d.companyName ?? "All companies (platform terms)"} ·{" "}
                     </span>
                   )}
-                  Effective {fmtDate(d.effectiveDate)} · {d.fileName}
+                  Effective {fmtDate(d.effectiveDate)} ·{" "}
+                  {d.generated ? "Generated from a template" : d.fileName}
                   {d.fileSize ? ` · ${fileSizeLabel(d.fileSize)}` : ""}
                 </div>
                 {d.notes && (
@@ -126,7 +149,11 @@ export function ContractDocumentList({
                 )}
               </div>
             </div>
-            <DownloadContractButton documentId={d.id} />
+            {d.generated ? (
+              <ViewContractButton documentId={d.id} title={d.title} />
+            ) : (
+              <DownloadContractButton documentId={d.id} />
+            )}
           </div>
         );
       })}

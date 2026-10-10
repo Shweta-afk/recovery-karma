@@ -1,12 +1,7 @@
 import { supabase } from "./supabase";
 
 export type DisputeType =
-  | "payment"
-  | "identity"
-  | "amount"
-  | "legal_threat"
-  | "harassment_claim"
-  | "other";
+  "payment" | "identity" | "amount" | "legal_threat" | "harassment_claim" | "other";
 export type DisputeStatus = "open" | "under_review" | "resolved" | "escalated_legal";
 
 export interface DisputeRecord {
