@@ -456,7 +456,9 @@ export const searchCibilDebtors = createServerFn({ method: "POST" })
 
     const { data: rows, error } = await db()
       .from("debtors")
-      .select("id, name, loan_reference, phone_primary, portfolios(lender_name, product_type)")
+      .select(
+        "id, name, loan_reference, phone_primary, portfolios!debtors_portfolio_id_fkey(lender_name, product_type)",
+      )
       .eq("client_id", caller.clientId)
       .is("archived_at", null)
       .or(filters.join(","))
