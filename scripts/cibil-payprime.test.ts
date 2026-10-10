@@ -120,11 +120,27 @@ describe("outcome / billing", () => {
   });
   test("price: ₹76.70 for a report and for an unpriced outcome", () => {
     const s = getService(CIBIL_SERVICE)!;
-    expect(s.adminOnly).toBe(true);
     expect(s.provider).toBe("payprime");
     expect(priceFor(s, "1")).toBe(76.7);
     expect(priceFor(s, "2")).toBe(76.7);
     expect(priceFor(s, "1", { [CIBIL_SERVICE]: { "1": 99 } })).toBe(99);
+  });
+});
+
+describe("failure reason", () => {
+  test("no record found carries PayPrime's inner reason and counts as charged", () => {
+    const o = readCibilOutcome(200, {
+      status: false,
+      txn_id: "PP9811349700",
+      txn_status: "failed",
+      message: "Generate Cibil Report Failed",
+      data: { code: 2, message: "No Record Found", status: 200 },
+    });
+    expect(o).toMatchObject({
+      status: "2",
+      billable: true,
+      message: "Generate Cibil Report Failed: No Record Found",
+    });
   });
 });
 

@@ -1441,26 +1441,15 @@ export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
     if (unknown.length) {
       throw new Error(`Unknown Insights service(s): ${unknown.join(", ")}`);
     }
-    const enabledServices = [...new Set(data.enabledServices)];
-
-    // CIBIL asserts borrower consent on every request, so it can only go on a plan once the
-    // company's consent agreement is recorded (setCompanyCibilConsent below).
-    if (enabledServices.includes(CIBIL_SERVICE)) {
-      const { data: row, error: consentErr } = await db()
-        .from("profilex_settings")
-        .select("cibil_consent_at")
-        .eq("client_id", data.clientId)
-        .maybeSingle();
-      if (consentErr || !(row as { cibil_consent_at?: string | null } | null)?.cibil_consent_at) {
-        throw new Error(
-          "Record this company's CIBIL consent agreement (the switch above) before adding CIBIL " +
-            "Report to its plan.",
-        );
-      }
-    }
-
     // The plan as it was, to describe what changed (for a draft contract update).
     const before = await loadSettings(data.clientId);
+
+    // CIBIL is not set from this list: it has its own switch (setCompanyCibil), which also
+    // records the consent agreement. Whatever the list says, keep CIBIL exactly as it was.
+    const enabledServices = [
+      ...new Set(data.enabledServices.filter((id) => id !== CIBIL_SERVICE)),
+      ...(before.enabled_services.includes(CIBIL_SERVICE) ? [CIBIL_SERVICE] : []),
+    ];
 
     const admin = db();
     const { error } = await admin.from("profilex_settings").upsert(
@@ -1717,11 +1706,10 @@ export const decideLookupExportRequest = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-/** The company's CIBIL consent agreement: when a superadmin recorded that the company holds
- *  borrower consent for credit-report pulls. Required before CIBIL can go on its plan and
- *  checked again on every pull (cibil-actions.server.ts). See
- *  migrations/20261010_cibil_reports.sql. */
-export const getCompanyCibilConsent = createServerFn({ method: "POST" })
+/** The company's one CIBIL switch. On = CIBIL on its plan AND its consent agreement recorded;
+ *  off = neither, and nobody in the company (admin, manager or agent) sees anything CIBIL —
+ *  enforced in cibil-actions.server.ts. See migrations/20261010_cibil_reports.sql. */
+export const getCompanyCibil = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z.object({ accessToken: tokenSchema, clientId: idSchema }).parse(d),
   )
@@ -1730,32 +1718,34 @@ export const getCompanyCibilConsent = createServerFn({ method: "POST" })
     if (!caller) throw new Error("Not authenticated as superadmin");
     const { data: row, error } = await db()
       .from("profilex_settings")
-      .select("cibil_consent_at, cibil_consent_note, superadmins(name)")
+      .select("enabled_services, cibil_consent_at, cibil_consent_note, superadmins(name)")
       .eq("client_id", data.clientId)
       .maybeSingle();
     // Column missing = the migration has not been applied yet.
-    if (error) return { available: false, at: null, note: null, byName: null };
+    if (error) return { available: false, on: false, at: null, note: null, byName: null };
     const r = (row ?? {}) as {
+      enabled_services?: string[] | null;
       cibil_consent_at?: string | null;
       cibil_consent_note?: string | null;
       superadmins?: { name?: string } | null;
     };
     return {
       available: true,
+      on: !!r.cibil_consent_at && (r.enabled_services ?? []).includes(CIBIL_SERVICE),
       at: r.cibil_consent_at ?? null,
       note: r.cibil_consent_note ?? null,
       byName: r.superadmins?.name ?? null,
     };
   });
 
-export const setCompanyCibilConsent = createServerFn({ method: "POST" })
+export const setCompanyCibil = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
       .object({
         accessToken: tokenSchema,
         clientId: idSchema,
-        agreed: z.boolean(),
-        /** Where the agreement is — e.g. "MSA clause 7.2, signed 2026-10-01". */
+        on: z.boolean(),
+        /** Where the company's consent agreement is — required to switch on. */
         note: z.string().trim().max(500).optional(),
       })
       .parse(d),
@@ -1763,43 +1753,46 @@ export const setCompanyCibilConsent = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated as superadmin");
-    if (data.agreed && !data.note) {
+    if (data.on && (!data.note || data.note.length < 3)) {
       throw new Error("Say where the company's consent agreement is recorded.");
     }
-    // Untyped until database.types.ts is regenerated after migrations/20261010_cibil_reports.sql.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const admin = db() as unknown as { from: (t: string) => any };
-    const patch = data.agreed
+    const admin = db();
+    const { data: row } = await admin
+      .from("profilex_settings")
+      .select("enabled_services")
+      .eq("client_id", data.clientId)
+      .maybeSingle();
+    const services = ((row as { enabled_services?: string[] | null } | null)?.enabled_services ??
+      []) as string[];
+    const nextServices = data.on
+      ? [...new Set([...services, CIBIL_SERVICE])]
+      : services.filter((s) => s !== CIBIL_SERVICE);
+    const patch = data.on
       ? {
+          enabled_services: nextServices,
           cibil_consent_at: new Date().toISOString(),
           cibil_consent_by: caller.superadminId,
-          cibil_consent_note: data.note,
+          cibil_consent_note: data.note ?? null,
         }
-      : { cibil_consent_at: null, cibil_consent_by: null, cibil_consent_note: null };
+      : {
+          enabled_services: nextServices,
+          cibil_consent_at: null,
+          cibil_consent_by: null,
+          cibil_consent_note: null,
+        };
 
     // Update, then insert only if the company has no settings row yet (see setCompanyDirectExport).
     const { data: existing, error: updErr } = await admin
       .from("profilex_settings")
       .update(patch)
       .eq("client_id", data.clientId)
-      .select("client_id, enabled_services");
+      .select("client_id");
     if (updErr) throw new Error(`Could not save (${updErr.message})`);
     if (!existing?.length) {
       const { error } = await admin
         .from("profilex_settings")
         .insert({ client_id: data.clientId, rate_card: {}, ...patch });
       if (error) throw new Error(`Could not save (${error.message})`);
-    }
-
-    // Withdrawing the agreement takes CIBIL off the plan too, so the plan never shows a service
-    // every pull of which would be refused.
-    const services = ((existing?.[0] as { enabled_services?: string[] } | undefined)
-      ?.enabled_services ?? []) as string[];
-    if (!data.agreed && services.includes(CIBIL_SERVICE)) {
-      await admin
-        .from("profilex_settings")
-        .update({ enabled_services: services.filter((s) => s !== CIBIL_SERVICE) })
-        .eq("client_id", data.clientId);
     }
 
     const { data: client } = await admin
@@ -1809,10 +1802,10 @@ export const setCompanyCibilConsent = createServerFn({ method: "POST" })
       .maybeSingle();
     await logSuperadminActivity({
       superadminId: caller.superadminId,
-      action: "insights_cibil_consent_changed",
+      action: "insights_cibil_changed",
       clientId: data.clientId,
-      summary: `${data.agreed ? "Recorded" : "Withdrew"} the CIBIL consent agreement for ${(client as { company_name: string } | null)?.company_name ?? "a company"}`,
-      detail: { agreed: data.agreed, note: data.note ?? null },
+      summary: `Turned CIBIL reports ${data.on ? "on" : "off"} for ${(client as { company_name: string } | null)?.company_name ?? "a company"}`,
+      detail: { on: data.on, consentNote: data.note ?? null },
     });
     return { ok: true };
   });

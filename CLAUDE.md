@@ -434,33 +434,35 @@ Unlike every other integration here:
   trace unlocks the employment lookups. It has **no** GST block, so it does not unlock GST→Contact. The phone and name are read from the debtor row
   server-side; that is what keeps every lookup to data already in a portfolio.
 
-**CIBIL reports via PayPrime (2026-10-10) — an Insights service for company ADMINS only.**
-Catalogue id `cibil-report` (`provider: "payprime"`, `adminOnly`), ₹65 + 18% GST = ₹76.70 per report
-from the PayPrime wallet (b2b.payprime.in; API spec at `/cibilDocs`). Own server action
-`src/lib/cibil-actions.server.ts` (pure logic `src/lib/cibil/payprime.ts`, tested in
-`scripts/cibil-payprime.test.ts`); `runProfilexTrace`/`runManualInsight` refuse it. Lives ONLY on
-**Admin → Insights** (`components/profilex/cibil-admin-section.tsx` + `cibil-panel.tsx`) — admins
-have no debtor-profile screen, so they search a borrower (loan ID/name/number), pull, and see the
-company's reports there. Form prefilled from the bank file + earlier lookups (PAN/DOB/gender);
-phone always the debtor's own.
-- **Consent:** every request asserts `user_consent_data_share: true`. A superadmin must record the
-  company's consent agreement (company page → Insights card) before CIBIL can go on its plan, and
-  every pull re-checks `profilex_settings.cibil_consent_at`. Withdrawing it takes CIBIL off the plan.
-- **Admins only, including the fact that a pull happened.** The ledger row goes in
-  `insights_manual_lookups` (RLS: admins only; `query_key` = debtor id), NEVER `debtor_traces`
-  (readable by the assigned agent and their manager). The report lives in server-only
-  `cibil_reports` (`lookup_id` → that ledger row), read via server functions after an admin check.
-  Superadmin usage/billing already counts manual lookups. No RLS policy was changed.
+**CIBIL reports via PayPrime (2026-10-10, reworked 2026-10-11).** Catalogue id `cibil-report`
+(`provider: "payprime"`), ₹65 + 18% GST = ₹76.70 per report from the PayPrime wallet
+(b2b.payprime.in; API spec at `/cibilDocs`). Server `src/lib/cibil-actions.server.ts`, pure logic
+`src/lib/cibil/payprime.ts` (tested in `scripts/cibil-payprime.test.ts`); `runProfilexTrace` /
+`runManualInsight` refuse it.
+- **One switch per company** (superadmin → company → Insights card → "CIBIL reports",
+  `setCompanyCibil`). On = `cibil-report` in `enabled_services` AND `cibil_consent_at` set —
+  turning it on asks where the consent agreement is (every request asserts borrower consent).
+  Off → admin, manager and agent see nothing CIBIL and the server refuses. Independent of the
+  ProfileX "Enable Insights" toggle; the plan checkbox list can't change it.
+- **Borrower pulls — managers** (`runCibilBorrower`, `components/profilex/cibil-panel.tsx` at the
+  top of the borrower's Insights tab). Phone = the borrower's own; PAN/DOB/address prefilled from
+  the bank file + earlier lookups (Skip Tracing returns PAN). Manager wallet hold/settle like other
+  lookups. Ledger `debtor_traces`. Visible to whoever can see the borrower (checked by running
+  `debtors_select` AS the caller) — so the assigned agent sees it too.
+- **Manual pulls — admins** (`runCibilManual`, `cibil-admin-section.tsx` on Admin → Insights):
+  any person's details typed in. Ledger `insights_manual_lookups` (admins only). `debtor_id` NULL.
+- Reports in server-only `cibil_reports` (`trace_id` or `lookup_id` → ledger row); ledger rows
+  hold billing fields only. No RLS policy was changed.
 - **IP allow-list:** PayPrime accepts calls only from the IPs/domain on its portal (Developer
-  Setting → Api Token): `152.55.177.192/.193`, `162.220.232.251`, `api.samvadx.com` — per the
-  Railway's static outbound IPs (verified 2026-10-10, all three "Shared"; any call may leave from
-  any of them). It cannot work from localhost. PayPrime issues one token per IP, so
-  `PAYPRIME_API_TOKEN` holds all three comma-separated; each pull tries them in order and moves on
-  only on "Invalid Api token" (no transaction, never charged).
-- Billing: success → status "1"; any response with a `txn_id` but no report → "2", treated as
-  charged (PayPrime doesn't document refunds); no txn id → not charged. Not deducted from the
-  ProfileX actual-balance wallet — PayPrime's balance is only on its portal.
-- Migrations `20261010_cibil_reports.sql` + `20261010_cibil_ledger_admin_only.sql` (both live).
+  Setting → Api Token): `152.55.177.192/.193`, `162.220.232.251` = Railway's static outbound IPs
+  (all three "Shared"; any call may leave from any). Can't work from localhost.
+  `PAYPRIME_API_TOKEN` = all three tokens comma-separated; tried in order, moving on only on
+  "Invalid Api token" (no transaction, never charged). Confirmed working 2026-10-10.
+- Billing: success → status "1"; a `txn_id` without a report → "2", treated as charged — e.g.
+  "No Record Found" (details match nobody at the bureau; seen live 2026-10-10). Not deducted from
+  the ProfileX actual-balance wallet — PayPrime's balance is only on its portal.
+- Migrations `20261010_cibil_reports.sql`, `20261010_cibil_ledger_admin_only.sql`,
+  `20261011_cibil_borrower_and_manual.sql` (all live).
 
 **Monthly archive + cross-upload lookup reuse (2026-09-22).** `monthly_archive_rows` /
 `monthly_archive_runs` (`migrations/20260922_monthly_archive.sql`) permanently keep every Insights

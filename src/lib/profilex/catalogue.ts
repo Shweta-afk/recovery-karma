@@ -53,8 +53,6 @@ export interface ProfilexService {
    *  runManualInsight refuse it. Kept in this catalogue so plans, rate cards, spend and usage
    *  reports treat it like every other Insights service. */
   provider?: "payprime";
-  /** Only a company ADMIN may run it (not managers) and only an admin sees its result. */
-  adminOnly?: boolean;
   /** Stable slug — persisted in `debtor_traces.service_id`, so never rename one in place. */
   id: string;
   label: string;
@@ -275,7 +273,6 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     provider: "payprime",
     path: "/api/cibil-report",
     input: "cibil",
-    adminOnly: true,
     // PayPrime's commission plan (b2b.payprime.in/commission-charges, checked 2026-10-10):
     // ₹65 + 18% GST = ₹76.70, deducted from the PayPrime wallet. Only a success is priced; an
     // unpriced outcome resolves to the same ₹76.70 (priceFor fails expensive), since PayPrime
@@ -283,7 +280,8 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     defaultPrices: { "1": 76.7 },
     blurb:
       "The borrower's full CIBIL credit report: score, loans and cards, repayment history and " +
-      "recent enquiries. Needs their PAN, date of birth and address. Admins only.",
+      "recent enquiries. Needs their PAN (Skip Tracing returns it), date of birth and address. " +
+      "Has its own on/off switch per company.",
   },
 ];
 

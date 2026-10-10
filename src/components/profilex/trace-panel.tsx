@@ -50,6 +50,7 @@ import {
   refreshOpenRequest,
   requestInsights,
 } from "@/lib/insight-request-store";
+import { CibilPanel } from "@/components/profilex/cibil-panel";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -328,6 +329,18 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
 
 export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorName: string }) {
   const { user } = useAuth();
+  // CIBIL sits outside the lookups below, which have their own "Insights is off" states: it has
+  // its own company switch, and renders nothing at all while that is off.
+  return (
+    <div className="space-y-4">
+      <CibilPanel debtorId={debtorId} debtorName={debtorName} showCost={user?.role === "admin"} />
+      <LookupsPanel debtorId={debtorId} debtorName={debtorName} />
+    </div>
+  );
+}
+
+function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: string }) {
+  const { user } = useAuth();
   const canRun = user?.role === "manager" || user?.role === "admin";
   // Cost is an admin concern, not a manager's. A manager deciding whether this debtor is worth
   // looking up should weigh that on the merits of the account, not haggle with a price tag
@@ -577,8 +590,7 @@ export function TracePanel({ debtorId, debtorName }: { debtorId: string; debtorN
         </div>
       )}
 
-      {/* CIBIL (provider "payprime") is never shown here: it is admins-only and lives on
-          Admin → Insights (cibil-admin-section.tsx). */}
+      {/* CIBIL (provider "payprime") has its own card above (cibil-panel.tsx). */}
       {/* manualOnly services (e.g. DIN to Contact) have no debtor field to run against — they
           only ever appear on Admin > Insights, where an admin types the value in. */}
       {PROFILEX_SERVICES.filter((service) => !service.manualOnly && !service.provider).map(

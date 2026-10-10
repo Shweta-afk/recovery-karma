@@ -1,19 +1,24 @@
 // CIBIL credit reports through PayPrime — the only place that spends money with PayPrime.
 //
-// An Insights service (catalogue id "cibil-report", provider "payprime"), so it shares the
-// company's plan, rate card, spend reports and superadmin billing with the ProfileX lookups. What
-// is different, and enforced here rather than in the browser:
+// An Insights service (catalogue id "cibil-report", provider "payprime") with ONE switch per
+// company, set by a superadmin (company page → Insights card): CIBIL is "on" when the service is
+// on the company's plan AND its consent agreement is recorded — the switch sets both together
+// (setCompanyCibil in superadmin-actions.server.ts). Off, every function here returns nothing and
+// refuses to run, for every role. Independent of the ProfileX "Enable Insights" toggle.
 //
-//   - Company ADMINS only — not managers, not agents. Both to run and to read. Run from
-//     Admin → Insights (admins have no debtor-profile screen), against a debtor found by search.
-//   - The billing ledger row goes in insights_manual_lookups (RLS: admins only), never
-//     debtor_traces (readable by the assigned agent and their manager), so nobody but an admin can
-//     see that a credit report was pulled. query_key = the debtor id.
-//   - A superadmin must have recorded the company's consent agreement
-//     (profilex_settings.cibil_consent_at), because every request asserts the borrower's consent.
-//   - The report is stored in cibil_reports (server-only). See migrations/20261010_cibil_*.sql.
-//   - The phone is the debtor's own; name/PAN/DOB/address are typed by the admin (prefilled from
-//     the bank file and earlier lookups), since nothing on a debtor row reliably holds a PAN.
+// Two ways in, both enforced here rather than in the browser:
+//
+//   - Borrower pull (runCibilBorrower) — a MANAGER (or admin) on a borrower they can see, from
+//     the borrower's Insights tab. The phone is the borrower's own; PAN/DOB/address come from the
+//     bank file and earlier lookups (Skip Tracing returns PAN) and can be corrected. Managers pay
+//     from their Insights wallet, like every other lookup. Ledger: debtor_traces. The report is
+//     visible to everyone who can see that borrower (the assigned agent, their manager, admins).
+//   - Manual pull (runCibilManual) — an ADMIN types in any person's details on Admin → Insights.
+//     Ledger: insights_manual_lookups (admins only). Visible to the company's admins only.
+//
+// Reports live in cibil_reports (server-only — no RLS policies), read through getCibilBorrower /
+// listCibilManual / getCibilReportData after the visibility checks above. The ledger rows carry
+// billing fields only. See migrations/20261010_cibil_*.sql and 20261011_cibil_borrower_and_manual.sql.
 //
 // PayPrime only answers calls from the IPs registered on its portal (Developer Setting → Api
 // Token), so this works only where the server's outbound IP is on that list — Railway's static
@@ -22,10 +27,11 @@
 // charged) — and optionally PAYPRIME_BASE_URL.
 import { z, tokenSchema, idSchema } from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
+import { createClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import type { Json } from "./database.types";
 import { enforceRateLimit } from "./rate-limit.server";
-import { loadSettings } from "./profilex-actions.server";
+import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 import { normalisePhone } from "./profilex/billing";
 import { CIBIL_SERVICE, getService, priceFor } from "./profilex/catalogue";
 import { buildLoanLookupData } from "./profilex/loan-lookup-data";
@@ -37,36 +43,58 @@ import {
   readCibilOutcome,
   validateCibilForm,
   type CibilForm,
+  type CibilOutcome,
 } from "./cibil/payprime";
 
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the new tables/columns are read
-   through an untyped client until database.types.ts is regenerated after the migration. */
+/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST's fluent builder;
+   the chain is `any` by necessity, as in profilex-actions.server.ts. */
 type QueryBuilder = any;
 interface LooseDb {
   from: (table: string) => QueryBuilder;
+  rpc: (fn: string, args?: Row) => Promise<{ data: unknown; error: { message: string } | null }>;
 }
 const db = (): LooseDb => getSupabaseAdmin() as unknown as LooseDb;
 type Row = Record<string, unknown>;
+type Caller = NonNullable<Awaited<ReturnType<typeof verifyCaller>>>;
 
 const env = (name: string) => process.env[name]?.trim() || undefined;
 
-async function requireAdmin(accessToken: string) {
+async function requireCaller(accessToken: string): Promise<Caller> {
   const caller = await verifyCaller(accessToken);
   if (!caller) throw new Error("Not authenticated");
-  if (caller.role !== "admin") throw new Error("Only admins can use CIBIL reports");
   return caller;
 }
 
-/** When the superadmin recorded this company's consent agreement, or null. A database still
- *  missing the column reads as "not recorded", which keeps CIBIL off — the safe direction. */
-async function consentAt(clientId: string): Promise<string | null> {
-  const { data, error } = await db()
-    .from("profilex_settings")
-    .select("cibil_consent_at")
-    .eq("client_id", clientId)
-    .maybeSingle();
-  if (error) return null;
-  return (data?.cibil_consent_at as string | null) ?? null;
+/** The company's one CIBIL switch: on the plan AND consent recorded. A database missing the
+ *  consent column reads as off — the safe direction. */
+async function cibilState(clientId: string): Promise<{ on: boolean; settings: ProfilexSettings }> {
+  const [settings, consent] = await Promise.all([
+    loadSettings(clientId),
+    db()
+      .from("profilex_settings")
+      .select("cibil_consent_at")
+      .eq("client_id", clientId)
+      .maybeSingle()
+      .then((r: { data: Row | null; error: unknown }) =>
+        r.error ? null : ((r.data?.cibil_consent_at as string | null) ?? null),
+      ),
+  ]);
+  return { on: settings.enabled_services.includes(CIBIL_SERVICE) && !!consent, settings };
+}
+
+/** Whether the caller can see this borrower — decided by the database's own debtors_select RLS,
+ *  run AS the caller, so CIBIL visibility is exactly borrower visibility (assigned agent, their
+ *  manager, admins) and can never drift from it. */
+async function callerCanSeeDebtor(accessToken: string, debtorId: string): Promise<boolean> {
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!url || !anonKey) throw new Error("Missing SUPABASE_URL/SUPABASE_ANON_KEY (server env)");
+  const asUser = createClient(url, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
+  const { data } = await asUser.from("debtors").select("id").eq("id", debtorId).maybeSingle();
+  return !!data;
 }
 
 async function loadDebtor(debtorId: string, clientId: string) {
@@ -75,9 +103,9 @@ async function loadDebtor(debtorId: string, clientId: string) {
     .select("id, client_id, name, email, phone_primary, loan_reference, extra")
     .eq("id", debtorId)
     .maybeSingle();
-  if (error) throw new Error(`Could not load the debtor (${error.message})`);
-  if (!debtor) throw new Error("That debtor no longer exists");
-  if (debtor.client_id !== clientId) throw new Error("That debtor belongs to another organisation");
+  if (error) throw new Error(`Could not load the borrower (${error.message})`);
+  if (!debtor) throw new Error("That borrower no longer exists");
+  if (debtor.client_id !== clientId) throw new Error("That borrower belongs to another company");
   return debtor as Row;
 }
 
@@ -88,12 +116,15 @@ export interface CibilReportSummary {
   htmlUrl: string | null;
   txnId: string | null;
   requestedByName: string | null;
-  /** The name/PAN/DOB… it was pulled with, so a re-pull can start from it. */
-  request: Json;
+  /** Who the report is about (name and PAN as sent). */
+  subject: string;
 }
+
+const REPORT_COLUMNS = "id, created_at, score, html_url, txn_id, request, agents(name)";
 
 function toSummary(r: Row): CibilReportSummary {
   const agent = r.agents as { name?: string } | null;
+  const req = (r.request as Row | null) ?? {};
   return {
     id: String(r.id),
     createdAt: String(r.created_at),
@@ -101,91 +132,14 @@ function toSummary(r: Row): CibilReportSummary {
     htmlUrl: (r.html_url as string | null) ?? null,
     txnId: (r.txn_id as string | null) ?? null,
     requestedByName: agent?.name ?? null,
-    request: (r.request as Json) ?? {},
+    subject: [
+      `${String(req.first_name ?? "")} ${String(req.last_name ?? "")}`.trim(),
+      req.id_number,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   };
 }
-
-export interface CibilPanelState {
-  /** Why the Pull button is not offered, or null when it is. */
-  blockedReason: string | null;
-  price: number;
-  prefill: CibilForm;
-  reports: CibilReportSummary[];
-}
-
-/** Everything the debtor's CIBIL panel needs: whether it can run, the price, the form prefilled
- *  from the bank file and earlier lookups, and reports already pulled. */
-export const getCibilPanel = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) =>
-    z.object({ accessToken: tokenSchema, debtorId: idSchema }).parse(d),
-  )
-  .handler(async ({ data }): Promise<CibilPanelState> => {
-    const caller = await requireAdmin(data.accessToken);
-    const debtor = await loadDebtor(data.debtorId, caller.clientId);
-    const service = getService(CIBIL_SERVICE)!;
-    const admin = db();
-
-    const [settings, consent, traces, reports] = await Promise.all([
-      loadSettings(caller.clientId),
-      consentAt(caller.clientId),
-      admin
-        .from("debtor_traces")
-        .select("id, service_id, state, provider_status, billable, cost, created_at, response")
-        .eq("debtor_id", data.debtorId)
-        .eq("state", "done")
-        .neq("service_id", CIBIL_SERVICE),
-      admin
-        .from("cibil_reports")
-        .select("id, created_at, score, html_url, txn_id, request, agents(name)")
-        .eq("debtor_id", data.debtorId)
-        .order("created_at", { ascending: false })
-        .limit(10),
-    ]);
-
-    let blockedReason: string | null = null;
-    if (!settings.enabled) blockedReason = "Insights is turned off for your company.";
-    else if (!settings.enabled_services.includes(CIBIL_SERVICE))
-      blockedReason = "CIBIL reports are not on your company's Insights plan.";
-    else if (!consent)
-      blockedReason =
-        "CIBIL reports are on your plan but your company's consent agreement has not been " +
-        "recorded yet. Contact SamvadX support.";
-    else if (reports.error)
-      blockedReason = "CIBIL reports are not set up on the server yet. Contact SamvadX support.";
-
-    // PAN / DOB / gender / emails earlier lookups found on this debtor.
-    const lookup =
-      buildLoanLookupData(
-        ((traces.data ?? []) as Row[]).map((t) => ({
-          traceId: String(t.id),
-          debtorId: data.debtorId,
-          serviceId: String(t.service_id),
-          state: String(t.state),
-          providerStatus: (t.provider_status as string | null) ?? null,
-          billable: !!t.billable,
-          cost: Number(t.cost ?? 0),
-          createdAt: String(t.created_at),
-          response: t.response,
-          loanReference: "",
-          name: String(debtor.name ?? ""),
-          phonePrimary: String(debtor.phone_primary ?? ""),
-          email: (debtor.email as string | null) ?? null,
-          bankExtra: {},
-        })),
-      ).rows[0] ?? null;
-
-    return {
-      blockedReason,
-      price: priceFor(service, "1", settings.rate_card),
-      prefill: buildPrefill({
-        name: String(debtor.name ?? ""),
-        email: (debtor.email as string | null) ?? null,
-        extra: (debtor.extra as Row | null) ?? {},
-        lookup,
-      }),
-      reports: reports.error ? [] : ((reports.data ?? []) as Row[]).map(toSummary),
-    };
-  });
 
 const formSchema = z.object({
   firstName: z.string().trim().max(80),
@@ -201,102 +155,243 @@ const formSchema = z.object({
   addressType: z.string().trim().max(1),
 });
 
-export const runCibilReport = createServerFn({ method: "POST" })
+function checkForm(form: CibilForm) {
+  const first = Object.entries(validateCibilForm(form))[0];
+  if (first) throw new Error(`Check the form: ${first[0]} — ${first[1]}`);
+}
+
+/** POST to PayPrime, trying each configured token (see header). Never throws on an HTTP error —
+ *  only when PayPrime cannot be reached at all, in which case nothing was charged. */
+async function callPayPrime(
+  body: Record<string, unknown>,
+): Promise<{ httpStatus: number; text: string; json: Row | null }> {
+  const tokens = parseTokens(env("PAYPRIME_API_TOKEN"));
+  if (!tokens.length) {
+    throw new Error(
+      "CIBIL reports are not configured. Set PAYPRIME_API_TOKEN in the server environment " +
+        "(and in Railway for production).",
+    );
+  }
+  const base = (env("PAYPRIME_BASE_URL") ?? "https://b2b.payprime.in").replace(/\/+$/, "");
+  const path = getService(CIBIL_SERVICE)!.path;
+  let httpStatus = 0;
+  let text = "";
+  let json: Row | null = null;
+  for (const token of tokens) {
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ token, ...body }),
+      signal: AbortSignal.timeout(90_000),
+    });
+    httpStatus = res.status;
+    text = await res.text();
+    json = null;
+    try {
+      json = JSON.parse(text) as Row;
+    } catch {
+      // Non-JSON (an HTML error page — e.g. the IP is not on PayPrime's list). Kept as text.
+    }
+    if (!isInvalidToken(json)) break;
+  }
+  return { httpStatus, text, json };
+}
+
+function ledgerFields(outcome: CibilOutcome, httpStatus: number, text: string, cost: number) {
+  return {
+    state: outcome.billable ? "done" : "failed",
+    http_status: httpStatus,
+    provider_status: outcome.status,
+    billable: outcome.billable,
+    cost,
+    transaction_id: outcome.txnId,
+    // Billing fields only — the report itself goes in cibil_reports.
+    response: {
+      provider: "payprime",
+      status: outcome.status,
+      txn_id: outcome.txnId,
+      message: outcome.message.slice(0, 200),
+    },
+    error: outcome.status === "1" ? null : `HTTP ${httpStatus}: ${text.slice(0, 400)}`,
+    completed_at: new Date().toISOString(),
+  };
+}
+
+function failureMessage(outcome: CibilOutcome, httpStatus: number, text: string): string {
+  const hint =
+    httpStatus === 401 || httpStatus === 403 || /\bip\b|whitelist|not allowed/i.test(text)
+      ? " If PayPrime says the IP or domain is not allowed, this server's outbound IP is not on " +
+        "the list under Developer Setting → Api Token on the PayPrime portal."
+      : "";
+  const noRecord = /no record/i.test(outcome.message)
+    ? " The bureau has no record matching these details — check the PAN, date of birth and " +
+      "name spelling against the borrower's PAN card."
+    : "";
+  return (
+    `PayPrime did not return a report (${outcome.message}).` +
+    noRecord +
+    (outcome.billable
+      ? ` It issued transaction ${outcome.txnId}, so it may have been charged.`
+      : " Nothing was charged.") +
+    hint
+  );
+}
+
+function unreachable(err: unknown): Error {
+  return new Error(
+    err instanceof Error && /not configured/.test(err.message)
+      ? err.message
+      : "Could not reach PayPrime — nothing was charged. Try again in a minute.",
+  );
+}
+
+async function saveReport(fields: Row): Promise<CibilReportSummary> {
+  const { data: saved, error } = await db()
+    .from("cibil_reports")
+    .insert(fields)
+    .select(REPORT_COLUMNS)
+    .single();
+  if (error || !saved) {
+    // Paid for, but not stored: say so with the transaction id rather than lose it silently.
+    console.error("[cibil] report save failed:", error?.message);
+    throw new Error(
+      `The report was generated (transaction ${String(fields.txn_id)}) but could not be saved ` +
+        `(${error?.message ?? "unknown error"}). Contact SamvadX support with that id.`,
+    );
+  }
+  return toSummary(saved as Row);
+}
+
+// ── Borrower pulls (managers; visible to whoever can see the borrower) ─────────────────────────
+
+export interface CibilBorrowerState {
+  /** The company's CIBIL switch. Off → nothing else is returned and the UI shows nothing. */
+  on: boolean;
+  /** Whether this caller may pull (managers and admins; agents read only). */
+  canRun: boolean;
+  price: number;
+  /** Prefilled form, only for someone who can run it. */
+  prefill: CibilForm | null;
+  reports: CibilReportSummary[];
+}
+
+export const getCibilBorrower = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
-    z
-      .object({
-        accessToken: tokenSchema,
-        debtorId: idSchema,
-        form: formSchema,
-        /** Pull a fresh report even though one is still within the re-use window. */
-        force: z.boolean().optional(),
-      })
-      .parse(d),
+    z.object({ accessToken: tokenSchema, debtorId: idSchema }).parse(d),
   )
-  .handler(async ({ data }) => {
-    const caller = await requireAdmin(data.accessToken);
-    // Each pull is ₹76.70 of real money.
-    enforceRateLimit(`cibil:${caller.authUserId}`, 10, 60_000);
-
-    const service = getService(CIBIL_SERVICE)!;
-    const debtor = await loadDebtor(data.debtorId, caller.clientId);
-
-    const settings = await loadSettings(caller.clientId);
-    if (!settings.enabled) throw new Error("Insights is turned off for your company.");
-    if (!settings.enabled_services.includes(CIBIL_SERVICE)) {
-      throw new Error("CIBIL reports are not on your company's Insights plan.");
-    }
-    if (!(await consentAt(caller.clientId))) {
-      throw new Error(
-        "Your company's CIBIL consent agreement has not been recorded. Contact SamvadX support.",
-      );
-    }
-
-    const form = data.form as CibilForm;
-    const problems = validateCibilForm(form);
-    const firstProblem = Object.entries(problems)[0];
-    if (firstProblem) throw new Error(`Check the form: ${firstProblem[0]} — ${firstProblem[1]}`);
-
-    // The phone is the debtor's own, never the browser's.
-    const phone = normalisePhone(debtor.phone_primary as string);
-    if (!/^[6-9]\d{9}$/.test(phone)) {
-      throw new Error(`${debtor.name} has no valid mobile number on file.`);
-    }
-
-    const tokens = parseTokens(env("PAYPRIME_API_TOKEN"));
-    if (!tokens.length) {
-      throw new Error(
-        "CIBIL reports are not configured. Set PAYPRIME_API_TOKEN in the server environment " +
-          "(and in Railway for production).",
-      );
-    }
+  .handler(async ({ data }): Promise<CibilBorrowerState> => {
+    const off: CibilBorrowerState = {
+      on: false,
+      canRun: false,
+      price: 0,
+      prefill: null,
+      reports: [],
+    };
+    const caller = await requireCaller(data.accessToken);
+    const { on, settings } = await cibilState(caller.clientId);
+    if (!on) return off;
+    if (!(await callerCanSeeDebtor(data.accessToken, data.debtorId))) return off;
 
     const admin = db();
+    const canRun = caller.role === "manager" || caller.role === "admin";
+    const service = getService(CIBIL_SERVICE)!;
 
-    // Re-use: a report pulled within the company's "found" window is served free.
-    if (!data.force) {
-      const since = new Date(Date.now() - settings.hit_ttl_hours * 3_600_000).toISOString();
-      const { data: recent } = await admin
-        .from("cibil_reports")
-        .select("id, created_at, score, html_url, txn_id, request, agents(name)")
+    const reportsRes = await admin
+      .from("cibil_reports")
+      .select(REPORT_COLUMNS)
+      .eq("debtor_id", data.debtorId)
+      .order("created_at", { ascending: false })
+      .limit(10);
+    const reports = reportsRes.error ? [] : ((reportsRes.data ?? []) as Row[]).map(toSummary);
+
+    let prefill: CibilForm | null = null;
+    if (canRun) {
+      const debtor = await loadDebtor(data.debtorId, caller.clientId);
+      // PAN / DOB / gender / emails that earlier lookups (Skip Tracing especially) found.
+      const { data: traces } = await admin
+        .from("debtor_traces")
+        .select("id, service_id, state, provider_status, billable, cost, created_at, response")
         .eq("debtor_id", data.debtorId)
-        .not("html_url", "is", null)
-        .gte("created_at", since)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (recent) return { cached: true, cost: 0, report: toSummary(recent as Row) };
+        .eq("state", "done")
+        .neq("service_id", CIBIL_SERVICE);
+      const lookup =
+        buildLoanLookupData(
+          ((traces ?? []) as Row[]).map((t) => ({
+            traceId: String(t.id),
+            debtorId: data.debtorId,
+            serviceId: String(t.service_id),
+            state: String(t.state),
+            providerStatus: (t.provider_status as string | null) ?? null,
+            billable: !!t.billable,
+            cost: Number(t.cost ?? 0),
+            createdAt: String(t.created_at),
+            response: t.response,
+            loanReference: "",
+            name: String(debtor.name ?? ""),
+            phonePrimary: String(debtor.phone_primary ?? ""),
+            email: (debtor.email as string | null) ?? null,
+            bankExtra: {},
+          })),
+        ).rows[0] ?? null;
+      prefill = buildPrefill({
+        name: String(debtor.name ?? ""),
+        email: (debtor.email as string | null) ?? null,
+        extra: (debtor.extra as Row | null) ?? {},
+        lookup,
+      });
     }
 
-    // Release an abandoned claim, then claim the in-flight slot — the partial unique index on
-    // insights_manual_lookups (client_id, service_id, query_key) WHERE state = 'pending' stops a
-    // double click paying twice. Same pattern as runManualInsight.
+    return { on, canRun, price: priceFor(service, "1", settings.rate_card), prefill, reports };
+  });
+
+export const runCibilBorrower = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, debtorId: idSchema, form: formSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (caller.role !== "manager" && caller.role !== "admin") {
+      throw new Error("Only managers can pull a CIBIL report");
+    }
+    enforceRateLimit(`cibil:${caller.authUserId}`, 10, 60_000);
+
+    const { on, settings } = await cibilState(caller.clientId);
+    if (!on) throw new Error("CIBIL reports are not available for your company.");
+    if (!(await callerCanSeeDebtor(data.accessToken, data.debtorId))) {
+      throw new Error("You can only pull a report for a borrower you can see.");
+    }
+    const debtor = await loadDebtor(data.debtorId, caller.clientId);
+    const form = data.form as CibilForm;
+    checkForm(form);
+
+    // The phone is the borrower's own, never the browser's.
+    const phone = normalisePhone(debtor.phone_primary as string);
+    if (!/^[6-9]\d{9}$/.test(phone)) throw new Error(`${debtor.name} has no valid mobile number.`);
+
+    const service = getService(CIBIL_SERVICE)!;
+    const worstCase = priceFor(service, null, settings.rate_card);
+    const admin = db();
+
+    // Release an abandoned claim, then claim the in-flight slot (partial unique index on
+    // debtor_traces (debtor_id, service_id) WHERE state = 'pending' — no double charge).
     await admin
-      .from("insights_manual_lookups")
+      .from("debtor_traces")
       .update({
         state: "failed",
         error: "Abandoned — no response was recorded, so it is not counted as spend.",
         completed_at: new Date().toISOString(),
       })
-      .eq("client_id", caller.clientId)
+      .eq("debtor_id", data.debtorId)
       .eq("service_id", CIBIL_SERVICE)
-      .eq("query_key", data.debtorId)
       .eq("state", "pending")
       .lt("created_at", new Date(Date.now() - 5 * 60_000).toISOString());
-
     const { data: pending, error: claimErr } = await admin
-      .from("insights_manual_lookups")
+      .from("debtor_traces")
       .insert({
         client_id: caller.clientId,
+        debtor_id: data.debtorId,
         service_id: CIBIL_SERVICE,
         requested_by: caller.agentId ?? null,
-        query_key: data.debtorId,
-        // Who it was about — the name/PAN/DOB sent are kept with the report in cibil_reports.
-        input: {
-          debtor_id: data.debtorId,
-          name: String(debtor.name ?? ""),
-          loan_reference: String(debtor.loan_reference ?? ""),
-        },
         state: "pending",
       })
       .select("id")
@@ -307,32 +402,165 @@ export const runCibilReport = createServerFn({ method: "POST" })
       );
     }
 
-    const body = cibilRequestBody(form, phone);
-    const base = (env("PAYPRIME_BASE_URL") ?? "https://b2b.payprime.in").replace(/\/+$/, "");
-    let httpStatus = 0;
-    let text = "";
-    let json: Row | null = null;
-    try {
-      // Each token belongs to one allow-listed IP and this call may leave from any of them, so
-      // try them in order. Only "Invalid Api token" moves on — it comes back before any
-      // transaction is created, so a wrong token is never charged. Any other answer is final.
-      for (const token of tokens) {
-        const res = await fetch(`${base}${service.path}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ token, ...body }),
-          signal: AbortSignal.timeout(90_000),
-        });
-        httpStatus = res.status;
-        text = await res.text();
-        json = null;
-        try {
-          json = JSON.parse(text) as Row;
-        } catch {
-          // Non-JSON (an HTML error page — e.g. the IP is not on PayPrime's list). Kept as text.
-        }
-        if (!isInvalidToken(json)) break;
+    // Managers pay from their Insights wallet — hold the price up front, settle after (same RPCs
+    // as runProfilexTrace). Admins fund the wallets and aren't wallet-gated.
+    let held = 0;
+    if (caller.role === "manager" && caller.agentId) {
+      const { data: ok, error: holdErr } = await admin.rpc("profilex_wallet_hold", {
+        p_manager_id: caller.agentId,
+        p_amount: worstCase,
+      });
+      if (holdErr || !ok) {
+        await admin
+          .from("debtor_traces")
+          .update({
+            state: "failed",
+            error: holdErr
+              ? `Wallet hold failed: ${holdErr.message}`
+              : "Insufficient wallet balance",
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", pending.id);
+        throw new Error(
+          `Your Insights wallet needs at least ₹${worstCase.toFixed(2)} for a CIBIL report. ` +
+            "Ask an admin to top it up.",
+        );
       }
+      held = worstCase;
+    }
+    const settle = async (cost: number) => {
+      if (!held || !caller.agentId) return;
+      const { error } = await admin.rpc("profilex_wallet_settle", {
+        p_manager_id: caller.agentId,
+        p_hold: held,
+        p_cost: Math.min(cost, held),
+      });
+      if (error) console.error("[cibil] wallet settle failed:", error.message);
+    };
+
+    const body = cibilRequestBody(form, phone);
+    let call: Awaited<ReturnType<typeof callPayPrime>>;
+    try {
+      call = await callPayPrime(body);
+    } catch (err) {
+      await settle(0);
+      await admin
+        .from("debtor_traces")
+        .update({
+          state: "failed",
+          error: `Could not reach PayPrime: ${err instanceof Error ? err.message : String(err)}`,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", pending.id);
+      throw unreachable(err);
+    }
+
+    const outcome = readCibilOutcome(call.httpStatus, call.json);
+    const cost = outcome.billable ? priceFor(service, outcome.status, settings.rate_card) : 0;
+    await admin
+      .from("debtor_traces")
+      .update(ledgerFields(outcome, call.httpStatus, call.text, cost))
+      .eq("id", pending.id);
+    await settle(cost);
+
+    if (outcome.status !== "1") {
+      throw new Error(failureMessage(outcome, call.httpStatus, call.text));
+    }
+
+    const report = await saveReport({
+      client_id: caller.clientId,
+      debtor_id: data.debtorId,
+      trace_id: pending.id,
+      requested_by: caller.agentId ?? null,
+      request: body,
+      txn_id: outcome.txnId,
+      html_url: outcome.htmlUrl,
+      score: outcome.score,
+      response: call.json,
+    });
+    return { cost, report };
+  });
+
+// ── Manual pulls (admins only, any person) ──────────────────────────────────────────────────────
+
+export const listCibilManual = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const none = { on: false, price: 0, rows: [] as CibilReportSummary[] };
+    const caller = await requireCaller(data.accessToken);
+    if (caller.role !== "admin") return none;
+    const { on, settings } = await cibilState(caller.clientId);
+    if (!on) return none;
+    const res = await db()
+      .from("cibil_reports")
+      .select(REPORT_COLUMNS)
+      .eq("client_id", caller.clientId)
+      .is("debtor_id", null)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    return {
+      on,
+      price: priceFor(getService(CIBIL_SERVICE)!, "1", settings.rate_card),
+      rows: res.error ? [] : ((res.data ?? []) as Row[]).map(toSummary),
+    };
+  });
+
+export const runCibilManual = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        form: formSchema,
+        phone: z.string().trim().max(15),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (caller.role !== "admin") throw new Error("Only admins can run a manual CIBIL report");
+    enforceRateLimit(`cibil:${caller.authUserId}`, 10, 60_000);
+
+    const { on, settings } = await cibilState(caller.clientId);
+    if (!on) throw new Error("CIBIL reports are not available for your company.");
+    const form = data.form as CibilForm;
+    checkForm(form);
+    const phone = normalisePhone(data.phone);
+    if (!/^[6-9]\d{9}$/.test(phone)) throw new Error("Enter a valid 10-digit mobile number.");
+
+    const service = getService(CIBIL_SERVICE)!;
+    const pan = form.pan.trim().toUpperCase();
+    const admin = db();
+
+    await admin
+      .from("insights_manual_lookups")
+      .update({
+        state: "failed",
+        error: "Abandoned — no response was recorded, so it is not counted as spend.",
+        completed_at: new Date().toISOString(),
+      })
+      .eq("client_id", caller.clientId)
+      .eq("service_id", CIBIL_SERVICE)
+      .eq("query_key", pan)
+      .eq("state", "pending")
+      .lt("created_at", new Date(Date.now() - 5 * 60_000).toISOString());
+    const { data: pending, error: claimErr } = await admin
+      .from("insights_manual_lookups")
+      .insert({
+        client_id: caller.clientId,
+        service_id: CIBIL_SERVICE,
+        requested_by: caller.agentId ?? null,
+        query_key: pan,
+        input: { name: `${form.firstName} ${form.lastName}`.trim(), pan },
+        state: "pending",
+      })
+      .select("id")
+      .single();
+    if (claimErr || !pending) throw new Error("A report for this PAN is already being pulled.");
+
+    const body = cibilRequestBody(form, phone);
+    let call: Awaited<ReturnType<typeof callPayPrime>>;
+    try {
+      call = await callPayPrime(body);
     } catch (err) {
       await admin
         .from("insights_manual_lookups")
@@ -342,186 +570,55 @@ export const runCibilReport = createServerFn({ method: "POST" })
           completed_at: new Date().toISOString(),
         })
         .eq("id", pending.id);
-      throw new Error("Could not reach PayPrime — nothing was charged. Try again in a minute.");
+      throw unreachable(err);
     }
 
-    const outcome = readCibilOutcome(httpStatus, json);
+    const outcome = readCibilOutcome(call.httpStatus, call.json);
     const cost = outcome.billable ? priceFor(service, outcome.status, settings.rate_card) : 0;
-
-    // Ledger row: billing fields only; the report itself goes in cibil_reports.
     await admin
       .from("insights_manual_lookups")
-      .update({
-        state: outcome.billable ? "done" : "failed",
-        http_status: httpStatus,
-        provider_status: outcome.status,
-        billable: outcome.billable,
-        cost,
-        transaction_id: outcome.txnId,
-        response: {
-          provider: "payprime",
-          status: outcome.status,
-          txn_id: outcome.txnId,
-          message: outcome.message.slice(0, 200),
-        },
-        error: outcome.status === "1" ? null : `HTTP ${httpStatus}: ${text.slice(0, 400)}`,
-        completed_at: new Date().toISOString(),
-      })
+      .update(ledgerFields(outcome, call.httpStatus, call.text, cost))
       .eq("id", pending.id);
 
     if (outcome.status !== "1") {
-      const hint =
-        httpStatus === 401 || httpStatus === 403 || /ip|whitelist|not allowed/i.test(text)
-          ? " If PayPrime says the IP or domain is not allowed, this server's outbound IP is " +
-            "not on the list under Developer Setting → Api Token on the PayPrime portal."
-          : "";
-      throw new Error(
-        `PayPrime did not return a report (${outcome.message}).` +
-          (outcome.billable
-            ? ` It issued transaction ${outcome.txnId}, so it may have been charged.`
-            : " Nothing was charged.") +
-          hint,
-      );
+      throw new Error(failureMessage(outcome, call.httpStatus, call.text));
     }
 
-    const { data: saved, error: saveErr } = await admin
-      .from("cibil_reports")
-      .insert({
-        client_id: caller.clientId,
-        debtor_id: data.debtorId,
-        lookup_id: pending.id,
-        requested_by: caller.agentId ?? null,
-        request: body,
-        txn_id: outcome.txnId,
-        html_url: outcome.htmlUrl,
-        score: outcome.score,
-        response: json,
-      })
-      .select("id, created_at, score, html_url, txn_id, request, agents(name)")
-      .single();
-    if (saveErr || !saved) {
-      // Paid for, but not stored: say so with the transaction id rather than lose it silently.
-      console.error("[cibil] report save failed:", saveErr?.message);
-      throw new Error(
-        `The report was generated (transaction ${outcome.txnId}) but could not be saved ` +
-          `(${saveErr?.message ?? "unknown error"}). Contact SamvadX support with that id.`,
-      );
-    }
-
-    return { cached: false, cost, report: toSummary(saved as Row) };
+    const report = await saveReport({
+      client_id: caller.clientId,
+      debtor_id: null,
+      lookup_id: pending.id,
+      requested_by: caller.agentId ?? null,
+      request: body,
+      txn_id: outcome.txnId,
+      html_url: outcome.htmlUrl,
+      score: outcome.score,
+      response: call.json,
+    });
+    return { cost, report };
   });
 
-/** One report's full structured data, for "Show all fields". Admins of the same company only. */
+// ── One report's full data ─────────────────────────────────────────────────────────────────────
+
+/** For "Show all fields". A borrower report: anyone who can see that borrower. A manual report:
+ *  the company's admins. Either way only while the company's CIBIL switch is on. */
 export const getCibilReportData = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z.object({ accessToken: tokenSchema, reportId: idSchema }).parse(d),
   )
   .handler(async ({ data }) => {
-    const caller = await requireAdmin(data.accessToken);
+    const caller = await requireCaller(data.accessToken);
     const { data: row, error } = await db()
       .from("cibil_reports")
-      .select("client_id, response")
+      .select("client_id, debtor_id, response")
       .eq("id", data.reportId)
       .maybeSingle();
     if (error) throw new Error(`Could not load the report (${error.message})`);
     if (!row || row.client_id !== caller.clientId) throw new Error("Report not found");
+    if (!(await cibilState(caller.clientId)).on) throw new Error("Report not found");
+    const visible = row.debtor_id
+      ? await callerCanSeeDebtor(data.accessToken, String(row.debtor_id))
+      : caller.role === "admin";
+    if (!visible) throw new Error("Report not found");
     return { response: (row.response as Json | null) ?? null };
-  });
-
-export interface CibilDebtorHit {
-  id: string;
-  name: string;
-  loanReference: string;
-  /** Last 4 digits only — enough to tell two borrowers apart. */
-  phoneTail: string;
-  portfolio: string;
-}
-
-/** Find a borrower to pull a report on (Admin → Insights). Searches the admin's own company by
- *  loan ID, name or mobile number. */
-export const searchCibilDebtors = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) =>
-    z.object({ accessToken: tokenSchema, query: z.string().trim().min(2).max(60) }).parse(d),
-  )
-  .handler(async ({ data }): Promise<CibilDebtorHit[]> => {
-    const caller = await requireAdmin(data.accessToken);
-    enforceRateLimit(`cibil-search:${caller.authUserId}`, 60, 60_000);
-    // Only characters a loan ID, name or number can hold — PostgREST's or() filter treats commas,
-    // parentheses and dots as syntax, and % / _ as wildcards.
-    const q = data.query.replace(/[^A-Za-z0-9 \-/]/g, " ").trim();
-    if (q.length < 2) return [];
-    const digits = q.replace(/\D/g, "");
-    const filters = [`loan_reference.ilike.*${q}*`, `name.ilike.*${q}*`];
-    if (digits.length >= 4) filters.push(`phone_primary.ilike.*${digits}*`);
-
-    const { data: rows, error } = await db()
-      .from("debtors")
-      .select(
-        "id, name, loan_reference, phone_primary, portfolios!debtors_portfolio_id_fkey(lender_name, product_type)",
-      )
-      .eq("client_id", caller.clientId)
-      .is("archived_at", null)
-      .or(filters.join(","))
-      .order("name")
-      .limit(25);
-    if (error) throw new Error(`Search failed (${error.message})`);
-    return ((rows ?? []) as Row[]).map((r) => {
-      const p = r.portfolios as { lender_name?: string; product_type?: string } | null;
-      return {
-        id: String(r.id),
-        name: String(r.name ?? ""),
-        loanReference: String(r.loan_reference ?? ""),
-        phoneTail: String(r.phone_primary ?? "").slice(-4),
-        portfolio: [p?.lender_name, p?.product_type].filter(Boolean).join(" · "),
-      };
-    });
-  });
-
-export interface CibilReportListRow {
-  id: string;
-  debtorId: string;
-  debtorName: string;
-  loanReference: string;
-  createdAt: string;
-  score: number | null;
-  htmlUrl: string | null;
-  requestedByName: string | null;
-}
-
-/** The company's recent CIBIL reports, newest first (Admin → Insights). */
-export const listCibilReports = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
-  .handler(async ({ data }) => {
-    const caller = await requireAdmin(data.accessToken);
-    const [settings, consent, res] = await Promise.all([
-      loadSettings(caller.clientId),
-      consentAt(caller.clientId),
-      db()
-        .from("cibil_reports")
-        .select(
-          "id, debtor_id, created_at, score, html_url, agents(name), debtors(name, loan_reference)",
-        )
-        .eq("client_id", caller.clientId)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    ]);
-    const onPlan =
-      settings.enabled && settings.enabled_services.includes(CIBIL_SERVICE) && !!consent;
-    const rows: CibilReportListRow[] = res.error
-      ? []
-      : ((res.data ?? []) as Row[]).map((r) => {
-          const d = r.debtors as { name?: string; loan_reference?: string } | null;
-          const a = r.agents as { name?: string } | null;
-          return {
-            id: String(r.id),
-            debtorId: String(r.debtor_id),
-            debtorName: d?.name ?? "",
-            loanReference: d?.loan_reference ?? "",
-            createdAt: String(r.created_at),
-            score: (r.score as number | null) ?? null,
-            htmlUrl: (r.html_url as string | null) ?? null,
-            requestedByName: a?.name ?? null,
-          };
-        });
-    return { onPlan, rows };
   });

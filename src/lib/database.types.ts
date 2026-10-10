@@ -305,7 +305,7 @@ export interface Database {
         Row: {
           id: string;
           client_id: string;
-          debtor_id: string;
+          debtor_id: string | null;
           lookup_id: string | null;
           requested_by: string | null;
           request: Json;
@@ -314,11 +314,12 @@ export interface Database {
           score: number | null;
           response: Json | null;
           created_at: string;
+          trace_id: string | null;
         };
         Insert: {
           id?: string;
           client_id: string;
-          debtor_id: string;
+          debtor_id?: string | null;
           lookup_id?: string | null;
           requested_by?: string | null;
           request: Json;
@@ -327,11 +328,12 @@ export interface Database {
           score?: number | null;
           response?: Json | null;
           created_at?: string;
+          trace_id?: string | null;
         };
         Update: {
           id?: string;
           client_id?: string;
-          debtor_id?: string;
+          debtor_id?: string | null;
           lookup_id?: string | null;
           requested_by?: string | null;
           request?: Json;
@@ -340,6 +342,7 @@ export interface Database {
           score?: number | null;
           response?: Json | null;
           created_at?: string;
+          trace_id?: string | null;
         };
         Relationships: [];
       };

@@ -279,10 +279,15 @@ export function readCibilOutcome(httpStatus: number, json: Json | null): CibilOu
     httpStatus === 200 &&
     json?.status === true &&
     String(json?.txn_status ?? "").toLowerCase() === "success";
-  const message =
+  // PayPrime's top-level message is generic ("Generate Cibil Report Failed"); the reason — e.g.
+  // "No Record Found" when the details match nobody at the bureau — is one level down.
+  const inner2 = json?.data as Json | undefined;
+  const reason = typeof inner2?.message === "string" ? inner2.message : "";
+  const top =
     (typeof json?.message === "string" && json.message) ||
     (typeof json?.status === "string" && json.status) ||
     `HTTP ${httpStatus}`;
+  const message = reason && reason !== top ? `${top}: ${reason}` : top;
   return {
     status: ok ? "1" : txnId ? "2" : null,
     billable: ok || !!txnId,
