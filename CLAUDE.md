@@ -434,6 +434,27 @@ Unlike every other integration here:
   trace unlocks the employment lookups. It has **no** GST block, so it does not unlock GST→Contact. The phone and name are read from the debtor row
   server-side; that is what keeps every lookup to data already in a portfolio.
 
+**CIBIL reports via PayPrime (2026-10-10) — an Insights service for company ADMINS only.**
+Catalogue id `cibil-report` (`provider: "payprime"`, `adminOnly`), ₹65 + 18% GST = ₹76.70 per report
+from the PayPrime wallet (b2b.payprime.in; API spec at `/cibilDocs`). Own server action
+`src/lib/cibil-actions.server.ts` (pure logic `src/lib/cibil/payprime.ts`, tested in
+`scripts/cibil-payprime.test.ts`); `runProfilexTrace`/`runManualInsight` refuse it. Panel:
+`components/profilex/cibil-panel.tsx` on the debtor's Insights tab, admins only — form prefilled from
+the bank file + earlier lookups (PAN/DOB/gender), phone always the debtor's own.
+- **Consent:** every request asserts `user_consent_data_share: true`. A superadmin must record the
+  company's consent agreement (company page → Insights card) before CIBIL can go on its plan, and
+  every pull re-checks `profilex_settings.cibil_consent_at`. Withdrawing it takes CIBIL off the plan.
+- **The report is NOT in `debtor_traces.response`** (agents can read that table). The ledger row
+  carries only status/txn id/cost; the report lives in server-only `cibil_reports`, read via
+  `getCibilPanel`/`getCibilReportData` after an admin check. No RLS policy was changed.
+- **IP allow-list:** PayPrime accepts calls only from the IPs/domain on its portal (Developer
+  Setting → Api Token): `152.55.177.192/.193`, `162.220.232.251`, `api.samvadx.com` — per the
+  user, Railway static outbound IPs. It cannot work from localhost. Env `PAYPRIME_API_TOKEN`.
+- Billing: success → status "1"; any response with a `txn_id` but no report → "2", treated as
+  charged (PayPrime doesn't document refunds); no txn id → not charged. Not deducted from the
+  ProfileX actual-balance wallet — PayPrime's balance is only on its portal.
+- Migration `20261010_cibil_reports.sql`.
+
 **Monthly archive + cross-upload lookup reuse (2026-09-22).** `monthly_archive_rows` /
 `monthly_archive_runs` (`migrations/20260922_monthly_archive.sql`) permanently keep every Insights
 lookup, call log/feedback, payment etc. per IST month; admins download a month as Excel from

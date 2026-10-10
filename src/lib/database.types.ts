@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 51 tables.
+// Generated from 52 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -298,6 +298,48 @@ export interface Database {
           ring_seconds?: number | null;
           wrap_seconds?: number | null;
           dialed_phone?: string | null;
+        };
+        Relationships: [];
+      };
+      cibil_reports: {
+        Row: {
+          id: string;
+          client_id: string;
+          debtor_id: string;
+          trace_id: string | null;
+          requested_by: string | null;
+          request: Json;
+          txn_id: string | null;
+          html_url: string | null;
+          score: number | null;
+          response: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          debtor_id: string;
+          trace_id?: string | null;
+          requested_by?: string | null;
+          request: Json;
+          txn_id?: string | null;
+          html_url?: string | null;
+          score?: number | null;
+          response?: Json | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          debtor_id?: string;
+          trace_id?: string | null;
+          requested_by?: string | null;
+          request?: Json;
+          txn_id?: string | null;
+          html_url?: string | null;
+          score?: number | null;
+          response?: Json | null;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -1660,6 +1702,9 @@ export interface Database {
           updated_by: string | null;
           enabled_services: string[];
           direct_export: boolean;
+          cibil_consent_at: string | null;
+          cibil_consent_by: string | null;
+          cibil_consent_note: string | null;
         };
         Insert: {
           client_id: string;
@@ -1672,6 +1717,9 @@ export interface Database {
           updated_by?: string | null;
           enabled_services?: string[];
           direct_export?: boolean;
+          cibil_consent_at?: string | null;
+          cibil_consent_by?: string | null;
+          cibil_consent_note?: string | null;
         };
         Update: {
           client_id?: string;
@@ -1684,6 +1732,9 @@ export interface Database {
           updated_by?: string | null;
           enabled_services?: string[];
           direct_export?: boolean;
+          cibil_consent_at?: string | null;
+          cibil_consent_by?: string | null;
+          cibil_consent_note?: string | null;
         };
         Relationships: [];
       };

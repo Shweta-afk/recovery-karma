@@ -22,7 +22,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
-import { ALL_SERVICE_IDS, getService, priceFor } from "./profilex/catalogue";
+import { ALL_SERVICE_IDS, CIBIL_SERVICE, getService, priceFor } from "./profilex/catalogue";
 import { insightsPriceChanges } from "./profilex/price-changes";
 import { fetchAllRows } from "./fetch-all-rows";
 import { APP_PING_BODY, APP_PING_PATH, addressFor, subdomainProblem } from "./company-address";
@@ -1443,6 +1443,22 @@ export const saveCompanyProfilexSettings = createServerFn({ method: "POST" })
     }
     const enabledServices = [...new Set(data.enabledServices)];
 
+    // CIBIL asserts borrower consent on every request, so it can only go on a plan once the
+    // company's consent agreement is recorded (setCompanyCibilConsent below).
+    if (enabledServices.includes(CIBIL_SERVICE)) {
+      const { data: row, error: consentErr } = await db()
+        .from("profilex_settings")
+        .select("cibil_consent_at")
+        .eq("client_id", data.clientId)
+        .maybeSingle();
+      if (consentErr || !(row as { cibil_consent_at?: string | null } | null)?.cibil_consent_at) {
+        throw new Error(
+          "Record this company's CIBIL consent agreement (the switch above) before adding CIBIL " +
+            "Report to its plan.",
+        );
+      }
+    }
+
     // The plan as it was, to describe what changed (for a draft contract update).
     const before = await loadSettings(data.clientId);
 
@@ -1697,6 +1713,106 @@ export const decideLookupExportRequest = createServerFn({ method: "POST" })
         portfolioId: updated.portfolio_id,
         note: data.note ?? null,
       },
+    });
+    return { ok: true };
+  });
+
+/** The company's CIBIL consent agreement: when a superadmin recorded that the company holds
+ *  borrower consent for credit-report pulls. Required before CIBIL can go on its plan and
+ *  checked again on every pull (cibil-actions.server.ts). See
+ *  migrations/20261010_cibil_reports.sql. */
+export const getCompanyCibilConsent = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, clientId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const { data: row, error } = await db()
+      .from("profilex_settings")
+      .select("cibil_consent_at, cibil_consent_note, superadmins(name)")
+      .eq("client_id", data.clientId)
+      .maybeSingle();
+    // Column missing = the migration has not been applied yet.
+    if (error) return { available: false, at: null, note: null, byName: null };
+    const r = (row ?? {}) as {
+      cibil_consent_at?: string | null;
+      cibil_consent_note?: string | null;
+      superadmins?: { name?: string } | null;
+    };
+    return {
+      available: true,
+      at: r.cibil_consent_at ?? null,
+      note: r.cibil_consent_note ?? null,
+      byName: r.superadmins?.name ?? null,
+    };
+  });
+
+export const setCompanyCibilConsent = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        agreed: z.boolean(),
+        /** Where the agreement is — e.g. "MSA clause 7.2, signed 2026-10-01". */
+        note: z.string().trim().max(500).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    if (data.agreed && !data.note) {
+      throw new Error("Say where the company's consent agreement is recorded.");
+    }
+    // Untyped until database.types.ts is regenerated after migrations/20261010_cibil_reports.sql.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const admin = db() as unknown as { from: (t: string) => any };
+    const patch = data.agreed
+      ? {
+          cibil_consent_at: new Date().toISOString(),
+          cibil_consent_by: caller.superadminId,
+          cibil_consent_note: data.note,
+        }
+      : { cibil_consent_at: null, cibil_consent_by: null, cibil_consent_note: null };
+
+    // Update, then insert only if the company has no settings row yet (see setCompanyDirectExport).
+    const { data: existing, error: updErr } = await admin
+      .from("profilex_settings")
+      .update(patch)
+      .eq("client_id", data.clientId)
+      .select("client_id, enabled_services");
+    if (updErr) throw new Error(`Could not save (${updErr.message})`);
+    if (!existing?.length) {
+      const { error } = await admin
+        .from("profilex_settings")
+        .insert({ client_id: data.clientId, rate_card: {}, ...patch });
+      if (error) throw new Error(`Could not save (${error.message})`);
+    }
+
+    // Withdrawing the agreement takes CIBIL off the plan too, so the plan never shows a service
+    // every pull of which would be refused.
+    const services = ((existing?.[0] as { enabled_services?: string[] } | undefined)
+      ?.enabled_services ?? []) as string[];
+    if (!data.agreed && services.includes(CIBIL_SERVICE)) {
+      await admin
+        .from("profilex_settings")
+        .update({ enabled_services: services.filter((s) => s !== CIBIL_SERVICE) })
+        .eq("client_id", data.clientId);
+    }
+
+    const { data: client } = await admin
+      .from("clients")
+      .select("company_name")
+      .eq("id", data.clientId)
+      .maybeSingle();
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "insights_cibil_consent_changed",
+      clientId: data.clientId,
+      summary: `${data.agreed ? "Recorded" : "Withdrew"} the CIBIL consent agreement for ${(client as { company_name: string } | null)?.company_name ?? "a company"}`,
+      detail: { agreed: data.agreed, note: data.note ?? null },
     });
     return { ok: true };
   });

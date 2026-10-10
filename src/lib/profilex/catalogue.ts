@@ -20,7 +20,17 @@
 export type ProfilexInput =
   /** The debtor's own number, sent as `mobile` — or as `phone`, which some endpoints want
    *  instead. Same value either way; only the body key differs. */
-  "mobile" | "phone" | "mobile+name" | "mobile+firstName" | "uan" | "gstin" | "din";
+  | "mobile"
+  | "phone"
+  | "mobile+name"
+  | "mobile+firstName"
+  | "uan"
+  | "gstin"
+  | "din"
+  /** A CIBIL report (PayPrime). The phone comes from the debtor row; name, PAN, date of birth,
+   *  gender, email and address are typed by an admin on the debtor's Insights tab, prefilled
+   *  from the bank file. Never runs through runProfilexTrace — see `provider`. */
+  | "cibil";
 
 /** How a derived input is obtained: which service supplies it, and how to read it back out of
  *  that service's stored response. Declaring it here rather than branching in the server action
@@ -37,6 +47,14 @@ export interface DerivedFrom {
 }
 
 export interface ProfilexService {
+  /** Who is called. Absent = ProfileX (Neokred). "payprime" = the CIBIL report from
+   *  b2b.payprime.in, which has its own server action (cibil-actions.server.ts), its own
+   *  credentials and an IP allow-list on PayPrime's side; runProfilexTrace and
+   *  runManualInsight refuse it. Kept in this catalogue so plans, rate cards, spend and usage
+   *  reports treat it like every other Insights service. */
+  provider?: "payprime";
+  /** Only a company ADMIN may run it (not managers) and only an admin sees its result. */
+  adminOnly?: boolean;
   /** Stable slug — persisted in `debtor_traces.service_id`, so never rename one in place. */
   id: string;
   label: string;
@@ -251,7 +269,25 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
       "Identification Number) — typed in by an admin, not run against a debtor. Useful when a " +
       "business or proprietor loan needs to reach a director directly.",
   },
+  {
+    id: "cibil-report",
+    label: "CIBIL Report",
+    provider: "payprime",
+    path: "/api/cibil-report",
+    input: "cibil",
+    adminOnly: true,
+    // PayPrime's commission plan (b2b.payprime.in/commission-charges, checked 2026-10-10):
+    // ₹65 + 18% GST = ₹76.70, deducted from the PayPrime wallet. Only a success is priced; an
+    // unpriced outcome resolves to the same ₹76.70 (priceFor fails expensive), since PayPrime
+    // does not document whether a failed transaction is charged.
+    defaultPrices: { "1": 76.7 },
+    blurb:
+      "The borrower's full CIBIL credit report: score, loans and cards, repayment history and " +
+      "recent enquiries. Needs their PAN, date of birth and address. Admins only.",
+  },
 ];
+
+export const CIBIL_SERVICE = "cibil-report";
 
 /** Services that were once wired and no longer are, so historical `debtor_traces` rows still
  *  render a name instead of a raw slug. `mobile-to-prefill-ext` was retired on 2026-08-26: it

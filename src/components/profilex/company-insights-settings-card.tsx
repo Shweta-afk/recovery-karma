@@ -14,14 +14,17 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase";
 import {
+  getCompanyCibilConsent,
   getCompanyDirectExport,
   getCompanyProfilexSettings,
   saveCompanyProfilexSettings,
+  setCompanyCibilConsent,
   setCompanyDirectExport,
 } from "@/lib/superadmin-actions.server";
 import { getAccessToken } from "@/lib/access-token";
 import {
   ALL_SERVICE_IDS,
+  CIBIL_SERVICE,
   PROFILEX_SERVICES,
   getService,
   priceFor,
@@ -40,6 +43,8 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
   const [rateCard, setRateCard] = useState<RateCard>({});
   // The company's plan: which services it may use. Enforced server-side in runProfilexTrace.
   const [enabledServices, setEnabledServices] = useState<string[]>([]);
+  // When the company's CIBIL consent agreement was recorded; CIBIL can't be ticked without it.
+  const [cibilConsentAt, setCibilConsentAt] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -148,6 +153,17 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
 
             <Separator />
 
+            <CibilConsent
+              clientId={clientId}
+              onChange={(at) => {
+                setCibilConsentAt(at);
+                // Withdrawing also takes CIBIL off the plan server-side; mirror it here.
+                if (!at) setEnabledServices((prev) => prev.filter((x) => x !== CIBIL_SERVICE));
+              }}
+            />
+
+            <Separator />
+
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-xs font-medium text-foreground">Re-use a result for (hours)</p>
@@ -189,7 +205,11 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                   <button
                     type="button"
                     className="text-primary hover:underline"
-                    onClick={() => setEnabledServices([...ALL_SERVICE_IDS])}
+                    onClick={() =>
+                      setEnabledServices(
+                        ALL_SERVICE_IDS.filter((id) => id !== CIBIL_SERVICE || !!cibilConsentAt),
+                      )
+                    }
                   >
                     Select all
                   </button>
@@ -242,6 +262,11 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                     <label className="flex items-center gap-2 min-w-0 cursor-pointer">
                       <Checkbox
                         checked={enabledServices.includes(s.id)}
+                        disabled={
+                          s.id === CIBIL_SERVICE &&
+                          !cibilConsentAt &&
+                          !enabledServices.includes(s.id)
+                        }
                         onCheckedChange={(v) => toggleService(s.id, v === true)}
                       />
                       <span
@@ -253,6 +278,18 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                       >
                         {s.label}
                       </span>
+                      {s.adminOnly && (
+                        <span
+                          className="text-[9px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1 flex-shrink-0"
+                          title={
+                            s.id === CIBIL_SERVICE && !cibilConsentAt
+                              ? "Record the CIBIL consent agreement above to enable this"
+                              : "Only the company's admins can run it or see its results"
+                          }
+                        >
+                          Admins only
+                        </span>
+                      )}
                       {s.manualOnly && (
                         <span
                           className="text-[9px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1 flex-shrink-0"
@@ -352,6 +389,120 @@ function DirectExportSwitch({ clientId }: { clientId: string }) {
         disabled={direct === null || saving}
         onCheckedChange={(v) => void toggle(v)}
       />
+    </div>
+  );
+}
+
+/** The company's CIBIL consent agreement. Saved on its own, immediately, like the direct-export
+ *  switch: it is a compliance record with its own activity-log entry, not pricing. */
+function CibilConsent({
+  clientId,
+  onChange,
+}: {
+  clientId: string;
+  onChange: (at: string | null) => void;
+}) {
+  const [state, setState] = useState<{
+    available: boolean;
+    at: string | null;
+    note: string | null;
+    byName: string | null;
+  } | null>(null);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await getCompanyCibilConsent({
+          data: { accessToken: await getAccessToken(), clientId },
+        });
+        setState(res);
+        onChange(res.at);
+      } catch {
+        setState({ available: false, at: null, note: null, byName: null });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per company
+  }, [clientId]);
+
+  const save = async (agreed: boolean) => {
+    setSaving(true);
+    try {
+      await setCompanyCibilConsent({
+        data: {
+          accessToken: await getAccessToken(),
+          clientId,
+          agreed,
+          note: agreed ? note.trim() : undefined,
+        },
+      });
+      const res = await getCompanyCibilConsent({
+        data: { accessToken: await getAccessToken(), clientId },
+      });
+      setState(res);
+      onChange(res.at);
+      setNote("");
+      toast.success(
+        agreed ? "CIBIL consent agreement recorded" : "Withdrawn — CIBIL taken off the plan",
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <p className="text-xs font-medium text-foreground">CIBIL consent agreement</p>
+      <p className="text-[11px] text-muted-foreground mb-2">
+        Every CIBIL pull tells the bureau the borrower has consented. Record this only once the
+        company has confirmed in writing that it holds that consent. Needed before CIBIL Report can
+        go on the plan; withdrawing it takes CIBIL off. Saves immediately.
+      </p>
+      {state === null ? (
+        <p className="text-[11px] text-muted-foreground">Loading…</p>
+      ) : !state.available ? (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          Not available until migrations/20261010_cibil_reports.sql is applied.
+        </p>
+      ) : state.at ? (
+        <div className="flex items-start justify-between gap-3 rounded-md border border-border px-2.5 py-2">
+          <p className="text-[11px] text-foreground">
+            Recorded {new Date(state.at).toLocaleString("en-IN")}
+            {state.byName && ` by ${state.byName}`}
+            {state.note && <span className="block text-muted-foreground">{state.note}</span>}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs flex-shrink-0"
+            disabled={saving}
+            onClick={() => void save(false)}
+          >
+            Withdraw
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Where it is recorded, e.g. MSA clause 7.2 signed 01-10-2026"
+            className="h-8 text-xs"
+            maxLength={500}
+          />
+          <Button
+            size="sm"
+            className="h-8 text-xs flex-shrink-0"
+            disabled={saving || note.trim().length < 3}
+            onClick={() => void save(true)}
+          >
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Record agreement"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

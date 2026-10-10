@@ -155,7 +155,8 @@ function AdminInsightsPage() {
     void load();
   }, [load]);
 
-  const services = useMemo(() => PROFILEX_SERVICES.filter((s) => plan.includes(s.id)), [plan]);
+  // CIBIL (provider "payprime") runs only against a debtor, from the debtor's Insights tab.
+  const services = useMemo(() => PROFILEX_SERVICES.filter((s) => plan.includes(s.id) && !s.provider), [plan]);
   const service = services.find((s) => s.id === serviceId);
 
   useEffect(() => {

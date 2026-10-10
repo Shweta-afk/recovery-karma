@@ -405,6 +405,10 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     if (service.manualOnly) {
       throw new Error(`"${service.label}" can only be run from Admin > Insights.`);
     }
+    // A different provider with its own action, inputs and admin-only rule.
+    if (service.provider) {
+      throw new Error(`"${service.label}" is run from its own panel on the Insights tab.`);
+    }
 
     const admin = db();
 
@@ -1360,6 +1364,11 @@ export const runManualInsight = createServerFn({ method: "POST" })
 
     const service = getService(data.serviceId);
     if (!service) throw new Error(`Unknown lookup service "${data.serviceId}"`);
+    // A CIBIL report is always pulled against a debtor in the company's portfolio, never from a
+    // typed-in number (cibil-actions.server.ts).
+    if (service.provider) {
+      throw new Error(`"${service.label}" is run from a debtor's Insights tab.`);
+    }
 
     const settings = await loadSettings(caller.clientId);
     if (!settings.enabled) {
