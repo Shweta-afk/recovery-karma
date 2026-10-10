@@ -6,6 +6,8 @@ import {
   buildPrefill,
   cibilRequestBody,
   findScore,
+  isInvalidToken,
+  parseTokens,
   isoDob,
   readCibilOutcome,
   stateCodeFor,
@@ -170,5 +172,18 @@ describe("prefill", () => {
     expect(isoDob("16-07-1978")).toBe("1978-07-16");
     expect(isoDob("1978/7/6")).toBe("1978-07-06");
     expect(isoDob("July 1978")).toBe("");
+  });
+});
+
+describe("tokens", () => {
+  test("comma/space separated, de-duplicated", () => {
+    expect(parseTokens(" a1, b2 ,a1\nc3 ")).toEqual(["a1", "b2", "c3"]);
+    expect(parseTokens(undefined)).toEqual([]);
+  });
+  test("only an untransacted Invalid Api token moves to the next token", () => {
+    expect(isInvalidToken({ statuscode: "ERR", status: "Invalid Api token" })).toBe(true);
+    expect(isInvalidToken({ statuscode: "BPR", message: "Bad Parameter Request" })).toBe(false);
+    expect(isInvalidToken({ txn_id: "PP1", message: "Invalid Api token" })).toBe(false);
+    expect(isInvalidToken(null)).toBe(false);
   });
 });

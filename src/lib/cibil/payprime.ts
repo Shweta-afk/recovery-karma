@@ -209,6 +209,28 @@ export function cibilRequestBody(f: CibilForm, phone: string): Record<string, un
 
 type Json = Record<string, unknown>;
 
+/** PAYPRIME_API_TOKEN may hold several tokens, comma-separated. PayPrime issues one token per
+ *  allow-listed IP, and Railway sends outbound traffic from any of the service's three static
+ *  IPs, so the token that matches a given call's IP isn't knowable in advance. */
+export function parseTokens(raw: string | undefined): string[] {
+  return [
+    ...new Set(
+      String(raw ?? "")
+        .split(/[,\s]+/)
+        .map((t) => t.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/** PayPrime's "Invalid Api token" answer — rejected before any transaction, so nothing was
+ *  charged and the next token can be tried safely. Anything carrying a txn_id is never this. */
+export function isInvalidToken(json: Json | null): boolean {
+  if (!json || json.txn_id) return false;
+  const text = `${json.statuscode ?? ""} ${json.status ?? ""} ${json.message ?? ""}`;
+  return /invalid\s*api\s*token/i.test(text);
+}
+
 export interface CibilOutcome {
   /** "1" = report generated; "2" = PayPrime answered with a transaction but no report; null =
    *  rejected before any transaction (bad token, bad parameters). */

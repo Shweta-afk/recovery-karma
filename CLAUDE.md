@@ -449,7 +449,10 @@ the bank file + earlier lookups (PAN/DOB/gender), phone always the debtor's own.
   `getCibilPanel`/`getCibilReportData` after an admin check. No RLS policy was changed.
 - **IP allow-list:** PayPrime accepts calls only from the IPs/domain on its portal (Developer
   Setting → Api Token): `152.55.177.192/.193`, `162.220.232.251`, `api.samvadx.com` — per the
-  user, Railway static outbound IPs. It cannot work from localhost. Env `PAYPRIME_API_TOKEN`.
+  Railway's static outbound IPs (verified 2026-10-10, all three "Shared"; any call may leave from
+  any of them). It cannot work from localhost. PayPrime issues one token per IP, so
+  `PAYPRIME_API_TOKEN` holds all three comma-separated; each pull tries them in order and moves on
+  only on "Invalid Api token" (no transaction, never charged).
 - Billing: success → status "1"; any response with a `txn_id` but no report → "2", treated as
   charged (PayPrime doesn't document refunds); no txn id → not charged. Not deducted from the
   ProfileX actual-balance wallet — PayPrime's balance is only on its portal.

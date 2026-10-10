@@ -14,7 +14,9 @@
 //
 // PayPrime only answers calls from the IPs registered on its portal (Developer Setting → Api
 // Token), so this works only where the server's outbound IP is on that list — Railway's static
-// outbound IPs in production. Env: PAYPRIME_API_TOKEN (and optionally PAYPRIME_BASE_URL).
+// outbound IPs in production. Env: PAYPRIME_API_TOKEN — one token, or all of them comma-separated
+// (one per allow-listed IP; tried in order, moving on only on "Invalid Api token", which is never
+// charged) — and optionally PAYPRIME_BASE_URL.
 import { z, tokenSchema, idSchema } from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
@@ -27,6 +29,8 @@ import { buildLoanLookupData } from "./profilex/loan-lookup-data";
 import {
   buildPrefill,
   cibilRequestBody,
+  isInvalidToken,
+  parseTokens,
   readCibilOutcome,
   validateCibilForm,
   type CibilForm,
@@ -236,8 +240,8 @@ export const runCibilReport = createServerFn({ method: "POST" })
       throw new Error(`${debtor.name} has no valid mobile number on file.`);
     }
 
-    const token = env("PAYPRIME_API_TOKEN");
-    if (!token) {
+    const tokens = parseTokens(env("PAYPRIME_API_TOKEN"));
+    if (!tokens.length) {
       throw new Error(
         "CIBIL reports are not configured. Set PAYPRIME_API_TOKEN in the server environment " +
           "(and in Railway for production).",
@@ -299,18 +303,25 @@ export const runCibilReport = createServerFn({ method: "POST" })
     let text = "";
     let json: Row | null = null;
     try {
-      const res = await fetch(`${base}${service.path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ token, ...body }),
-        signal: AbortSignal.timeout(90_000),
-      });
-      httpStatus = res.status;
-      text = await res.text();
-      try {
-        json = JSON.parse(text) as Row;
-      } catch {
-        // Non-JSON (an HTML error page — e.g. the IP is not on PayPrime's list). Kept as text.
+      // Each token belongs to one allow-listed IP and this call may leave from any of them, so
+      // try them in order. Only "Invalid Api token" moves on — it comes back before any
+      // transaction is created, so a wrong token is never charged. Any other answer is final.
+      for (const token of tokens) {
+        const res = await fetch(`${base}${service.path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ token, ...body }),
+          signal: AbortSignal.timeout(90_000),
+        });
+        httpStatus = res.status;
+        text = await res.text();
+        json = null;
+        try {
+          json = JSON.parse(text) as Row;
+        } catch {
+          // Non-JSON (an HTML error page — e.g. the IP is not on PayPrime's list). Kept as text.
+        }
+        if (!isInvalidToken(json)) break;
       }
     } catch (err) {
       await admin
