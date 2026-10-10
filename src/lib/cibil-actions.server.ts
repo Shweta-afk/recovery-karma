@@ -35,9 +35,14 @@ import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 import { normalisePhone } from "./profilex/billing";
 import { CIBIL_SERVICE, getService, priceFor } from "./profilex/catalogue";
 import { buildLoanLookupData } from "./profilex/loan-lookup-data";
+import { flatten } from "./profilex/flatten";
 import {
   buildPrefill,
+  buildReportHtml,
   cibilRequestBody,
+  isUsableReportHtml,
+  reportFileName,
+  withBaseHref,
   isInvalidToken,
   parseTokens,
   readCibilOutcome,
@@ -223,6 +228,10 @@ function failureMessage(outcome: CibilOutcome, httpStatus: number, text: string)
       ? " If PayPrime says the IP or domain is not allowed, this server's outbound IP is not on " +
         "the list under Developer Setting → Api Token on the PayPrime portal."
       : "";
+  const badParams = /bad parameter/i.test(outcome.message)
+    ? " PayPrime needs more of the person's details for this one — fill in gender, email and " +
+      "the address too, then try again."
+    : "";
   const noRecord = /no record/i.test(outcome.message)
     ? " The bureau has no record matching these details — check the PAN, date of birth and " +
       "name spelling against the borrower's PAN card."
@@ -230,6 +239,7 @@ function failureMessage(outcome: CibilOutcome, httpStatus: number, text: string)
   return (
     `PayPrime did not return a report (${outcome.message}).` +
     noRecord +
+    badParams +
     (outcome.billable
       ? ` It issued transaction ${outcome.txnId}, so it may have been charged.`
       : " Nothing was charged.") +
@@ -243,6 +253,26 @@ function unreachable(err: unknown): Error {
       ? err.message
       : "Could not reach PayPrime — nothing was charged. Try again in a minute.",
   );
+}
+
+/** Save a copy of the report page PayPrime links to (htmlUrl), since such links can expire.
+ *  Best-effort: only https pages on CIBIL's or PayPrime's own sites, size-capped, and only when
+ *  the page has real content (isUsableReportHtml). Null otherwise — the download then builds a
+ *  report from the structured data instead. */
+async function captureReportHtml(url: string | null): Promise<string | null> {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:" || !/(^|\.)(cibil\.com|payprime\.in)$/i.test(u.hostname))
+      return null;
+    const res = await fetch(u, { signal: AbortSignal.timeout(20_000), redirect: "follow" });
+    if (!res.ok || !/html/i.test(res.headers.get("content-type") ?? "")) return null;
+    const html = await res.text();
+    if (html.length > 5_000_000 || !isUsableReportHtml(html)) return null;
+    return withBaseHref(html, res.url || url);
+  } catch {
+    return null;
+  }
 }
 
 async function saveReport(fields: Row): Promise<CibilReportSummary> {
@@ -477,6 +507,7 @@ export const runCibilBorrower = createServerFn({ method: "POST" })
       html_url: outcome.htmlUrl,
       score: outcome.score,
       response: call.json,
+      report_html: await captureReportHtml(outcome.htmlUrl),
     });
     return { cost, report };
   });
@@ -594,31 +625,78 @@ export const runCibilManual = createServerFn({ method: "POST" })
       html_url: outcome.htmlUrl,
       score: outcome.score,
       response: call.json,
+      report_html: await captureReportHtml(outcome.htmlUrl),
     });
     return { cost, report };
   });
 
-// ── One report's full data ─────────────────────────────────────────────────────────────────────
+// ── One report: full data and download ─────────────────────────────────────────────────────────
 
-/** For "Show all fields". A borrower report: anyone who can see that borrower. A manual report:
- *  the company's admins. Either way only while the company's CIBIL switch is on. */
+/** A report the caller may see. A borrower report: anyone who can see that borrower. A manual
+ *  report: the company's admins. Either way only while the company's CIBIL switch is on. */
+async function loadVisibleReport(accessToken: string, reportId: string, columns: string) {
+  const caller = await requireCaller(accessToken);
+  const { data: row, error } = await db()
+    .from("cibil_reports")
+    .select(`client_id, debtor_id, ${columns}`)
+    .eq("id", reportId)
+    .maybeSingle();
+  if (error) throw new Error(`Could not load the report (${error.message})`);
+  if (!row || row.client_id !== caller.clientId) throw new Error("Report not found");
+  if (!(await cibilState(caller.clientId)).on) throw new Error("Report not found");
+  const visible = row.debtor_id
+    ? await callerCanSeeDebtor(accessToken, String(row.debtor_id))
+    : caller.role === "admin";
+  if (!visible) throw new Error("Report not found");
+  return row as Row;
+}
+
+/** The structured part of PayPrime's response (data.data.cibilData). */
+function cibilDataOf(response: unknown): unknown {
+  const r = response as Record<string, any> | null; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const inner = r?.data?.data ?? r?.data ?? r;
+  return inner?.cibilData ?? inner;
+}
+
+/** For "Show all fields". */
 export const getCibilReportData = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z.object({ accessToken: tokenSchema, reportId: idSchema }).parse(d),
   )
   .handler(async ({ data }) => {
-    const caller = await requireCaller(data.accessToken);
-    const { data: row, error } = await db()
-      .from("cibil_reports")
-      .select("client_id, debtor_id, response")
-      .eq("id", data.reportId)
-      .maybeSingle();
-    if (error) throw new Error(`Could not load the report (${error.message})`);
-    if (!row || row.client_id !== caller.clientId) throw new Error("Report not found");
-    if (!(await cibilState(caller.clientId)).on) throw new Error("Report not found");
-    const visible = row.debtor_id
-      ? await callerCanSeeDebtor(data.accessToken, String(row.debtor_id))
-      : caller.role === "admin";
-    if (!visible) throw new Error("Report not found");
+    const row = await loadVisibleReport(data.accessToken, data.reportId, "response");
     return { response: (row.response as Json | null) ?? null };
+  });
+
+/** The report as a file to save on the user's computer: the saved copy of CIBIL's own page
+ *  when there is one (captured now if it wasn't at pull time), otherwise a report built from the
+ *  structured data. */
+export const downloadCibilReport = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, reportId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const row = await loadVisibleReport(
+      data.accessToken,
+      data.reportId,
+      "id, created_at, score, html_url, txn_id, request, response, report_html, agents(name)",
+    );
+    const summary = toSummary(row);
+    let html = (row.report_html as string | null) ?? null;
+    if (!html && row.html_url) {
+      html = await captureReportHtml(String(row.html_url));
+      if (html)
+        await db().from("cibil_reports").update({ report_html: html }).eq("id", data.reportId);
+    }
+    if (!html) {
+      html = buildReportHtml({
+        subject: summary.subject,
+        score: summary.score,
+        createdAt: summary.createdAt,
+        txnId: summary.txnId,
+        htmlUrl: summary.htmlUrl,
+        fields: flatten(cibilDataOf(row.response)),
+      });
+    }
+    return { fileName: reportFileName(summary.subject, summary.createdAt), html };
   });

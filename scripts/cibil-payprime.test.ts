@@ -5,7 +5,11 @@ import { describe, expect, test } from "bun:test";
 import {
   buildPrefill,
   cibilRequestBody,
+  buildReportHtml,
   findScore,
+  isUsableReportHtml,
+  reportFileName,
+  withBaseHref,
   isInvalidToken,
   parseTokens,
   isoDob,
@@ -54,19 +58,55 @@ describe("request body", () => {
   });
 });
 
+describe("minimal request", () => {
+  test("blank optional fields are left out, consent fields always sent", () => {
+    const body = cibilRequestBody(
+      {
+        ...good,
+        lastName: "",
+        gender: "",
+        email: "",
+        streetAddress: "",
+        city: "",
+        postalCode: "",
+        region: "",
+      },
+      "9010665440",
+    );
+    expect(body).toEqual({
+      first_name: "Ravi",
+      id_type: "TaxId",
+      id_number: "ABCDE1234F",
+      phone: 9010665440,
+      dob: "1997-01-02",
+      legal_copy_status: "Accept",
+      user_consent_data_share: true,
+    });
+  });
+});
+
 describe("validation", () => {
   test("a complete form passes", () => {
     expect(validateCibilForm(good)).toEqual({});
   });
-  test("flags bad PAN, PIN, missing surname and state", () => {
-    const e = validateCibilForm({
+  test("only name, PAN and date of birth are required", () => {
+    const minimal: CibilForm = {
       ...good,
-      pan: "ABC123",
-      postalCode: "01234",
       lastName: "",
+      gender: "",
+      email: "",
+      streetAddress: "",
+      city: "",
+      postalCode: "",
       region: "",
-    });
-    expect(Object.keys(e).sort()).toEqual(["lastName", "pan", "postalCode", "region"]);
+    };
+    expect(validateCibilForm(minimal)).toEqual({});
+    const e = validateCibilForm({ ...minimal, firstName: "", pan: "ABC123", dob: "" });
+    expect(Object.keys(e).sort()).toEqual(["dob", "firstName", "pan"]);
+  });
+  test("optional fields are still checked when filled in", () => {
+    const e = validateCibilForm({ ...good, postalCode: "01234", email: "nope" });
+    expect(Object.keys(e).sort()).toEqual(["email", "postalCode"]);
   });
   test("rejects a future date of birth", () => {
     expect(validateCibilForm({ ...good, dob: "2999-01-01" }).dob).toBeTruthy();
@@ -201,5 +241,44 @@ describe("tokens", () => {
     expect(isInvalidToken({ statuscode: "BPR", message: "Bad Parameter Request" })).toBe(false);
     expect(isInvalidToken({ txn_id: "PP1", message: "Invalid Api token" })).toBe(false);
     expect(isInvalidToken(null)).toBe(false);
+  });
+});
+
+describe("download", () => {
+  test("an empty app shell or login page is not saved; a real page is", () => {
+    expect(
+      isUsableReportHtml('<html><body><div id="root"></div><script>x</script></body></html>'),
+    ).toBe(false);
+    expect(isUsableReportHtml(`<html><body>Please sign in ${"x".repeat(500)}</body></html>`)).toBe(
+      false,
+    );
+    expect(
+      isUsableReportHtml(
+        `<html><body><table>${"<tr><td>Account 1234</td></tr>".repeat(40)}</table></body></html>`,
+      ),
+    ).toBe(true);
+  });
+  test("relative links point back at the source site", () => {
+    expect(
+      withBaseHref("<html><head><title>x</title></head></html>", "https://myscore.cibil.com/a/b"),
+    ).toContain('<head><base href="https://myscore.cibil.com/">');
+  });
+  test("built report escapes what it shows", () => {
+    const html = buildReportHtml({
+      subject: "Ravi <b>",
+      score: 742,
+      createdAt: "2026-10-11T06:00:00Z",
+      txnId: "PP1",
+      htmlUrl: null,
+      fields: [{ label: "Name", value: "<script>" }],
+    });
+    expect(html).toContain("Ravi &lt;b&gt;");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("742");
+  });
+  test("file name", () => {
+    expect(reportFileName("Ravi Kumar · ABCDE1234F", "2026-10-10T20:00:00Z")).toBe(
+      "CIBIL-Ravi-Kumar-2026-10-11.html",
+    );
   });
 });

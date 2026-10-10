@@ -315,6 +315,7 @@ export interface Database {
           response: Json | null;
           created_at: string;
           trace_id: string | null;
+          report_html: string | null;
         };
         Insert: {
           id?: string;
@@ -329,6 +330,7 @@ export interface Database {
           response?: Json | null;
           created_at?: string;
           trace_id?: string | null;
+          report_html?: string | null;
         };
         Update: {
           id?: string;
@@ -343,6 +345,7 @@ export interface Database {
           response?: Json | null;
           created_at?: string;
           trace_id?: string | null;
+          report_html?: string | null;
         };
         Relationships: [];
       };

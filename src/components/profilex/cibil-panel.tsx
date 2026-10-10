@@ -5,7 +5,7 @@
 //
 // Also exports the form fields and the report view that Admin → Insights' manual CIBIL uses.
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, FileText, IndianRupee, Loader2, ChevronRight } from "lucide-react";
+import { Download, FileText, IndianRupee, Loader2, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { getAccessToken } from "@/lib/access-token";
 import { flatten } from "@/lib/profilex/flatten";
 import {
+  downloadCibilReport,
   getCibilBorrower,
   getCibilReportData,
   runCibilBorrower,
@@ -31,12 +32,53 @@ import {
 } from "@/lib/cibil-actions.server";
 import {
   CIBIL_ADDRESS_TYPES,
+  CIBIL_REQUIRED,
   CIBIL_STATES,
   validateCibilForm,
   type CibilForm,
 } from "@/lib/cibil/payprime";
 
 export const rupees = (n: number) => `₹${n.toFixed(2)}`;
+
+/** Save a report on the user's computer as an .html file (opens in any browser; print → PDF). */
+export async function saveCibilReportFile(reportId: string): Promise<void> {
+  const { fileName, html } = await downloadCibilReport({
+    data: { accessToken: await getAccessToken(), reportId },
+  });
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+export function DownloadReportButton({ reportId }: { reportId: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-7 text-xs gap-1"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await saveCibilReportFile(reportId);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Could not download the report");
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+      Download
+    </Button>
+  );
+}
 
 const selectClass =
   "h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground";
@@ -88,24 +130,27 @@ export function CibilFormFields({
   panHint?: string;
 }) {
   const errors = showErrors ? validateCibilForm(form) : {};
+  // "PAN *" for what PayPrime needs, "(optional)" for the rest.
+  const L = (key: keyof CibilForm, text: string) =>
+    CIBIL_REQUIRED.includes(key) ? `${text} *` : `${text} (optional)`;
   const set = <K extends keyof CibilForm>(k: K, v: CibilForm[K]) => onChange({ ...form, [k]: v });
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-      <Field label="First name" error={errors.firstName}>
+      <Field label={L("firstName", "First name")} error={errors.firstName}>
         <Input
           className="h-8 text-xs"
           value={form.firstName}
           onChange={(e) => set("firstName", e.target.value)}
         />
       </Field>
-      <Field label="Last name" error={errors.lastName}>
+      <Field label={L("lastName", "Last name")} error={errors.lastName}>
         <Input
           className="h-8 text-xs"
           value={form.lastName}
           onChange={(e) => set("lastName", e.target.value)}
         />
       </Field>
-      <Field label="PAN" error={errors.pan ?? (!form.pan ? panHint : undefined)}>
+      <Field label={L("pan", "PAN")} error={errors.pan ?? (!form.pan ? panHint : undefined)}>
         <Input
           className="h-8 text-xs uppercase"
           maxLength={10}
@@ -113,7 +158,7 @@ export function CibilFormFields({
           onChange={(e) => set("pan", e.target.value.toUpperCase())}
         />
       </Field>
-      <Field label="Date of birth" error={errors.dob}>
+      <Field label={L("dob", "Date of birth")} error={errors.dob}>
         <Input
           type="date"
           className="h-8 text-xs"
@@ -121,7 +166,7 @@ export function CibilFormFields({
           onChange={(e) => set("dob", e.target.value)}
         />
       </Field>
-      <Field label="Gender" error={errors.gender}>
+      <Field label={L("gender", "Gender")} error={errors.gender}>
         <select
           className={selectClass}
           value={form.gender}
@@ -132,7 +177,7 @@ export function CibilFormFields({
           <option value="Female">Female</option>
         </select>
       </Field>
-      <Field label="Email" error={errors.email}>
+      <Field label={L("email", "Email")} error={errors.email}>
         <Input
           type="email"
           className="h-8 text-xs"
@@ -140,21 +185,21 @@ export function CibilFormFields({
           onChange={(e) => set("email", e.target.value)}
         />
       </Field>
-      <Field label="Residential address" error={errors.streetAddress} wide>
+      <Field label={L("streetAddress", "Residential address")} error={errors.streetAddress} wide>
         <Input
           className="h-8 text-xs"
           value={form.streetAddress}
           onChange={(e) => set("streetAddress", e.target.value)}
         />
       </Field>
-      <Field label="City" error={errors.city}>
+      <Field label={L("city", "City")} error={errors.city}>
         <Input
           className="h-8 text-xs"
           value={form.city}
           onChange={(e) => set("city", e.target.value)}
         />
       </Field>
-      <Field label="PIN code" error={errors.postalCode}>
+      <Field label={L("postalCode", "PIN code")} error={errors.postalCode}>
         <Input
           className="h-8 text-xs"
           inputMode="numeric"
@@ -163,7 +208,7 @@ export function CibilFormFields({
           onChange={(e) => set("postalCode", e.target.value.replace(/\D/g, ""))}
         />
       </Field>
-      <Field label="State" error={errors.region}>
+      <Field label={L("region", "State")} error={errors.region}>
         <select
           className={selectClass}
           value={form.region}
@@ -177,7 +222,7 @@ export function CibilFormFields({
           ))}
         </select>
       </Field>
-      <Field label="Address type" error={errors.addressType}>
+      <Field label={L("addressType", "Address type")} error={errors.addressType}>
         <select
           className={selectClass}
           value={form.addressType}
@@ -263,16 +308,7 @@ export function CibilReportView({
           <p className="text-[11px] text-muted-foreground">CIBIL score</p>
           <p className="text-2xl font-semibold text-foreground">{report.score ?? "—"}</p>
         </div>
-        {report.htmlUrl && (
-          <a
-            href={report.htmlUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-primary hover:underline flex items-center gap-1"
-          >
-            Open full report <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
+        <DownloadReportButton reportId={report.id} />
       </div>
       <ReportFields report={report} />
       <p className="text-[10px] text-muted-foreground mt-2">

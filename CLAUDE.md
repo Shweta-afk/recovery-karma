@@ -451,6 +451,13 @@ Unlike every other integration here:
   `debtors_select` AS the caller) — so the assigned agent sees it too.
 - **Manual pulls — admins** (`runCibilManual`, `cibil-admin-section.tsx` on Admin → Insights):
   any person's details typed in. Ledger `insights_manual_lookups` (admins only). `debtor_id` NULL.
+- **Required fields: name, PAN, date of birth + mobile only** (user's call, 2026-10-11; PayPrime's
+  docs mark everything required). Blank optional fields are left out of the request; if PayPrime
+  answers "Bad Parameter Request" (no txn, not charged) the error asks for the rest.
+- **Reports download as an .html file** (`downloadCibilReport`; open in a browser, print → PDF).
+  At pull time the server saves a copy of CIBIL's own page (`report_html`, captured from htmlUrl —
+  https on cibil.com/payprime.in only, content-checked); if none, the file is built from the
+  structured data. A manual pull downloads automatically.
 - Reports in server-only `cibil_reports` (`trace_id` or `lookup_id` → ledger row); ledger rows
   hold billing fields only. No RLS policy was changed.
 - **IP allow-list:** PayPrime accepts calls only from the IPs/domain on its portal (Developer
@@ -462,7 +469,7 @@ Unlike every other integration here:
   "No Record Found" (details match nobody at the bureau; seen live 2026-10-10). Not deducted from
   the ProfileX actual-balance wallet — PayPrime's balance is only on its portal.
 - Migrations `20261010_cibil_reports.sql`, `20261010_cibil_ledger_admin_only.sql`,
-  `20261011_cibil_borrower_and_manual.sql` (all live).
+  `20261011_cibil_borrower_and_manual.sql`, `20261011_cibil_report_html.sql` (all live).
 
 **Monthly archive + cross-upload lookup reuse (2026-09-22).** `monthly_archive_rows` /
 `monthly_archive_runs` (`migrations/20260922_monthly_archive.sql`) permanently keep every Insights

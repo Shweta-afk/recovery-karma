@@ -165,46 +165,57 @@ export function buildPrefill(src: PrefillSource): CibilForm {
 }
 
 /** What is wrong with the form, field by field. Empty = ready to send. */
+/** The fields PayPrime needs to find someone at the bureau. Its docs mark every field required,
+ *  but the user's call (2026-10-11) is to require only these and send the rest only when filled —
+ *  PayPrime answers a request it can't use with "Bad Parameter Request", which carries no
+ *  transaction and is not charged. Mobile is required too, checked separately (it comes from the
+ *  borrower row or the manual form's own field). */
+export const CIBIL_REQUIRED: (keyof CibilForm)[] = ["firstName", "pan", "dob"];
+
+/** What is wrong with the form, field by field. Empty = ready to send. Optional fields are only
+ *  checked when filled in. */
 export function validateCibilForm(f: CibilForm): Partial<Record<keyof CibilForm, string>> {
   const e: Partial<Record<keyof CibilForm, string>> = {};
   if (!f.firstName.trim()) e.firstName = "Required";
-  if (!f.lastName.trim()) e.lastName = "Required — CIBIL needs a surname";
   if (!PAN_RE.test(f.pan.trim().toUpperCase())) e.pan = "10 characters, e.g. ABCDE1234F";
   const dob = /^\d{4}-\d{2}-\d{2}$/.test(f.dob) ? new Date(`${f.dob}T00:00:00Z`) : null;
   if (!dob || isNaN(dob.getTime()) || dob.getUTCFullYear() < 1900 || dob > new Date()) {
     e.dob = "Date of birth, YYYY-MM-DD";
   }
-  if (f.gender !== "Male" && f.gender !== "Female") e.gender = "Required";
-  if (!EMAIL_RE.test(f.email.trim())) e.email = "A valid email";
-  if (f.streetAddress.trim().length < 5) e.streetAddress = "Full residential address";
-  if (!f.city.trim()) e.city = "Required";
-  if (!PIN_RE.test(f.postalCode.trim())) e.postalCode = "6-digit PIN code";
-  if (!CIBIL_STATES.some(([c]) => c === f.region)) e.region = "Pick the state";
-  if (!CIBIL_ADDRESS_TYPES.some(([c]) => c === f.addressType)) e.addressType = "Required";
+  if (f.gender && f.gender !== "Male" && f.gender !== "Female") e.gender = "Male or Female";
+  if (f.email.trim() && !EMAIL_RE.test(f.email.trim())) e.email = "A valid email";
+  if (f.postalCode.trim() && !PIN_RE.test(f.postalCode.trim())) e.postalCode = "6-digit PIN code";
+  if (f.region && !CIBIL_STATES.some(([c]) => c === f.region)) e.region = "Pick the state";
   return e;
 }
 
 /** PayPrime's request body, WITHOUT the token (the server adds it, and it is never stored).
- *  The two consent fields are fixed: a company only reaches this after a superadmin has
- *  recorded its consent agreement (profilex_settings.cibil_consent_at). */
+ *  Optional fields left blank are left out rather than sent empty. The two consent fields are
+ *  fixed: a company only reaches this with its CIBIL switch on, which records its consent
+ *  agreement (profilex_settings.cibil_consent_at). */
 export function cibilRequestBody(f: CibilForm, phone: string): Record<string, unknown> {
-  return {
+  const body: Record<string, unknown> = {
     first_name: f.firstName.trim(),
-    last_name: f.lastName.trim(),
     id_type: "TaxId",
     id_number: f.pan.trim().toUpperCase(),
-    street_address: f.streetAddress.trim(),
-    city: f.city.trim(),
-    postal_code: Number(f.postalCode.trim()),
-    region: f.region,
-    address_type: Number(f.addressType),
-    email: f.email.trim(),
     phone: Number(phone),
     dob: f.dob,
-    gender: f.gender,
-    legal_copy_status: "Accept",
-    user_consent_data_share: true,
   };
+  const opt = (key: string, value: unknown) => {
+    if (value !== "" && value !== undefined && value !== null) body[key] = value;
+  };
+  opt("last_name", f.lastName.trim());
+  opt("gender", f.gender);
+  opt("email", f.email.trim());
+  opt("street_address", f.streetAddress.trim());
+  opt("city", f.city.trim());
+  opt("postal_code", f.postalCode.trim() ? Number(f.postalCode.trim()) : "");
+  opt("region", f.region);
+  // Address type describes an address, so it goes only with one.
+  if (f.streetAddress.trim()) opt("address_type", Number(f.addressType) || 1);
+  body.legal_copy_status = "Accept";
+  body.user_consent_data_share = true;
+  return body;
 }
 
 type Json = Record<string, unknown>;
@@ -296,4 +307,77 @@ export function readCibilOutcome(httpStatus: number, json: Json | null): CibilOu
     score: ok ? findScore(inner?.cibilData ?? inner) : null,
     message,
   };
+}
+
+// ── Downloadable report ─────────────────────────────────────────────────────────────────────────
+
+const esc = (s: string) =>
+  s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+  );
+
+/** Whether a page fetched from PayPrime's htmlUrl is worth saving: real content, not an empty
+ *  shell that only renders with the site's own scripts, nor a login/error page. */
+export function isUsableReportHtml(html: string | null | undefined): boolean {
+  if (!html || !/<html|<body|<table|<div/i.test(html)) return false;
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (
+    text.length >= 400 && !/sign in|log in|session expired|access denied/i.test(text.slice(0, 600))
+  );
+}
+
+/** Point a saved page's relative links (styles, images) back at its own site. */
+export function withBaseHref(html: string, url: string): string {
+  let origin = "";
+  try {
+    origin = new URL(url).origin + "/";
+  } catch {
+    return html;
+  }
+  if (/<base\s/i.test(html)) return html;
+  return /<head[^>]*>/i.test(html)
+    ? html.replace(/<head([^>]*)>/i, `<head$1><base href="${esc(origin)}">`)
+    : `<base href="${esc(origin)}">${html}`;
+}
+
+/** A self-contained report built from the structured data, for when no page could be saved. */
+export function buildReportHtml(r: {
+  subject: string;
+  score: number | null;
+  createdAt: string;
+  txnId: string | null;
+  htmlUrl: string | null;
+  fields: { label: string; value: string }[];
+}): string {
+  const rows = r.fields
+    .map((f) => `<tr><th>${esc(f.label)}</th><td>${esc(f.value)}</td></tr>`)
+    .join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>CIBIL report — ${esc(r.subject)}</title>
+<style>body{font:14px/1.45 system-ui,sans-serif;margin:32px;color:#111}h1{font-size:20px;margin:0 0 4px}
+.meta{color:#555;margin-bottom:20px}.score{font-size:40px;font-weight:700;margin:8px 0 20px}
+table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}
+th{width:40%;color:#444;font-weight:500}@media print{body{margin:12mm}}</style></head><body>
+<h1>CIBIL report</h1><div class="meta">${esc(r.subject)} · pulled ${esc(new Date(r.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))}${r.txnId ? ` · ${esc(r.txnId)}` : ""}</div>
+<div>CIBIL score</div><div class="score">${r.score ?? "—"}</div>
+${r.htmlUrl ? `<p>Full report online: <a href="${esc(r.htmlUrl)}">${esc(r.htmlUrl)}</a></p>` : ""}
+${rows ? `<table>${rows}</table>` : "<p>No structured fields were returned.</p>"}
+</body></html>`;
+}
+
+/** "CIBIL-Ravi-Kumar-2026-10-11.html" */
+export function reportFileName(subject: string, createdAt: string): string {
+  const who =
+    subject
+      .split("·")[0]
+      .trim()
+      .replace(/[^A-Za-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "report";
+  const day = new Date(createdAt).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  return `CIBIL-${who}-${day}.html`;
 }

@@ -29,8 +29,10 @@ import { validateCibilForm, type CibilForm } from "@/lib/cibil/payprime";
 import {
   CibilFormFields,
   CibilReportView,
+  DownloadReportButton,
   EMPTY_CIBIL_FORM,
   rupees,
+  saveCibilReportFile,
 } from "@/components/profilex/cibil-panel";
 
 const MOBILE_RE = /^[6-9]\d{9}$/;
@@ -77,12 +79,16 @@ export function CibilAdminSection() {
       const res = await runCibilManual({
         data: { accessToken: await getAccessToken(), form, phone },
       });
-      toast.success(`CIBIL report pulled · ${rupees(res.cost)}`);
+      toast.success(`CIBIL report ready · ${rupees(res.cost)} — downloading`);
       setForm(EMPTY_CIBIL_FORM);
       setPhone("");
       setTouched(false);
       setShownId(res.report.id);
       await load();
+      // The point of a manual pull is the file: save it straight to their computer.
+      await saveCibilReportFile(res.report.id).catch((e) =>
+        toast.error(e instanceof Error ? e.message : "Could not download the report"),
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "CIBIL report failed");
     } finally {
@@ -101,15 +107,15 @@ export function CibilAdminSection() {
           </Badge>
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Enter anyone's details to get their credit report. {rupees(price)} per report. Only admins
-          see these. (Managers pull reports on their own borrowers from the borrower's Insights
-          tab.)
+          Enter anyone's details to download their credit report. Fields marked * are needed; the
+          rest are optional. {rupees(price)} per report. Only admins see these. (Managers pull
+          reports on their own borrowers from the borrower's Insights tab.)
         </p>
       </CardHeader>
       <CardContent className="pt-4 space-y-4">
         <div className="space-y-2">
           <label className="block space-y-1 sm:w-1/2 sm:pr-1">
-            <span className="text-[11px] text-muted-foreground">Mobile number</span>
+            <span className="text-[11px] text-muted-foreground">Mobile number *</span>
             <Input
               className="h-8 text-xs"
               inputMode="numeric"
@@ -135,7 +141,7 @@ export function CibilAdminSection() {
               {running ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
-                `Get report · ${rupees(price)}`
+                `Download report · ${rupees(price)}`
               )}
             </Button>
           </div>
@@ -160,7 +166,8 @@ export function CibilAdminSection() {
                     <th className="py-2 pr-3 font-medium">Pulled</th>
                     <th className="py-2 pr-3 font-medium">Person</th>
                     <th className="py-2 pr-3 font-medium text-right">Score</th>
-                    <th className="py-2 font-medium">By</th>
+                    <th className="py-2 pr-3 font-medium">By</th>
+                    <th className="py-2 font-medium" />
                   </tr>
                 </thead>
                 <tbody>
@@ -179,7 +186,10 @@ export function CibilAdminSection() {
                         </button>
                       </td>
                       <td className="py-2 pr-3 text-right font-semibold">{r.score ?? "—"}</td>
-                      <td className="py-2">{r.requestedByName ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.requestedByName ?? "—"}</td>
+                      <td className="py-2 text-right">
+                        <DownloadReportButton reportId={r.id} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -200,7 +210,7 @@ export function CibilAdminSection() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void pull()}>Get report</AlertDialogAction>
+            <AlertDialogAction onClick={() => void pull()}>Download report</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
