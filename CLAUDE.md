@@ -288,6 +288,15 @@ The same date, `ptp_escalations`' two policies were moved off reading `debtors` 
 banned pattern — they had been doing it since 20260811 and simply never recursed, which was
 luck) onto `auth_client_debtor_ids()`.
 
+⚠️ **This policy did not actually reach production until 2026-10-11** — live was still running
+the pre-08-21 inline-read bodies (found via the Supabase advisor). Applied then by
+`20261011_rls_policies_converge_and_initplan.sql`, whose NULL-debtor branch leaked ad-hoc calls
+across companies to admins for a few minutes; `20261011_scope_null_debtor_rows_to_company.sql`
+ties NULL-debtor rows to the caller's company via `auth_client_agent_ids()`. **Still NOT live as of
+2026-10-11:** `20260919_debtors_update_scoped_and_guarded.sql` and `20260920_rls_hardening_round2.sql`
+(agents can still update any debtor in their company). Never assume a migration file is live —
+check `pg_policies`.
+
 **If a debtor profile or Activity History starts 500ing, this is the first thing to revert** —
 restore `call_logs_select` to its `20260821_rls_no_direct_table_reads.sql` definition. Note
 that is a DATABASE change: rolling back application code will not undo it.
