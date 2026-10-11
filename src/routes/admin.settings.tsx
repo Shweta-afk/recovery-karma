@@ -12,6 +12,7 @@ import { getOrgSettings, saveOrgSettings, type OrgSettings } from "@/lib/org-set
 import { getMyClient, updateCompanyName } from "@/lib/client-store";
 import { ProfilexSettingsCard } from "@/components/profilex/profilex-settings-card";
 import { CompanyWalletCard, ManagerWalletsCard } from "@/components/profilex/wallets-card";
+import { CompanyDetailsCard } from "@/components/company-details-card";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({ meta: [{ title: "Settings · SamvadX Admin" }] }),
@@ -117,6 +118,9 @@ function AdminSettingsPage() {
           Save Settings
         </Button>
       </div>
+
+      {/* Required: every admin page shows a red banner until this is complete (admin.tsx). */}
+      <CompanyDetailsCard />
 
       <SectionCard
         icon={Building2}

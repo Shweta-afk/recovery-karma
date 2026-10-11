@@ -3,10 +3,12 @@ import { AppShell } from "@/components/app-shell";
 import { homeRouteForRole, useAuth } from "@/lib/auth";
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { FileSignature } from "lucide-react";
+import { AlertTriangle, FileSignature } from "lucide-react";
 import { getAccessToken } from "@/lib/access-token";
 import { getMyPendingContractCount } from "@/lib/contracts.server";
 import { CONTRACTS_VISIBLE_TO_COMPANIES } from "@/lib/contracts";
+import { getMyCompanyDetailsStatus } from "@/lib/company-details.server";
+import { COMPANY_DETAILS_UPDATED } from "@/components/company-details-card";
 
 export const Route = createFileRoute("/admin")({
   component: AdminLayout,
@@ -54,6 +56,58 @@ function PendingContractsBanner() {
   );
 }
 
+/** Red, on every admin page, and deliberately not dismissible: shown until the company's details
+ *  for invoices and agreements are complete (company-details.ts). Rechecks when they are saved. */
+function CompanyDetailsBanner() {
+  const [missing, setMissing] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await getMyCompanyDetailsStatus({
+          data: { accessToken: await getAccessToken() },
+        });
+        if (!cancelled) setMissing(res.complete ? [] : res.missing);
+      } catch {
+        // Network blip: leave the last answer in place rather than flashing the banner.
+      }
+    };
+    void load();
+    window.addEventListener(COMPANY_DETAILS_UPDATED, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(COMPANY_DETAILS_UPDATED, load);
+    };
+  }, []);
+
+  if (!missing || missing.length === 0) return null;
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-2 border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+        <div>
+          <p className="font-semibold">Your company details are incomplete.</p>
+          <p className="text-xs">
+            They are required for your invoices and agreement with SamvadX. Still needed:{" "}
+            {missing.join(", ")}.
+          </p>
+        </div>
+      </div>
+      <Link
+        to="/admin/settings"
+        hash="company-details"
+        className="inline-flex flex-shrink-0 items-center justify-center rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-destructive-foreground hover:bg-destructive/90"
+      >
+        Fill in company details
+      </Link>
+    </div>
+  );
+}
+
 function AdminLayout() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
@@ -82,6 +136,7 @@ function AdminLayout() {
 
   return (
     <AppShell>
+      <CompanyDetailsBanner />
       {CONTRACTS_VISIBLE_TO_COMPANIES && <PendingContractsBanner />}
       <Outlet />
     </AppShell>

@@ -32,6 +32,7 @@ import {
   type InvoiceRecord,
 } from "./invoice-math";
 import { loadPriceList } from "./price-list.server";
+import { companyDetailsFromRow, fullAddress } from "./company-details";
 
 function db() {
   return getSupabaseAdmin();
@@ -413,12 +414,17 @@ export const createInvoice = createServerFn({ method: "POST" })
     if (!cb?.legal_name || !cb.address || !cb.state_code) {
       throw new Error("Fill in this company's billing details (legal name, address, state) first");
     }
+    // City/PIN/PAN/phone are filled in by the company's admin on Admin → Settings
+    // (company-details.ts); fullAddress joins them onto the address line printed on the invoice.
+    const details = companyDetailsFromRow(cb as unknown as Record<string, unknown>);
     const recipient: InvoiceParty = {
       legalName: cb.legal_name,
       gstin: cb.gstin,
-      address: cb.address,
+      pan: details.pan || null,
+      address: fullAddress(details),
       stateCode: cb.state_code,
       email: cb.email,
+      phone: details.phone || null,
     };
 
     let taxableAmount: number;

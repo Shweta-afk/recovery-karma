@@ -14,6 +14,14 @@ export interface TemplateValues {
   companyLegalName: string;
   companyGstin: string | null;
   companyAddress: string;
+  /** Filled in by the company's admin on Admin → Settings (company-details.ts). Optional so
+   *  older callers and tests keep working; blank prints "—". */
+  companyPan?: string;
+  companyCin?: string;
+  companyEmail?: string;
+  companyPhone?: string;
+  companySignatoryName?: string;
+  companySignatoryDesignation?: string;
   supplierLegalName: string;
   effectiveDate: string; // already formatted for print
   today: string;
@@ -29,7 +37,13 @@ export const PLACEHOLDERS: { key: string; meaning: string }[] = [
   { key: "company_name", meaning: "Company name as shown in SamvadX" },
   { key: "company_legal_name", meaning: "Legal name from the company's billing details" },
   { key: "company_gstin", meaning: "Company GSTIN (or 'Unregistered')" },
-  { key: "company_address", meaning: "Billing address" },
+  { key: "company_address", meaning: "Registered address, with city, state and PIN" },
+  { key: "company_pan", meaning: "Company PAN" },
+  { key: "company_cin", meaning: "CIN / LLPIN (or 'Not applicable')" },
+  { key: "company_email", meaning: "Billing email" },
+  { key: "company_phone", meaning: "Billing phone" },
+  { key: "company_signatory_name", meaning: "Who signs for the company" },
+  { key: "company_signatory_designation", meaning: "The signatory's designation" },
   { key: "supplier_legal_name", meaning: "SamvadX's legal name (from Invoices → billing details)" },
   { key: "effective_date", meaning: "The date this schedule takes effect" },
   { key: "today", meaning: "Today's date" },
@@ -64,6 +78,12 @@ export function templateValueMap(v: TemplateValues): Record<string, string> {
     company_legal_name: v.companyLegalName || v.companyName,
     company_gstin: v.companyGstin || "Unregistered",
     company_address: v.companyAddress || "—",
+    company_pan: v.companyPan || "—",
+    company_cin: v.companyCin || "Not applicable",
+    company_email: v.companyEmail || "—",
+    company_phone: v.companyPhone || "—",
+    company_signatory_name: v.companySignatoryName || "—",
+    company_signatory_designation: v.companySignatoryDesignation || "—",
     supplier_legal_name: v.supplierLegalName || "SamvadX",
     effective_date: v.effectiveDate,
     today: v.today,
@@ -109,7 +129,11 @@ This schedule forms part of the SamvadX Master Service Agreement between {{suppl
 
 - Legal name: {{company_legal_name}}
 - GSTIN: {{company_gstin}}
+- PAN: {{company_pan}}
+- CIN / LLPIN: {{company_cin}}
 - Address: {{company_address}}
+- Billing contact: {{company_email}}, {{company_phone}}
+- Authorised signatory: {{company_signatory_name}}, {{company_signatory_designation}}
 
 ## One-time setup fee
 

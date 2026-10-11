@@ -359,6 +359,15 @@ export interface Database {
           email: string | null;
           updated_at: string;
           updated_by: string | null;
+          pan: string | null;
+          cin: string | null;
+          city: string | null;
+          pin_code: string | null;
+          phone: string | null;
+          signatory_name: string | null;
+          signatory_designation: string | null;
+          gst_unregistered: boolean;
+          updated_by_agent: string | null;
         };
         Insert: {
           client_id: string;
@@ -369,6 +378,15 @@ export interface Database {
           email?: string | null;
           updated_at?: string;
           updated_by?: string | null;
+          pan?: string | null;
+          cin?: string | null;
+          city?: string | null;
+          pin_code?: string | null;
+          phone?: string | null;
+          signatory_name?: string | null;
+          signatory_designation?: string | null;
+          gst_unregistered?: boolean;
+          updated_by_agent?: string | null;
         };
         Update: {
           client_id?: string;
@@ -379,6 +397,15 @@ export interface Database {
           email?: string | null;
           updated_at?: string;
           updated_by?: string | null;
+          pan?: string | null;
+          cin?: string | null;
+          city?: string | null;
+          pin_code?: string | null;
+          phone?: string | null;
+          signatory_name?: string | null;
+          signatory_designation?: string | null;
+          gst_unregistered?: boolean;
+          updated_by_agent?: string | null;
         };
         Relationships: [];
       };

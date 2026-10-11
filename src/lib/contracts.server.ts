@@ -3,6 +3,7 @@
 // server-only (migrations/20261009_contracts.sql), so everything goes through the service role
 // after verifySuperadminCaller / verifyCaller. Pure rules live in contracts.ts.
 
+import { companyDetailsFromRow, fullAddress } from "./company-details";
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z, tokenSchema, idSchema } from "./schemas";
@@ -829,11 +830,7 @@ async function templateValuesFor(clientId: string, effectiveDate: string) {
       .select("company_name, max_agents, max_managers")
       .eq("id", clientId)
       .maybeSingle(),
-    admin
-      .from("client_billing")
-      .select("legal_name, gstin, address")
-      .eq("client_id", clientId)
-      .maybeSingle(),
+    admin.from("client_billing").select("*").eq("client_id", clientId).maybeSingle(),
     admin
       .from("billing_profile")
       .select("legal_name, payment_terms_days")
@@ -853,6 +850,7 @@ async function templateValuesFor(clientId: string, effectiveDate: string) {
     gstin: string | null;
     address: string;
   } | null;
+  const details = companyDetailsFromRow(billingRes.data as Record<string, unknown> | null);
   const profile = profileRes.data as {
     legal_name: string;
     payment_terms_days: number | null;
@@ -862,7 +860,13 @@ async function templateValuesFor(clientId: string, effectiveDate: string) {
     companyName: client.company_name,
     companyLegalName: billing?.legal_name ?? "",
     companyGstin: billing?.gstin ?? null,
-    companyAddress: billing?.address ?? "",
+    companyAddress: billing?.address ? fullAddress(details) : "",
+    companyPan: details.pan,
+    companyCin: details.cin,
+    companyEmail: details.email,
+    companyPhone: details.phone,
+    companySignatoryName: details.signatoryName,
+    companySignatoryDesignation: details.signatoryDesignation,
     supplierLegalName: profile?.legal_name ?? "",
     effectiveDate: fmtLongDate(effectiveDate),
     today: fmtLongDate(todayIstKey()),

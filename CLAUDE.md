@@ -777,6 +777,21 @@ billing ↔ contracts don't import each other). Rules: `invoice-math.ts` (pure, 
   `invoice-actions.server.ts` / `revenue-report.server.ts` still read the new tables through an
   untyped client cast (written before the regeneration). Safe to replace with the typed client.
 
+### Company details — required from every company admin (2026-10-11)
+
+Admin → Settings → "Company details for invoices & agreements" (`components/company-details-card.tsx`,
+server `company-details.server.ts`, rules `company-details.ts`, tested in
+`scripts/company-details.test.ts`). Stored in **`client_billing`** — the same row invoices and
+contract templates read, extended by `migrations/20261011_company_details.sql` (PAN, CIN, city,
+PIN, phone, signatory name/designation, `gst_unregistered`, `updated_by_agent`). Required: legal
+name, GSTIN (unless "not registered"), PAN, address, city, PIN, state, billing email, phone,
+signatory name + designation; CIN optional. Catches a GSTIN from another state and a PAN that
+isn't the one inside the GSTIN. **Every admin page shows a red, non-dismissible banner**
+(`CompanyDetailsBanner` in `admin.tsx`) until complete. Invoices print `fullAddress` + PAN +
+phone; templates gained `{{company_pan}}`, `{{company_cin}}`, `{{company_email}}`,
+`{{company_phone}}`, `{{company_signatory_name}}`, `{{company_signatory_designation}}`.
+Superadmins still edit the basic fields from the company's Billing tab (same row).
+
 ### Contracts (Admin → Contracts, Superadmin → Contracts) — 2026-10-09
 
 Tables `contract_documents` / `contract_changes` / `contract_acceptances`
