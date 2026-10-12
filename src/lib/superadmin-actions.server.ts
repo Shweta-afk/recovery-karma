@@ -238,6 +238,8 @@ export interface CompanyRow {
   /** Every admin's email at this company — who to actually contact/vet before approving.
    *  Almost always exactly one, since a company has only its founding admin at signup. */
   adminEmails: string[];
+  /** GSTIN given at sign-up / in the company's details; "Not registered" or null if neither. */
+  gstin: string | null;
 }
 
 /** Every company, with role counts and its ProfileX company-wallet balance — the "see users of
@@ -264,6 +266,18 @@ export const getCompanies = createServerFn({ method: "POST" })
       admin.from("agents").select("client_id, role, email"),
       admin.from("profilex_company_wallets").select("client_id, balance"),
     ]);
+    const { data: billingRows } = await admin
+      .from("client_billing")
+      .select("client_id, gstin, gst_unregistered");
+    const gstinByClient = new Map(
+      (
+        (billingRows ?? []) as {
+          client_id: string;
+          gstin: string | null;
+          gst_unregistered: boolean;
+        }[]
+      ).map((b) => [b.client_id, b.gst_unregistered ? "Not registered" : b.gstin]),
+    );
     if (cErr) throw new Error(`Could not load companies (${cErr.message})`);
     if (aErr) throw new Error(`Could not load users (${aErr.message})`);
     if (wErr) throw new Error(`Could not load wallets (${wErr.message})`);
@@ -313,6 +327,7 @@ export const getCompanies = createServerFn({ method: "POST" })
           status: c.status,
           subdomain: c.subdomain,
           adminEmails: adminEmailsByClient.get(c.id) ?? [],
+          gstin: gstinByClient.get(c.id) ?? null,
         };
       })
       // Pending companies first — that's the queue a superadmin actually needs to work through.

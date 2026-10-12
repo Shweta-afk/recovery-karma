@@ -33,6 +33,8 @@ function SetupPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState<"details" | "otp">("details");
   const [companyName, setCompanyName] = useState("");
+  const [gstin, setGstin] = useState("");
+  const [gstUnregistered, setGstUnregistered] = useState(false);
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
@@ -64,7 +66,7 @@ function SetupPage() {
     try {
       localStorage.setItem(
         `${PENDING_SETUP_KEY_PREFIX}${email}`,
-        JSON.stringify({ companyName, adminName, savedAt: Date.now() }),
+        JSON.stringify({ companyName, gstin, gstUnregistered, adminName, savedAt: Date.now() }),
       );
     } catch {
       // localStorage can throw in private-browsing/blocked-storage contexts — the link path
@@ -138,6 +140,8 @@ function SetupPage() {
       const result = await createCompany({
         data: {
           companyName,
+          gstin,
+          gstUnregistered,
           adminName,
           adminEmail: email,
           adminPassword,
@@ -186,6 +190,33 @@ function SetupPage() {
                       onChange={(e) => setCompanyName(e.target.value)}
                       required
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="gstin">Company GSTIN</Label>
+                    <Input
+                      id="gstin"
+                      placeholder="27AAPFU0939F1ZV"
+                      value={gstin}
+                      onChange={(e) => setGstin(e.target.value.toUpperCase())}
+                      maxLength={15}
+                      required={!gstUnregistered}
+                      disabled={gstUnregistered}
+                      pattern="[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z][Zz][0-9A-Za-z]"
+                      title="15 characters, e.g. 27AAPFU0939F1ZV"
+                      className="font-mono uppercase"
+                    />
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={gstUnregistered}
+                        onChange={(e) => {
+                          setGstUnregistered(e.target.checked);
+                          if (e.target.checked) setGstin("");
+                        }}
+                      />
+                      Our company is not registered for GST
+                    </label>
                   </div>
 
                   <div className="space-y-2">

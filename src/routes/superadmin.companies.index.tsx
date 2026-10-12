@@ -341,6 +341,9 @@ function SuperadminCompaniesPage() {
                   <div className="text-[10px] text-muted-foreground truncate">
                     {row.adminEmails.length > 0 ? row.adminEmails.join(", ") : "No admin yet"}
                   </div>
+                  <div className="text-[10px] font-mono text-muted-foreground">
+                    GSTIN: {row.gstin ?? "not given"}
+                  </div>
                   <div className="text-[10px] text-muted-foreground">
                     Created {new Date(row.createdAt).toLocaleString()}
                   </div>

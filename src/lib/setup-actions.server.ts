@@ -10,6 +10,7 @@
 // doesn't exist yet — so it skips the verifyCaller() chokepoint by design. The accessToken it
 // does require comes from GoTrue's own OTP verification, not from an existing agents row.
 
+import { GSTIN_RE, normaliseGstin, stateFromGstin } from "./invoice-math";
 import { z, tokenSchema, shortText, emailSchema, passwordSchema } from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin } from "./supabase-admin.server";
@@ -22,6 +23,9 @@ export const createCompany = createServerFn({ method: "POST" })
     z
       .object({
         companyName: shortText(),
+        /** GSTIN — required unless the company says it isn't registered for GST. */
+        gstin: z.string().trim().max(20).optional(),
+        gstUnregistered: z.boolean().optional(),
         adminName: shortText(),
         adminEmail: emailSchema,
         adminPassword: passwordSchema,
@@ -38,6 +42,15 @@ export const createCompany = createServerFn({ method: "POST" })
 
     if (!companyName || !adminName || !adminEmail) {
       return { ok: false as const, error: "Fill in all fields." };
+    }
+    // The GSTIN goes on every invoice SamvadX issues this company, so it's asked at sign-up.
+    const gstin = data.gstUnregistered ? null : normaliseGstin(data.gstin ?? "");
+    if (!data.gstUnregistered && !GSTIN_RE.test(gstin ?? "")) {
+      return {
+        ok: false as const,
+        error:
+          "Enter your company's 15-character GSTIN (e.g. 27AAPFU0939F1ZV), or tick “not registered for GST”.",
+      };
     }
     if (!EMAIL_RE.test(adminEmail)) {
       return { ok: false as const, error: "Enter a valid email address." };
@@ -148,6 +161,21 @@ export const createCompany = createServerFn({ method: "POST" })
           : agentErr.message,
       };
     }
+
+    // Start the company's invoice/agreement details (client_billing) with what sign-up knows:
+    // the name, and from the GSTIN its state and PAN. The admin completes the rest on Admin →
+    // Settings (company-details.ts) — the red banner asks them to. Best-effort: a failure here
+    // must not undo a company that was just created.
+    const { error: billErr } = await admin.from("client_billing").insert({
+      client_id: client.id as string,
+      legal_name: companyName,
+      address: "",
+      gstin,
+      gst_unregistered: !!data.gstUnregistered,
+      state_code: gstin ? stateFromGstin(gstin) : null,
+      pan: gstin ? gstin.slice(2, 12) : null,
+    });
+    if (billErr) console.error("[createCompany] could not save the company's GSTIN:", billErr);
 
     return { ok: true as const, clientId: client.id as string, authUserId };
   });

@@ -31,6 +31,8 @@ function SetupConfirmPage() {
   const [email, setEmail] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [gstin, setGstin] = useState("");
+  const [gstUnregistered, setGstUnregistered] = useState(false);
   const [adminName, setAdminName] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -54,8 +56,15 @@ function SetupConfirmPage() {
         const key = `${PENDING_SETUP_KEY_PREFIX}${confirmedEmail}`;
         const cached = localStorage.getItem(key);
         if (cached) {
-          const parsed = JSON.parse(cached) as { companyName?: string; adminName?: string };
+          const parsed = JSON.parse(cached) as {
+            companyName?: string;
+            gstin?: string;
+            gstUnregistered?: boolean;
+            adminName?: string;
+          };
           setCompanyName(parsed.companyName ?? "");
+          setGstin(parsed.gstin ?? "");
+          setGstUnregistered(!!parsed.gstUnregistered);
           setAdminName(parsed.adminName ?? "");
           localStorage.removeItem(key);
         }
@@ -77,7 +86,15 @@ function SetupConfirmPage() {
       // same convention setup.tsx follows for this same import.
       const { createCompany } = await import("@/lib/setup-actions.server");
       const result = await createCompany({
-        data: { companyName, adminName, adminEmail: email, adminPassword, accessToken },
+        data: {
+          companyName,
+          gstin,
+          gstUnregistered,
+          adminName,
+          adminEmail: email,
+          adminPassword,
+          accessToken,
+        },
       });
       if (!result.ok) {
         setError(result.error);
@@ -126,8 +143,8 @@ function SetupConfirmPage() {
                   <h2 className="text-xl font-semibold">Email confirmed</h2>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  <span className="font-medium">{email}</span> is verified. Finish setting up
-                  your company.
+                  <span className="font-medium">{email}</span> is verified. Finish setting up your
+                  company.
                 </p>
               </CardHeader>
               <CardContent>
@@ -141,6 +158,31 @@ function SetupConfirmPage() {
                       onChange={(e) => setCompanyName(e.target.value)}
                       required
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="gstin">Company GSTIN</Label>
+                    <Input
+                      id="gstin"
+                      placeholder="27AAPFU0939F1ZV"
+                      value={gstin}
+                      onChange={(e) => setGstin(e.target.value.toUpperCase())}
+                      maxLength={15}
+                      required={!gstUnregistered}
+                      disabled={gstUnregistered}
+                      className="font-mono uppercase"
+                    />
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={gstUnregistered}
+                        onChange={(e) => {
+                          setGstUnregistered(e.target.checked);
+                          if (e.target.checked) setGstin("");
+                        }}
+                      />
+                      Our company is not registered for GST
+                    </label>
                   </div>
 
                   <div className="space-y-2">
