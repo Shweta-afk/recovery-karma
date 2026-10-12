@@ -2,15 +2,15 @@
 // (tables: migrations/20261009_contracts.sql; server: contracts.server.ts).
 
 /**
- * Company side switch. While false (user's decision, 2026-10-09: "visible to superadmin for now,
- * not on client side"), contracts are superadmin-only:
- *  - no Contracts link or pending-acceptance banner for company admins, and /admin/contracts says
- *    it isn't available;
- *  - the company-admin server actions refuse;
- *  - publishing a change records it but notifies and emails nobody.
- * Flip to true to open it to company admins — nothing else needs to change.
+ * Company side switch. ON since 2026-10-12 (user: company admins must be able to read their terms
+ * and agreement whenever they want, sign them, and the superadmin must see who has signed). It
+ * was off from 2026-10-09 ("visible to superadmin for now"). While on:
+ *  - company admins see Admin → Billing → Terms & agreements, and the pending-acceptance banner;
+ *  - the company-admin server actions work;
+ *  - publishing a change notifies (and, with Resend set up, emails) the companies' admins.
+ * Setting it back to false hides all of that again — nothing else needs to change.
  */
-export const CONTRACTS_VISIBLE_TO_COMPANIES = false;
+export const CONTRACTS_VISIBLE_TO_COMPANIES = true;
 
 export interface ContractDocument {
   id: string;
@@ -27,6 +27,30 @@ export interface ContractDocument {
   generated: boolean;
   notes: string | null;
   createdAt: string;
+}
+
+/** One company's progress with one document (contract_document_status): their own agreement,
+ *  or the platform terms. Null fields = hasn't happened yet. */
+export interface DocumentStatus {
+  documentId: string;
+  clientId: string;
+  sentAt: string | null;
+  sentTo: string | null;
+  sentVia: "resend" | "mail_app" | null;
+  viewedAt: string | null;
+  signedAt: string | null;
+  signedName: string | null;
+  signedEmail: string | null;
+}
+
+/** Where a company stands with a document, in one word, for a status chip. */
+export function documentStage(
+  s: DocumentStatus | null | undefined,
+): "signed" | "viewed" | "sent" | "not_sent" {
+  if (s?.signedAt) return "signed";
+  if (s?.viewedAt) return "viewed";
+  if (s?.sentAt) return "sent";
+  return "not_sent";
 }
 
 export interface ContractAcceptance {

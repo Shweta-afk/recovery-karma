@@ -267,18 +267,19 @@ export const PAGE_GUIDES = {
   invoices: {
     title: "Invoices",
     points: [
-      "Your billing details printed on every invoice, and the list of all invoices.",
-      "Issue new invoices from a company's page → Billing tab.",
-      "Mark an invoice paid when the money arrives — that is what Revenue counts as received.",
+      "Make & send: pick the company — the details its admin filled in and its price list are fetched for you.",
+      "Choose a tab — Setup, Insights, Monthly (Calls is coming soon) — then Preview to see exactly what the company will get, and Issue.",
+      "Send emails the invoice with a link to it in their SamvadX account. 'Viewed' appears once one of their admins opens it.",
+      "Open an invoice to record a payment or issue a credit note — that is what Revenue counts as received.",
     ],
   },
   contracts: {
     title: "Contracts",
     points: [
-      "Upload SamvadX's platform terms (for everyone) and each company's signed agreement. Older versions are kept.",
-      "When a feature is added or changes, publish a change: the companies' admins are notified in the app and, if you choose, must accept it.",
-      "After publishing, 'Email the admins' opens your email app with their addresses (BCC) and the change filled in.",
-      "Open a published change to see which companies accepted, who, and when — or withdraw it if it was a mistake.",
+      "Agreements: one row per company — their agreement and SamvadX's terms, each marked Not sent, Sent, Viewed or Signed.",
+      "Create an agreement from the template (it fills in the company's details and prices), preview it, then Send it.",
+      "The company reads and signs on their Billing & Agreements page (tick + typed name); you see who signed and when.",
+      "Changes & notices: when a feature or price changes, publish a notice; companies can be asked to accept it.",
     ],
   },
   activity: {

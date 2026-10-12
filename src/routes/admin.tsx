@@ -41,17 +41,18 @@ function PendingContractsBanner() {
     };
   }, []);
 
-  if (pending === 0 || pathname.startsWith("/admin/contracts")) return null;
+  if (pending === 0 || pathname.startsWith("/admin/billing")) return null;
   return (
     <Link
-      to="/admin/contracts"
+      to="/admin/billing"
+      search={{ tab: "agreements" }}
       className="flex items-center gap-2 border-b border-amber-400/50 bg-amber-500/10 px-4 py-2 text-xs font-medium text-amber-800 hover:bg-amber-500/15 dark:text-amber-300"
     >
       <FileSignature className="h-3.5 w-3.5 flex-shrink-0" />
       {pending === 1
         ? "A contract change needs your acceptance."
         : `${pending} contract changes need your acceptance.`}{" "}
-      Review under Contracts →
+      Review under Billing &amp; Agreements →
     </Link>
   );
 }

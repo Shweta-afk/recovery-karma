@@ -4,6 +4,7 @@
 // after verifySuperadminCaller / verifyCaller. Pure rules live in contracts.ts.
 
 import { companyDetailsFromRow, fullAddress } from "./company-details";
+import { agreementEmail, companyAppLink, mailtoLink } from "./billing-delivery";
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z, tokenSchema, idSchema } from "./schemas";
@@ -24,6 +25,7 @@ import {
 import { loadPriceList } from "./price-list.server";
 import {
   CONTRACTS_VISIBLE_TO_COMPANIES,
+  type DocumentStatus,
   changeAppliesTo,
   changeEmail,
   isPendingFor,
@@ -119,6 +121,67 @@ const toAcceptance = (r: AcceptanceRow): ContractAcceptance => ({
   acceptedAt: r.accepted_at,
 });
 
+interface StatusRow {
+  document_id: string;
+  client_id: string;
+  sent_at: string | null;
+  sent_to: string | null;
+  sent_via: "resend" | "mail_app" | null;
+  viewed_at: string | null;
+  signed_at: string | null;
+  signed_name: string | null;
+  signed_email: string | null;
+}
+const STATUS_COLUMNS =
+  "document_id, client_id, sent_at, sent_to, sent_via, viewed_at, signed_at, signed_name, signed_email";
+const toStatus = (r: StatusRow): DocumentStatus => ({
+  documentId: r.document_id,
+  clientId: r.client_id,
+  sentAt: r.sent_at,
+  sentTo: r.sent_to,
+  sentVia: r.sent_via,
+  viewedAt: r.viewed_at,
+  signedAt: r.signed_at,
+  signedName: r.signed_name,
+  signedEmail: r.signed_email,
+});
+
+/** Every status row, or one company's. A database without the table (code ahead of
+ *  migrations/20261012_billing_delivery.sql) reads as "nothing sent/viewed/signed yet". */
+async function loadStatuses(clientId?: string): Promise<DocumentStatus[]> {
+  let q = contractsDb().from("contract_document_status").select(STATUS_COLUMNS);
+  if (clientId) q = q.eq("client_id", clientId);
+  const { data, error } = await q;
+  if (error) return [];
+  return ((data ?? []) as StatusRow[]).map(toStatus);
+}
+
+/** First time a company admin opens a document: record it (never overwrites an earlier view). */
+async function markDocumentViewed(documentId: string, clientId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { data: existing } = await contractsDb()
+    .from("contract_document_status")
+    .select("viewed_at")
+    .eq("document_id", documentId)
+    .eq("client_id", clientId)
+    .maybeSingle();
+  if (existing) {
+    if (!(existing as { viewed_at: string | null }).viewed_at) {
+      await contractsDb()
+        .from("contract_document_status")
+        .update({ viewed_at: now })
+        .eq("document_id", documentId)
+        .eq("client_id", clientId)
+        .is("viewed_at", null);
+    }
+    return;
+  }
+  // 23505 = another admin opened it at the same moment; the first view is already recorded.
+  await contractsDb()
+    .from("contract_document_status")
+    .insert({ document_id: documentId, client_id: clientId, viewed_at: now });
+}
+
 async function requireSuperadmin(accessToken: string) {
   const caller = await verifySuperadminCaller(accessToken);
   if (!caller) throw new Error("Not authenticated as superadmin");
@@ -183,8 +246,10 @@ export interface SuperadminContractsView {
   companiesCanSee: boolean;
   /** Whether Resend is configured (RESEND_API_KEY + EMAIL_FROM on the server). */
   emailConfigured: boolean;
-  companies: { id: string; name: string; adminEmails: string[] }[];
+  companies: { id: string; name: string; adminEmails: string[]; billingEmail: string | null }[];
   documents: ContractDocument[];
+  /** Sent / viewed / signed, per document and company. */
+  statuses: DocumentStatus[];
   /** Published changes only. */
   changes: SuperadminContractChange[];
   /** Unpublished drafts (e.g. made when a company's prices changed) — never shown to companies. */
@@ -204,6 +269,16 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SuperadminContractsView> => {
     await requireSuperadmin(data.accessToken);
     const admin = db();
+    const [statuses, billingRes] = await Promise.all([
+      loadStatuses(),
+      admin.from("client_billing").select("client_id, email"),
+    ]);
+    const billingEmail = new Map(
+      ((billingRes.data ?? []) as { client_id: string; email: string | null }[]).map((b) => [
+        b.client_id,
+        b.email,
+      ]),
+    );
     const [clientsRes, docsRes, changesRes, accRes, admins, templatesRes] = await Promise.all([
       admin.from("clients").select("id, company_name, status").order("company_name"),
       contractsDb()
@@ -255,7 +330,9 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
         id: c.id,
         name: c.company_name,
         adminEmails: emailsByClient.get(c.id) ?? [],
+        billingEmail: billingEmail.get(c.id) ?? null,
       })),
+      statuses,
       documents: ((docsRes.data ?? []) as DocumentRow[]).map((r) =>
         toDocument(r, r.client_id ? (nameById.get(r.client_id) ?? null) : null),
       ),
@@ -529,6 +606,8 @@ export interface AdminContractsView {
   companyDocuments: ContractDocument[];
   changes: AdminContractChange[];
   pendingCount: number;
+  /** This company's sent / viewed / signed record per document. */
+  statuses: DocumentStatus[];
 }
 
 async function loadAdminView(clientId: string): Promise<AdminContractsView> {
@@ -578,6 +657,7 @@ async function loadAdminView(clientId: string): Promise<AdminContractsView> {
     companyDocuments: docs.filter((d) => d.clientId === clientId),
     changes,
     pendingCount: changes.filter((c) => c.pending).length,
+    statuses: await loadStatuses(clientId),
   };
 }
 
@@ -676,6 +756,7 @@ export const getContractFileUrl = createServerFn({ method: "POST" })
     if (companyClientId && doc.client_id !== null && doc.client_id !== companyClientId) {
       throw new Error("That document wasn't found");
     }
+    if (companyClientId) await markDocumentViewed(data.documentId, companyClientId);
     const { data: signed, error: sErr } = await admin.storage
       .from(CONTRACTS_BUCKET)
       .createSignedUrl(doc.file_path, DOWNLOAD_LINK_SECONDS, { download: doc.file_name });
@@ -1017,5 +1098,141 @@ export const getContractDocumentBody = createServerFn({ method: "POST" })
     if (companyClientId && doc.client_id !== null && doc.client_id !== companyClientId) {
       throw new Error("That document wasn't found");
     }
+    if (companyClientId) await markDocumentViewed(data.documentId, companyClientId);
     return { title: doc.title, versionLabel: doc.version_label, body: doc.body };
+  });
+
+// ── Send, view, sign a document ─────────────────────────────────────────────
+
+/**
+ * Emails a company its agreement (or the platform terms) with a link to read and sign it in
+ * SamvadX. Through Resend when set up; otherwise returns a mailto: that opens the superadmin's
+ * own mail app with the email written. Recorded as sent either way (with how).
+ */
+export const sendContractDocument = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        documentId: idSchema,
+        clientId: idSchema,
+        to: z.string().trim().email().max(254),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const [{ data: docRow }, { data: client }] = await Promise.all([
+      contractsDb()
+        .from("contract_documents")
+        .select("client_id, title, effective_date")
+        .eq("id", data.documentId)
+        .maybeSingle(),
+      db().from("clients").select("company_name, subdomain").eq("id", data.clientId).maybeSingle(),
+    ]);
+    const doc = docRow as {
+      client_id: string | null;
+      title: string;
+      effective_date: string;
+    } | null;
+    if (!doc || (doc.client_id !== null && doc.client_id !== data.clientId)) {
+      throw new Error("That document isn't for this company");
+    }
+    if (!client) throw new Error("That company wasn't found");
+    const link = companyAppLink(client.subdomain, "/admin/billing", {
+      tab: "agreements",
+      doc: data.documentId,
+    });
+    const email = agreementEmail(
+      { title: doc.title, effectiveDate: doc.effective_date },
+      client.company_name,
+      link,
+    );
+    let via: "resend" | "mail_app" = "mail_app";
+    let mailto: string | null = null;
+    if (emailConfigured()) {
+      const sent = await sendEmails([{ to: data.to, ...email }]);
+      if (!sent) throw new Error("The email service didn't accept it — try again in a minute");
+      via = "resend";
+    } else {
+      mailto = mailtoLink(data.to, email);
+    }
+    const { error } = await contractsDb().from("contract_document_status").upsert(
+      {
+        document_id: data.documentId,
+        client_id: data.clientId,
+        sent_at: new Date().toISOString(),
+        sent_to: data.to,
+        sent_via: via,
+      },
+      { onConflict: "document_id,client_id" },
+    );
+    if (error) throw new Error(`Could not record the send (${error.message})`);
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "contract_sent",
+      clientId: data.clientId,
+      summary: `${via === "resend" ? "Emailed" : "Opened an email for"} "${doc.title}" to ${data.to}`,
+      detail: { documentId: data.documentId, to: data.to, via },
+    });
+    return { via, mailto };
+  });
+
+/** A company admin signs a document for their company: ticks "I agree" and types their name.
+ *  Recorded once per company and document, like a change acceptance. */
+export const signContractDocument = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        documentId: idSchema,
+        fullName: z.string().trim().min(2).max(200),
+        confirm: z.literal(true),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCompanyAdmin(data.accessToken);
+    const [{ data: docRow }, { data: me }] = await Promise.all([
+      contractsDb()
+        .from("contract_documents")
+        .select("client_id")
+        .eq("id", data.documentId)
+        .maybeSingle(),
+      db().from("agents").select("email").eq("id", caller.agentId!).maybeSingle(),
+    ]);
+    const doc = docRow as { client_id: string | null } | null;
+    if (!doc || (doc.client_id !== null && doc.client_id !== caller.clientId)) {
+      throw new Error("That document wasn't found");
+    }
+    const { data: existing } = await contractsDb()
+      .from("contract_document_status")
+      .select("signed_at, signed_name, viewed_at")
+      .eq("document_id", data.documentId)
+      .eq("client_id", caller.clientId)
+      .maybeSingle();
+    const prior = existing as {
+      signed_at: string | null;
+      signed_name: string | null;
+      viewed_at: string | null;
+    } | null;
+    if (prior?.signed_at) throw new Error(`Already signed by ${prior.signed_name}`);
+    const now = new Date().toISOString();
+    const { error } = await contractsDb()
+      .from("contract_document_status")
+      .upsert(
+        {
+          document_id: data.documentId,
+          client_id: caller.clientId,
+          // Keep the first time it was opened; signing without opening counts as viewing.
+          viewed_at: prior?.viewed_at ?? now,
+          signed_at: now,
+          signed_name: data.fullName,
+          signed_email: (me as { email: string } | null)?.email ?? "",
+          signed_agent_id: caller.agentId,
+        },
+        { onConflict: "document_id,client_id", ignoreDuplicates: false },
+      );
+    if (error) throw new Error(`Could not record your signature (${error.message})`);
+    return { ok: true };
   });

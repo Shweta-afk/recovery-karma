@@ -20,6 +20,29 @@ import {
   formatRupees,
 } from "./invoice-document";
 import { InvoiceLedger } from "./invoice-ledger";
+import { whenLabel } from "@/lib/billing-delivery";
+
+/** "Emailed 12 Oct · Viewed 13 Oct" chips — superadmin only (onSend set). */
+export function DeliveryStatus({ invoice }: { invoice: InvoiceRecord }) {
+  if (invoice.status === "cancelled") return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="flex flex-col gap-0.5 text-[11px] leading-tight">
+      {invoice.emailedAt ? (
+        <span title={invoice.emailedTo ?? undefined}>
+          {invoice.emailedVia === "mail_app" ? "Mail app opened" : "Emailed"}{" "}
+          {whenLabel(invoice.emailedAt)}
+        </span>
+      ) : (
+        <span className="text-amber-600">Not sent</span>
+      )}
+      {invoice.viewedAt ? (
+        <span className="font-medium text-emerald-600">Viewed {whenLabel(invoice.viewedAt)}</span>
+      ) : (
+        <span className="text-muted-foreground">Not viewed yet</span>
+      )}
+    </div>
+  );
+}
 
 type Row = InvoiceRecord & { balance?: InvoiceBalance };
 
@@ -54,6 +77,7 @@ export function InvoiceTable<T extends Row>({
   invoices,
   companyName,
   onChanged,
+  onSend,
   empty = "No invoices yet.",
 }: {
   invoices: T[];
@@ -62,6 +86,8 @@ export function InvoiceTable<T extends Row>({
   /** Superadmin: enables payments, credit notes and cancelling in the viewer, and is called after
    *  any of them so the list refreshes. Omit for a read-only table. */
   onChanged?: () => Promise<void> | void;
+  /** Superadmin: adds the Sent / Viewed column and a Send button. */
+  onSend?: (inv: T) => void;
   empty?: string;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -82,6 +108,7 @@ export function InvoiceTable<T extends Row>({
               <th className="py-2 pr-3 text-right font-medium">Total (incl. GST)</th>
               <th className="py-2 pr-3 text-right font-medium">Still owed</th>
               <th className="py-2 pr-3 font-medium">Status</th>
+              {onSend && <th className="py-2 pr-3 font-medium">Sent / viewed</th>}
               <th className="py-2" />
             </tr>
           </thead>
@@ -104,7 +131,22 @@ export function InvoiceTable<T extends Row>({
                 <td className="py-2 pr-3">
                   <InvoiceStatusBadge invoice={inv} />
                 </td>
-                <td className="py-2 text-right">
+                {onSend && (
+                  <td className="py-2 pr-3">
+                    <DeliveryStatus invoice={inv} />
+                  </td>
+                )}
+                <td className="space-x-1.5 whitespace-nowrap py-2 text-right">
+                  {onSend && inv.status !== "cancelled" && (
+                    <Button
+                      size="sm"
+                      variant={inv.emailedAt ? "ghost" : "default"}
+                      className="h-7 text-xs"
+                      onClick={() => onSend(inv)}
+                    >
+                      {inv.emailedAt ? "Send again" : "Send"}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"

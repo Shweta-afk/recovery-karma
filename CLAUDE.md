@@ -792,6 +792,27 @@ phone; templates gained `{{company_pan}}`, `{{company_cin}}`, `{{company_email}}
 `{{company_phone}}`, `{{company_signatory_name}}`, `{{company_signatory_designation}}`.
 Superadmins still edit the basic fields from the company's Billing tab (same row).
 
+### Sending invoices & agreements, and seeing them viewed/signed — 2026-10-12
+
+`migrations/20261012_billing_delivery.sql` (live): `invoices.emailed_at/_to/_via`, `viewed_at`,
+`viewed_by_agent`; server-only `contract_document_status` (one row per document × company:
+sent / viewed / signed with typed name + email). Email text and links in `billing-delivery.ts`
+(links always go to the company's own `<subdomain>.samvadx.com`).
+- **Superadmin → Invoices** = tabs *Make & send* (company picker → `CompanyInvoicesCard`:
+  Bill-to from the company's own details, tabs Setup · Insights · Monthly · Calls (coming soon),
+  **Preview** = `createInvoice({preview:true})` — same builder, nothing saved, no number used —
+  then Issue → Send), *All invoices*, *SamvadX details*. `sendInvoiceEmail` uses Resend if set up,
+  else returns a mailto (recorded `emailed_via='mail_app'`).
+- **Company side: Admin → Billing & Agreements** (`admin.billing.tsx`; `/admin/contracts`
+  redirects there). Invoices via `company-billing.server.ts` — `openMyInvoice` sets `viewed_at`
+  once. Terms & agreements (`components/contracts/admin-agreements.tsx`): current agreement and
+  platform terms with **Sign** (`signContractDocument`); opening a document marks it viewed.
+- **Superadmin → Contracts** = tabs *Agreements* (`agreements-board.tsx`: per company, Not sent →
+  Sent → Viewed → Signed; Create from template with preview; Send), *Terms & uploads*,
+  *Changes & notices*, *Template*.
+- `CONTRACTS_VISIBLE_TO_COMPANIES` is now **true** (user, 2026-10-12); the test pins it.
+- Email is OFF until `RESEND_API_KEY` + `EMAIL_FROM` are set on Railway (not set as of 2026-10-12).
+
 ### Contracts (Admin → Contracts, Superadmin → Contracts) — 2026-10-09
 
 Tables `contract_documents` / `contract_changes` / `contract_acceptances`
@@ -837,7 +858,7 @@ server on first upload; the browser uploads straight to a signed upload URL).
 | `superadmin/` (Overview), `superadmin/companies`, company detail tabs, `superadmin/revenue` | ✅ Real (2026-10-09) — usage via `superadmin_usage_totals`, revenue via `invoices`. See "Superadmin portal" above                                                                                                                                                 |
 | `superadmin/wallet`, `superadmin/insights`, `superadmin/invoices`, `superadmin/activity`    | ✅ Real; shared date filter + Excel added 2026-10-09. Invoices: payments, credit notes and "Still owed" since 2026-10-10                                                                                                                                          |
 | `superadmin/contracts`, `superadmin/help`                                                   | ✅ Real. Contracts = uploads, templates, drafts, published changes + acceptances; superadmin-only for now (`CONTRACTS_VISIBLE_TO_COMPANIES`). Help = glossary + page guides                                                                                       |
-| `admin/contracts`                                                                           | ⏸ Built but switched off (`CONTRACTS_VISIBLE_TO_COMPANIES = false`) — shows "not available yet"                                                                                                                                                                   |
+| `admin/billing` (Billing & Agreements)                                                      | ✅ Real (2026-10-12): the company's invoices (opening = Viewed) and terms/agreements with Sign. `admin/contracts` redirects here                                                                                                                                  |
 
 ---
 

@@ -250,6 +250,12 @@ export interface InvoiceRecord {
   /** Printed under "Terms & disclaimer"; one paragraph per entry. */
   disclaimer: string[];
   createdAt: string;
+  /** Delivery (migrations/20261012_billing_delivery.sql): when it was emailed, to whom and how,
+   *  and when the company first opened it on Admin → Billing. Null until it happens. */
+  emailedAt: string | null;
+  emailedTo: string | null;
+  emailedVia: "resend" | "mail_app" | null;
+  viewedAt: string | null;
 }
 
 /** Maps an `invoices` row (snake_case, NUMERIC as string) to InvoiceRecord. */
@@ -278,6 +284,10 @@ export function toInvoiceRecord(r: {
   notes: string | null;
   disclaimer?: string | null;
   created_at: string;
+  emailed_at?: string | null;
+  emailed_to?: string | null;
+  emailed_via?: string | null;
+  viewed_at?: string | null;
 }): InvoiceRecord {
   return {
     id: r.id,
@@ -323,6 +333,10 @@ export function toInvoiceRecord(r: {
       ? r.disclaimer.split("\n").filter(Boolean)
       : invoiceDisclaimer(r.kind as InvoiceKind, (r.supplier as InvoiceParty).legalName),
     createdAt: r.created_at,
+    emailedAt: r.emailed_at ?? null,
+    emailedTo: r.emailed_to ?? null,
+    emailedVia: (r.emailed_via as InvoiceRecord["emailedVia"]) ?? null,
+    viewedAt: r.viewed_at ?? null,
   };
 }
 

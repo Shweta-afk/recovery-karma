@@ -32,7 +32,16 @@ import {
   type InvoiceRecord,
 } from "./invoice-math";
 import { loadPriceList } from "./price-list.server";
-import { companyDetailsFromRow, fullAddress } from "./company-details";
+import {
+  checkCompanyDetails,
+  companyDetailsFromRow,
+  companyDetailsToRow,
+  fullAddress,
+  type CompanyDetails,
+  type CompanyDetailsCheck,
+} from "./company-details";
+import { companyAppLink, invoiceEmail, mailtoLink } from "./billing-delivery";
+import { emailConfigured, sendEmails } from "./email.server";
 
 function db() {
   return getSupabaseAdmin();
@@ -261,7 +270,11 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
         .eq("client_id", data.clientId)
         .eq("role", "agent")
         .neq("is_active", false),
-      admin.from("clients").select("max_agents").eq("id", data.clientId).maybeSingle(),
+      admin
+        .from("clients")
+        .select("max_agents, company_name, subdomain")
+        .eq("id", data.clientId)
+        .maybeSingle(),
     ]);
     if (details.error) throw new Error(`Could not load billing details (${details.error.message})`);
     if (invoices.error) throw new Error(`Could not load invoices (${invoices.error.message})`);
@@ -291,8 +304,27 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
       stateCode: d?.state_code ?? null,
       email: d?.email ?? null,
     };
+    // Everything the company's admin filled in on Admin → Settings (company-details.ts).
+    // Who to offer in "Send invoice": the company's admins (active ones first).
+    const { data: adminRows } = await admin
+      .from("agents")
+      .select("email, is_active")
+      .eq("client_id", data.clientId)
+      .eq("role", "admin");
+    const adminEmails = ((adminRows ?? []) as { email: string | null; is_active: boolean | null }[])
+      .sort((x, y) => Number(y.is_active !== false) - Number(x.is_active !== false))
+      .map((r) => r.email)
+      .filter((e): e is string => !!e);
+    const companyDetails: CompanyDetails = companyDetailsFromRow(
+      d as Record<string, unknown> | null,
+    );
+    const detailsCheck: CompanyDetailsCheck = checkCompanyDetails(companyDetails);
     return {
       billing,
+      details: companyDetails,
+      detailsCheck,
+      adminEmails,
+      companyName: (clientRes.data as { company_name?: string } | null)?.company_name ?? "",
       invoices: await withBalances(records),
       uninvoicedTopups: uninvoiced,
       priceList,
@@ -302,32 +334,43 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
     };
   });
 
+/** A superadmin editing a company's details — the same fields, rules and row the company's own
+ *  admin fills in on Admin → Settings (company-details.server.ts). */
 export const saveCompanyBilling = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
       .object({
         accessToken: tokenSchema,
         clientId: idSchema,
-        legalName: z.string().trim().min(1).max(200),
-        gstin: gstinSchema,
-        address: z.string().trim().min(1).max(500),
-        stateCode: stateCodeSchema,
-        email: optText(200),
+        details: z.object({
+          legalName: z.string().max(200),
+          gstUnregistered: z.boolean(),
+          gstin: z.string().max(20),
+          pan: z.string().max(12),
+          cin: z.string().max(25),
+          address: z.string().max(500),
+          city: z.string().max(80),
+          pinCode: z.string().max(10),
+          stateCode: z.string().max(2),
+          email: z.string().max(200),
+          phone: z.string().max(20),
+          signatoryName: z.string().max(120),
+          signatoryDesignation: z.string().max(120),
+        }),
       })
       .parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await requireSuperadmin(data.accessToken);
-    checkGstinState(data.gstin, data.stateCode);
+    const details = data.details as CompanyDetails;
+    const check = checkCompanyDetails(details);
+    const firstInvalid = Object.entries(check.invalid)[0];
+    if (firstInvalid) throw new Error(`Check ${firstInvalid[0]}: ${firstInvalid[1]}`);
     const { error } = await db()
       .from("client_billing")
       .upsert({
         client_id: data.clientId,
-        legal_name: data.legalName,
-        gstin: data.gstin ?? null,
-        address: data.address,
-        state_code: data.stateCode,
-        email: data.email ?? null,
+        ...(companyDetailsToRow(details) as { legal_name: string; address: string }),
         updated_at: new Date().toISOString(),
         updated_by: caller.superadminId,
       });
@@ -336,9 +379,74 @@ export const saveCompanyBilling = createServerFn({ method: "POST" })
       superadminId: caller.superadminId,
       action: "company_billing_set",
       clientId: data.clientId,
-      summary: `Updated ${data.legalName}'s invoice (recipient) details`,
+      summary: `Updated ${details.legalName || "a company"}'s invoice (recipient) details`,
     });
-    return { ok: true as const };
+    return { ok: true as const, check };
+  });
+
+// ── Send an invoice ─────────────────────────────────────────────────────────
+
+/**
+ * Emails an issued invoice to the company: through Resend when it's set up (recorded as
+ * emailed), otherwise returns a mailto: link that opens the superadmin's own mail app with the
+ * email written (recorded as "mail_app" — we can't know they pressed send). The email links to
+ * the invoice on the company's own SamvadX address; opening it there marks it Viewed.
+ */
+export const sendInvoiceEmail = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        invoiceId: idSchema,
+        to: z.string().trim().email().max(254),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const admin = db();
+    const { data: row, error } = await admin
+      .from("invoices")
+      .select("*")
+      .eq("id", data.invoiceId)
+      .maybeSingle();
+    if (error || !row) throw new Error("Invoice not found");
+    const inv = toInvoiceRecord(row as Parameters<typeof toInvoiceRecord>[0]);
+    if (inv.status === "cancelled") throw new Error("A cancelled invoice can't be sent");
+    const { data: client } = await admin
+      .from("clients")
+      .select("company_name, subdomain")
+      .eq("id", inv.clientId)
+      .maybeSingle();
+    const link = companyAppLink(client?.subdomain, "/admin/billing", { invoice: inv.id });
+    const email = invoiceEmail(
+      inv,
+      inv.recipient.legalName || client?.company_name || "",
+      link,
+      inv.supplier.legalName,
+    );
+
+    let via: "resend" | "mail_app" = "mail_app";
+    let mailto: string | null = null;
+    if (emailConfigured()) {
+      const sent = await sendEmails([{ to: data.to, ...email }]);
+      if (!sent) throw new Error("The email service didn't accept it — try again in a minute");
+      via = "resend";
+    } else {
+      mailto = mailtoLink(data.to, email);
+    }
+    await admin
+      .from("invoices")
+      .update({ emailed_at: new Date().toISOString(), emailed_to: data.to, emailed_via: via })
+      .eq("id", inv.id);
+    void logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "invoice_sent",
+      clientId: inv.clientId,
+      summary: `${via === "resend" ? "Emailed" : "Opened an email for"} invoice ${inv.invoiceNumber} to ${data.to}`,
+      detail: { invoiceId: inv.id, to: data.to, via },
+    });
+    return { via, mailto };
   });
 
 // ── Issue an invoice ────────────────────────────────────────────────────────
@@ -373,6 +481,7 @@ export const createInvoice = createServerFn({ method: "POST" })
           kind: z.literal("insights_topup"),
           walletLedgerId: idSchema,
           notes: noteSchema.optional(),
+          preview: z.boolean().optional(),
         }),
         z.object({
           accessToken: tokenSchema,
@@ -381,6 +490,7 @@ export const createInvoice = createServerFn({ method: "POST" })
           // The charged rows — prefilled from the company's price list (before GST).
           lines: z.array(lineSchema).min(1).max(20),
           notes: noteSchema.optional(),
+          preview: z.boolean().optional(),
         }),
         z.object({
           accessToken: tokenSchema,
@@ -390,6 +500,7 @@ export const createInvoice = createServerFn({ method: "POST" })
           periodMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
           lines: z.array(lineSchema).min(1).max(20),
           notes: noteSchema.optional(),
+          preview: z.boolean().optional(),
         }),
       ])
       .parse(d),
@@ -478,6 +589,42 @@ export const createInvoice = createServerFn({ method: "POST" })
       paymentTermsDays,
       ...supplierParty
     } = supplier;
+
+    // Preview: exactly the invoice that "Issue" would create — same builder, same numbers — but
+    // nothing is saved and no invoice number is used up.
+    if (data.preview) {
+      const preview: InvoiceRecord = {
+        id: "preview",
+        clientId: data.clientId,
+        invoiceNumber: `${invoicePrefix}/${fy}/PREVIEW`,
+        kind: data.kind,
+        issueDate,
+        dueDate: addDaysIso(issueDate, companyTerms ?? paymentTermsDays),
+        description,
+        lines,
+        sac,
+        placeOfSupply: cb.state_code,
+        taxable: gst.taxable,
+        cgst: gst.cgst,
+        sgst: gst.sgst,
+        igst: gst.igst,
+        total: gst.total,
+        supplier: supplierParty,
+        recipient,
+        walletLedgerId,
+        status: "unpaid",
+        paidAt: null,
+        periodMonth: data.kind === "monthly" ? data.periodMonth : null,
+        notes: data.notes || null,
+        disclaimer: invoiceDisclaimer(data.kind, supplier.legalName),
+        createdAt: new Date().toISOString(),
+        emailedAt: null,
+        emailedTo: null,
+        emailedVia: null,
+        viewedAt: null,
+      };
+      return preview;
+    }
 
     const { data: row, error } = await admin.rpc("issue_invoice", {
       p_client_id: data.clientId,

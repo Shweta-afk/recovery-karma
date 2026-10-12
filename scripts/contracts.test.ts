@@ -130,7 +130,7 @@ describe("email (Resend)", () => {
     restore();
   });
 
-  test("contracts are superadmin-only for now (user decision, 2026-10-09)", () => {
-    expect(CONTRACTS_VISIBLE_TO_COMPANIES).toBe(false);
+  test("contracts are open to company admins (user decision, 2026-10-12)", () => {
+    expect(CONTRACTS_VISIBLE_TO_COMPANIES).toBe(true);
   });
 });

@@ -11,6 +11,8 @@ import {
   Upload,
   Undo2,
   EyeOff,
+  Megaphone,
+  PenLine,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +51,8 @@ import {
 import { ExcelButton } from "@/components/superadmin/usage-shared";
 import { InfoTip, PageGuide } from "@/components/superadmin/help";
 import { DraftsCard, TemplatesCard } from "@/components/contracts/drafts-and-templates";
+import { AgreementsBoard } from "@/components/contracts/agreements-board";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const Route = createFileRoute("/superadmin/contracts")({
   head: () => ({ meta: [{ title: "Contracts · SamvadX Platform" }] }),
@@ -133,9 +137,7 @@ function SuperadminContractsPage() {
             <Badge variant="secondary">Superadmin</Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Upload SamvadX's terms and each company's signed agreement, and publish a change
-            whenever a feature is added or changes. Company admins are notified and accept it on
-            their Contracts page.
+            Make each company's agreement, send it, and see who has viewed and signed it.
           </p>
         </div>
         <ExcelButton disabled={!view} onExport={exportAcceptances} />
@@ -160,38 +162,74 @@ function SuperadminContractsPage() {
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
         </div>
       ) : (
-        <div className={`space-y-6 ${loading ? "opacity-60" : ""}`}>
-          <DraftsCard
-            drafts={view.drafts}
-            companiesCanSee={view.companiesCanSee}
-            onChanged={load}
-          />
-          <div className="grid gap-6 xl:grid-cols-2">
-            <PublishChangeCard view={view} onPublished={load} />
+        <Tabs defaultValue="agreements" className={loading ? "opacity-60" : undefined}>
+          <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start gap-1">
+            <TabsTrigger value="agreements" className="text-xs">
+              <FileSignature className="mr-1.5 h-3.5 w-3.5" />
+              Agreements
+            </TabsTrigger>
+            <TabsTrigger value="terms" className="text-xs">
+              <FileText className="mr-1.5 h-3.5 w-3.5" />
+              Terms &amp; uploads
+            </TabsTrigger>
+            <TabsTrigger value="changes" className="text-xs">
+              <Megaphone className="mr-1.5 h-3.5 w-3.5" />
+              Changes &amp; notices
+              {view.drafts.length > 0 && (
+                <Badge className="ml-1.5 h-4 px-1.5 text-[10px]">{view.drafts.length}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="template" className="text-xs">
+              <PenLine className="mr-1.5 h-3.5 w-3.5" />
+              Template
+            </TabsTrigger>
+          </TabsList>
+
+          {/* 1. Who has which agreement, and whether they've signed — the page's main job. */}
+          <TabsContent value="agreements">
+            <AgreementsBoard view={view} onChanged={load} />
+          </TabsContent>
+
+          {/* 2. SamvadX's terms for everyone, and uploading a signed copy for one company. */}
+          <TabsContent value="terms" className="space-y-6">
             <UploadDocumentCard view={view} onUploaded={load} />
-          </div>
-          <ChangesCard changes={view.changes} onChanged={load} canEmail={view.companiesCanSee} />
-          <TemplatesCard view={view} onChanged={load} />
-          <Card>
-            <CardHeader className="border-b border-border pb-3">
-              <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                <FileText className="h-4 w-4 text-primary" />
-                Documents
-              </CardTitle>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Every uploaded version. "Current" is the latest one already in effect for that
-                company (or for the platform terms).
-              </p>
-            </CardHeader>
-            <CardContent className="pt-4">
-              <ContractDocumentList
-                documents={view.documents}
-                empty="No documents uploaded yet."
-                showCompany
-              />
-            </CardContent>
-          </Card>
-        </div>
+            <Card>
+              <CardHeader className="border-b border-border pb-3">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                  <FileText className="h-4 w-4 text-primary" />
+                  All documents
+                </CardTitle>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Every version, uploaded or made from the template. "Current" is the latest one
+                  already in effect for that company (or for the platform terms).
+                </p>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <ContractDocumentList
+                  documents={view.documents}
+                  empty="No documents yet."
+                  showCompany
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* 3. Notices when a feature or price changes; drafts are made automatically. */}
+          <TabsContent value="changes" className="space-y-6">
+            <DraftsCard
+              drafts={view.drafts}
+              companiesCanSee={view.companiesCanSee}
+              onChanged={load}
+            />
+            <PublishChangeCard view={view} onPublished={load} />
+            <ChangesCard changes={view.changes} onChanged={load} canEmail={view.companiesCanSee} />
+          </TabsContent>
+
+          {/* 4. The agreement text with {{blanks}} filled per company. */}
+          <TabsContent value="template">
+            <TemplatesCard view={view} onChanged={load} />
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );

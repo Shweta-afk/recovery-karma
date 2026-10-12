@@ -78,10 +78,12 @@ const adminItems = [
   { title: "Insights", url: "/admin/insights", icon: Sparkles },
   { title: "Archive History", url: "/admin/archive", icon: DatabaseBackup },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
-  // Superadmin-only for now — see CONTRACTS_VISIBLE_TO_COMPANIES.
-  ...(CONTRACTS_VISIBLE_TO_COMPANIES
-    ? [{ title: "Contracts", url: "/admin/contracts", icon: FileSignature }]
-    : []),
+  // Invoices from SamvadX, plus terms & agreements while CONTRACTS_VISIBLE_TO_COMPANIES is on.
+  {
+    title: CONTRACTS_VISIBLE_TO_COMPANIES ? "Billing & Agreements" : "Billing",
+    url: "/admin/billing",
+    icon: FileSignature,
+  },
   { title: "System Settings", url: "/admin/settings", icon: Settings },
 ];
 

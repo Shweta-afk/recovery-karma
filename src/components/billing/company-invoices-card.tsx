@@ -1,14 +1,32 @@
-// Superadmin → Companies → one company → Billing: the company's price list, billing (recipient)
-// details, Insights top-ups not yet invoiced, setup and monthly invoice forms (prefilled from the
-// price list), and its invoices with payments and credit notes.
-
+// Making and sending one company's invoices — used on Superadmin → Invoices (after picking the
+// company) and on a company's Billing tab. Laid out so nothing needs a long scroll:
+//
+//   Bill to       — everything the company filled in (Admin → Settings), editable here too
+//   New invoice   — one tab per kind: Setup · Insights · Monthly · Calls (coming soon). Each has
+//                   Preview (the real invoice, nothing saved) and Issue. Issuing opens Send.
+//   Issued        — the company's invoices with Sent / Viewed, Send, payments and credit notes
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, FileText, Loader2, Plus, RotateCcw, Save, X } from "lucide-react";
+import {
+  CalendarDays,
+  CheckCircle2,
+  Eye,
+  FileText,
+  Loader2,
+  Pencil,
+  Phone,
+  Plus,
+  RotateCcw,
+  Save,
+  Search,
+  Settings2,
+  AlertTriangle,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -16,17 +34,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getAccessToken } from "@/lib/access-token";
 import {
-  GST_STATES,
   gstBreakdown,
-  normaliseGstin,
-  stateFromGstin,
+  stateName,
   sumLines,
   monthLabel,
   monthlyInvoiceLines,
   EMPTY_PRICE_LIST,
   SETUP_LINE_ITEMS,
+  type InvoiceRecord,
   type PriceList,
 } from "@/lib/invoice-math";
 import {
@@ -35,14 +53,22 @@ import {
   getCompanyBilling,
   saveCompanyBilling,
   type BillingProfile,
-  type CompanyBillingDetails,
   type InvoiceWithBalance,
   type UninvoicedTopup,
 } from "@/lib/invoice-actions.server";
+import {
+  EMPTY_COMPANY_DETAILS,
+  checkCompanyDetails,
+  fullAddress,
+  type CompanyDetails,
+} from "@/lib/company-details";
 import { todayIstKey } from "@/lib/date-filter";
+import { CompanyDetailsForm } from "@/components/company-details-form";
 import { InvoiceTable } from "./invoice-list";
 import { formatRupees } from "./invoice-document";
 import { CompanyPriceListCard } from "./company-price-list-card";
+import { InvoicePreviewDialog } from "./invoice-preview-dialog";
+import { SendInvoiceDialog } from "./send-invoice-dialog";
 
 /** The current IST month and the three before it — the months a monthly invoice is usually for. */
 function recentMonths(): string[] {
@@ -62,35 +88,48 @@ const setupLinesFrom = (prices: PriceList) =>
       }))
     : SETUP_LINE_ITEMS.map((d) => ({ description: d, amount: "" }));
 
-export function CompanyInvoicesCard({ clientId }: { clientId: string }) {
+/** What "Issue" sends to createInvoice for each kind (and "Preview" with preview: true). */
+type Draft =
+  | { kind: "insights_topup"; walletLedgerId: string }
+  | { kind: "setup"; lines: { description: string; amount: number }[] }
+  | {
+      kind: "monthly";
+      periodMonth: string;
+      lines: { description: string; amount: number; quantity?: number; rate?: number }[];
+    };
+
+export function CompanyInvoicesCard({
+  clientId,
+  showPriceList = true,
+}: {
+  clientId: string;
+  /** The company's Billing tab shows its price list above; the Invoices page links to it. */
+  showPriceList?: boolean;
+}) {
   const [loading, setLoading] = useState(true);
   const [supplier, setSupplier] = useState<BillingProfile | null>(null);
-  const [billing, setBilling] = useState<CompanyBillingDetails | null>(null);
+  const [details, setDetails] = useState<CompanyDetails>(EMPTY_COMPANY_DETAILS);
+  const [companyName, setCompanyName] = useState("");
+  const [adminEmails, setAdminEmails] = useState<string[]>([]);
   const [invoices, setInvoices] = useState<InvoiceWithBalance[]>([]);
   const [topups, setTopups] = useState<UninvoicedTopup[]>([]);
   const [priceList, setPriceList] = useState<PriceList>(EMPTY_PRICE_LIST);
   const [activeAgents, setActiveAgents] = useState(0);
+
+  const [editing, setEditing] = useState(false);
+  const [draftDetails, setDraftDetails] = useState<CompanyDetails>(EMPTY_COMPANY_DETAILS);
+  const [triedSave, setTriedSave] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
+
   const months = useMemo(recentMonths, []);
   // Default to last month: a monthly fee is normally billed once the month is over.
   const [month, setMonth] = useState(() => recentMonths()[1]);
   const [seats, setSeats] = useState("");
-
-  const [draft, setDraft] = useState<CompanyBillingDetails>({
-    legalName: "",
-    gstin: "",
-    address: "",
-    stateCode: null,
-    email: "",
-  });
-  const [savingDetails, setSavingDetails] = useState(false);
-  const [issuing, setIssuing] = useState<string | null>(null);
-  // One row per charge on the setup invoice, prefilled from the price list; amounts as typed.
-  // Rows left blank/₹0 are skipped.
   const [setupLines, setSetupLines] = useState(() => setupLinesFrom(EMPTY_PRICE_LIST));
-  const setupCharged = setupLines
-    .map((l) => ({ description: l.description.trim(), amount: Number(l.amount) }))
-    .filter((l) => l.description && l.amount > 0);
-  const setupTotal = sumLines(setupCharged);
+
+  const [busy, setBusy] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ draft: Draft; invoice: InvoiceRecord } | null>(null);
+  const [sendFor, setSendFor] = useState<InvoiceRecord | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -100,12 +139,10 @@ export function CompanyInvoicesCard({ clientId }: { clientId: string }) {
         getCompanyBilling({ data: { accessToken, clientId } }),
       ]);
       setSupplier(profile);
-      setBilling(company.billing);
-      setDraft({
-        ...company.billing,
-        gstin: company.billing.gstin ?? "",
-        email: company.billing.email ?? "",
-      });
+      setDetails(company.details);
+      setDraftDetails(company.details);
+      setCompanyName(company.companyName);
+      setAdminEmails(company.adminEmails);
       setInvoices(company.invoices);
       setTopups(company.uninvoicedTopups);
       setPriceList(company.priceList);
@@ -118,23 +155,20 @@ export function CompanyInvoicesCard({ clientId }: { clientId: string }) {
   }, [clientId]);
 
   useEffect(() => {
+    setLoading(true);
+    setEditing(false);
     void load();
   }, [load]);
+  useEffect(() => setSetupLines(setupLinesFrom(priceList)), [priceList]);
+  useEffect(() => setSeats(String(activeAgents)), [activeAgents]);
 
-  // Refill the invoice forms whenever the price list changes (first load, or after saving it).
-  useEffect(() => {
-    setSetupLines(setupLinesFrom(priceList));
-  }, [priceList]);
-  useEffect(() => {
-    setSeats(String(activeAgents));
-  }, [activeAgents]);
-
+  const setupCharged = setupLines
+    .map((l) => ({ description: l.description.trim(), amount: Number(l.amount) }))
+    .filter((l) => l.description && l.amount > 0);
   const monthlyLines = useMemo(
     () => monthlyInvoiceLines(priceList, month, Math.max(0, Math.floor(Number(seats) || 0))),
     [priceList, month, seats],
   );
-  const monthlyTotal = sumLines(monthlyLines);
-  /** Months that already have a live monthly invoice — can't be billed twice. */
   const billedMonths = useMemo(
     () =>
       new Set(
@@ -145,136 +179,133 @@ export function CompanyInvoicesCard({ clientId }: { clientId: string }) {
     [invoices],
   );
 
+  const check = checkCompanyDetails(details);
+  const detailsComplete = check.missing.length === 0 && !Object.keys(check.invalid).length;
   const supplierReady = !!(
     supplier?.legalName &&
     supplier.gstin &&
     supplier.address &&
     supplier.stateCode
   );
-  const recipientReady = !!(billing?.legalName && billing.address && billing.stateCode);
+  // What issuing actually needs (createInvoice); the rest is wanted, and flagged, but not blocking.
+  const recipientReady = !!(details.legalName && details.address && details.stateCode);
+  const canIssue = supplierReady && recipientReady;
 
-  /** What GST an invoice to this company will carry, for the hint under the buttons. */
-  const gstHint = useMemo(() => {
-    if (!supplier?.stateCode || !billing?.stateCode) return null;
-    return gstBreakdown(100, supplier.stateCode, billing.stateCode).intraState
-      ? "Same state as SamvadX → 9% CGST + 9% SGST"
-      : "Different state from SamvadX → 18% IGST";
-  }, [supplier?.stateCode, billing?.stateCode]);
-
-  const onGstinChange = (v: string) => {
-    const state = stateFromGstin(v);
-    setDraft((d) => ({ ...d, gstin: v, stateCode: state ?? d.stateCode }));
-  };
+  const gstHint =
+    supplier?.stateCode && details.stateCode
+      ? gstBreakdown(100, supplier.stateCode, details.stateCode).intraState
+        ? "Same state as SamvadX → 9% CGST + 9% SGST"
+        : "Different state from SamvadX → 18% IGST"
+      : null;
 
   const saveDetails = async () => {
-    if (!draft.stateCode) {
-      toast.error("Pick the company's state (place of supply)");
-      return;
-    }
+    setTriedSave(true);
     setSavingDetails(true);
     try {
-      const accessToken = await getAccessToken();
       await saveCompanyBilling({
-        data: {
-          accessToken,
-          clientId,
-          legalName: draft.legalName,
-          gstin: draft.gstin ? normaliseGstin(draft.gstin) : null,
-          address: draft.address,
-          stateCode: draft.stateCode,
-          email: draft.email || null,
-        },
+        data: { accessToken: await getAccessToken(), clientId, details: draftDetails },
       });
-      toast.success("Billing details saved");
+      toast.success("Company details saved");
+      setEditing(false);
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save billing details");
+      toast.error(err instanceof Error ? err.message : "Could not save company details");
     } finally {
       setSavingDetails(false);
     }
   };
 
-  const issueTopup = async (t: UninvoicedTopup) => {
-    if (
-      !window.confirm(
-        `Issue an Insights top-up invoice for ${formatRupees(t.amount)} + GST? Invoice numbers can't be reused.`,
-      )
-    ) {
-      return;
-    }
-    setIssuing(t.ledgerId);
+  /** Preview first: the real invoice from the server, nothing saved. */
+  const openPreview = async (draft: Draft) => {
+    setBusy(`preview:${draft.kind}`);
     try {
-      const accessToken = await getAccessToken();
-      const inv = await createInvoice({
-        data: { accessToken, clientId, kind: "insights_topup", walletLedgerId: t.ledgerId },
+      const invoice = await createInvoice({
+        data: { accessToken: await getAccessToken(), clientId, ...draft, preview: true },
       });
-      toast.success(`Invoice ${inv.invoiceNumber} issued`);
-      await load();
+      setPreview({ draft, invoice });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not issue the invoice");
+      toast.error(err instanceof Error ? err.message : "Could not build the preview");
     } finally {
-      setIssuing(null);
+      setBusy(null);
     }
   };
 
-  const issueSetup = async () => {
-    if (!setupCharged.length) {
-      toast.error("Enter an amount (before GST) for at least one setup charge");
-      return;
-    }
-    if (
-      !window.confirm(
-        `Issue a setup invoice for ${formatRupees(setupTotal)} + GST (${setupCharged.length} line${setupCharged.length === 1 ? "" : "s"})? Invoice numbers can't be reused.`,
-      )
-    ) {
-      return;
-    }
-    setIssuing("setup");
+  const issue = async (draft: Draft) => {
+    setBusy(`issue:${draft.kind}`);
     try {
-      const accessToken = await getAccessToken();
       const inv = await createInvoice({
-        data: { accessToken, clientId, kind: "setup", lines: setupCharged },
+        data: { accessToken: await getAccessToken(), clientId, ...draft },
       });
-      toast.success(`Invoice ${inv.invoiceNumber} issued`);
-      setSetupLines(setupLinesFrom(priceList));
+      toast.success(`Invoice ${inv.invoiceNumber} issued — now send it`);
+      setPreview(null);
+      if (draft.kind === "setup") setSetupLines(setupLinesFrom(priceList));
       await load();
+      setSendFor(inv);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not issue the invoice");
     } finally {
-      setIssuing(null);
+      setBusy(null);
     }
   };
 
-  const issueMonthly = async () => {
-    if (!monthlyLines.length) {
-      toast.error("Set this company's monthly fee or per-seat price in the price list first");
-      return;
-    }
-    if (
-      !window.confirm(
-        `Issue the ${monthLabel(month)} invoice for ${formatRupees(monthlyTotal)} + GST? Invoice numbers can't be reused.`,
-      )
-    ) {
-      return;
-    }
-    setIssuing("monthly");
-    try {
-      const accessToken = await getAccessToken();
-      const inv = await createInvoice({
-        data: { accessToken, clientId, kind: "monthly", periodMonth: month, lines: monthlyLines },
-      });
-      toast.success(`Invoice ${inv.invoiceNumber} issued`);
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not issue the invoice");
-    } finally {
-      setIssuing(null);
-    }
-  };
+  const actions = (draft: Draft | null, disabledReason: string | null) => (
+    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
+      {disabledReason && (
+        <span className="mr-auto text-[11px] text-amber-600">{disabledReason}</span>
+      )}
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 text-xs"
+        disabled={!draft || !!disabledReason || busy !== null}
+        onClick={() => draft && openPreview(draft)}
+      >
+        {busy === `preview:${draft?.kind}` ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <Eye className="h-3.5 w-3.5" />
+        )}
+        Preview
+      </Button>
+      <Button
+        size="sm"
+        className="h-8 text-xs"
+        disabled={!draft || !!disabledReason || busy !== null}
+        onClick={() => {
+          if (
+            draft &&
+            window.confirm("Issue this invoice? Invoice numbers can't be reused once given.")
+          ) {
+            void issue(draft);
+          }
+        }}
+      >
+        {busy === `issue:${draft?.kind}` ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          "Issue invoice"
+        )}
+      </Button>
+    </div>
+  );
+
+  const blocked = !supplierReady
+    ? "Fill in SamvadX's own details first (Invoices → SamvadX details)"
+    : !recipientReady
+      ? "This company's legal name, address and state are needed first"
+      : null;
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
 
   return (
-    <>
-      {!loading && (
+    <div className="space-y-4">
+      {showPriceList && (
         <CompanyPriceListCard
           clientId={clientId}
           priceList={priceList}
@@ -282,89 +313,67 @@ export function CompanyInvoicesCard({ clientId }: { clientId: string }) {
           onSaved={load}
         />
       )}
-      <Card>
+
+      {/* ── Bill to ─────────────────────────────────────────────────────────────── */}
+      <Card className={detailsComplete ? undefined : "border-amber-500/50"}>
         <CardHeader className="border-b border-border pb-3">
-          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-            <FileText className="h-4 w-4 text-primary" />
-            Invoices
-          </CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+              <FileText className="h-4 w-4 text-primary" />
+              Bill to — {details.legalName || companyName}
+              {detailsComplete ? (
+                <span className="flex items-center gap-1 text-[11px] font-normal text-emerald-600">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Details complete
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-[11px] font-normal text-amber-600">
+                  <AlertTriangle className="h-3.5 w-3.5" /> Company hasn't finished its details
+                </span>
+              )}
+            </CardTitle>
+            {!editing && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 text-xs"
+                onClick={() => {
+                  setDraftDetails(details);
+                  setTriedSave(false);
+                  setEditing(true);
+                }}
+              >
+                <Pencil className="h-3 w-3" /> Edit
+              </Button>
+            )}
+          </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            GST tax invoices for Insights wallet top-ups, the setup fee and the monthly fee. Amounts
-            are before GST; 18% GST is added. Open an invoice to record payments or issue a credit
-            note. Only superadmins can see invoices for now.
+            Filled in by the company's admin on their Settings page — fetched here automatically.
+            {!detailsComplete &&
+              check.missing.length > 0 &&
+              ` Still missing: ${check.missing.join(", ")}.`}
           </p>
         </CardHeader>
-        <CardContent className="space-y-6 pt-4">
-          {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          ) : (
-            <>
-              {!supplierReady && (
-                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
-                  SamvadX's own billing details (legal name, GSTIN, address, state) aren't filled in
-                  yet. Add them on <span className="font-medium">Superadmin → Invoices</span> before
-                  issuing invoices.
-                </p>
-              )}
-
-              <section className="space-y-3">
-                <h3 className="text-xs font-semibold">Bill to (this company)</h3>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Legal name">
-                    <Input
-                      value={draft.legalName}
-                      onChange={(e) => setDraft({ ...draft, legalName: e.target.value })}
-                      placeholder="As registered"
-                      className="h-8 text-xs"
-                    />
-                  </Field>
-                  <Field label="GSTIN (blank if unregistered)">
-                    <Input
-                      value={draft.gstin ?? ""}
-                      onChange={(e) => onGstinChange(e.target.value)}
-                      placeholder="27AAPFU0939F1ZV"
-                      className="h-8 font-mono text-xs uppercase"
-                    />
-                  </Field>
-                  <Field label="State (place of supply)">
-                    <Select
-                      value={draft.stateCode ?? ""}
-                      onValueChange={(v) => setDraft({ ...draft, stateCode: v })}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Pick a state" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {GST_STATES.map((s) => (
-                          <SelectItem key={s.code} value={s.code} className="text-xs">
-                            {s.name} ({s.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label="Billing email">
-                    <Input
-                      value={draft.email ?? ""}
-                      onChange={(e) => setDraft({ ...draft, email: e.target.value })}
-                      placeholder="accounts@company.in"
-                      className="h-8 text-xs"
-                    />
-                  </Field>
-                  <Field label="Billing address" className="sm:col-span-2">
-                    <Textarea
-                      value={draft.address}
-                      onChange={(e) => setDraft({ ...draft, address: e.target.value })}
-                      rows={2}
-                      className="text-xs"
-                    />
-                  </Field>
-                </div>
+        <CardContent className="pt-4">
+          {editing ? (
+            <div className="space-y-3">
+              <CompanyDetailsForm
+                details={draftDetails}
+                onChange={setDraftDetails}
+                showMissing={triedSave}
+              />
+              <div className="flex justify-end gap-2">
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="ghost"
+                  className="h-8 text-xs"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
                   className="h-8 gap-1 text-xs"
-                  disabled={savingDetails || !draft.legalName.trim() || !draft.address.trim()}
+                  disabled={savingDetails}
                   onClick={saveDetails}
                 >
                   {savingDetails ? (
@@ -372,24 +381,180 @@ export function CompanyInvoicesCard({ clientId }: { clientId: string }) {
                   ) : (
                     <Save className="h-3 w-3" />
                   )}
-                  Save billing details
+                  Save details
                 </Button>
-              </section>
+              </div>
+            </div>
+          ) : (
+            <dl className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+              <Detail label="Legal name" value={details.legalName} />
+              <Detail
+                label="GSTIN"
+                value={details.gstUnregistered ? "Not registered for GST" : details.gstin}
+                mono
+              />
+              <Detail label="PAN" value={details.pan} mono />
+              <Detail label="CIN / LLPIN" value={details.cin || "—"} mono optional />
+              <Detail label="Address" value={details.address ? fullAddress(details) : ""} wide />
+              <Detail label="State (place of supply)" value={stateName(details.stateCode) ?? ""} />
+              <Detail label="Billing email" value={details.email} />
+              <Detail label="Billing phone" value={details.phone} />
+              <Detail
+                label="Authorised signatory"
+                value={
+                  details.signatoryName
+                    ? `${details.signatoryName}${details.signatoryDesignation ? `, ${details.signatoryDesignation}` : ""}`
+                    : ""
+                }
+              />
+            </dl>
+          )}
+          {gstHint && !editing && (
+            <p className="mt-3 text-[11px] text-muted-foreground">{gstHint}</p>
+          )}
+        </CardContent>
+      </Card>
 
-              <section className="space-y-2">
-                <h3 className="text-xs font-semibold">Insights top-ups not yet invoiced</h3>
-                {!topups.length ? (
-                  <p className="text-xs text-muted-foreground">
-                    Every Insights top-up to this company has an invoice.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-border/60 text-xs">
-                    {topups.map((t) => (
-                      <li key={t.ledgerId} className="flex items-center justify-between gap-3 py-2">
+      {/* ── New invoice ─────────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="border-b border-border pb-3">
+          <CardTitle className="text-sm font-semibold">New invoice</CardTitle>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Pick what it's for. Amounts are before GST; 18% GST is added. Preview it first — it
+            shows exactly what the company will receive.
+          </p>
+        </CardHeader>
+        <CardContent className="pt-4">
+          <Tabs defaultValue="setup">
+            <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start gap-1">
+              <TabsTrigger value="setup" className="text-xs">
+                <Settings2 className="mr-1.5 h-3.5 w-3.5" />
+                Setup
+              </TabsTrigger>
+              <TabsTrigger value="insights" className="text-xs">
+                <Search className="mr-1.5 h-3.5 w-3.5" />
+                Insights
+                {topups.length > 0 && (
+                  <Badge className="ml-1.5 h-4 px-1.5 text-[10px]">{topups.length}</Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="monthly" className="text-xs">
+                <CalendarDays className="mr-1.5 h-3.5 w-3.5" />
+                Monthly
+              </TabsTrigger>
+              <TabsTrigger value="calls" className="text-xs">
+                <Phone className="mr-1.5 h-3.5 w-3.5" />
+                Calls
+                <span className="ml-1.5 rounded border border-border px-1 text-[9px] uppercase text-muted-foreground">
+                  Soon
+                </span>
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Setup */}
+            <TabsContent value="setup" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] text-muted-foreground">
+                  {priceList.setupLines.length
+                    ? "Filled in from this company's price list — change anything for this invoice only."
+                    : "No setup prices saved for this company yet — type them in, or set them once in its price list."}{" "}
+                  Leave a line blank to leave it off.
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 text-[11px]"
+                  onClick={() => setSetupLines(setupLinesFrom(priceList))}
+                >
+                  <RotateCcw className="h-3 w-3" /> Reset
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                {setupLines.map((line, n) => (
+                  <div key={n} className="flex items-center gap-2">
+                    <Input
+                      value={line.description}
+                      onChange={(e) =>
+                        setSetupLines((ls) =>
+                          ls.map((l, k) => (k === n ? { ...l, description: e.target.value } : l)),
+                        )
+                      }
+                      className="h-8 min-w-0 flex-1 text-xs"
+                    />
+                    <span className="text-xs text-muted-foreground">₹</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={line.amount}
+                      placeholder="0.00"
+                      onChange={(e) =>
+                        setSetupLines((ls) =>
+                          ls.map((l, k) => (k === n ? { ...l, amount: e.target.value } : l)),
+                        )
+                      }
+                      className="h-8 w-32 text-right text-xs"
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0 text-muted-foreground"
+                      aria-label={`Remove ${line.description || "line"}`}
+                      disabled={setupLines.length === 1}
+                      onClick={() => setSetupLines((ls) => ls.filter((_, k) => k !== n))}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 text-xs"
+                  disabled={setupLines.length >= 20}
+                  onClick={() => setSetupLines((ls) => [...ls, { description: "", amount: "" }])}
+                >
+                  <Plus className="h-3 w-3" /> Add line
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Before GST:{" "}
+                  <span className="font-medium tabular-nums text-foreground">
+                    {formatRupees(sumLines(setupCharged))}
+                  </span>
+                </span>
+              </div>
+              {actions(
+                setupCharged.length ? { kind: "setup", lines: setupCharged } : null,
+                blocked ?? (setupCharged.length ? null : "Enter at least one amount"),
+              )}
+            </TabsContent>
+
+            {/* Insights */}
+            <TabsContent value="insights" className="space-y-3">
+              <p className="text-[11px] text-muted-foreground">
+                One invoice per Insights wallet top-up given to this company. Top-ups already
+                invoiced aren't listed.
+              </p>
+              {!topups.length ? (
+                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+                  Every Insights top-up to this company has an invoice.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border rounded-md border border-border text-xs">
+                  {topups.map((t) => {
+                    const draft: Draft = { kind: "insights_topup", walletLedgerId: t.ledgerId };
+                    return (
+                      <li
+                        key={t.ledgerId}
+                        className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+                      >
                         <span>
                           <span className="font-medium tabular-nums">{formatRupees(t.amount)}</span>
                           <span className="ml-2 text-muted-foreground">
-                            {new Date(t.createdAt).toLocaleString("en-IN", {
+                            top-up of{" "}
+                            {new Date(t.createdAt).toLocaleDateString("en-IN", {
                               timeZone: "Asia/Kolkata",
                               day: "2-digit",
                               month: "short",
@@ -398,240 +563,173 @@ export function CompanyInvoicesCard({ clientId }: { clientId: string }) {
                             {t.note ? ` · ${t.note}` : ""}
                           </span>
                         </span>
-                        <Button
-                          size="sm"
-                          className="h-7 text-xs"
-                          disabled={!supplierReady || !recipientReady || issuing !== null}
-                          onClick={() => issueTopup(t)}
-                        >
-                          {issuing === t.ledgerId ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            "Issue invoice"
-                          )}
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-
-              <section className="space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-xs font-semibold">Setup invoice</h3>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 gap-1 text-[11px]"
-                    onClick={() => setSetupLines(setupLinesFrom(priceList))}
-                  >
-                    <RotateCcw className="h-3 w-3" /> Reset to price list
-                  </Button>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  {priceList.setupLines.length
-                    ? "Filled in from the price list — change anything for this invoice only."
-                    : "No setup prices saved yet — set them once in the price list above to have this filled in."}{" "}
-                  Amounts are before GST; leave a line blank to leave it off.
-                </p>
-                <div className="space-y-1.5">
-                  {setupLines.map((line, n) => (
-                    <div key={n} className="flex items-center gap-2">
-                      <Input
-                        value={line.description}
-                        onChange={(e) =>
-                          setSetupLines((ls) =>
-                            ls.map((l, k) => (k === n ? { ...l, description: e.target.value } : l)),
-                          )
-                        }
-                        className="h-8 min-w-0 flex-1 text-xs"
-                      />
-                      <span className="text-xs text-muted-foreground">₹</span>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={line.amount}
-                        placeholder="0.00"
-                        onChange={(e) =>
-                          setSetupLines((ls) =>
-                            ls.map((l, k) => (k === n ? { ...l, amount: e.target.value } : l)),
-                          )
-                        }
-                        className="h-8 w-32 text-right text-xs"
-                      />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-8 w-8 p-0 text-muted-foreground"
-                        aria-label={`Remove ${line.description || "line"}`}
-                        disabled={setupLines.length === 1}
-                        onClick={() => setSetupLines((ls) => ls.filter((_, k) => k !== n))}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 gap-1 text-xs"
-                    disabled={setupLines.length >= 20}
-                    onClick={() => setSetupLines((ls) => [...ls, { description: "", amount: "" }])}
-                  >
-                    <Plus className="h-3 w-3" />
-                    Add line
-                  </Button>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground">
-                      Before GST:{" "}
-                      <span className="font-medium tabular-nums text-foreground">
-                        {formatRupees(setupTotal)}
-                      </span>
-                    </span>
-                    <Button
-                      size="sm"
-                      className="h-8 text-xs"
-                      disabled={
-                        !supplierReady ||
-                        !recipientReady ||
-                        issuing !== null ||
-                        !setupCharged.length
-                      }
-                      onClick={issueSetup}
-                    >
-                      {issuing === "setup" ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        "Issue invoice"
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </section>
-
-              <section className="space-y-2">
-                <h3 className="flex items-center gap-1.5 text-xs font-semibold">
-                  <CalendarDays className="h-3.5 w-3.5" /> Monthly invoice
-                </h3>
-                <div className="flex flex-wrap items-center gap-3 text-xs">
-                  <label className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Month</span>
-                    <Select value={month} onValueChange={setMonth}>
-                      <SelectTrigger className="h-8 w-40 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {months.map((m) => (
-                          <SelectItem key={m} value={m} className="text-xs">
-                            {monthLabel(m)}
-                            {billedMonths.has(m) ? " · invoiced" : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </label>
-                  {priceList.perSeatFee > 0 && (
-                    <label className="flex items-center gap-2">
-                      <span className="text-muted-foreground">Agent seats</span>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={seats}
-                        onChange={(e) => setSeats(e.target.value)}
-                        className="h-8 w-20 text-right text-xs"
-                      />
-                      <span className="text-[11px] text-muted-foreground">
-                        ({activeAgents} active now)
-                      </span>
-                    </label>
-                  )}
-                </div>
-                {monthlyLines.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground">
-                    No monthly fee or per-seat price in this company's price list yet.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-border/60 rounded-md border border-border text-xs">
-                    {monthlyLines.map((l, n) => (
-                      <li key={n} className="flex items-center justify-between gap-3 px-3 py-1.5">
-                        <span>{l.description}</span>
-                        <span className="tabular-nums">
-                          {l.quantity && l.rate ? `${l.quantity} × ${formatRupees(l.rate)} = ` : ""}
-                          {formatRupees(l.amount)}
+                        <span className="flex gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 gap-1 text-xs"
+                            disabled={!!blocked || busy !== null}
+                            onClick={() => openPreview(draft)}
+                          >
+                            <Eye className="h-3 w-3" /> Preview
+                          </Button>
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={!!blocked || busy !== null}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `Issue the Insights invoice for ${formatRupees(t.amount)} + GST?`,
+                                )
+                              ) {
+                                void issue(draft);
+                              }
+                            }}
+                          >
+                            Issue invoice
+                          </Button>
                         </span>
                       </li>
-                    ))}
-                  </ul>
-                )}
-                <div className="flex flex-wrap items-center justify-end gap-3">
-                  {billedMonths.has(month) && (
-                    <span className="text-[11px] text-amber-600">
-                      {monthLabel(month)} is already invoiced — cancel that invoice first to
-                      reissue.
-                    </span>
-                  )}
-                  <span className="text-xs text-muted-foreground">
-                    Before GST:{" "}
-                    <span className="font-medium tabular-nums text-foreground">
-                      {formatRupees(monthlyTotal)}
-                    </span>
-                  </span>
-                  <Button
-                    size="sm"
-                    className="h-8 text-xs"
-                    disabled={
-                      !supplierReady ||
-                      !recipientReady ||
-                      issuing !== null ||
-                      !monthlyLines.length ||
-                      billedMonths.has(month)
-                    }
-                    onClick={issueMonthly}
-                  >
-                    {issuing === "monthly" ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      "Issue invoice"
-                    )}
-                  </Button>
-                </div>
-              </section>
-
-              {!recipientReady && (
-                <p className="text-xs text-muted-foreground">
-                  Save this company's billing details to enable issuing.
-                </p>
+                    );
+                  })}
+                </ul>
               )}
-              {gstHint && <p className="text-xs text-muted-foreground">{gstHint}</p>}
+              {blocked && <p className="text-[11px] text-amber-600">{blocked}</p>}
+            </TabsContent>
 
-              <section className="space-y-2">
-                <h3 className="text-xs font-semibold">Issued</h3>
-                <InvoiceTable invoices={invoices} onChanged={load} />
-              </section>
-            </>
-          )}
+            {/* Monthly */}
+            <TabsContent value="monthly" className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <label className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Month</span>
+                  <Select value={month} onValueChange={setMonth}>
+                    <SelectTrigger className="h-8 w-44 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {months.map((m) => (
+                        <SelectItem key={m} value={m} className="text-xs">
+                          {monthLabel(m)}
+                          {billedMonths.has(m) ? " · invoiced" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                {priceList.perSeatFee > 0 && (
+                  <label className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Agent seats</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={seats}
+                      onChange={(e) => setSeats(e.target.value)}
+                      className="h-8 w-20 text-right text-xs"
+                    />
+                    <span className="text-[11px] text-muted-foreground">
+                      ({activeAgents} active now)
+                    </span>
+                  </label>
+                )}
+              </div>
+              {monthlyLines.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+                  No monthly fee or per-seat price in this company's price list yet.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border rounded-md border border-border text-xs">
+                  {monthlyLines.map((l, n) => (
+                    <li key={n} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                      <span>{l.description}</span>
+                      <span className="tabular-nums">
+                        {l.quantity && l.rate ? `${l.quantity} × ${formatRupees(l.rate)} = ` : ""}
+                        {formatRupees(l.amount)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {actions(
+                monthlyLines.length
+                  ? { kind: "monthly", periodMonth: month, lines: monthlyLines }
+                  : null,
+                blocked ??
+                  (billedMonths.has(month)
+                    ? `${monthLabel(month)} is already invoiced — cancel that invoice first to reissue`
+                    : monthlyLines.length
+                      ? null
+                      : "Set a monthly fee or per-seat price in the price list first"),
+              )}
+            </TabsContent>
+
+            {/* Calls */}
+            <TabsContent value="calls">
+              <div className="rounded-md border border-dashed border-border px-4 py-8 text-center">
+                <Phone className="mx-auto mb-2 h-6 w-6 text-muted-foreground/50" />
+                <p className="text-sm font-medium text-foreground">Call invoices — coming soon</p>
+                <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+                  When calling is billed by usage, invoices for calls will be made here, the same
+                  way as Insights.
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
-    </>
+
+      {/* ── Issued ──────────────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="border-b border-border pb-3">
+          <CardTitle className="text-sm font-semibold">Issued invoices</CardTitle>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Send each one to the company; "Viewed" shows once one of their admins opens it. Open an
+            invoice to record payments or issue a credit note.
+          </p>
+        </CardHeader>
+        <CardContent className="pt-4">
+          <InvoiceTable invoices={invoices} onChanged={load} onSend={setSendFor} />
+        </CardContent>
+      </Card>
+
+      <InvoicePreviewDialog
+        invoice={preview?.invoice ?? null}
+        issuing={busy?.startsWith("issue:") ?? false}
+        onClose={() => setPreview(null)}
+        onIssue={() => preview && void issue(preview.draft)}
+      />
+      <SendInvoiceDialog
+        key={sendFor?.id ?? "none"}
+        invoice={sendFor}
+        suggestions={[details.email, ...adminEmails].filter(Boolean)}
+        onClose={() => setSendFor(null)}
+        onSent={load}
+      />
+    </div>
   );
 }
 
-function Field({
+function Detail({
   label,
-  className,
-  children,
+  value,
+  mono,
+  wide,
+  optional,
 }: {
   label: string;
-  className?: string;
-  children: React.ReactNode;
+  value: string;
+  mono?: boolean;
+  wide?: boolean;
+  optional?: boolean;
 }) {
   return (
-    <label className={`block space-y-1 ${className ?? ""}`}>
-      <span className="text-[11px] text-muted-foreground">{label}</span>
-      {children}
-    </label>
+    <div className={wide ? "sm:col-span-2" : undefined}>
+      <dt className="text-[11px] text-muted-foreground">{label}</dt>
+      <dd
+        className={`${mono ? "font-mono" : ""} ${value ? "text-foreground" : optional ? "text-muted-foreground" : "text-amber-600"}`}
+      >
+        {value || "Not filled in"}
+      </dd>
+    </div>
   );
 }

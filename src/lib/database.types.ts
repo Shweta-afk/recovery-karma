@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 52 tables.
+// Generated from 53 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -553,6 +553,45 @@ export interface Database {
           withdrawn_by?: string | null;
           status?: string;
           published_at?: string | null;
+        };
+        Relationships: [];
+      };
+      contract_document_status: {
+        Row: {
+          document_id: string;
+          client_id: string;
+          sent_at: string | null;
+          sent_to: string | null;
+          sent_via: string | null;
+          viewed_at: string | null;
+          signed_at: string | null;
+          signed_name: string | null;
+          signed_email: string | null;
+          signed_agent_id: string | null;
+        };
+        Insert: {
+          document_id: string;
+          client_id: string;
+          sent_at?: string | null;
+          sent_to?: string | null;
+          sent_via?: string | null;
+          viewed_at?: string | null;
+          signed_at?: string | null;
+          signed_name?: string | null;
+          signed_email?: string | null;
+          signed_agent_id?: string | null;
+        };
+        Update: {
+          document_id?: string;
+          client_id?: string;
+          sent_at?: string | null;
+          sent_to?: string | null;
+          sent_via?: string | null;
+          viewed_at?: string | null;
+          signed_at?: string | null;
+          signed_name?: string | null;
+          signed_email?: string | null;
+          signed_agent_id?: string | null;
         };
         Relationships: [];
       };
@@ -1226,6 +1265,11 @@ export interface Database {
           created_by: string | null;
           created_at: string;
           period_month: string | null;
+          emailed_at: string | null;
+          emailed_to: string | null;
+          emailed_via: string | null;
+          viewed_at: string | null;
+          viewed_by_agent: string | null;
         };
         Insert: {
           id?: string;
@@ -1254,6 +1298,11 @@ export interface Database {
           created_by?: string | null;
           created_at?: string;
           period_month?: string | null;
+          emailed_at?: string | null;
+          emailed_to?: string | null;
+          emailed_via?: string | null;
+          viewed_at?: string | null;
+          viewed_by_agent?: string | null;
         };
         Update: {
           id?: string;
@@ -1282,6 +1331,11 @@ export interface Database {
           created_by?: string | null;
           created_at?: string;
           period_month?: string | null;
+          emailed_at?: string | null;
+          emailed_to?: string | null;
+          emailed_via?: string | null;
+          viewed_at?: string | null;
+          viewed_by_agent?: string | null;
         };
         Relationships: [];
       };
