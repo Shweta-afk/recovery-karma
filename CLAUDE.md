@@ -807,9 +807,16 @@ sent / viewed / signed with typed name + email). Email text and links in `billin
   redirects there). Invoices via `company-billing.server.ts` — `openMyInvoice` sets `viewed_at`
   once. Terms & agreements (`components/contracts/admin-agreements.tsx`): current agreement and
   platform terms with **Sign** (`signContractDocument`); opening a document marks it viewed.
-- **Superadmin → Contracts** = tabs *Agreements* (`agreements-board.tsx`: per company, Not sent →
-  Sent → Viewed → Signed; Create from template with preview; Send), *Terms & uploads*,
-  *Changes & notices*, *Template*.
+- **Superadmin → Contracts** = tabs *Agreement*, *Changes & notices*, *Other documents*.
+  **One master agreement for every company** (user, 2026-10-12; text from "Samvadx
+  Aggrement.docx" → `src/lib/master-agreement.ts`): published once as a platform
+  `contract_documents` row with `{{blanks}}` (`publishMasterAgreement`); each company sees it
+  filled with ITS details and SamvadX's own (`billing_profile` incl. `short_name`, `cin`,
+  `signatory_*` — set on Invoices → SamvadX details), via `bodyForCompany`. Signing freezes the
+  exact text in `contract_document_status.signed_body`. `master-agreement-panel.tsx` lists every
+  company Not sent → Sent → Viewed → Signed, with "Their copy" and Send. Change notices record
+  first view per company in `contract_change_views` (`migrations/20261012_master_agreement.sql`,
+  live). A test keeps the text free of hard-coded company names and unknown blanks.
 - `CONTRACTS_VISIBLE_TO_COMPANIES` is now **true** (user, 2026-10-12); the test pins it.
 - Email is OFF until `RESEND_API_KEY` + `EMAIL_FROM` are set on Railway (not set as of 2026-10-12).
 

@@ -150,7 +150,16 @@ export function InvoiceDocument({
           {invoice.lines.map((line, n) => (
             <tr key={n} className="border-b border-neutral-200 align-top">
               <td className="py-1.5 pr-2">{n + 1}</td>
-              <td className="py-1.5 pr-2">{line.description}</td>
+              <td className="py-1.5 pr-2">
+                {line.description}
+                {line.includes && line.includes.length > 0 && (
+                  <ul className="mt-1 list-disc pl-4 text-[11px] text-neutral-600">
+                    {line.includes.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                )}
+              </td>
               <td className="py-1.5 pr-2">{invoice.sac ?? "—"}</td>
               <td className="py-1.5 pr-2 text-right">
                 {line.quantity && line.rate ? `${line.quantity} × ${formatRupees(line.rate)}` : 1}

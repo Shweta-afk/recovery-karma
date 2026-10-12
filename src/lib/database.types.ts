@@ -3,7 +3,7 @@
 // Produced by `bun run gen:types` from the live database's PostgREST schema.
 // Re-run it after any migration that adds or changes a column, and commit the result.
 //
-// Generated from 53 tables.
+// Generated from 54 tables.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -145,6 +145,10 @@ export interface Database {
           updated_at: string;
           updated_by: string | null;
           sac_monthly: string | null;
+          cin: string | null;
+          short_name: string | null;
+          signatory_name: string | null;
+          signatory_designation: string | null;
         };
         Insert: {
           id?: string;
@@ -166,6 +170,10 @@ export interface Database {
           updated_at?: string;
           updated_by?: string | null;
           sac_monthly?: string | null;
+          cin?: string | null;
+          short_name?: string | null;
+          signatory_name?: string | null;
+          signatory_designation?: string | null;
         };
         Update: {
           id?: string;
@@ -187,6 +195,10 @@ export interface Database {
           updated_at?: string;
           updated_by?: string | null;
           sac_monthly?: string | null;
+          cin?: string | null;
+          short_name?: string | null;
+          signatory_name?: string | null;
+          signatory_designation?: string | null;
         };
         Relationships: [];
       };
@@ -508,6 +520,24 @@ export interface Database {
         };
         Relationships: [];
       };
+      contract_change_views: {
+        Row: {
+          change_id: string;
+          client_id: string;
+          viewed_at: string;
+        };
+        Insert: {
+          change_id: string;
+          client_id: string;
+          viewed_at?: string;
+        };
+        Update: {
+          change_id?: string;
+          client_id?: string;
+          viewed_at?: string;
+        };
+        Relationships: [];
+      };
       contract_changes: {
         Row: {
           id: string;
@@ -568,6 +598,7 @@ export interface Database {
           signed_name: string | null;
           signed_email: string | null;
           signed_agent_id: string | null;
+          signed_body: string | null;
         };
         Insert: {
           document_id: string;
@@ -580,6 +611,7 @@ export interface Database {
           signed_name?: string | null;
           signed_email?: string | null;
           signed_agent_id?: string | null;
+          signed_body?: string | null;
         };
         Update: {
           document_id?: string;
@@ -592,6 +624,7 @@ export interface Database {
           signed_name?: string | null;
           signed_email?: string | null;
           signed_agent_id?: string | null;
+          signed_body?: string | null;
         };
         Relationships: [];
       };

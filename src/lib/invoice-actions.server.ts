@@ -93,6 +93,11 @@ function checkGstinState(gstin: string | null | undefined, stateCode: string | n
 // ── Supplier (Axiotta) details ──────────────────────────────────────────────
 
 export interface BillingProfile extends InvoiceParty {
+  /** Used in the master agreement (master-agreement.ts), not on invoices. */
+  cin: string | null;
+  shortName: string | null;
+  signatoryName: string | null;
+  signatoryDesignation: string | null;
   invoicePrefix: string;
   sacInsights: string | null;
   sacSetup: string | null;
@@ -119,6 +124,10 @@ async function loadBillingProfile(): Promise<BillingProfile> {
     bankAccount: data?.bank_account ?? null,
     bankIfsc: data?.bank_ifsc ?? null,
     terms: data?.terms ?? null,
+    cin: data?.cin ?? null,
+    shortName: data?.short_name ?? null,
+    signatoryName: data?.signatory_name ?? null,
+    signatoryDesignation: data?.signatory_designation ?? null,
     invoicePrefix: data?.invoice_prefix ?? "SX",
     sacInsights: data?.sac_insights ?? null,
     sacSetup: data?.sac_setup ?? null,
@@ -150,6 +159,10 @@ export const saveBillingProfile = createServerFn({ method: "POST" })
         bankAccount: optText(40),
         bankIfsc: optText(20),
         terms: optText(1000),
+        cin: optText(25),
+        shortName: optText(60),
+        signatoryName: optText(120),
+        signatoryDesignation: optText(120),
         invoicePrefix: z.string().trim().toUpperCase().regex(INVOICE_PREFIX_RE),
         sacInsights: optText(10),
         sacSetup: optText(10),
@@ -176,6 +189,10 @@ export const saveBillingProfile = createServerFn({ method: "POST" })
         bank_account: data.bankAccount ?? null,
         bank_ifsc: data.bankIfsc ?? null,
         terms: data.terms ?? null,
+        cin: data.cin ?? null,
+        short_name: data.shortName ?? null,
+        signatory_name: data.signatoryName ?? null,
+        signatory_designation: data.signatoryDesignation ?? null,
         invoice_prefix: data.invoicePrefix,
         sac_insights: data.sacInsights ?? null,
         sac_setup: data.sacSetup ?? null,
@@ -459,17 +476,19 @@ const lineSchema = z
     amount: amountSchema,
     quantity: z.number().int().min(1).max(100_000).optional(),
     rate: amountSchema.optional(),
+    includes: z.array(z.string().trim().min(1).max(200)).max(30).optional(),
   })
-  .transform((l): InvoiceLine =>
-    l.quantity && l.rate
+  .transform((l): InvoiceLine => ({
+    ...(l.quantity && l.rate
       ? {
           description: l.description,
           quantity: l.quantity,
           rate: round2(l.rate),
           amount: round2(l.quantity * l.rate),
         }
-      : { description: l.description, amount: round2(l.amount) },
-  );
+      : { description: l.description, amount: round2(l.amount) }),
+    ...(l.includes?.length ? { includes: l.includes } : {}),
+  }));
 
 export const createInvoice = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>

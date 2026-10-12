@@ -14,16 +14,43 @@ export interface InvoiceLine {
   amount: number;
   quantity?: number;
   rate?: number;
+  /** What the charge covers, printed as a list under it with no amounts of their own — the
+   *  setup fee is ONE charge that includes several things (user, 2026-10-12). */
+  includes?: string[];
 }
 
-/** What the setup fee covers — each is its own charged line on a setup invoice (user, 2026-10-09).
- * The superadmin enters an amount per line; a line left at ₹0 is left off the invoice. */
+export const SETUP_FEE_LABEL = "SamvadX platform setup";
+
+/** What the setup fee covers, by default — listed under the one setup charge, not priced
+ *  separately (user, 2026-10-12; until then each was its own charged line). */
 export const SETUP_LINE_ITEMS = [
   "Domain Setup",
   "API Configuration",
   "Administrator Configuration",
   "Cloud Storage",
 ] as const;
+
+/** The setup fee as one total plus what it includes. Price lists saved before 2026-10-12 hold one
+ *  priced line per item; those read as their sum, with the items as the "includes". */
+export function setupPackage(lines: InvoiceLine[]): { amount: number; includes: string[] } {
+  if (lines.length === 1 && lines[0].includes) {
+    return { amount: round2(lines[0].amount), includes: lines[0].includes };
+  }
+  return {
+    amount: sumLines(lines.filter((l) => l.amount > 0)),
+    includes: lines.map((l) => l.description).filter(Boolean),
+  };
+}
+
+/** The one setup line stored on a price list and printed on a setup invoice. */
+export function setupLine(amount: number, includes: string[]): InvoiceLine {
+  const items = includes.map((i) => i.trim()).filter(Boolean);
+  return {
+    description: SETUP_FEE_LABEL,
+    amount: round2(amount),
+    ...(items.length ? { includes: items } : {}),
+  };
+}
 
 /** Sum of the lines, rounded the way taxable_amount is stored. */
 export function sumLines(lines: InvoiceLine[]): number {
@@ -307,12 +334,14 @@ export function toInvoiceRecord(r: {
               amount: number | string;
               quantity?: number | string;
               rate?: number | string;
+              includes?: unknown;
             }[]
           ).map((l) => ({
             description: String(l.description),
             amount: Number(l.amount),
             ...(l.quantity != null ? { quantity: Number(l.quantity) } : {}),
             ...(l.rate != null ? { rate: Number(l.rate) } : {}),
+            ...(Array.isArray(l.includes) ? { includes: l.includes.map(String) } : {}),
           }))
         : [{ description: r.description, amount: Number(r.taxable_amount) }],
     sac: r.sac,

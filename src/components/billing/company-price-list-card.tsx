@@ -9,7 +9,14 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { SETUP_LINE_ITEMS, sumLines, type PriceList } from "@/lib/invoice-math";
+import {
+  SETUP_LINE_ITEMS,
+  setupLine,
+  setupPackage,
+  sumLines,
+  type PriceList,
+} from "@/lib/invoice-math";
+import { IncludedItemsEditor } from "./included-items-editor";
 import { getAccessToken } from "@/lib/access-token";
 import { savePriceList } from "@/lib/billing-actions.server";
 import { formatRupees } from "./invoice-document";
@@ -94,19 +101,19 @@ export function CompanyPriceListCard({
     !priceList.monthlyLines.length &&
     !priceList.perSeatFee &&
     priceList.paymentTermsDays === null;
-  const [setup, setSetup] = useState<DraftLine[]>([]);
+  // The setup fee is one total; the items only say what it covers (user, 2026-10-12).
+  const [setupAmount, setSetupAmount] = useState("");
+  const [setupItems, setSetupItems] = useState<string[]>([]);
   const [monthly, setMonthly] = useState<DraftLine[]>([]);
   const [perSeat, setPerSeat] = useState("");
   const [terms, setTerms] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    // A company with no price list yet starts from the standard setup lines.
-    setSetup(
-      priceList.setupLines.length
-        ? toDraft(priceList.setupLines)
-        : SETUP_LINE_ITEMS.map((d) => ({ description: d, amount: "" })),
-    );
+    // A company with no price list yet starts from the standard list of what setup includes.
+    const pkg = setupPackage(priceList.setupLines);
+    setSetupAmount(pkg.amount ? String(pkg.amount) : "");
+    setSetupItems(pkg.includes.length ? pkg.includes : [...SETUP_LINE_ITEMS]);
     setMonthly(
       priceList.monthlyLines.length
         ? toDraft(priceList.monthlyLines)
@@ -129,9 +136,11 @@ export function CompanyPriceListCard({
         data: {
           accessToken,
           clientId,
-          // Lines left at ₹0 are kept as items (so a ₹0 "Domain Setup" can still print on the
-          // schedule); invoices skip ₹0 lines.
-          setupLines: fromDraft(setup),
+          // One setup line: the total, with what it includes listed under it.
+          setupLines:
+            Number(setupAmount) > 0 || setupItems.some((i) => i.trim())
+              ? [setupLine(Number(setupAmount) || 0, setupItems)]
+              : [],
           monthlyLines: fromDraft(monthly),
           perSeatFee: Number(perSeat) || 0,
           paymentTermsDays: termsNum,
@@ -149,7 +158,6 @@ export function CompanyPriceListCard({
     }
   };
 
-  const setupTotal = sumLines(fromDraft(setup).filter((l) => l.amount > 0));
   const monthlyTotal = sumLines(fromDraft(monthly).filter((l) => l.amount > 0));
 
   return (
@@ -167,13 +175,23 @@ export function CompanyPriceListCard({
       </CardHeader>
       <CardContent className="space-y-5 pt-4">
         <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-xs font-semibold">One-time setup fee</h3>
-            <span className="text-[11px] text-muted-foreground">
-              Total {formatRupees(setupTotal)}
-            </span>
+          <h3 className="text-xs font-semibold">One-time setup fee</h3>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Total (before GST) ₹</span>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={setupAmount}
+              onChange={(e) => setSetupAmount(e.target.value)}
+              placeholder="0"
+              className="h-8 w-36 text-right text-xs"
+            />
           </div>
-          <LinesEditor lines={setup} onChange={setSetup} addLabel="Add setup line" />
+          <p className="text-[11px] text-muted-foreground">
+            What it includes — listed on the invoice under the setup fee, without separate prices:
+          </p>
+          <IncludedItemsEditor items={setupItems} onChange={setSetupItems} />
         </div>
 
         <div className="space-y-2">

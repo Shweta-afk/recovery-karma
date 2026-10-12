@@ -8,9 +8,10 @@ import { EMPTY_PRICE_LIST, type InvoiceLine, type PriceList } from "./invoice-ma
 
 export const toPriceLines = (v: unknown): InvoiceLine[] =>
   Array.isArray(v)
-    ? (v as { description: string; amount: number | string }[]).map((l) => ({
+    ? (v as { description: string; amount: number | string; includes?: unknown }[]).map((l) => ({
         description: String(l.description),
         amount: Number(l.amount),
+        ...(Array.isArray(l.includes) ? { includes: l.includes.map(String) } : {}),
       }))
     : [];
 

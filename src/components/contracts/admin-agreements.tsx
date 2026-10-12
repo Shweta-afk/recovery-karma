@@ -55,6 +55,16 @@ export function AdminAgreements({ focusDocId }: { focusDocId?: string }) {
     await load();
     window.dispatchEvent(new CustomEvent(CONTRACTS_UPDATED_EVENT));
   };
+  const today = todayIstKey();
+  // The master agreement = the latest platform document with text (published on Superadmin →
+  // Contracts → Agreement); uploaded platform files are listed under "All versions" below.
+  const master = view
+    ? currentDocument(
+        view.platformDocuments.filter((d) => d.generated),
+        today,
+      )
+    : null;
+  const companyDoc = view ? currentDocument(view.companyDocuments, today) : null;
   const statusFor = (docId: string | undefined) =>
     view?.statuses.find((s) => s.documentId === docId) ?? null;
 
@@ -69,24 +79,28 @@ export function AdminAgreements({ focusDocId }: { focusDocId?: string }) {
         </div>
       ) : view ? (
         <>
+          {/* The master agreement (one text for every company, filled with this company's details)
+              comes first; a company-specific document only shows if SamvadX shared one. */}
           <div className="grid gap-4 lg:grid-cols-2">
             <SignableDocument
-              heading={`${view.companyName}'s agreement`}
-              empty="SamvadX hasn't shared your company's agreement yet."
-              doc={currentDocument(view.companyDocuments, todayIstKey())}
-              status={statusFor(currentDocument(view.companyDocuments, todayIstKey())?.id)}
+              heading={`${view.companyName}'s agreement with SamvadX`}
+              empty="SamvadX hasn't published the agreement yet."
+              doc={master}
+              status={statusFor(master?.id)}
               companyName={view.companyName}
               highlight={!!focusDocId}
               onSigned={reload}
             />
-            <SignableDocument
-              heading="SamvadX terms"
-              empty="No platform terms have been published yet."
-              doc={currentDocument(view.platformDocuments, todayIstKey())}
-              status={statusFor(currentDocument(view.platformDocuments, todayIstKey())?.id)}
-              companyName={view.companyName}
-              onSigned={reload}
-            />
+            {companyDoc && (
+              <SignableDocument
+                heading="Additional document for your company"
+                empty=""
+                doc={companyDoc}
+                status={statusFor(companyDoc.id)}
+                companyName={view.companyName}
+                onSigned={reload}
+              />
+            )}
           </div>
 
           {pending.length > 0 && (

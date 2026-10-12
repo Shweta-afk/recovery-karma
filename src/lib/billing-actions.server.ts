@@ -42,6 +42,7 @@ const daySchema = z.string().refine(isDayKey, "Expected a date (YYYY-MM-DD)");
 const priceLineSchema = z.object({
   description: z.string().trim().min(1).max(200),
   amount: z.number().finite().min(0).max(100_000_000),
+  includes: z.array(z.string().trim().min(1).max(200)).max(30).optional(),
 });
 
 const toLines = toPriceLines;

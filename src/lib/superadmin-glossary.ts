@@ -276,10 +276,10 @@ export const PAGE_GUIDES = {
   contracts: {
     title: "Contracts",
     points: [
-      "Agreements: one row per company — their agreement and SamvadX's terms, each marked Not sent, Sent, Viewed or Signed.",
-      "Create an agreement from the template (it fills in the company's details and prices), preview it, then Send it.",
-      "The company reads and signs on their Billing & Agreements page (tick + typed name); you see who signed and when.",
-      "Changes & notices: when a feature or price changes, publish a notice; companies can be asked to accept it.",
+      "Agreement: ONE agreement for every company. Publish it once; each company sees it with its own details (and yours) filled in.",
+      "The list shows every company: Not sent, Sent, Viewed or Signed (who and when). 'Their copy' shows exactly what they see — or what they signed.",
+      "Your company's name, CIN, address and signatory come from Invoices → SamvadX details; change them there and every agreement follows.",
+      "Change notices: tell companies about a new feature or price. Each one shows who has seen it and who has accepted it.",
     ],
   },
   activity: {

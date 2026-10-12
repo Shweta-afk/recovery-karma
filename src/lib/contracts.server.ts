@@ -5,6 +5,7 @@
 
 import { companyDetailsFromRow, fullAddress } from "./company-details";
 import { agreementEmail, companyAppLink, mailtoLink } from "./billing-delivery";
+import { DEFAULT_MASTER_AGREEMENT_BODY, MASTER_AGREEMENT_TITLE } from "./master-agreement";
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z, tokenSchema, idSchema } from "./schemas";
@@ -238,6 +239,8 @@ export interface SuperadminContractChange extends ContractChange {
     companyName: string;
     acceptance: ContractAcceptance | null;
     adminEmails: string[];
+    /** When an admin of this company first saw the notice (Billing & Agreements), or null. */
+    viewedAt: string | null;
   }[];
 }
 
@@ -269,10 +272,19 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SuperadminContractsView> => {
     await requireSuperadmin(data.accessToken);
     const admin = db();
-    const [statuses, billingRes] = await Promise.all([
+    const [statuses, billingRes, viewsRes] = await Promise.all([
       loadStatuses(),
       admin.from("client_billing").select("client_id, email"),
+      contractsDb().from("contract_change_views").select("change_id, client_id, viewed_at"),
     ]);
+    const viewedAt = new Map(
+      ((viewsRes.error ? [] : viewsRes.data) ?? []).map(
+        (v: { change_id: string; client_id: string; viewed_at: string }) => [
+          `${v.change_id}|${v.client_id}`,
+          v.viewed_at,
+        ],
+      ),
+    );
     const billingEmail = new Map(
       ((billingRes.data ?? []) as { client_id: string; email: string | null }[]).map((b) => [
         b.client_id,
@@ -367,6 +379,7 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
                 companyName: c.company_name,
                 acceptance: accByKey.get(`${change.id}|${c.id}`) ?? null,
                 adminEmails: emailsByClient.get(c.id) ?? [],
+                viewedAt: (viewedAt.get(`${change.id}|${c.id}`) as string | undefined) ?? null,
               })),
           };
         }),
@@ -651,6 +664,17 @@ async function loadAdminView(clientId: string): Promise<AdminContractsView> {
       const acceptance = accByChange.get(c.id) ?? null;
       return { ...c, acceptance, pending: isPendingFor(c, clientId, acceptance ?? undefined) };
     });
+  // The company's admin is looking at every notice listed here: record the first time for each,
+  // so the superadmin can tell "seen" from "never opened". Best-effort.
+  const shown = changes.filter((c) => !c.withdrawnAt).map((c) => c.id);
+  if (shown.length) {
+    await contractsDb()
+      .from("contract_change_views")
+      .upsert(
+        shown.map((id) => ({ change_id: id, client_id: clientId })),
+        { onConflict: "change_id,client_id", ignoreDuplicates: true },
+      );
+  }
   return {
     companyName,
     platformDocuments: docs.filter((d) => d.clientId === null),
@@ -903,7 +927,14 @@ const fmtLongDate = (day: string) =>
   });
 
 /** Everything a template can mention about one company, read fresh from the database. */
-async function templateValuesFor(clientId: string, effectiveDate: string) {
+/** Everything a template can mention about one company and SamvadX's own company.
+ *  `effectiveDate` null = the master agreement before signing (it takes effect on signing);
+ *  `signing` fills who signed and when (frozen into the signed copy). */
+async function templateValuesFor(
+  clientId: string,
+  effectiveDate: string | null,
+  signing?: { by: string; date: string },
+) {
   const admin = db();
   const [clientRes, billingRes, profileRes, prices, insights] = await Promise.all([
     admin
@@ -914,7 +945,7 @@ async function templateValuesFor(clientId: string, effectiveDate: string) {
     admin.from("client_billing").select("*").eq("client_id", clientId).maybeSingle(),
     admin
       .from("billing_profile")
-      .select("legal_name, payment_terms_days")
+      .select("*")
       .eq("id", "main")
       .maybeSingle(),
     loadPriceList(clientId),
@@ -935,6 +966,11 @@ async function templateValuesFor(clientId: string, effectiveDate: string) {
   const profile = profileRes.data as {
     legal_name: string;
     payment_terms_days: number | null;
+    address: string | null;
+    cin?: string | null;
+    short_name?: string | null;
+    signatory_name?: string | null;
+    signatory_designation?: string | null;
   } | null;
   const enabled = new Set(insights.enabled_services);
   return templateValueMap({
@@ -949,7 +985,18 @@ async function templateValuesFor(clientId: string, effectiveDate: string) {
     companySignatoryName: details.signatoryName,
     companySignatoryDesignation: details.signatoryDesignation,
     supplierLegalName: profile?.legal_name ?? "",
-    effectiveDate: fmtLongDate(effectiveDate),
+    supplierShortName: profile?.short_name ?? "",
+    supplierCin: profile?.cin ?? "",
+    supplierAddress: profile?.address ?? "",
+    supplierSignatoryName: profile?.signatory_name ?? "",
+    supplierSignatoryDesignation: profile?.signatory_designation ?? "",
+    signedBy: signing?.by,
+    signedDate: signing ? fmtLongDate(signing.date) : undefined,
+    effectiveDate: signing
+      ? fmtLongDate(signing.date)
+      : effectiveDate
+        ? fmtLongDate(effectiveDate)
+        : "the date of signing below",
     today: fmtLongDate(todayIstKey()),
     prices,
     paymentTermsDays: prices.paymentTermsDays ?? profile?.payment_terms_days ?? 15,
@@ -1076,7 +1123,14 @@ export const generateCompanyContract = createServerFn({ method: "POST" })
 /** The text of a generated document. Same access rule as file downloads. */
 export const getContractDocumentBody = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
-    z.object({ accessToken: tokenSchema, documentId: idSchema }).parse(d),
+    z
+      .object({
+        accessToken: tokenSchema,
+        documentId: idSchema,
+        /** Superadmin: show the master agreement as this company sees it. */
+        asClientId: idSchema.optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const superadmin = await verifySuperadminCaller(data.accessToken);
@@ -1099,7 +1153,143 @@ export const getContractDocumentBody = createServerFn({ method: "POST" })
       throw new Error("That document wasn't found");
     }
     if (companyClientId) await markDocumentViewed(data.documentId, companyClientId);
-    return { title: doc.title, versionLabel: doc.version_label, body: doc.body };
+    const forClient = companyClientId ?? data.asClientId ?? null;
+    return {
+      title: doc.title,
+      versionLabel: doc.version_label,
+      body: forClient ? await bodyForCompany(data.documentId, doc.body, forClient) : doc.body,
+    };
+  });
+
+/** A document's text as one company sees it: the copy they signed if they have, otherwise the
+ *  {{placeholders}} filled with both parties' details as they are now. */
+async function bodyForCompany(documentId: string, body: string, clientId: string): Promise<string> {
+  if (!body.includes("{{")) return body;
+  const { data: st } = await contractsDb()
+    .from("contract_document_status")
+    .select("signed_body")
+    .eq("document_id", documentId)
+    .eq("client_id", clientId)
+    .maybeSingle();
+  const signed = (st as { signed_body: string | null } | null)?.signed_body;
+  if (signed) return signed;
+  return fillTemplate(body, await templateValuesFor(clientId, null)).text;
+}
+
+// ── The master agreement: one text for every company ────────────────────────
+
+/** The master agreement as it stands: the latest published version (a platform document with
+ *  text), or the starting text from "Samvadx Aggrement.docx" if none is published yet. */
+export const getMasterAgreement = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    await requireSuperadmin(data.accessToken);
+    const [{ data: rows }, { data: profile }] = await Promise.all([
+      contractsDb()
+        .from("contract_documents")
+        .select("id, title, version_label, effective_date, body, created_at")
+        .is("client_id", null)
+        .not("body", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1),
+      db().from("billing_profile").select("*").eq("id", "main").maybeSingle(),
+    ]);
+    const latest = ((rows ?? []) as {
+      id: string;
+      title: string;
+      version_label: string | null;
+      effective_date: string;
+      body: string;
+      created_at: string;
+    }[])[0];
+    // What the agreement needs from SamvadX's own details, still missing.
+    const p = (profile ?? {}) as Record<string, string | null>;
+    const supplierMissing = [
+      ["legal_name", "Legal name"],
+      ["short_name", "Short name"],
+      ["cin", "CIN"],
+      ["address", "Registered address"],
+      ["signatory_name", "Authorised signatory"],
+      ["signatory_designation", "Signatory designation"],
+    ]
+      .filter(([k]) => !String(p[k] ?? "").trim())
+      .map(([, label]) => label);
+    return {
+      published: latest
+        ? {
+            id: latest.id,
+            title: latest.title,
+            versionLabel: latest.version_label,
+            effectiveDate: latest.effective_date,
+            createdAt: latest.created_at,
+          }
+        : null,
+      title: latest?.title ?? MASTER_AGREEMENT_TITLE,
+      body: latest?.body ?? DEFAULT_MASTER_AGREEMENT_BODY,
+      supplierMissing,
+    };
+  });
+
+/** Publishes the master agreement (a new version). Every company sees it filled with its own
+ *  details and must sign the new version; earlier signatures stay on the earlier version. */
+export const publishMasterAgreement = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        title: z.string().trim().min(1).max(200),
+        versionLabel: z.string().trim().max(40).optional(),
+        effectiveDate: daySchema,
+        body: z.string().trim().min(50).max(100_000),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    // Every {{blank}} must be one SamvadX knows, or companies would sign a literal "{{typo}}".
+    const probe = fillTemplate(
+      data.body,
+      templateValueMap({
+        companyName: "",
+        companyLegalName: "",
+        companyGstin: null,
+        companyAddress: "",
+        supplierLegalName: "",
+        effectiveDate: "",
+        today: "",
+        prices: { setupLines: [], monthlyLines: [], perSeatFee: 0, paymentTermsDays: null },
+        paymentTermsDays: 0,
+        agentSeatLimit: null,
+        managerSeatLimit: null,
+        insightsPrices: [],
+      }),
+    );
+    if (probe.unknown.length) {
+      throw new Error(
+        `Unknown blanks: ${probe.unknown.map((u) => `{{${u}}}`).join(", ")} — fix or remove them`,
+      );
+    }
+    const { data: row, error } = await contractsDb()
+      .from("contract_documents")
+      .insert({
+        client_id: null,
+        title: data.title,
+        version_label: data.versionLabel || null,
+        effective_date: data.effectiveDate,
+        body: data.body,
+        created_by: caller.superadminId,
+      })
+      .select("id")
+      .single();
+    if (error || !row) throw new Error(`Could not publish the agreement (${error?.message})`);
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "master_agreement_published",
+      clientId: null,
+      summary: `Published "${data.title}"${data.versionLabel ? ` (${data.versionLabel})` : ""} for every company`,
+      detail: { documentId: (row as { id: string }).id },
+    });
+    return { id: (row as { id: string }).id };
   });
 
 // ── Send, view, sign a document ─────────────────────────────────────────────
@@ -1196,12 +1386,12 @@ export const signContractDocument = createServerFn({ method: "POST" })
     const [{ data: docRow }, { data: me }] = await Promise.all([
       contractsDb()
         .from("contract_documents")
-        .select("client_id")
+        .select("client_id, body")
         .eq("id", data.documentId)
         .maybeSingle(),
       db().from("agents").select("email").eq("id", caller.agentId!).maybeSingle(),
     ]);
-    const doc = docRow as { client_id: string | null } | null;
+    const doc = docRow as { client_id: string | null; body: string | null } | null;
     if (!doc || (doc.client_id !== null && doc.client_id !== caller.clientId)) {
       throw new Error("That document wasn't found");
     }
@@ -1218,12 +1408,24 @@ export const signContractDocument = createServerFn({ method: "POST" })
     } | null;
     if (prior?.signed_at) throw new Error(`Already signed by ${prior.signed_name}`);
     const now = new Date().toISOString();
+    // Freeze exactly what they signed: both parties' details as they are today, plus their name
+    // and the date — a later rename of either company never changes a signed agreement.
+    const signedBody = doc.body?.includes("{{")
+      ? fillTemplate(
+          doc.body,
+          await templateValuesFor(caller.clientId, null, {
+            by: data.fullName,
+            date: todayIstKey(),
+          }),
+        ).text
+      : null;
     const { error } = await contractsDb()
       .from("contract_document_status")
       .upsert(
         {
           document_id: data.documentId,
           client_id: caller.clientId,
+          signed_body: signedBody,
           // Keep the first time it was opened; signing without opening counts as viewing.
           viewed_at: prior?.viewed_at ?? now,
           signed_at: now,

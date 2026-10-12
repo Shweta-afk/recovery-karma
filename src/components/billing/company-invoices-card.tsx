@@ -14,13 +14,11 @@ import {
   Loader2,
   Pencil,
   Phone,
-  Plus,
   RotateCcw,
   Save,
   Search,
   Settings2,
   AlertTriangle,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -39,11 +37,12 @@ import { getAccessToken } from "@/lib/access-token";
 import {
   gstBreakdown,
   stateName,
-  sumLines,
   monthLabel,
   monthlyInvoiceLines,
   EMPTY_PRICE_LIST,
   SETUP_LINE_ITEMS,
+  setupLine,
+  setupPackage,
   type InvoiceRecord,
   type PriceList,
 } from "@/lib/invoice-math";
@@ -69,6 +68,7 @@ import { formatRupees } from "./invoice-document";
 import { CompanyPriceListCard } from "./company-price-list-card";
 import { InvoicePreviewDialog } from "./invoice-preview-dialog";
 import { SendInvoiceDialog } from "./send-invoice-dialog";
+import { IncludedItemsEditor } from "./included-items-editor";
 
 /** The current IST month and the three before it — the months a monthly invoice is usually for. */
 function recentMonths(): string[] {
@@ -79,14 +79,15 @@ function recentMonths(): string[] {
   });
 }
 
-/** Setup lines to start the form with: the price list's, else the standard items blank. */
-const setupLinesFrom = (prices: PriceList) =>
-  prices.setupLines.length
-    ? prices.setupLines.map((l) => ({
-        description: l.description,
-        amount: l.amount > 0 ? String(l.amount) : "",
-      }))
-    : SETUP_LINE_ITEMS.map((d) => ({ description: d, amount: "" }));
+/** The setup form starts from the price list: its total and what it includes (or the standard
+ *  list of items when nothing is saved yet). */
+const setupFrom = (prices: PriceList) => {
+  const pkg = setupPackage(prices.setupLines);
+  return {
+    amount: pkg.amount > 0 ? String(pkg.amount) : "",
+    items: pkg.includes.length ? pkg.includes : [...SETUP_LINE_ITEMS],
+  };
+};
 
 /** What "Issue" sends to createInvoice for each kind (and "Preview" with preview: true). */
 type Draft =
@@ -125,7 +126,13 @@ export function CompanyInvoicesCard({
   // Default to last month: a monthly fee is normally billed once the month is over.
   const [month, setMonth] = useState(() => recentMonths()[1]);
   const [seats, setSeats] = useState("");
-  const [setupLines, setSetupLines] = useState(() => setupLinesFrom(EMPTY_PRICE_LIST));
+  const [setupAmount, setSetupAmount] = useState("");
+  const [setupItems, setSetupItems] = useState<string[]>([...SETUP_LINE_ITEMS]);
+  const resetSetup = (prices: PriceList) => {
+    const s = setupFrom(prices);
+    setSetupAmount(s.amount);
+    setSetupItems(s.items);
+  };
 
   const [busy, setBusy] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ draft: Draft; invoice: InvoiceRecord } | null>(null);
@@ -159,12 +166,12 @@ export function CompanyInvoicesCard({
     setEditing(false);
     void load();
   }, [load]);
-  useEffect(() => setSetupLines(setupLinesFrom(priceList)), [priceList]);
+  useEffect(() => resetSetup(priceList), [priceList]);
   useEffect(() => setSeats(String(activeAgents)), [activeAgents]);
 
-  const setupCharged = setupLines
-    .map((l) => ({ description: l.description.trim(), amount: Number(l.amount) }))
-    .filter((l) => l.description && l.amount > 0);
+  // ONE charged line — the total — with what it includes listed under it (no per-item prices).
+  const setupTotal = Number(setupAmount) || 0;
+  const setupCharged = setupTotal > 0 ? [setupLine(setupTotal, setupItems)] : [];
   const monthlyLines = useMemo(
     () => monthlyInvoiceLines(priceList, month, Math.max(0, Math.floor(Number(seats) || 0))),
     [priceList, month, seats],
@@ -238,7 +245,7 @@ export function CompanyInvoicesCard({
       });
       toast.success(`Invoice ${inv.invoiceNumber} issued — now send it`);
       setPreview(null);
-      if (draft.kind === "setup") setSetupLines(setupLinesFrom(priceList));
+      if (draft.kind === "setup") resetSetup(priceList);
       await load();
       setSendFor(inv);
     } catch (err) {
@@ -451,83 +458,44 @@ export function CompanyInvoicesCard({
               </TabsTrigger>
             </TabsList>
 
-            {/* Setup */}
+            {/* Setup — one total, plus what it includes (no price per item). */}
             <TabsContent value="setup" className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[11px] text-muted-foreground">
                   {priceList.setupLines.length
                     ? "Filled in from this company's price list — change anything for this invoice only."
-                    : "No setup prices saved for this company yet — type them in, or set them once in its price list."}{" "}
-                  Leave a line blank to leave it off.
+                    : "No setup fee saved for this company yet — type it in, or set it once in its price list."}
                 </p>
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-7 gap-1 text-[11px]"
-                  onClick={() => setSetupLines(setupLinesFrom(priceList))}
+                  onClick={() => resetSetup(priceList)}
                 >
                   <RotateCcw className="h-3 w-3" /> Reset
                 </Button>
               </div>
-              <div className="space-y-1.5">
-                {setupLines.map((line, n) => (
-                  <div key={n} className="flex items-center gap-2">
-                    <Input
-                      value={line.description}
-                      onChange={(e) =>
-                        setSetupLines((ls) =>
-                          ls.map((l, k) => (k === n ? { ...l, description: e.target.value } : l)),
-                        )
-                      }
-                      className="h-8 min-w-0 flex-1 text-xs"
-                    />
-                    <span className="text-xs text-muted-foreground">₹</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={line.amount}
-                      placeholder="0.00"
-                      onChange={(e) =>
-                        setSetupLines((ls) =>
-                          ls.map((l, k) => (k === n ? { ...l, amount: e.target.value } : l)),
-                        )
-                      }
-                      className="h-8 w-32 text-right text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 w-8 p-0 text-muted-foreground"
-                      aria-label={`Remove ${line.description || "line"}`}
-                      disabled={setupLines.length === 1}
-                      onClick={() => setSetupLines((ls) => ls.filter((_, k) => k !== n))}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-between">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 gap-1 text-xs"
-                  disabled={setupLines.length >= 20}
-                  onClick={() => setSetupLines((ls) => [...ls, { description: "", amount: "" }])}
-                >
-                  <Plus className="h-3 w-3" /> Add line
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  Before GST:{" "}
-                  <span className="font-medium tabular-nums text-foreground">
-                    {formatRupees(sumLines(setupCharged))}
-                  </span>
-                </span>
+              <label className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-medium text-foreground">Setup fee (before GST) ₹</span>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={setupAmount}
+                  placeholder="0.00"
+                  onChange={(e) => setSetupAmount(e.target.value)}
+                  className="h-8 w-40 text-right text-xs"
+                />
+              </label>
+              <div className="space-y-1">
+                <p className="text-[11px] text-muted-foreground">
+                  What it includes — printed as a list under the fee, without separate prices:
+                </p>
+                <IncludedItemsEditor items={setupItems} onChange={setSetupItems} />
               </div>
               {actions(
                 setupCharged.length ? { kind: "setup", lines: setupCharged } : null,
-                blocked ?? (setupCharged.length ? null : "Enter at least one amount"),
+                blocked ?? (setupCharged.length ? null : "Enter the setup fee"),
               )}
             </TabsContent>
 

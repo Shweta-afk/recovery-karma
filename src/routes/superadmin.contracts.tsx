@@ -12,7 +12,6 @@ import {
   Undo2,
   EyeOff,
   Megaphone,
-  PenLine,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -50,8 +49,8 @@ import {
 } from "@/components/contracts/contract-documents";
 import { ExcelButton } from "@/components/superadmin/usage-shared";
 import { InfoTip, PageGuide } from "@/components/superadmin/help";
-import { DraftsCard, TemplatesCard } from "@/components/contracts/drafts-and-templates";
-import { AgreementsBoard } from "@/components/contracts/agreements-board";
+import { DraftsCard } from "@/components/contracts/drafts-and-templates";
+import { MasterAgreementPanel } from "@/components/contracts/master-agreement-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const Route = createFileRoute("/superadmin/contracts")({
@@ -166,11 +165,7 @@ function SuperadminContractsPage() {
           <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start gap-1">
             <TabsTrigger value="agreements" className="text-xs">
               <FileSignature className="mr-1.5 h-3.5 w-3.5" />
-              Agreements
-            </TabsTrigger>
-            <TabsTrigger value="terms" className="text-xs">
-              <FileText className="mr-1.5 h-3.5 w-3.5" />
-              Terms &amp; uploads
+              Agreement
             </TabsTrigger>
             <TabsTrigger value="changes" className="text-xs">
               <Megaphone className="mr-1.5 h-3.5 w-3.5" />
@@ -179,18 +174,18 @@ function SuperadminContractsPage() {
                 <Badge className="ml-1.5 h-4 px-1.5 text-[10px]">{view.drafts.length}</Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="template" className="text-xs">
-              <PenLine className="mr-1.5 h-3.5 w-3.5" />
-              Template
+            <TabsTrigger value="terms" className="text-xs">
+              <FileText className="mr-1.5 h-3.5 w-3.5" />
+              Other documents
             </TabsTrigger>
           </TabsList>
 
-          {/* 1. Who has which agreement, and whether they've signed — the page's main job. */}
+          {/* 1. The one agreement every company signs, and who has. */}
           <TabsContent value="agreements">
-            <AgreementsBoard view={view} onChanged={load} />
+            <MasterAgreementPanel view={view} onChanged={load} />
           </TabsContent>
 
-          {/* 2. SamvadX's terms for everyone, and uploading a signed copy for one company. */}
+          {/* 3. Anything else: uploaded PDFs (e.g. a signed paper copy for one company). */}
           <TabsContent value="terms" className="space-y-6">
             <UploadDocumentCard view={view} onUploaded={load} />
             <Card>
@@ -214,7 +209,7 @@ function SuperadminContractsPage() {
             </Card>
           </TabsContent>
 
-          {/* 3. Notices when a feature or price changes; drafts are made automatically. */}
+          {/* 2. Notices when a feature or price changes; drafts are made automatically. */}
           <TabsContent value="changes" className="space-y-6">
             <DraftsCard
               drafts={view.drafts}
@@ -223,11 +218,6 @@ function SuperadminContractsPage() {
             />
             <PublishChangeCard view={view} onPublished={load} />
             <ChangesCard changes={view.changes} onChanged={load} canEmail={view.companiesCanSee} />
-          </TabsContent>
-
-          {/* 4. The agreement text with {{blanks}} filled per company. */}
-          <TabsContent value="template">
-            <TemplatesCard view={view} onChanged={load} />
           </TabsContent>
         </Tabs>
       )}
@@ -652,6 +642,7 @@ function ChangeRow({
   const [open, setOpen] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const accepted = change.companies.filter((c) => c.acceptance).length;
+  const seen = change.companies.filter((c) => c.viewedAt || c.acceptance).length;
   const total = change.companies.length;
   const waiting = change.companies.filter((c) => !c.acceptance);
   const mailtoWaiting = useMemo(
@@ -669,14 +660,14 @@ function ChangeRow({
     </Badge>
   ) : !change.requiresAcceptance ? (
     <Badge variant="outline" className="text-[10px]">
-      For information · {total} compan{total === 1 ? "y" : "ies"}
+      For information · seen by {seen} of {total}
     </Badge>
   ) : (
     <Badge
       variant={accepted === total ? "default" : "outline"}
       className={`text-[10px] ${accepted < total ? "border-amber-500/50 text-amber-600" : ""}`}
     >
-      {accepted} of {total} accepted
+      {accepted} of {total} accepted · {seen} seen
     </Badge>
   );
 
@@ -756,6 +747,7 @@ function ChangeRow({
               <thead>
                 <tr className="border-b border-border text-left text-muted-foreground">
                   <th className="py-1.5 pr-4 font-medium">Company</th>
+                  <th className="py-1.5 pr-4 font-medium">Seen</th>
                   <th className="py-1.5 pr-4 font-medium">Status</th>
                   <th className="py-1.5 pr-4 font-medium">Accepted by</th>
                   <th className="py-1.5 pr-4 font-medium">When</th>
@@ -765,6 +757,20 @@ function ChangeRow({
                 {change.companies.map((co) => (
                   <tr key={co.clientId} className="border-b border-border last:border-0">
                     <td className="py-1.5 pr-4 text-foreground">{co.companyName}</td>
+                    <td className="py-1.5 pr-4">
+                      {co.viewedAt ? (
+                        <span className="text-sky-600">
+                          {new Date(co.viewedAt).toLocaleString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">Not opened</span>
+                      )}
+                    </td>
                     <td className="py-1.5 pr-4">
                       {co.acceptance ? (
                         <span className="text-emerald-600">Accepted</span>

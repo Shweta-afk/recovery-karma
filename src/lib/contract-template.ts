@@ -23,6 +23,15 @@ export interface TemplateValues {
   companySignatoryName?: string;
   companySignatoryDesignation?: string;
   supplierLegalName: string;
+  /** SamvadX's own company, from Superadmin → Invoices → SamvadX details (billing_profile). */
+  supplierShortName?: string;
+  supplierCin?: string;
+  supplierAddress?: string;
+  supplierSignatoryName?: string;
+  supplierSignatoryDesignation?: string;
+  /** Filled when the company signs (frozen into the signed copy); blanks until then. */
+  signedBy?: string;
+  signedDate?: string;
   effectiveDate: string; // already formatted for print
   today: string;
   prices: PriceList;
@@ -44,7 +53,15 @@ export const PLACEHOLDERS: { key: string; meaning: string }[] = [
   { key: "company_phone", meaning: "Billing phone" },
   { key: "company_signatory_name", meaning: "Who signs for the company" },
   { key: "company_signatory_designation", meaning: "The signatory's designation" },
-  { key: "supplier_legal_name", meaning: "SamvadX's legal name (from Invoices → billing details)" },
+  { key: "supplier_legal_name", meaning: "Your company's legal name (Invoices → SamvadX details)" },
+  { key: "supplier_short_name", meaning: "Your company's short name used through the agreement, e.g. Axiotta" },
+  { key: "supplier_short_name_caps", meaning: "The same short name in CAPITALS" },
+  { key: "supplier_cin", meaning: "Your company's CIN" },
+  { key: "supplier_address", meaning: "Your company's registered address" },
+  { key: "supplier_signatory_name", meaning: "Who signs for your company" },
+  { key: "supplier_signatory_designation", meaning: "Their designation" },
+  { key: "signed_by", meaning: "The name the client's admin typed when signing (blank until signed)" },
+  { key: "signed_date", meaning: "The date the client signed (blank until signed)" },
   { key: "effective_date", meaning: "The date this schedule takes effect" },
   { key: "today", meaning: "Today's date" },
   { key: "setup_fee_table", meaning: "Table of setup fee lines with a total" },
@@ -66,7 +83,10 @@ function linesTable(lines: InvoiceLine[], emptyText: string): string {
   if (!charged.length) return emptyText;
   return [
     "| Item | Amount (before GST) |",
-    ...charged.map((l) => `| ${l.description} | ${rupees(l.amount)} |`),
+    ...charged.map(
+      (l) =>
+        `| ${l.description}${l.includes?.length ? ` — includes ${l.includes.join(", ")}` : ""} | ${rupees(l.amount)} |`,
+    ),
     `| **Total** | **${rupees(sumLines(charged))}** |`,
   ].join("\n");
 }
@@ -85,6 +105,14 @@ export function templateValueMap(v: TemplateValues): Record<string, string> {
     company_signatory_name: v.companySignatoryName || "—",
     company_signatory_designation: v.companySignatoryDesignation || "—",
     supplier_legal_name: v.supplierLegalName || "SamvadX",
+    supplier_short_name: v.supplierShortName || v.supplierLegalName || "SamvadX",
+    supplier_short_name_caps: (v.supplierShortName || v.supplierLegalName || "SamvadX").toUpperCase(),
+    supplier_cin: v.supplierCin || "—",
+    supplier_address: v.supplierAddress || "—",
+    supplier_signatory_name: v.supplierSignatoryName || "____________________",
+    supplier_signatory_designation: v.supplierSignatoryDesignation || "____________________",
+    signed_by: v.signedBy || "____________________",
+    signed_date: v.signedDate || "____________________",
     effective_date: v.effectiveDate,
     today: v.today,
     setup_fee_table: linesTable(v.prices.setupLines, "No setup fee."),

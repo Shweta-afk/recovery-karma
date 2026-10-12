@@ -57,6 +57,10 @@ const EMPTY_PROFILE: BillingProfile = {
   bankAccount: "",
   bankIfsc: "",
   terms: "",
+  cin: "",
+  shortName: "",
+  signatoryName: "",
+  signatoryDesignation: "",
   invoicePrefix: "SX",
   sacInsights: "",
   sacSetup: "",
@@ -149,6 +153,10 @@ function SuperadminInvoicesPage() {
           bankAccount: profile.bankAccount || null,
           bankIfsc: profile.bankIfsc || null,
           terms: profile.terms || null,
+          cin: profile.cin || null,
+          shortName: profile.shortName || null,
+          signatoryName: profile.signatoryName || null,
+          signatoryDesignation: profile.signatoryDesignation || null,
           invoicePrefix: profile.invoicePrefix,
           sacInsights: profile.sacInsights || null,
           sacSetup: profile.sacSetup || null,
@@ -360,6 +368,36 @@ function SuperadminInvoicesPage() {
                       value={profile.pan ?? ""}
                       onChange={(e) => set("pan", e.target.value.toUpperCase())}
                       className="h-8 font-mono text-xs"
+                    />
+                  </Field>
+                  <Field label="CIN (printed on the agreement)">
+                    <Input
+                      value={profile.cin ?? ""}
+                      onChange={(e) => set("cin", e.target.value.toUpperCase())}
+                      className="h-8 font-mono text-xs"
+                    />
+                  </Field>
+                  <Field label="Short name used in the agreement">
+                    <Input
+                      value={profile.shortName ?? ""}
+                      onChange={(e) => set("shortName", e.target.value)}
+                      placeholder="e.g. Axiotta"
+                      className="h-8 text-xs"
+                    />
+                  </Field>
+                  <Field label="Authorised signatory (agreement)">
+                    <Input
+                      value={profile.signatoryName ?? ""}
+                      onChange={(e) => set("signatoryName", e.target.value)}
+                      className="h-8 text-xs"
+                    />
+                  </Field>
+                  <Field label="Signatory designation">
+                    <Input
+                      value={profile.signatoryDesignation ?? ""}
+                      onChange={(e) => set("signatoryDesignation", e.target.value)}
+                      placeholder="e.g. Director"
+                      className="h-8 text-xs"
                     />
                   </Field>
                   <Field label="Email (printed)">

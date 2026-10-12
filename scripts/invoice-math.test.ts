@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  SETUP_FEE_LABEL,
+  setupLine,
+  setupPackage,
   amountInWords,
   financialYear,
   formatInvoiceNumber,
@@ -106,5 +109,28 @@ describe("invoiceDisclaimer", () => {
       expect(t).toContain("Axiotta Communication acts as Data Processor");
       expect(t).toContain("Master Service Agreement");
     }
+  });
+});
+
+describe("setup fee = one total plus what it includes (2026-10-12)", () => {
+  test("one line carrying the items, blanks dropped", () => {
+    expect(setupLine(50000, ["Domain setup", " ", "Cloud storage"])).toEqual({
+      description: SETUP_FEE_LABEL,
+      amount: 50000,
+      includes: ["Domain setup", "Cloud storage"],
+    });
+  });
+  test("a price list saved the old way (a price per item) reads as its total", () => {
+    expect(
+      setupPackage([
+        { description: "Domain Setup", amount: 10000 },
+        { description: "Cloud Storage", amount: 5000 },
+        { description: "Training", amount: 0 },
+      ]),
+    ).toEqual({ amount: 15000, includes: ["Domain Setup", "Cloud Storage", "Training"] });
+  });
+  test("a new-style line round-trips", () => {
+    const line = setupLine(25000, ["A", "B"]);
+    expect(setupPackage([line])).toEqual({ amount: 25000, includes: ["A", "B"] });
   });
 });
