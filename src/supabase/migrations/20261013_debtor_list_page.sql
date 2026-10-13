@@ -20,7 +20,9 @@
 -- The filters mirror what the two screens did in the browser (dashboard.debtors.tsx's
 -- `filtered`, dashboard.call-queue.tsx's `filteredQueue`), including:
 --   * a debtor with no portfolio, or whose portfolio the caller cannot see, is not listed;
---   * p.open_only drops closed / past-end-date portfolios (isPortfolioEnded, IST);
+--   * p.open_only drops closed / past-end-date portfolios (isPortfolioEnded, IST) in SQL, so
+--     an agent never downloads them (live 2026-10-13: 22,820 rows in closed portfolios and
+--     10,369 in past-end-date ones, of 68,659); archived dead accounts are always dropped;
 --   * queue status = the debtor's latest call outcome (promised→ptp, callback, no_answer,
 --     anything else / never called → fresh), as build-queue.ts derived it from all visible
 --     call logs; "own" outcome/reason = the latest call by one of p.agent_ids (Call Queue's
@@ -113,7 +115,9 @@ BEGIN
   END IF;
 
   -- Scope: what the screen is about, before any filter the user picks. $1 = p.
-  scope_sql := 'coalesce(d.status, ''active'') <> ''removed'' AND pf.deleted_at IS NULL';
+  -- archived_at: a dead account stripped 60 days after its portfolio closed
+  -- (dead-account-archive.server.ts) is never listed, whichever portfolio it sits in.
+  scope_sql := 'coalesce(d.status, ''active'') <> ''removed'' AND d.archived_at IS NULL AND pf.deleted_at IS NULL';
   IF agent_ids IS NOT NULL THEN scope_sql := scope_sql || ' AND d.assigned_agent_id = ANY ($2)'; END IF;
   IF portfolio_ids IS NOT NULL THEN scope_sql := scope_sql || ' AND d.portfolio_id = ANY ($3)'; END IF;
   IF ids IS NOT NULL THEN scope_sql := scope_sql || ' AND d.id = ANY ($4)'; END IF;
