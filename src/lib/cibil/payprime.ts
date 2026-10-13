@@ -100,6 +100,69 @@ export function stateCodeFor(raw: string | null | undefined): string {
   return hit ? hit[0] : "";
 }
 
+/** Indian PIN code → CIBIL state code by its first three digits, so the State box fills itself
+ *  from the PIN. Prefixes shared by two states/UTs (e.g. 160 Chandigarh/Mohali, 605 Puducherry/
+ *  Tamil Nadu, 244/247/262 UP/Uttarakhand) are left out — those the admin picks by hand. */
+const PIN_STATE_RANGES: [from: number, to: number, code: string][] = [
+  [110, 110, "07"],
+  [121, 133, "06"],
+  [135, 136, "06"],
+  [140, 159, "03"],
+  [171, 177, "02"],
+  [180, 193, "01"],
+  [194, 194, "38"],
+  [201, 243, "09"],
+  [245, 245, "09"],
+  [246, 246, "05"],
+  [248, 249, "05"],
+  [250, 261, "09"],
+  [263, 263, "05"],
+  [270, 285, "09"],
+  [301, 345, "08"],
+  [360, 395, "24"],
+  [400, 402, "27"],
+  [403, 403, "30"],
+  [404, 445, "27"],
+  [450, 488, "23"],
+  [490, 497, "22"],
+  [500, 509, "36"],
+  [515, 535, "28"],
+  [560, 591, "29"],
+  [600, 604, "33"],
+  [606, 608, "33"],
+  [610, 643, "33"],
+  [670, 681, "32"],
+  [683, 695, "32"],
+  [700, 736, "19"],
+  [737, 737, "11"],
+  [738, 743, "19"],
+  [744, 744, "35"],
+  [745, 749, "19"],
+  [751, 770, "21"],
+  [781, 788, "18"],
+  [790, 792, "12"],
+  [793, 794, "17"],
+  [795, 795, "14"],
+  [796, 796, "15"],
+  [797, 798, "13"],
+  [799, 799, "16"],
+  [800, 813, "10"],
+  [814, 816, "20"],
+  [817, 821, "10"],
+  [822, 822, "20"],
+  [823, 824, "10"],
+  [825, 835, "20"],
+  [841, 855, "10"],
+];
+
+/** "400072" → "27" (Maharashtra); "" when the PIN is incomplete or its prefix is shared. */
+export function stateForPin(pin: string | null | undefined): string {
+  const p = String(pin ?? "").trim();
+  if (!/^[1-9]\d{5}$/.test(p)) return "";
+  const n = Number(p.slice(0, 3));
+  return PIN_STATE_RANGES.find(([from, to]) => n >= from && n <= to)?.[2] ?? "";
+}
+
 const PAN_RE = /^[A-Z]{5}\d{4}[A-Z]$/;
 const PIN_RE = /^[1-9]\d{5}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -159,18 +222,18 @@ export function buildPrefill(src: PrefillSource): CibilForm {
     streetAddress: pick(x, /^(address|address_?1|address_?line_?1|residence_?address|addr)$/i),
     city: pick(x, /^(city|district|town)$/i),
     postalCode: /^\d{6}$/.test(pin) ? pin : "",
-    region: stateCodeFor(pick(x, /^state$/i)),
+    region: stateCodeFor(pick(x, /^state$/i)) || stateForPin(/^\d{6}$/.test(pin) ? pin : ""),
     addressType: "1",
   };
 }
 
-/** What is wrong with the form, field by field. Empty = ready to send. */
-/** The fields PayPrime needs to find someone at the bureau. Its docs mark every field required,
- *  but the user's call (2026-10-11) is to require only these and send the rest only when filled —
- *  PayPrime answers a request it can't use with "Bad Parameter Request", which carries no
- *  transaction and is not charged. Mobile is required too, checked separately (it comes from the
- *  borrower row or the manual form's own field). */
-export const CIBIL_REQUIRED: (keyof CibilForm)[] = ["firstName", "pan", "dob"];
+/** The fields PayPrime needs. Its docs mark every field required; the user's call (2026-10-11)
+ *  was to require only name, PAN and DOB and send the rest only when filled. But PayPrime itself
+ *  rejects a request without an email ("The email field is required.") or a state ("The region
+ *  field is required.") — seen live 2026-10-10, after that change — so those two are required
+ *  here too. Such rejections carry no transaction and are not charged. Mobile is required too,
+ *  checked separately (it comes from the borrower row or the manual form's own field). */
+export const CIBIL_REQUIRED: (keyof CibilForm)[] = ["firstName", "pan", "dob", "email", "region"];
 
 /** What is wrong with the form, field by field. Empty = ready to send. Optional fields are only
  *  checked when filled in. */
@@ -183,9 +246,9 @@ export function validateCibilForm(f: CibilForm): Partial<Record<keyof CibilForm,
     e.dob = "Date of birth, YYYY-MM-DD";
   }
   if (f.gender && f.gender !== "Male" && f.gender !== "Female") e.gender = "Male or Female";
-  if (f.email.trim() && !EMAIL_RE.test(f.email.trim())) e.email = "A valid email";
+  if (!EMAIL_RE.test(f.email.trim())) e.email = f.email.trim() ? "A valid email" : "Required";
   if (f.postalCode.trim() && !PIN_RE.test(f.postalCode.trim())) e.postalCode = "6-digit PIN code";
-  if (f.region && !CIBIL_STATES.some(([c]) => c === f.region)) e.region = "Pick the state";
+  if (!CIBIL_STATES.some(([c]) => c === f.region)) e.region = "Pick the state";
   return e;
 }
 

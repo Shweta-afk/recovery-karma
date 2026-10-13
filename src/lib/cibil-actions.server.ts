@@ -232,6 +232,11 @@ function failureMessage(outcome: CibilOutcome, httpStatus: number, text: string)
     ? " PayPrime needs more of the person's details for this one — fill in gender, email and " +
       "the address too, then try again."
     : "";
+  // Laravel-style validation ("The region field is required.") — rejected before any transaction.
+  const missing = outcome.message.match(/the (\w+) field is required/i)?.[1];
+  const missingField = missing
+    ? ` PayPrime needs the ${{ region: "state", postal_code: "PIN code", street_address: "address" }[missing.toLowerCase()] ?? missing.replace(/_/g, " ")} filled in — add it and try again.`
+    : "";
   const noRecord = /no record/i.test(outcome.message)
     ? " The bureau has no record matching these details — check the PAN, date of birth and " +
       "name spelling against the borrower's PAN card."
@@ -239,6 +244,7 @@ function failureMessage(outcome: CibilOutcome, httpStatus: number, text: string)
   return (
     `PayPrime did not return a report (${outcome.message}).` +
     noRecord +
+    missingField +
     badParams +
     (outcome.billable
       ? ` It issued transaction ${outcome.txnId}, so it may have been charged.`

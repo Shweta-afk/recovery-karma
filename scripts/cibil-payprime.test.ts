@@ -15,6 +15,7 @@ import {
   isoDob,
   readCibilOutcome,
   stateCodeFor,
+  stateForPin,
   validateCibilForm,
   type CibilForm,
 } from "../src/lib/cibil/payprime";
@@ -89,20 +90,38 @@ describe("validation", () => {
   test("a complete form passes", () => {
     expect(validateCibilForm(good)).toEqual({});
   });
-  test("only name, PAN and date of birth are required", () => {
+  test("name, PAN, date of birth, email and state are required — PayPrime rejects without them", () => {
     const minimal: CibilForm = {
       ...good,
       lastName: "",
       gender: "",
-      email: "",
       streetAddress: "",
       city: "",
       postalCode: "",
-      region: "",
     };
     expect(validateCibilForm(minimal)).toEqual({});
-    const e = validateCibilForm({ ...minimal, firstName: "", pan: "ABC123", dob: "" });
-    expect(Object.keys(e).sort()).toEqual(["dob", "firstName", "pan"]);
+    const e = validateCibilForm({
+      ...minimal,
+      firstName: "",
+      pan: "ABC123",
+      dob: "",
+      email: "",
+      region: "",
+    });
+    expect(Object.keys(e).sort()).toEqual(["dob", "email", "firstName", "pan", "region"]);
+  });
+  test("state comes from the PIN code, except where a prefix is shared", () => {
+    expect(stateForPin("400072")).toBe("27"); // Powai, Maharashtra
+    expect(stateForPin("400017")).toBe("27");
+    expect(stateForPin("516401")).toBe("28"); // Kadapa, Andhra Pradesh
+    expect(stateForPin("403001")).toBe("30"); // Goa
+    expect(stateForPin("110001")).toBe("07");
+    expect(stateForPin("834001")).toBe("20"); // Ranchi, Jharkhand
+    expect(stateForPin("800001")).toBe("10"); // Patna, Bihar
+    expect(stateForPin("160017")).toBe(""); // Chandigarh or Mohali
+    expect(stateForPin("605001")).toBe(""); // Puducherry or Tamil Nadu
+    expect(stateForPin("40007")).toBe("");
+    expect(stateForPin("")).toBe("");
   });
   test("optional fields are still checked when filled in", () => {
     const e = validateCibilForm({ ...good, postalCode: "01234", email: "nope" });

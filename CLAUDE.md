@@ -460,9 +460,14 @@ Unlike every other integration here:
   `debtors_select` AS the caller) — so the assigned agent sees it too.
 - **Manual pulls — admins** (`runCibilManual`, `cibil-admin-section.tsx` on Admin → Insights):
   any person's details typed in. Ledger `insights_manual_lookups` (admins only). `debtor_id` NULL.
-- **Required fields: name, PAN, date of birth + mobile only** (user's call, 2026-10-11; PayPrime's
-  docs mark everything required). Blank optional fields are left out of the request; if PayPrime
-  answers "Bad Parameter Request" (no txn, not charged) the error asks for the rest.
+- **Required fields: name, PAN, date of birth, email, state + mobile** (user's call 2026-10-11 was
+  name/PAN/DOB/mobile only, but PayPrime itself rejects a request without email or region — "The
+  email/region field is required.", no txn, not charged; seen live 2026-10-10). State fills itself
+  from the PIN code (`stateForPin`, 3-digit prefixes; shared prefixes like 160/605 left blank).
+  Other blank fields are left out of the request.
+- **As of 2026-10-13 no pull has ever returned a report**: 13 charged "No Record Found" / "No Bureau
+  Record Found For The Provided Inputs" (code 2 / 7) on 2026-10-10 and 2026-10-13. Unresolved whether the inputs
+  were wrong or the request format is — the spec at /cibilDocs needs a PayPrime login.
 - **Reports download as an .html file** (`downloadCibilReport`; open in a browser, print → PDF).
   At pull time the server saves a copy of CIBIL's own page (`report_html`, captured from htmlUrl —
   https on cibil.com/payprime.in only, content-checked); if none, the file is built from the

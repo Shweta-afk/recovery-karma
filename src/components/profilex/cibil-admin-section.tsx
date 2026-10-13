@@ -107,9 +107,10 @@ export function CibilAdminSection() {
           </Badge>
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Enter anyone's details to download their credit report. Fields marked * are needed; the
-          rest are optional. {rupees(price)} per report. Only admins see these. (Managers pull
-          reports on their own borrowers from the borrower's Insights tab.)
+          Enter anyone's details to download their credit report. Fields marked * are needed (the
+          state fills itself from the PIN code); the rest are optional. {rupees(price)} per report.
+          Only admins see these. (Managers pull reports on their own borrowers from the borrower's
+          Insights tab.)
         </p>
       </CardHeader>
       <CardContent className="pt-4 space-y-4">

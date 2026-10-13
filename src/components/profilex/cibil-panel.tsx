@@ -34,6 +34,7 @@ import {
   CIBIL_ADDRESS_TYPES,
   CIBIL_REQUIRED,
   CIBIL_STATES,
+  stateForPin,
   validateCibilForm,
   type CibilForm,
 } from "@/lib/cibil/payprime";
@@ -205,7 +206,11 @@ export function CibilFormFields({
           inputMode="numeric"
           maxLength={6}
           value={form.postalCode}
-          onChange={(e) => set("postalCode", e.target.value.replace(/\D/g, ""))}
+          onChange={(e) => {
+            const postalCode = e.target.value.replace(/\D/g, "");
+            // Fill the state from a complete PIN, unless the user already picked one.
+            onChange({ ...form, postalCode, region: form.region || stateForPin(postalCode) });
+          }}
         />
       </Field>
       <Field label={L("region", "State")} error={errors.region}>
