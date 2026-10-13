@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { DateRangeFilter } from "@/components/date-range-filter";
-import { EMPTY_RANGE, inDayRange, type DateRange } from "@/lib/date-filter";
+import { EMPTY_RANGE, type DateRange } from "@/lib/date-filter";
 import {
   bucketOf,
   formatINR,
@@ -19,19 +19,24 @@ import {
 } from "@/lib/mock-debtors";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { useRoster } from "@/lib/team-store";
-import { getPortfolios, refreshPortfolios, debtorFromRow } from "@/lib/portfolio-store";
 import {
-  getScopedPortfolios,
-  refreshScopedPortfolios,
   getVisiblePortfolioMeta,
   refreshVisiblePortfolioMeta,
   isPortfolioEnded,
-  type DebtorScope,
 } from "@/lib/scoped-debtors";
+import {
+  countBy,
+  fetchAllDebtorRows,
+  fetchDebtorRows,
+  sumFacets,
+  useDebtorList,
+  type DebtorQuery,
+  type FacetDim,
+} from "@/lib/debtor-page-store";
 import { useAuth } from "@/lib/auth";
 import { AssignedAgentLine } from "@/components/assigned-agent";
 import { DebtorProfile } from "@/components/debtor-profile";
-import { ListPager, usePaged } from "@/components/list-pager";
+import { ListPager, serverPaged, useServerPage } from "@/components/list-pager";
 import {
   INSIGHT_FLAGS_UPDATED,
   getInsightFlag,
@@ -92,9 +97,8 @@ export const Route = createFileRoute("/dashboard/debtors")({
 
 const BUCKET_ORDER: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
 
-// Convert uploaded debtor to the Debtor shape expected by this page — shared with the call
-// queue's buildAssignedQueue() via debtorFromRow() so both surfaces show the same info.
-const toDebtor = debtorFromRow;
+/** Counts the dropdowns show, over the whole book. */
+const FACET_DIMS: FacetDim[] = ["portfolio_id", "assigned_agent_id", "insight"];
 
 type SortKey =
   "dpd_asc" | "dpd_desc" | "outstanding_desc" | "outstanding_asc" | "score_desc" | "name_asc";
@@ -107,17 +111,6 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "score_desc", label: "AI Score — Best first" },
   { key: "name_asc", label: "Name — A to Z" },
 ];
-
-function sortDebtors(list: Debtor[], key: SortKey): Debtor[] {
-  return [...list].sort((a, b) => {
-    if (key === "dpd_desc") return b.dpd - a.dpd;
-    if (key === "dpd_asc") return a.dpd - b.dpd;
-    if (key === "outstanding_desc") return b.loanAmount - a.loanAmount;
-    if (key === "outstanding_asc") return a.loanAmount - b.loanAmount;
-    if (key === "score_desc") return b.aiScore - a.aiScore;
-    return a.name.localeCompare(b.name);
-  });
-}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -163,10 +156,9 @@ function DebtorsPage() {
   const [sort, setSort] = useState<SortKey>("dpd_desc");
   const [sortOpen, setSortOpen] = useState(false);
   const [selected, setSelected] = useState<Debtor | null>(null);
-  const [uploadedDebtors, setUploadedDebtors] = useState<Debtor[]>([]);
-  // Bumped whenever the Insights flags change so the cards and the Insights filter re-read
-  // getInsightFlag() (a module cache, so nothing else would re-run them).
-  const [flagsVersion, setFlagsVersion] = useState(0);
+  // Bumped whenever the Insights flags change so the cards re-read getInsightFlag() (a module
+  // cache, so nothing else would re-run them).
+  const [, setFlagsVersion] = useState(0);
   useEffect(() => {
     const onFlags = () => setFlagsVersion((n) => n + 1);
     window.addEventListener(INSIGHT_FLAGS_UPDATED, onFlags);
@@ -174,190 +166,211 @@ function DebtorsPage() {
     return () => window.removeEventListener(INSIGHT_FLAGS_UPDATED, onFlags);
   }, []);
 
-  // Load only the debtors this screen actually needs, not every debtor the signed-in user can
-  // see. The old version called refreshPortfolios(), which — measured directly against
-  // production, 2026-09-22 — took 1.3s in the database alone for one manager's visible set,
-  // because RLS can only narrow the search to "this client's debtors" before checking
-  // assignment row by row; there's no index for "this agent's rows" or "this team's rows"
-  // alone. See scoped-debtors.ts for the full write-up.
-  //
-  // Admins are the one exception: they're org-wide by design, and scoping "everything RLS
-  // lets an admin see" doesn't shrink anything, so that path keeps using the full
-  // portfolio-store.ts cache unchanged.
+  // Portfolio metadata (the small portfolios table, no debtor rows): names for the Portfolio
+  // dropdown, and which portfolios make up a supervisor's book.
+  const [portfolioMeta, setPortfolioMeta] = useState(() => getVisiblePortfolioMeta());
+  const [metaLoaded, setMetaLoaded] = useState(false);
   useEffect(() => {
-    let cancelled = false;
+    const load = () => {
+      setPortfolioMeta(getVisiblePortfolioMeta());
+      setMetaLoaded(true);
+    };
+    const refetch = () => void refreshVisiblePortfolioMeta();
+    window.addEventListener("visible-portfolio-meta-updated", load);
+    // A portfolio created/closed/moved to another team changes whose book is whose.
+    window.addEventListener("portfolios-updated", refetch);
+    refetch();
+    return () => {
+      window.removeEventListener("visible-portfolio-meta-updated", load);
+      window.removeEventListener("portfolios-updated", refetch);
+    };
+  }, []);
 
-    if (isSupervisor && user?.role === "admin") {
-      const load = () => {
-        const portfolios = getPortfolios();
-        const result: Debtor[] = [];
-        for (const p of portfolios) for (const r of p.rows) result.push(toDebtor(r, p));
-        setUploadedDebtors(result);
-      };
-      load();
-      window.addEventListener("portfolios-updated", load);
-      refreshPortfolios();
-      return () => window.removeEventListener("portfolios-updated", load);
-    }
-
-    if (isSupervisor) {
-      // A manager's book is by PORTFOLIO (their active team's, or theirs directly), which can
-      // include accounts nobody has picked up yet — not just accounts already assigned to one
-      // of their agents. Resolve which portfolios that is first (a small, cheap query — the
-      // portfolios table, not the debtors table), THEN fetch only those portfolios' debtors.
-      let scope: DebtorScope | null = null;
-      const render = () => {
-        if (cancelled || !scope) return;
-        const result: Debtor[] = [];
-        for (const p of getScopedPortfolios(scope))
-          for (const r of p.rows) result.push(toDebtor(r, p));
-        setUploadedDebtors(result);
-      };
-      const resolveAndLoad = async () => {
-        await refreshVisiblePortfolioMeta();
-        if (cancelled) return;
-        // Same fallback and reasoning as visibleToTeam() in manager.portfolio.tsx, which this
-        // mirrors — keep the two in sync. isPortfolioEnded excludes a closed or past-end-date
-        // cycle, which the old rows:[] trick handled implicitly; there is no such fallback
-        // here since a closed portfolio's debtors are never fetched at all now.
-        const visible = getVisiblePortfolioMeta().filter(
+  // WHICH debtors this screen is about. The database pages, filters, sorts and counts them
+  // (debtor-page-store.ts) — this page never holds more than the 100 on screen. It used to
+  // download the whole book first: an agent's ~5,000 rows, a manager's team, and for an admin
+  // every debtor in the company (29,800 for the largest one on 2026-10-13).
+  //
+  // - agent: their own accounts, open portfolios only (closed / past end date drop out, as on
+  //   Call Queue).
+  // - manager: every account in their active team's open portfolios — including ones nobody
+  //   has picked up yet. Same rule as visibleToTeam() in manager.portfolio.tsx; keep in sync.
+  // - admin: every portfolio that isn't closed (a closed portfolio's rows were never listed).
+  const scope = useMemo<DebtorQuery | null>(() => {
+    if (!user) return null;
+    if (!isSupervisor) return { agents: [agentId], openOnly: true };
+    if (!metaLoaded) return null;
+    if (user.role === "admin")
+      return { portfolioIds: portfolioMeta.filter((p) => !p.closedAt).map((p) => p.id) };
+    return {
+      portfolioIds: portfolioMeta
+        .filter(
           (p) =>
             !isPortfolioEnded(p) &&
             (p.teamId === activeTeamId || (!p.teamId && !!agentId && p.managerId === agentId)),
-        );
-        scope = { kind: "portfolios", portfolioIds: visible.map((p) => p.id) };
-        render();
-        await refreshScopedPortfolios(scope);
-        render();
-      };
-      void resolveAndLoad();
-      // portfolios-updated covers a portfolio being created/closed/reassigned to a different
-      // team — anything that could change WHICH portfolios are visible, so the whole
-      // resolution re-runs; scoped-portfolios-updated covers a debtor row changing within an
-      // already-resolved scope.
-      window.addEventListener("portfolios-updated", resolveAndLoad);
-      window.addEventListener("scoped-portfolios-updated", render);
-      return () => {
-        cancelled = true;
-        window.removeEventListener("portfolios-updated", resolveAndLoad);
-        window.removeEventListener("scoped-portfolios-updated", render);
-      };
-    }
-
-    // A plain agent — their own book only, scoped by assigned_agent_id. Same scope shape Call
-    // Queue uses, so the two pages share one fetch when both are open for the same agent.
-    // Ended (closed or past end date) portfolios are skipped, matching the supervisor branch
-    // above and Call Queue — otherwise an agent saw portfolios their manager's view had dropped.
-    const scope: DebtorScope = { kind: "agents", agentIds: [agentId] };
-    const render = () => {
-      if (cancelled) return;
-      const result: Debtor[] = [];
-      for (const p of getScopedPortfolios(scope)) {
-        if (isPortfolioEnded(p)) continue;
-        for (const r of p.rows) result.push(toDebtor(r, p));
-      }
-      setUploadedDebtors(result);
+        )
+        .map((p) => p.id),
     };
-    render();
-    void refreshScopedPortfolios(scope).then(render);
-    window.addEventListener("scoped-portfolios-updated", render);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("scoped-portfolios-updated", render);
+  }, [user, isSupervisor, agentId, metaLoaded, portfolioMeta, activeTeamId]);
+
+  // Typing shouldn't send a request per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const query = useMemo<DebtorQuery | null>(() => {
+    if (!scope) return null;
+    const from = contactedRange.from;
+    const to = contactedRange.to;
+    return {
+      ...scope,
+      search: debouncedSearch.trim() || undefined,
+      // Both ends set but backwards is a typo mid-entry — swap, as date-filter.ts does.
+      contactedFrom: (from && to && from > to ? to : from) || undefined,
+      contactedTo: (from && to && from > to ? from : to) || undefined,
+      bucket: bucket === "all" ? undefined : bucket,
+      portfolioId: portfolio === "all" ? undefined : portfolio,
+      assignee: assignee === "all" ? undefined : assignee === UNASSIGNED ? "unassigned" : assignee,
+      insight: insightFilter === "all" ? undefined : insightFilter,
+      sort,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, isSupervisor, activeTeamId, user?.role]);
+  }, [scope, debouncedSearch, contactedRange, bucket, portfolio, assignee, insightFilter, sort]);
 
-  // Only the debtors assigned to this agent from uploaded portfolios — no mock data
-  const allDebtors = uploadedDebtors;
+  const [page, setPage] = useServerPage(
+    JSON.stringify([
+      debouncedSearch,
+      contactedRange,
+      bucket,
+      portfolio,
+      assignee,
+      insightFilter,
+      sort,
+      scope,
+    ]),
+  );
+  const list = useDebtorList(query, page, FACET_DIMS);
+  const debtorsPaged = serverPaged<Debtor>(list.rows, page, setPage, list.total);
+  // The list shrank under us (a reassignment, a filter elsewhere): back to the last page.
+  useEffect(() => {
+    if (list.total !== undefined && page > 0 && page >= debtorsPaged.pageCount)
+      setPage(debtorsPaged.pageCount - 1);
+  }, [list.total, page, debtorsPaged.pageCount, setPage]);
+  const gridRef = useRef<HTMLDivElement>(null);
 
-  // ?debtor=<id>: open that profile once it shows up in the loaded book. Only once per link, so
-  // closing the sheet doesn't immediately reopen it.
+  // Whole-book counts for the dropdowns, from the database's facet counts.
+  const bookTotal = sumFacets(list.facets).n;
+  const portfolioCounts = useMemo(() => countBy(list.facets, "portfolio_id"), [list.facets]);
+  const portfolioName = useCallback(
+    (id: string) => portfolioMeta.find((p) => p.id === id)?.name ?? "Portfolio",
+    [portfolioMeta],
+  );
+  const portfolioOptions = useMemo(
+    () =>
+      Array.from(portfolioCounts, ([id, count]) => ({ id, count, name: portfolioName(id) })).sort(
+        (a, b) => a.name.localeCompare(b.name),
+      ),
+    [portfolioCounts, portfolioName],
+  );
+
+  // ?debtor=<id>: open that profile. Fetched by id (within this screen's scope) rather than
+  // looked for in a loaded book, since only one page is ever loaded. Once per link, so closing
+  // the sheet doesn't immediately reopen it.
   const openedFromLink = useRef<string | null>(null);
   useEffect(() => {
     const id = linkSearch.debtor;
-    if (!id || openedFromLink.current === id) return;
-    const d = allDebtors.find((x) => x.id === id);
-    if (d) {
-      openedFromLink.current = id;
-      setSelected(d);
-    }
-  }, [linkSearch.debtor, allDebtors]);
-  const allPortfolioNames = useMemo(
-    () => Array.from(new Set(allDebtors.map((d) => d.portfolio))).sort(),
-    [allDebtors],
-  );
+    if (!id || !scope || openedFromLink.current === id) return;
+    openedFromLink.current = id;
+    fetchDebtorRows({ ...scope, ids: [id] }, 0, 1)
+      .then(([d]) => d && setSelected(d))
+      .catch(() => {});
+  }, [linkSearch.debtor, scope]);
 
-  // Owners of the book actually on screen, each with a headcount — built from the debtors
-  // themselves rather than the whole roster, so the list never offers an agent who has nothing
-  // in this book and comes back empty. Unassigned accounts get their own entry (the gap a
-  // manager most wants to find), listed last.
+  // Owners of the book, each with a headcount — from the debtors themselves rather than the
+  // whole roster, so the list never offers an agent who has nothing in this book and comes back
+  // empty. Unassigned accounts get their own entry (the gap a manager most wants to find),
+  // listed last.
   const assigneeOptions = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const d of allDebtors) {
-      const key = d.assignedAgentId ?? UNASSIGNED;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
+    const counts = countBy(list.facets, "assigned_agent_id");
     const named = Array.from(counts.entries())
-      .filter(([id]) => id !== UNASSIGNED)
+      .filter(([id]) => id !== "")
       .map(([id, count]) => ({ id, label: agentLabel(id), count }))
       .sort((a, b) => a.label.localeCompare(b.label));
-    const unassigned = counts.get(UNASSIGNED);
+    const unassigned = counts.get("");
     return unassigned
       ? [...named, { id: UNASSIGNED, label: "Unassigned", count: unassigned }]
       : named;
-  }, [allDebtors, agentLabel]);
+  }, [list.facets, agentLabel]);
 
-  // A manager switching teams (or a reassignment landing) can retire the agent being filtered
-  // on. Left alone that reads as "this agent has zero accounts"; drop back to All instead.
+  // A manager switching teams (or a reassignment landing) can retire the agent or portfolio
+  // being filtered on. Left alone that reads as "zero accounts"; drop back to All instead.
   useEffect(() => {
+    if (!list.facets) return;
     if (assignee !== "all" && !assigneeOptions.some((o) => o.id === assignee)) setAssignee("all");
-  }, [assignee, assigneeOptions]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const list = allDebtors.filter((d) => {
-      if (!inDayRange(d.lastContacted, contactedRange)) return false;
-      if (bucket !== "all" && bucketOf(d.dpd) !== bucket) return false;
-      if (portfolio !== "all" && d.portfolio !== portfolio) return false;
-      if (assignee !== "all" && (d.assignedAgentId ?? UNASSIGNED) !== assignee) return false;
-      if (insightFilter !== "all" && (getInsightFlag(d.id) ?? "none") !== insightFilter)
-        return false;
-      if (q && !d.name.toLowerCase().includes(q) && !displayId(d).toLowerCase().includes(q))
-        return false;
-      return true;
-    });
-    return sortDebtors(list, sort);
-  }, [
-    search,
-    contactedRange,
-    bucket,
-    portfolio,
-    assignee,
-    insightFilter,
-    sort,
-    allDebtors,
-    flagsVersion,
-  ]);
+    if (portfolio !== "all" && !portfolioCounts.has(portfolio)) setPortfolio("all");
+  }, [assignee, assigneeOptions, portfolio, portfolioCounts, list.facets]);
 
   // Per-option counts for the Insights dropdown, over the whole book.
   const insightCounts = useMemo(() => {
-    const counts: Record<Exclude<InsightFilter, "all">, number> = {
-      requested: 0,
-      traced: 0,
-      none: 0,
-    };
-    for (const d of allDebtors) counts[getInsightFlag(d.id) ?? "none"]++;
-    return counts;
-  }, [allDebtors, flagsVersion]);
+    const c = countBy(list.facets, "insight");
+    return {
+      requested: c.get("requested") ?? 0,
+      traced: c.get("traced") ?? 0,
+      none: c.get("none") ?? 0,
+    } as Record<Exclude<InsightFilter, "all">, number>;
+  }, [list.facets]);
 
-  // Paged rendering (list-pager.tsx) — a book of ~3,000 accounts used to render ~3,000 cards.
-  // Counts and Export above still use the whole `filtered` list.
-  const debtorsPaged = usePaged(
-    filtered,
-    JSON.stringify([search, contactedRange, bucket, portfolio, assignee, insightFilter, sort]),
-  );
-  const gridRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
+  const exportCsv = async () => {
+    if (!query) return;
+    setExporting(true);
+    try {
+      // The whole filtered list, fetched only now — never held for rendering.
+      const all = await fetchAllDebtorRows(query);
+      const sanitize = (v: string | number | null | undefined) => {
+        const s = String(v ?? "");
+        const safe = /^[=+\-@]/.test(s) ? `\t${s}` : s;
+        return `"${safe.replace(/"/g, '""')}"`;
+      };
+      const headers = [
+        "Name",
+        "Loan ID",
+        "Phone",
+        "Loan Amount",
+        "DPD",
+        "AI Score",
+        "Portfolio",
+        "Language",
+        "Last Contacted",
+        // Only a supervisor's export spans more than one agent, so only theirs needs to say
+        // who each account belongs to.
+        ...(isSupervisor ? ["Assigned To"] : []),
+      ];
+      const rows = all.map((d) => [
+        d.name,
+        displayId(d),
+        d.phone,
+        d.loanAmount,
+        d.dpd,
+        d.aiScore,
+        d.portfolio,
+        d.language,
+        d.lastContacted,
+        ...(isSupervisor ? [d.assignedAgentId ? agentLabel(d.assignedAgentId) : "Unassigned"] : []),
+      ]);
+      const csv = "\uFEFF" + [headers, ...rows].map((r) => r.map(sanitize).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "debtors.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const currentSortLabel = SORT_OPTIONS.find((s) => s.key === sort)?.label ?? "";
 
@@ -428,7 +441,7 @@ function DebtorsPage() {
                   )}
                 >
                   <span>All Buckets</span>
-                  <span className="opacity-50">{allDebtors.length}</span>
+                  <span className="opacity-50">{bookTotal}</span>
                 </button>
                 {BUCKET_ORDER.map((b) => (
                   <button
@@ -471,7 +484,7 @@ function DebtorsPage() {
                   : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
               )}
             >
-              {portfolio === "all" ? "Portfolio" : portfolio}
+              {portfolio === "all" ? "Portfolio" : portfolioName(portfolio)}
               <ChevronDown className="h-3 w-3 opacity-60" />
             </button>
             {portfolioDropOpen && (
@@ -488,25 +501,23 @@ function DebtorsPage() {
                   )}
                 >
                   <span>All Portfolios</span>
-                  <span className="opacity-50">{allDebtors.length}</span>
+                  <span className="opacity-50">{bookTotal}</span>
                 </button>
-                {allPortfolioNames.map((p) => (
+                {portfolioOptions.map((p) => (
                   <button
-                    key={p}
+                    key={p.id}
                     type="button"
                     onClick={() => {
-                      setPortfolio(p);
+                      setPortfolio(p.id);
                       setPortfolioDropOpen(false);
                     }}
                     className={cn(
                       "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between",
-                      portfolio === p ? "font-medium text-foreground" : "text-muted-foreground",
+                      portfolio === p.id ? "font-medium text-foreground" : "text-muted-foreground",
                     )}
                   >
-                    <span>{p}</span>
-                    <span className="opacity-50">
-                      {allDebtors.filter((d) => d.portfolio === p).length}
-                    </span>
+                    <span>{p.name}</span>
+                    <span className="opacity-50">{p.count}</span>
                   </button>
                 ))}
               </div>
@@ -554,7 +565,7 @@ function DebtorsPage() {
                     )}
                   >
                     <span>All Agents</span>
-                    <span className="opacity-50">{allDebtors.length}</span>
+                    <span className="opacity-50">{bookTotal}</span>
                   </button>
                   {assigneeOptions.map((o) => (
                     <button
@@ -623,7 +634,7 @@ function DebtorsPage() {
                   )}
                 >
                   <span>All</span>
-                  <span className="opacity-50">{allDebtors.length}</span>
+                  <span className="opacity-50">{bookTotal}</span>
                 </button>
                 {INSIGHT_FILTER_OPTIONS.map((o) => (
                   <button
@@ -708,58 +719,18 @@ function DebtorsPage() {
               ))}
             </div>
             <span className="text-xs text-muted-foreground">
-              {filtered.length} debtor{filtered.length !== 1 ? "s" : ""}
+              {list.total === undefined
+                ? "Counting…"
+                : `${list.total.toLocaleString("en-IN")} debtor${list.total !== 1 ? "s" : ""}`}
             </span>
             <button
               type="button"
-              onClick={() => {
-                const sanitize = (v: string | number | null | undefined) => {
-                  const s = String(v ?? "");
-                  const safe = /^[=+\-@]/.test(s) ? `\t${s}` : s;
-                  return `"${safe.replace(/"/g, '""')}"`;
-                };
-                const headers = [
-                  "Name",
-                  "Loan ID",
-                  "Phone",
-                  "Loan Amount",
-                  "DPD",
-                  "AI Score",
-                  "Portfolio",
-                  "Language",
-                  "Last Contacted",
-                  // Only a supervisor's export spans more than one agent, so only theirs needs
-                  // to say who each account belongs to.
-                  ...(isSupervisor ? ["Assigned To"] : []),
-                ];
-                const rows = filtered.map((d) => [
-                  d.name,
-                  displayId(d),
-                  d.phone,
-                  d.loanAmount,
-                  d.dpd,
-                  d.aiScore,
-                  d.portfolio,
-                  d.language,
-                  d.lastContacted,
-                  ...(isSupervisor
-                    ? [d.assignedAgentId ? agentLabel(d.assignedAgentId) : "Unassigned"]
-                    : []),
-                ]);
-                const csv =
-                  "﻿" + [headers, ...rows].map((r) => r.map(sanitize).join(",")).join("\n");
-                const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "debtors.csv";
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
+              disabled={exporting || !list.total}
+              onClick={() => void exportCsv()}
               className="inline-flex items-center gap-1 h-7 rounded-md border border-border bg-card px-2 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all"
             >
               <FileDown className="h-3.5 w-3.5" />
-              Export
+              {exporting ? "Exporting…" : "Export"}
             </button>
           </div>
         </div>
@@ -781,9 +752,19 @@ function DebtorsPage() {
               }
             />
           ))}
-          {filtered.length === 0 && (
+          {list.loading && (
+            <p className="col-span-full py-16 text-center text-sm text-muted-foreground">
+              Loading accounts…
+            </p>
+          )}
+          {list.error && (
+            <p className="col-span-full py-16 text-center text-sm text-destructive">
+              Couldn't load accounts: {list.error}
+            </p>
+          )}
+          {!list.loading && !list.error && list.rows.length === 0 && (
             <div className="col-span-full py-16 text-center space-y-2">
-              {allDebtors.length === 0 ? (
+              {bookTotal === 0 && list.facets !== undefined ? (
                 <>
                   <p className="text-sm text-muted-foreground">
                     {isSupervisor

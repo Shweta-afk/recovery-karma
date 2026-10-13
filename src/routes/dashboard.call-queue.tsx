@@ -95,12 +95,7 @@ import { DebtorProfile } from "@/components/debtor-profile";
 // these live in proper shared modules now, not in this route file.
 export { ActiveCallPanel, ActiveCallModal } from "@/components/call-queue/active-call";
 export { buildAssignedQueue } from "@/lib/call-queue/build-queue";
-import { buildQueueFromPortfolios } from "@/lib/call-queue/build-queue";
-import {
-  getScopedPortfolios,
-  refreshScopedPortfolios,
-  type DebtorScope,
-} from "@/lib/scoped-debtors";
+import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
 export {
   DialerModeBar,
   DialingBoard,
@@ -139,7 +134,26 @@ import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { toast } from "sonner";
 import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
-import { ListPager, usePaged } from "@/components/list-pager";
+import { ListPager, serverPaged, useServerPage } from "@/components/list-pager";
+import {
+  countBy,
+  fetchAllDebtorRows,
+  sumFacets,
+  useDebtorList,
+  type DebtorQuery,
+  type FacetDim,
+  type FacetGroup,
+} from "@/lib/debtor-page-store";
+
+/** Everything the page's counts are built from, in one facet request. */
+const QUEUE_FACET_DIMS: FacetDim[] = [
+  "portfolio_id",
+  "queue_status",
+  "retained",
+  "bucket",
+  "own_outcome",
+  "own_reason",
+];
 
 export const Route = createFileRoute("/dashboard/call-queue")({
   head: () => ({
@@ -236,11 +250,24 @@ export function CallQueueContent({
   // every effect below on every render instead of only when the actual membership changes.
   const agentKey = isCombined ? agentId.slice().sort().join(",") : agentId;
   // Every Call Queue view — an agent's own, a manager reading one agent, or the "whole team"
-  // combined view — is scoped by assigned_agent_id, never by portfolio/team membership. See
-  // scoped-debtors.ts for why this replaces a full sync of every debtor the caller can see.
-  // extraColumns: the one list that renders bank-file columns (see extraColumns below).
-  const debtorScope: DebtorScope = useMemo(
-    () => ({ kind: "agents", agentIds: isCombined ? agentId : [agentId], extraColumns: true }),
+  // combined view — is scoped by assigned_agent_id, never by portfolio/team membership.
+  //
+  // The database filters, sorts, pages and counts the queue (debtor-page-store.ts,
+  // migrations/20261013_debtor_list_page.sql); this screen holds one page of ≤100 rows plus the
+  // counts. It used to download the whole book first (5,086 rows for the largest agent on
+  // 2026-10-13, more for a combined team view) and do all of that in the browser.
+  // extraHead: the one list that renders bank-file columns (see extraColumns below).
+  const baseQuery = useMemo<DebtorQuery>(
+    () => ({
+      agents: isCombined ? agentId : [agentId],
+      // A closed (or past its end date) portfolio's cycle is over — whoever wasn't carried
+      // forward via an approved retention request was recalled by the bank. A bank paid-file
+      // upload moves status to 'paid' without a disposition; those leave the queue too.
+      openOnly: true,
+      excludePaid: true,
+      queue: true,
+      extraHead: true,
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [agentKey],
   );
@@ -250,64 +277,176 @@ export function CallQueueContent({
   const [statusOpen, setStatusOpen] = useState(false);
   const statusMeta = STATUS_META[status];
 
-  // Queue = only the debtors assigned to this agent from uploaded portfolios
-  const [fullQueue, setFullQueue] = useState<QueueDebtor[]>(() =>
-    buildQueueFromPortfolios(getScopedPortfolios(debtorScope)),
-  );
   // Which portfolio the agent/manager is looking at. Applied to the queue itself (not just the
-  // table) so counts, the dialer boards and the "primary portfolio" dialer settings below all
-  // follow the selection. "all" = every portfolio, the previous behaviour.
+  // table) so counts, the dialer and the "primary portfolio" dialer settings below all follow
+  // the selection. "all" = every portfolio.
   const [portfolioFilter, setPortfolioFilter] = useState<string>("all");
-  const portfolioOptions = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const d of fullQueue) {
-      if (d.portfolioId) counts.set(d.portfolioId, (counts.get(d.portfolioId) ?? 0) + 1);
-    }
-    const all = getScopedPortfolios(debtorScope);
-    return Array.from(counts, ([id, count]) => ({
-      id,
-      count,
-      name: all.find((p) => p.id === id)?.name ?? "Portfolio",
-    })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [fullQueue, debtorScope]);
-  // A selection that no longer exists (portfolio closed, accounts reassigned) falls back to all
-  // rather than leaving the queue empty behind a stale filter.
-  const activePortfolioFilter = portfolioOptions.some((o) => o.id === portfolioFilter)
-    ? portfolioFilter
-    : "all";
-  const allQueue = useMemo(
-    () =>
-      activePortfolioFilter === "all"
-        ? fullQueue
-        : fullQueue.filter((d) => d.portfolioId === activePortfolioFilter),
-    [fullQueue, activePortfolioFilter],
+  const [prodFilter, setProdFilter] = useState<ProdFilter>("all");
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>(initialFilter ?? "all");
+  const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
+  const [bucketDropOpen, setBucketDropOpen] = useState(false);
+  const [dispositionFilter, setDispositionFilter] = useState<CallOutcome | "all">("all");
+  // Narrows within the chosen outcome (e.g. Refused → "Broken Promise to Pay"). Reset to "all"
+  // whenever the outcome itself changes, since a reason from a different outcome's list would
+  // silently match nothing.
+  const [reasonFilter, setReasonFilter] = useState<string | "all">("all");
+  const [dispositionDropOpen, setDispositionDropOpen] = useState(false);
+  const [expandedDispositionOutcome, setExpandedDispositionOutcome] = useState<CallOutcome | null>(
+    null,
   );
+  const [queueSearch, setQueueSearch] = useState("");
 
-  // Reload queue when assignments/portfolios change. Scoped to just this agentId/agentIds set
-  // (see scoped-debtors.ts) instead of resyncing every debtor the signed-in user can see —
-  // that full sync measured at 1.3s in the database alone for one manager's team, before
-  // network transfer, and was the main cause of Call Queue loading slowly (2026-09-22).
+  // Queue table column sort + filters
+  const [qSortKey, setQSortKey] = useState<QueueSortKey | null>(null);
+  const [qSortDir, setQSortDir] = useState<"asc" | "desc">("asc");
+  const [filterOutstanding, setFilterOutstanding] = useState<"all" | "lt1L" | "1to5L" | "gt5L">(
+    "all",
+  );
+  const [filterDpd, setFilterDpd] = useState<"all" | "lt30" | "30to60" | "61to90" | "gt90">("all");
+  const [filterScore, setFilterScore] = useState<"all" | "high" | "mid" | "low">("all");
+  const [filterStatus, setFilterStatus] = useState<QueueDebtor["queueStatus"] | "all">("all");
+  const [openColFilter, setOpenColFilter] = useState<string | null>(null);
+
+  const toggleQSort = (key: QueueSortKey) => {
+    if (qSortKey === key) setQSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setQSortKey(key);
+      setQSortDir("asc");
+    }
+    setOpenColFilter(null);
+  };
+
+  // Portfolio names and dialer settings — the small portfolios table, no debtor rows.
+  const [portfolioMeta, setPortfolioMeta] = useState(() => getVisiblePortfolioMeta());
   useEffect(() => {
-    const reload = () => setFullQueue(buildQueueFromPortfolios(getScopedPortfolios(debtorScope)));
-    window.addEventListener("scoped-portfolios-updated", reload);
-    // buildQueueFromPortfolios derives queueStatus/scheduledAt/ptpAmount from the dispositions
-    // cache, so the queue has to rebuild when that cache lands — not just when portfolios do.
-    // refreshDispositions() below is async and usually resolves AFTER this first build.
-    window.addEventListener("dispositions-updated", reload);
-    refreshScopedPortfolios(debtorScope);
-    refreshDispositions();
+    const load = () => setPortfolioMeta(getVisiblePortfolioMeta());
+    const refetch = () => void refreshVisiblePortfolioMeta();
+    window.addEventListener("visible-portfolio-meta-updated", load);
+    window.addEventListener("portfolios-updated", refetch);
+    refetch();
     return () => {
-      window.removeEventListener("scoped-portfolios-updated", reload);
-      window.removeEventListener("dispositions-updated", reload);
+      window.removeEventListener("visible-portfolio-meta-updated", load);
+      window.removeEventListener("portfolios-updated", refetch);
     };
+  }, []);
+
+  // Typing shouldn't send a request per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(queueSearch), 250);
+    return () => clearTimeout(t);
+  }, [queueSearch]);
+
+  // Productive / status pill / Status column all narrow the same thing — the queue status — so
+  // they are sent as one allowed set (their intersection).
+  const queueStatuses = useMemo(() => {
+    let set: QueueDebtor["queueStatus"][] | undefined;
+    const narrow = (allowed: QueueDebtor["queueStatus"][]) => {
+      set = set ? set.filter((x) => allowed.includes(x)) : [...allowed];
+    };
+    if (prodFilter === "productive") narrow(PRODUCTIVE_STATUSES);
+    else if (prodFilter === "non_productive") narrow(NON_PRODUCTIVE_STATUSES);
+    if (
+      queueFilter === "callback" ||
+      queueFilter === "ptp" ||
+      queueFilter === "no_answer" ||
+      queueFilter === "fresh" ||
+      queueFilter === "escalated"
+    )
+      narrow([queueFilter]);
+    if (filterStatus !== "all") narrow([filterStatus]);
+    return set;
+  }, [prodFilter, queueFilter, filterStatus]);
+
+  // Facets come back for the whole queue, so the portfolio filter is checked against them
+  // here; a selection that no longer exists (portfolio closed, accounts reassigned) falls back
+  // to all rather than leaving the queue empty behind a stale filter.
+  const [facetsForFilter, setFacetsForFilter] = useState<FacetGroup[] | undefined>(undefined);
+  const portfolioCounts = useMemo(
+    () => countBy(facetsForFilter, "portfolio_id"),
+    [facetsForFilter],
+  );
+  const activePortfolioFilter =
+    portfolioFilter !== "all" && (!facetsForFilter || portfolioCounts.has(portfolioFilter))
+      ? portfolioFilter
+      : "all";
+
+  const queueQuery = useMemo<DebtorQuery>(
+    () => ({
+      ...baseQuery,
+      portfolioId: activePortfolioFilter === "all" ? undefined : activePortfolioFilter,
+      search: debouncedSearch.trim() || undefined,
+      bucket: bucketFilter === "all" ? undefined : bucketFilter,
+      // The Disposition filter: the latest outcome logged by this queue's agent(s).
+      ownOutcome: dispositionFilter === "all" ? undefined : dispositionFilter,
+      ownReason: reasonFilter === "all" ? undefined : reasonFilter,
+      retained: queueFilter === "retained" || undefined,
+      queueStatuses,
+      outstanding: filterOutstanding === "all" ? undefined : filterOutstanding,
+      dpdBand: filterDpd === "all" ? undefined : filterDpd,
+      scoreBand: filterScore === "all" ? undefined : filterScore,
+      sort: qSortKey ?? undefined,
+      dir: qSortKey ? qSortDir : undefined,
+    }),
+    [
+      baseQuery,
+      activePortfolioFilter,
+      debouncedSearch,
+      bucketFilter,
+      dispositionFilter,
+      reasonFilter,
+      queueFilter,
+      queueStatuses,
+      filterOutstanding,
+      filterDpd,
+      filterScore,
+      qSortKey,
+      qSortDir,
+    ],
+  );
+  // A filter/sort/search change goes back to page 1; a background refresh or a saved
+  // disposition does not.
+  const [queuePage, setQueuePage] = useServerPage(JSON.stringify([agentKey, queueQuery]));
+  const queueList = useDebtorList(queueQuery, queuePage, QUEUE_FACET_DIMS);
+  const facets = queueList.facets;
+  useEffect(() => setFacetsForFilter(facets), [facets]);
+  const queueRows: QueueDebtor[] = queueList.rows;
+  const queuePaged = serverPaged(queueRows, queuePage, setQueuePage, queueList.total);
+  useEffect(() => {
+    if (queueList.total !== undefined && queuePage > 0 && queuePage >= queuePaged.pageCount)
+      setQueuePage(queuePaged.pageCount - 1);
+  }, [queueList.total, queuePage, queuePaged.pageCount, setQueuePage]);
+
+  const portfolioName_ = (id: string) =>
+    portfolioMeta.find((p) => p.id === id)?.name ?? "Portfolio";
+  const portfolioOptions = Array.from(portfolioCounts, ([id, count]) => ({
+    id,
+    count,
+    name: portfolioName_(id),
+  })).sort((a, b) => a.name.localeCompare(b.name));
+  const fullQueueCount = sumFacets(facets).n;
+  const inPortfolio = (g: FacetGroup) =>
+    activePortfolioFilter === "all" || g.portfolio_id === activePortfolioFilter;
+
+  // dispositions-updated drives the row badges and the PTP tracker (the dispositions cache);
+  // the list itself re-fetches on it inside useDebtorList.
+  useEffect(() => {
+    refreshDispositions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentKey]);
+
+  // Rows fetched for a dialer run, kept so a ringing leg can be matched back to its debtor
+  // even when it is not on the page being shown.
+  const [dialTargetRows, setDialTargetRows] = useState<QueueDebtor[]>([]);
 
   // Portfolio mode/name are properties of the portfolio, set by the manager at upload time.
   // An agent's queue can span multiple portfolios; show the primary (first) one they're
   // currently working, falling back to the platform default when nothing is assigned yet.
-  const primaryPortfolio = allQueue[0]?.portfolioId
-    ? getScopedPortfolios(debtorScope).find((p) => p.id === allQueue[0].portfolioId)
+  const primaryPortfolioId =
+    queueRows[0]?.portfolioId ??
+    (activePortfolioFilter !== "all" ? activePortfolioFilter : portfolioOptions[0]?.id);
+  const primaryPortfolio = primaryPortfolioId
+    ? portfolioMeta.find((p) => p.id === primaryPortfolioId)
     : undefined;
   const dialerSettings = primaryPortfolio?.settings ?? DEFAULT_PORTFOLIO_SETTINGS;
   const portfolioMode: CallMode = dialerSettings.callMode;
@@ -357,7 +496,6 @@ export function CallQueueContent({
   // Ordered list dialed by the current Productive run, captured at start so the board can show
   // fixed list-position progress (done / current / upcoming) rather than just the live legs.
   const [productiveTargets, setProductiveTargets] = useState<DialTarget[]>([]);
-  const [prodFilter, setProdFilter] = useState<ProdFilter>("all");
   // Caller ID the dialer runs present to the debtor — must be a DID/ExoPhone on the account,
   // never a personal number. Fixed to the first configured DID now that the manual-dial form
   // (which used to own the picker) has moved to ManualDialDock; the dialer boards below still
@@ -371,40 +509,6 @@ export function CallQueueContent({
     debtor: QueueDebtor;
     from: string;
   } | null>(null);
-  const [queueFilter, setQueueFilter] = useState<QueueFilter>(initialFilter ?? "all");
-  const [bucketFilter, setBucketFilter] = useState<DPDBucket | "all">("all");
-  const [bucketDropOpen, setBucketDropOpen] = useState(false);
-  const [dispositionFilter, setDispositionFilter] = useState<CallOutcome | "all">("all");
-  // Narrows within the chosen outcome (e.g. Refused → "Broken Promise to Pay"). Reset to "all"
-  // whenever the outcome itself changes, since a reason from a different outcome's list would
-  // silently match nothing.
-  const [reasonFilter, setReasonFilter] = useState<string | "all">("all");
-  const [dispositionDropOpen, setDispositionDropOpen] = useState(false);
-  const [expandedDispositionOutcome, setExpandedDispositionOutcome] = useState<CallOutcome | null>(
-    null,
-  );
-  const [queueSearch, setQueueSearch] = useState("");
-
-  // Queue table column sort + filters
-  const [qSortKey, setQSortKey] = useState<QueueSortKey | null>(null);
-  const [qSortDir, setQSortDir] = useState<"asc" | "desc">("asc");
-  const [filterOutstanding, setFilterOutstanding] = useState<"all" | "lt1L" | "1to5L" | "gt5L">(
-    "all",
-  );
-  const [filterDpd, setFilterDpd] = useState<"all" | "lt30" | "30to60" | "61to90" | "gt90">("all");
-  const [filterScore, setFilterScore] = useState<"all" | "high" | "mid" | "low">("all");
-  const [filterStatus, setFilterStatus] = useState<QueueDebtor["queueStatus"] | "all">("all");
-  const [openColFilter, setOpenColFilter] = useState<string | null>(null);
-
-  const toggleQSort = (key: QueueSortKey) => {
-    if (qSortKey === key) setQSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setQSortKey(key);
-      setQSortDir("asc");
-    }
-    setOpenColFilter(null);
-  };
-
   // Debtor profile sheet
   const [profileDebtor, setProfileDebtor] = useState<QueueDebtor | null>(null);
 
@@ -420,11 +524,12 @@ export function CallQueueContent({
     }
     const ringingLeg = dialer.legs.find((lc) => !lc.incoming && lc.status === "ringing");
     if (!ringingLeg || poppedProductiveDebtorRef.current === ringingLeg.loanId) return;
-    const debtor = allQueue.find((d) => d.id === ringingLeg.loanId);
+    const debtor = findQueueDebtor(ringingLeg.loanId);
     if (!debtor) return;
     poppedProductiveDebtorRef.current = ringingLeg.loanId;
     setProfileDebtor(debtor);
-  }, [activeDialMode, dialer.legs, allQueue]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDialMode, dialer.legs, queueRows, dialTargetRows]);
 
   // Escalation modal
   const [escalationCall, setEscalationCall] = useState<{
@@ -750,188 +855,95 @@ export function CallQueueContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentKey, ptpFollowups, isSelf]);
 
-  const filterCounts = useMemo(
-    () => ({
-      all: allQueue.length,
-      retained: allQueue.filter((d) => d.retained).length,
-      callback: allQueue.filter((d) => d.queueStatus === "callback").length,
-      ptp: allQueue.filter((d) => d.queueStatus === "ptp").length,
-      no_answer: allQueue.filter((d) => d.queueStatus === "no_answer").length,
-      fresh: allQueue.filter((d) => d.queueStatus === "fresh").length,
-      escalated: allQueue.filter((d) => d.queueStatus === "escalated").length,
-    }),
-    [allQueue],
+  // Every count on this page comes from the database's facet counts over the whole queue
+  // (narrowed to the selected portfolio here), not from rows held in the browser.
+  const queueTotals = sumFacets(facets, inPortfolio);
+  const statusCount = (st: QueueDebtor["queueStatus"]) =>
+    sumFacets(facets, (g) => inPortfolio(g) && g.queue_status === st).n;
+  const filterCounts = {
+    all: queueTotals.n,
+    retained: sumFacets(facets, (g) => inPortfolio(g) && !!g.retained).n,
+    callback: statusCount("callback"),
+    ptp: statusCount("ptp"),
+    no_answer: statusCount("no_answer"),
+    fresh: statusCount("fresh"),
+    escalated: statusCount("escalated"),
+  };
+  const bucketCounts = countBy(facets, "bucket", inPortfolio);
+  const ownOutcomeCounts = countBy(facets, "own_outcome", inPortfolio);
+  const ownReasonCount = (code: string, reason: string) =>
+    sumFacets(facets, (g) => inPortfolio(g) && g.own_outcome === code && g.own_reason === reason).n;
+
+  // "Remaining" = accounts in the queue not yet worked TODAY (debtors.last_contacted_at, judged
+  // by the IST day in the database) — so the count rolls over at midnight IST.
+  const remainingToday = queueTotals.n - queueTotals.contactedToday;
+
+  // The whole filtered queue (or, with nothing matching, the whole queue) — fetched only when
+  // an action needs every row: starting the dialer, CSV export. Never rendered.
+  const fetchQueueTargets = async (): Promise<QueueDebtor[]> => {
+    const filtered = await fetchAllDebtorRows(queueQuery);
+    if (filtered.length) return filtered;
+    return fetchAllDebtorRows({ ...baseQuery, portfolioId: queueQuery.portfolioId });
+  };
+
+  // Retained accounts for the collapsible panel — fetched only while it is open.
+  const retainedList = useDebtorList(
+    retainedOpen
+      ? { ...baseQuery, extraHead: false, portfolioId: queueQuery.portfolioId, retained: true }
+      : null,
+    0,
   );
-
-  // "Remaining" = accounts in the queue not yet worked TODAY, judged by lastContacted, which
-  // is an IST day key (see fetch-debtors.ts) — so the count rolls over at midnight IST rather
-  // than at 05:30 the way a UTC comparison would. Every other count on this row stays as-is;
-  // this is the one an agent actually works down to zero.
-  const remainingToday = useMemo(() => {
-    const today = todayIstKey();
-    return allQueue.filter((d) => d.lastContacted !== today).length;
-  }, [allQueue]);
-
-  const filteredQueue = useMemo(() => {
-    let rows = allQueue;
-
-    // Bucket filter
-    if (bucketFilter !== "all") rows = rows.filter((d) => bucketOf(d.dpd) === bucketFilter);
-
-    // Disposition filter — the agent's own latest logged outcome per debtor, optionally
-    // narrowed further to a specific reason within that outcome.
-    if (dispositionFilter !== "all")
-      rows = rows.filter((d) => loggedOutcomes[d.id]?.outcome === dispositionFilter);
-    if (reasonFilter !== "all")
-      rows = rows.filter((d) => loggedOutcomes[d.id]?.reason === reasonFilter);
-
-    // Productive / Non-Productive
-    if (prodFilter === "productive")
-      rows = rows.filter((d) => PRODUCTIVE_STATUSES.includes(d.queueStatus));
-    else if (prodFilter === "non_productive")
-      rows = rows.filter((d) => NON_PRODUCTIVE_STATUSES.includes(d.queueStatus));
-
-    // Status pill filter
-    if (queueFilter === "retained") rows = rows.filter((d) => d.retained);
-    else if (queueFilter === "callback") rows = rows.filter((d) => d.queueStatus === "callback");
-    else if (queueFilter === "ptp") rows = rows.filter((d) => d.queueStatus === "ptp");
-    else if (queueFilter === "no_answer") rows = rows.filter((d) => d.queueStatus === "no_answer");
-    else if (queueFilter === "fresh") rows = rows.filter((d) => d.queueStatus === "fresh");
-    else if (queueFilter === "escalated") rows = rows.filter((d) => d.queueStatus === "escalated");
-
-    // Column filters
-    if (filterStatus !== "all") rows = rows.filter((d) => d.queueStatus === filterStatus);
-    if (filterOutstanding === "lt1L") rows = rows.filter((d) => d.loanAmount < 100000);
-    else if (filterOutstanding === "1to5L")
-      rows = rows.filter((d) => d.loanAmount >= 100000 && d.loanAmount <= 500000);
-    else if (filterOutstanding === "gt5L") rows = rows.filter((d) => d.loanAmount > 500000);
-    if (filterDpd === "lt30") rows = rows.filter((d) => d.dpd < 30);
-    else if (filterDpd === "30to60") rows = rows.filter((d) => d.dpd >= 30 && d.dpd <= 60);
-    else if (filterDpd === "61to90") rows = rows.filter((d) => d.dpd > 60 && d.dpd <= 90);
-    else if (filterDpd === "gt90") rows = rows.filter((d) => d.dpd > 90);
-    if (filterScore === "high") rows = rows.filter((d) => d.aiScore >= 8);
-    else if (filterScore === "mid") rows = rows.filter((d) => d.aiScore >= 5 && d.aiScore < 8);
-    else if (filterScore === "low") rows = rows.filter((d) => d.aiScore < 5);
-
-    // Search
-    const q = queueSearch.trim().toLowerCase();
-    if (q)
-      rows = rows.filter(
-        (d) =>
-          d.name.toLowerCase().includes(q) ||
-          (d.loanReference ?? d.id).toLowerCase().includes(q) ||
-          d.phone.includes(q),
-      );
-
-    // Column sort
-    if (qSortKey) {
-      rows = [...rows].sort((a, b) => {
-        let av: string | number = 0,
-          bv: string | number = 0;
-        if (qSortKey === "name") {
-          av = a.name;
-          bv = b.name;
-        }
-        if (qSortKey === "outstanding") {
-          av = a.loanAmount;
-          bv = b.loanAmount;
-        }
-        if (qSortKey === "dpd") {
-          av = a.dpd;
-          bv = b.dpd;
-        }
-        if (qSortKey === "aiScore") {
-          av = a.aiScore;
-          bv = b.aiScore;
-        }
-        if (qSortKey === "status") {
-          av = a.queueStatus;
-          bv = b.queueStatus;
-        }
-        if (qSortKey === "scheduled") {
-          av = a.scheduledAt;
-          bv = b.scheduledAt;
-        }
-        if (av < bv) return qSortDir === "asc" ? -1 : 1;
-        if (av > bv) return qSortDir === "asc" ? 1 : -1;
-        return 0;
-      });
-    }
-
-    return rows;
-  }, [
-    allQueue,
-    queueFilter,
-    bucketFilter,
-    dispositionFilter,
-    reasonFilter,
-    loggedOutcomes,
-    queueSearch,
-    prodFilter,
-    filterStatus,
-    filterOutstanding,
-    filterDpd,
-    filterScore,
-    qSortKey,
-    qSortDir,
-  ]);
+  // The PTP tracker shows each follow-up's Loan ID; fetch just those debtors.
+  const ptpDebtorIds = useMemo(
+    () => [...new Set(ptpFollowups.map((p) => p.debtorId).filter(Boolean))].slice(0, 100),
+    [ptpFollowups],
+  );
+  const ptpList = useDebtorList(
+    ptpDebtorIds.length ? { ...baseQuery, extraHead: false, ids: ptpDebtorIds } : null,
+    0,
+  );
+  /** A debtor on screen or in the current dialer run, by id. */
+  const findQueueDebtor = (id: string): QueueDebtor | undefined =>
+    queueRows.find((d) => d.id === id) ??
+    dialTargetRows.find((d) => d.id === id) ??
+    ptpList.rows.find((d) => d.id === id);
 
   // Every raw CSV column the upload didn't map to a named field — debtorFromRow() carries the
-  // whole bag on `_uploadedExtra`. Rendered as extra columns after Reason so scrolling the
-  // (non-sticky) middle of the row surfaces most of the uploaded file, not just the handful of
-  // fields this table already has dedicated columns for. Built from allQueue (not
-  // filteredQueue) so the column set doesn't jump around as filters/search change; ordered by
-  // first appearance so it roughly tracks the source CSV's column order.
+  // bag on `_uploadedExtra`. Rendered as extra columns after Reason so scrolling the
+  // (non-sticky) middle of the row surfaces most of the uploaded file. Accumulated across the
+  // pages seen (reset when whose queue it is changes) so the column set doesn't jump around as
+  // filters/search/pages change.
   //
   // Capped — some portfolios carry 150+ unmapped columns, which used to render literally, and
   // one (165 columns) blew the table out to ~32,900px wide. Confirmed live (screen recording)
   // that a table that wide makes Chromium "ghost" far-off-screen cell content through the
   // sticky Debtor/Actions columns during horizontal scroll — a real compositor bug, not just a
   // usability problem, and will-change:transform on the sticky cells did not fix it. 25 columns
-  // keeps the table in a width range with no observed ghosting and is already far more of the
-  // upload than the table showed before this feature existed.
+  // keeps the table in a width range with no observed ghosting.
   const MAX_EXTRA_COLUMNS = 25;
-  // Paged rendering (list-pager.tsx). Everything above — filters, counts, export, "dial all" —
-  // still works on the whole filteredQueue; only the table body shows one page. The key is the
-  // same set of inputs filteredQueue depends on (plus whose queue it is), so a filter/sort/
-  // search change goes back to page 1 but a background refresh or a saved disposition does not.
-  const queuePaged = usePaged(
-    filteredQueue,
-    JSON.stringify([
-      agentKey,
-      queueFilter,
-      bucketFilter,
-      dispositionFilter,
-      reasonFilter,
-      queueSearch,
-      prodFilter,
-      filterStatus,
-      filterOutstanding,
-      filterDpd,
-      filterScore,
-      qSortKey,
-      qSortDir,
-    ]),
-  );
   const queueScrollRef = useRef<HTMLDivElement>(null);
-
-  const extraColumns = useMemo(() => {
-    const seen = new Set<string>();
-    const cols: string[] = [];
-    for (const d of allQueue) {
-      if (cols.length >= MAX_EXTRA_COLUMNS) break;
-      const extra = (d as QueueDebtor & { _uploadedExtra?: Record<string, string> })._uploadedExtra;
-      if (!extra) continue;
-      for (const key of Object.keys(extra)) {
-        if (cols.length >= MAX_EXTRA_COLUMNS) break;
-        if (!seen.has(key)) {
-          seen.add(key);
-          cols.push(key);
+  const [extraColumns, setExtraColumns] = useState<string[]>([]);
+  useEffect(() => setExtraColumns([]), [agentKey]);
+  useEffect(() => {
+    setExtraColumns((prev) => {
+      if (prev.length >= MAX_EXTRA_COLUMNS) return prev;
+      const seen = new Set(prev);
+      const cols = [...prev];
+      for (const d of queueRows) {
+        const extra = (d as QueueDebtor & { _uploadedExtra?: Record<string, string> })
+          ._uploadedExtra;
+        if (!extra) continue;
+        for (const key of Object.keys(extra)) {
+          if (cols.length >= MAX_EXTRA_COLUMNS) break;
+          if (!seen.has(key)) {
+            seen.add(key);
+            cols.push(key);
+          }
         }
       }
-    }
-    return cols;
-  }, [allQueue]);
+      return cols.length === prev.length ? prev : cols;
+    });
+  }, [queueRows]);
 
   // Narrower than QueueFilter — only the statuses filterCounts actually computes from real
   // queueStatus data. switch_off/nc/paid exist in QueueFilter for URL back-compat but were
@@ -1017,34 +1029,33 @@ export function CallQueueContent({
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Portfolio
           </span>
-          {[
-            { id: "all", name: "All portfolios", count: fullQueue.length },
-            ...portfolioOptions,
-          ].map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              role="tab"
-              aria-selected={activePortfolioFilter === o.id}
-              onClick={() => setPortfolioFilter(o.id)}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-colors",
-                activePortfolioFilter === o.id
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-background text-foreground hover:bg-muted",
-              )}
-            >
-              {o.name}
-              <span
+          {[{ id: "all", name: "All portfolios", count: fullQueueCount }, ...portfolioOptions].map(
+            (o) => (
+              <button
+                key={o.id}
+                type="button"
+                role="tab"
+                aria-selected={activePortfolioFilter === o.id}
+                onClick={() => setPortfolioFilter(o.id)}
                 className={cn(
-                  "rounded-full px-1.5 text-xs tabular-nums",
-                  activePortfolioFilter === o.id ? "bg-primary-foreground/20" : "bg-muted",
+                  "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-colors",
+                  activePortfolioFilter === o.id
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-background text-foreground hover:bg-muted",
                 )}
               >
-                {o.count}
-              </span>
-            </button>
-          ))}
+                {o.name}
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 text-xs tabular-nums",
+                    activePortfolioFilter === o.id ? "bg-primary-foreground/20" : "bg-muted",
+                  )}
+                >
+                  {o.count}
+                </span>
+              </button>
+            ),
+          )}
         </div>
       )}
 
@@ -1109,19 +1120,19 @@ export function CallQueueContent({
             },
             {
               label: "Total Count",
-              value: allQueue.length.toString(),
+              value: queueTotals.n.toString(),
               sub: "accounts in queue",
               cls: "text-foreground",
             },
             {
               label: "Total Principal",
-              value: formatINR(allQueue.reduce((s, d) => s + d.loanAmount, 0)),
+              value: formatINR(queueTotals.loan),
               sub: "outstanding principal",
               cls: "text-foreground",
             },
             {
               label: "Total PTP",
-              value: formatINR(allQueue.reduce((s, d) => s + (d.ptpAmount ?? 0), 0)),
+              value: formatINR(queueTotals.ptp),
               sub: `${filterCounts.ptp} accounts promised`,
               cls: "text-blue-500",
             },
@@ -1238,7 +1249,7 @@ export function CallQueueContent({
       <PTPTracker
         onCall={startCall}
         onView={setProfileDebtor}
-        queue={allQueue}
+        queue={ptpList.rows}
         followups={ptpFollowups}
         bucketFilter={bucketFilter}
         search={queueSearch}
@@ -1274,8 +1285,10 @@ export function CallQueueContent({
                     setActiveDialMode(null);
                     return;
                   }
-                  // 4b — dial the currently filtered queue, not the whole book
-                  const target = filteredQueue.length ? filteredQueue : allQueue;
+                  // 4b — dial the currently filtered queue, not the whole book. Fetched now,
+                  // in full, since only one page is held for display.
+                  const target = await fetchQueueTargets();
+                  setDialTargetRows(target);
                   const activeFilter = FILTERS.find((f) => f.key === queueFilter);
                   // The agent pool is the concurrency ceiling: click-to-call rings an agent
                   // first, so a line cannot be opened without one free to take it.
@@ -1349,7 +1362,8 @@ export function CallQueueContent({
                     setActiveDialMode(null);
                     return;
                   }
-                  const target = filteredQueue.length ? filteredQueue : allQueue;
+                  const target = await fetchQueueTargets();
+                  setDialTargetRows(target);
                   const activeFilter = FILTERS.find((f) => f.key === queueFilter);
                   const agentNumbers = await fetchDialerAgentNumbers();
                   if (!agentNumbers.length) {
@@ -1407,8 +1421,8 @@ export function CallQueueContent({
 
         {/* ── Retained debtors — collapsible ── */}
         {(() => {
-          const retained = allQueue.filter((d) => d.retained);
-          if (!retained.length) return null;
+          const retained = retainedList.rows;
+          if (!filterCounts.retained) return null;
           return (
             <div className="mb-3 rounded-xl border border-violet-400/30 bg-violet-500/5 overflow-hidden">
               <button
@@ -1420,7 +1434,7 @@ export function CallQueueContent({
                   <span className="h-2 w-2 rounded-full bg-violet-500 flex-shrink-0" />
                   <span className="text-sm font-semibold text-violet-600">Retained Debtors</span>
                   <span className="text-xs text-muted-foreground">
-                    Carried over from previous month · {retained.length} accounts
+                    Carried over from previous month · {filterCounts.retained} accounts
                   </span>
                 </div>
                 <ChevronDown
@@ -1618,9 +1632,7 @@ export function CallQueueContent({
                       )}
                     >
                       <span>{BUCKET_META[b].label}</span>
-                      <span className="opacity-50">
-                        {allQueue.filter((d) => bucketOf(d.dpd) === b).length}
-                      </span>
+                      <span className="opacity-50">{bucketCounts.get(b) ?? 0}</span>
                     </button>
                   ))}
                 </div>
@@ -1692,7 +1704,7 @@ export function CallQueueContent({
                             {OUTCOME_META[code].label}
                           </button>
                           <span className="text-[10px] opacity-50 pr-1">
-                            {allQueue.filter((d) => loggedOutcomes[d.id]?.outcome === code).length}
+                            {ownOutcomeCounts.get(code) ?? 0}
                           </span>
                           {reasons.length > 0 && (
                             <button
@@ -1715,11 +1727,7 @@ export function CallQueueContent({
                         {isExpanded && (
                           <div className="border-l border-border ml-3 pl-2">
                             {reasons.map((reason) => {
-                              const count = allQueue.filter(
-                                (d) =>
-                                  loggedOutcomes[d.id]?.outcome === code &&
-                                  loggedOutcomes[d.id]?.reason === reason,
-                              ).length;
+                              const count = ownReasonCount(code, reason);
                               return (
                                 <button
                                   key={reason}
@@ -1764,7 +1772,7 @@ export function CallQueueContent({
               size="sm"
               variant="outline"
               className="h-7 gap-1 text-xs whitespace-nowrap"
-              onClick={() =>
+              onClick={async () =>
                 exportCSV(
                   "call-queue.csv",
                   [
@@ -1777,7 +1785,7 @@ export function CallQueueContent({
                     "AI Score",
                     "Scheduled",
                   ],
-                  filteredQueue.map((d) => [
+                  (await fetchAllDebtorRows(queueQuery)).map((d) => [
                     d.name,
                     d.loanReference ?? d.id,
                     d.phone,
@@ -2040,13 +2048,17 @@ export function CallQueueContent({
                   <TableRow aria-hidden className="h-0 leading-none">
                     <TableCell colSpan={9 + extraColumns.length} className="h-0 p-0 border-0" />
                   </TableRow>
-                  {filteredQueue.length === 0 ? (
+                  {queueRows.length === 0 ? (
                     <TableRow>
                       <TableCell
                         colSpan={9 + extraColumns.length}
                         className="text-center py-12 text-muted-foreground text-sm"
                       >
-                        No debtors match this filter.
+                        {queueList.loading
+                          ? "Loading queue…"
+                          : queueList.error
+                            ? `Couldn't load the queue: ${queueList.error}`
+                            : "No debtors match this filter."}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -2166,7 +2178,7 @@ export function CallQueueContent({
             setActiveDialMode(null);
           }}
           onTake={(lc) => {
-            const debtor = allQueue.find((d) => d.id === lc.loanId) ?? allQueue[0];
+            const debtor = findQueueDebtor(lc.loanId) ?? queueRows[0];
             // Taking a leg off the running dialer — attribute it to whichever board produced
             // it, not to "single". activeDialMode is the INTERNAL enum, whose two values read
             // backwards; dialModeFromDialerMode is the one place that is untangled.

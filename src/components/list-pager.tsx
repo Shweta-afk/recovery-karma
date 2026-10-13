@@ -131,3 +131,40 @@ export function ListPager<T>({
     </div>
   );
 }
+
+/**
+ * Page state for a list the DATABASE pages (debtor-page-store.ts): only `page` lives here; the
+ * rows on screen are already that page. Same reset rule as usePaged — a change of `resetKey`
+ * (filter, search, sort) goes back to page 1, a refresh of the same list does not. `total` is
+ * undefined while the count is still loading; the pager then offers Next only when this page
+ * came back full.
+ */
+export function useServerPage(resetKey: string): [number, (page: number) => void] {
+  const [page, setPage] = useState(0);
+  const [prevKey, setPrevKey] = useState(resetKey);
+  if (prevKey !== resetKey) {
+    setPrevKey(resetKey);
+    setPage(0);
+  }
+  return [page, setPage];
+}
+
+export function serverPaged<T>(
+  pageItems: T[],
+  page: number,
+  setPage: (page: number) => void,
+  total: number | undefined,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Paged<T> {
+  const known =
+    total ?? page * pageSize + pageItems.length + (pageItems.length === pageSize ? 1 : 0);
+  const pageCount = Math.max(1, Math.ceil(known / pageSize));
+  return {
+    pageItems,
+    page: Math.min(page, pageCount - 1),
+    pageCount,
+    pageSize,
+    total: known,
+    setPage,
+  };
+}

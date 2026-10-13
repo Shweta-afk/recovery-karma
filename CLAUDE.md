@@ -142,6 +142,17 @@ every bank-file column read the full bag themselves (`useFullExtra`, `fetchPortf
 Never write a cached row's `extra` back to the database; the client falls back to plain `extra`
 if the functions are missing.
 
+**Debtors page and Call Queue are paged by the database (2026-10-13).** They never hold the
+whole book: `debtor-page-store.ts` calls the SQL function `debtor_list(p jsonb)`
+(`migrations/20261013_debtor_list_page.sql`, live; SECURITY INVOKER, so RLS still decides what
+exists) in three modes — `rows` (one page of ≤100, filters + sort in SQL), `count`, and
+`facets` (grouped counts over the whole scope, for dropdown counts and Call Queue's KPI cards).
+`useDebtorList()` re-fetches on the usual `*-updated` events. Queue status is derived in SQL
+from the latest visible call log (same mapping as `build-queue.ts`); Call Queue's Disposition
+filter uses the latest call by the queue's own agent(s). Actions that need every filtered row
+(dialer start, CSV export) fetch them on click with `fetchAllDebtorRows`. If a filter changes
+meaning on one screen, change `debtor_list` too — the browser no longer filters these lists.
+
 **If asked to wire another page/table, match this pattern** — it's a deliberate, established
 convention across the whole app, not an oversight. Don't introduce `useQuery` for it.
 

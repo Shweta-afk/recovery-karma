@@ -22,11 +22,9 @@
 // one localStorage entry per agent behind, drifting back toward the same quota problem this
 // module exists to avoid.
 //
-// Scope: currently wired into dashboard.call-queue.tsx (agent's own queue, a manager viewing
-// one agent, and the "whole team" combined view — all keyed by assigned_agent_id, see
-// CallQueueContent's `agentId` prop) and dashboard.debtors.tsx (an agent's own book, and a
-// manager's active-team book). Portfolio Overview, Reports and admin pages are unchanged and
-// still read the full portfolio-store.ts cache.
+// Scope: Messages, Reports, Portfolio Overview (scoped-portfolio-overview.ts) and Manual Dial's
+// Loan ID lookup. Call Queue and the Debtors page no longer use it (2026-10-13): they ask the
+// database for one page at a time — see debtor-page-store.ts.
 import { supabase } from "./supabase";
 import { fetchAllRows } from "./fetch-all-rows";
 import { selectWithSlimExtra, slimExtraFromRow } from "./debtor-extra";
