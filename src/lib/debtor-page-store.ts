@@ -244,7 +244,9 @@ async function call<T>(params: Record<string, unknown>): Promise<T> {
     fn: string,
     args: { p: Record<string, unknown> },
   ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-  const { data, error } = await rpc("debtor_list", { p: params });
+  // .call(supabase, …): rpc reads this.rest, so a detached call throws
+  // "Cannot read properties of undefined (reading 'rest')".
+  const { data, error } = await rpc.call(supabase, "debtor_list", { p: params });
   if (error) throw new Error(error.message);
   return data as T;
 }
