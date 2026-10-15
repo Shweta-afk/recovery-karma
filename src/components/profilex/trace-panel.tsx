@@ -513,7 +513,7 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
         <Search className="h-8 w-8 text-muted-foreground/40" />
         <p className="text-sm font-medium text-foreground">Insights is not switched on</p>
         <p className="text-xs text-muted-foreground max-w-xs">
-          An admin can switch on Insights for you under Settings.
+          An admin can enable Insights and fund your wallet under Settings.
         </p>
       </div>
     );
