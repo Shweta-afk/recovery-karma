@@ -49,7 +49,7 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 | SX-1013 | Could not check the portfolio.                 | Portfolio check for an Excel request failed.                                                                                           |
 | SX-1014 | Could not send the request.                    | Inserting an Excel export request failed.                                                                                              |
 | SX-1015 | Could not load lookups.                        | Reading manual lookups (Admin → Insights) failed.                                                                                      |
-| SX-1016 | Could not reserve funds for this lookup.       | `profilex_wallet_hold` RPC errored (not "not enough money" — that has its own plain message).                                          |
+| SX-1016 | This lookup could not be started.              | `profilex_wallet_hold` RPC errored (not "not enough money" — that has its own plain message).                                          |
 | SX-1017 | Could not load the Insights outcome report.    | `insights_outcome_report` RPC failed. If the log names the function, `migrations/20260927_insights_outcome_report.sql` is not applied. |
 | SX-1018 | Could not send the request.                    | `insight-request-store.ts`: inserting an Insights request failed (browser-side; detail in browser console).                            |
 | SX-1019 | Could not update the request.                  | `insight-request-store.ts`: updating an Insights request failed (browser-side).                                                        |

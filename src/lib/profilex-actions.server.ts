@@ -628,7 +628,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
           })
           .eq("id", pending.id);
         throw holdErr
-          ? appError("SX-1016", "Could not reserve funds for this lookup.", holdErr)
+          ? appError("SX-1016", "This lookup could not be started. Please try again.", holdErr)
           : new Error(
               "Your Insights wallet does not have enough left for this lookup. Ask an admin to top it up in Settings.",
             );
