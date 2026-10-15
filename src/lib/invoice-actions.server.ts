@@ -250,8 +250,21 @@ async function withBalances<T extends InvoiceRecord>(
   // Code deployed ahead of the migration: no payments/credit notes yet, not an error.
   const pays = pay.error ? [] : ((pay.data ?? []) as { invoice_id: string; amount: number }[]);
   const cns = cn.error ? [] : ((cn.data ?? []) as { invoice_id: string; total: number }[]);
+  // Who opened each invoice (Admin → Billing records the first viewer).
+  const viewerIds = [
+    ...new Set(records.map((r) => r.viewedByAgentId).filter((x): x is string => !!x)),
+  ];
+  const viewers = new Map<string, { name: string; email: string }>();
+  if (viewerIds.length) {
+    const { data: agents } = await db()
+      .from("agents")
+      .select("id, name, email")
+      .in("id", viewerIds);
+    for (const a of agents ?? []) viewers.set(a.id, { name: a.name, email: a.email });
+  }
   return records.map((r) => ({
     ...r,
+    viewedBy: r.viewedByAgentId ? (viewers.get(r.viewedByAgentId) ?? null) : null,
     balance: invoiceBalance(
       r,
       pays.filter((p) => p.invoice_id === r.id).map((p) => ({ amount: Number(p.amount) })),

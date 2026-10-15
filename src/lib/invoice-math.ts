@@ -294,6 +294,10 @@ export interface InvoiceRecord {
   emailedTo: string | null;
   emailedVia: "resend" | "mail_app" | null;
   viewedAt: string | null;
+  /** The company admin who first opened it — id from invoices.viewed_by_agent; name/email are
+   *  filled by the superadmin lists (invoice-actions.server.ts), absent elsewhere. */
+  viewedByAgentId?: string | null;
+  viewedBy?: { name: string; email: string } | null;
 }
 
 /** Maps an `invoices` row (snake_case, NUMERIC as string) to InvoiceRecord. */
@@ -326,6 +330,7 @@ export function toInvoiceRecord(r: {
   emailed_to?: string | null;
   emailed_via?: string | null;
   viewed_at?: string | null;
+  viewed_by_agent?: string | null;
 }): InvoiceRecord {
   return {
     id: r.id,
@@ -377,6 +382,7 @@ export function toInvoiceRecord(r: {
     emailedTo: r.emailed_to ?? null,
     emailedVia: (r.emailed_via as InvoiceRecord["emailedVia"]) ?? null,
     viewedAt: r.viewed_at ?? null,
+    viewedByAgentId: r.viewed_by_agent ?? null,
   };
 }
 

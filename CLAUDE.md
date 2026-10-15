@@ -844,6 +844,11 @@ sent / viewed / signed with typed name + email). Email text and links in `billin
   first view per company in `contract_change_views` (`migrations/20261012_master_agreement.sql`,
   live). A test keeps the text free of hard-coded company names and unknown blanks.
 - `CONTRACTS_VISIBLE_TO_COMPANIES` is now **true** (user, 2026-10-12); the test pins it.
+- **Who viewed (2026-10-16):** superadmin lists show the admin who first opened an invoice
+  ("Viewed 13 Oct by …", from `invoices.viewed_by_agent`, resolved in `withBalances`), and the
+  agreement panel shows who first opened (`contract_document_status.viewed_by_agent`,
+  `migrations/20261016_document_viewed_by.sql`, live) and who signed (typed name + email).
+  Views recorded before this date have no name.
 - Email is OFF until `RESEND_API_KEY` + `EMAIL_FROM` are set on Railway (not set as of 2026-10-12).
 
 ### Contracts (Admin → Contracts, Superadmin → Contracts) — 2026-10-09

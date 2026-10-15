@@ -130,19 +130,25 @@ interface StatusRow {
   sent_to: string | null;
   sent_via: "resend" | "mail_app" | null;
   viewed_at: string | null;
+  viewed_by_agent?: string | null;
   signed_at: string | null;
   signed_name: string | null;
   signed_email: string | null;
 }
 const STATUS_COLUMNS =
-  "document_id, client_id, sent_at, sent_to, sent_via, viewed_at, signed_at, signed_name, signed_email";
-const toStatus = (r: StatusRow): DocumentStatus => ({
+  "document_id, client_id, sent_at, sent_to, sent_via, viewed_at, viewed_by_agent, signed_at, signed_name, signed_email";
+const toStatus = (
+  r: StatusRow,
+  viewer?: { name: string; email: string } | undefined,
+): DocumentStatus => ({
   documentId: r.document_id,
   clientId: r.client_id,
   sentAt: r.sent_at,
   sentTo: r.sent_to,
   sentVia: r.sent_via,
   viewedAt: r.viewed_at,
+  viewedByName: viewer?.name ?? null,
+  viewedByEmail: viewer?.email ?? null,
   signedAt: r.signed_at,
   signedName: r.signed_name,
   signedEmail: r.signed_email,
@@ -155,11 +161,29 @@ async function loadStatuses(clientId?: string): Promise<DocumentStatus[]> {
   if (clientId) q = q.eq("client_id", clientId);
   const { data, error } = await q;
   if (error) return [];
-  return ((data ?? []) as StatusRow[]).map(toStatus);
+  const rows = (data ?? []) as StatusRow[];
+  const viewerIds = [
+    ...new Set(rows.map((r) => r.viewed_by_agent).filter((x): x is string => !!x)),
+  ];
+  const viewers = new Map<string, { name: string; email: string }>();
+  if (viewerIds.length) {
+    const { data: agents } = await db()
+      .from("agents")
+      .select("id, name, email")
+      .in("id", viewerIds);
+    for (const a of agents ?? []) viewers.set(a.id, { name: a.name, email: a.email });
+  }
+  return rows.map((r) =>
+    toStatus(r, r.viewed_by_agent ? viewers.get(r.viewed_by_agent) : undefined),
+  );
 }
 
 /** First time a company admin opens a document: record it (never overwrites an earlier view). */
-async function markDocumentViewed(documentId: string, clientId: string): Promise<void> {
+async function markDocumentViewed(
+  documentId: string,
+  clientId: string,
+  agentId: string | null,
+): Promise<void> {
   const now = new Date().toISOString();
   const { data: existing } = await contractsDb()
     .from("contract_document_status")
@@ -171,7 +195,7 @@ async function markDocumentViewed(documentId: string, clientId: string): Promise
     if (!(existing as { viewed_at: string | null }).viewed_at) {
       await contractsDb()
         .from("contract_document_status")
-        .update({ viewed_at: now })
+        .update({ viewed_at: now, viewed_by_agent: agentId })
         .eq("document_id", documentId)
         .eq("client_id", clientId)
         .is("viewed_at", null);
@@ -181,7 +205,12 @@ async function markDocumentViewed(documentId: string, clientId: string): Promise
   // 23505 = another admin opened it at the same moment; the first view is already recorded.
   await contractsDb()
     .from("contract_document_status")
-    .insert({ document_id: documentId, client_id: clientId, viewed_at: now });
+    .insert({
+      document_id: documentId,
+      client_id: clientId,
+      viewed_at: now,
+      viewed_by_agent: agentId,
+    });
 }
 
 async function requireSuperadmin(accessToken: string) {
@@ -765,9 +794,8 @@ export const getContractFileUrl = createServerFn({ method: "POST" })
     const admin = db();
     // Who is asking comes first — nothing is looked up for an unknown caller.
     const superadmin = await verifySuperadminCaller(data.accessToken);
-    const companyClientId = superadmin
-      ? null
-      : (await requireCompanyAdmin(data.accessToken)).clientId;
+    const companyAdmin = superadmin ? null : await requireCompanyAdmin(data.accessToken);
+    const companyClientId = companyAdmin?.clientId ?? null;
 
     const { data: row, error } = await contractsDb()
       .from("contract_documents")
@@ -781,7 +809,9 @@ export const getContractFileUrl = createServerFn({ method: "POST" })
     if (companyClientId && doc.client_id !== null && doc.client_id !== companyClientId) {
       throw new Error("That document wasn't found");
     }
-    if (companyClientId) await markDocumentViewed(data.documentId, companyClientId);
+    if (companyClientId) {
+      await markDocumentViewed(data.documentId, companyClientId, companyAdmin?.agentId ?? null);
+    }
     const { data: signed, error: sErr } = await admin.storage
       .from(CONTRACTS_BUCKET)
       .createSignedUrl(doc.file_path, DOWNLOAD_LINK_SECONDS, { download: doc.file_name });
@@ -1135,9 +1165,8 @@ export const getContractDocumentBody = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const superadmin = await verifySuperadminCaller(data.accessToken);
-    const companyClientId = superadmin
-      ? null
-      : (await requireCompanyAdmin(data.accessToken)).clientId;
+    const companyAdmin = superadmin ? null : await requireCompanyAdmin(data.accessToken);
+    const companyClientId = companyAdmin?.clientId ?? null;
     const { data: row, error } = await contractsDb()
       .from("contract_documents")
       .select("client_id, title, version_label, body")
@@ -1153,7 +1182,9 @@ export const getContractDocumentBody = createServerFn({ method: "POST" })
     if (companyClientId && doc.client_id !== null && doc.client_id !== companyClientId) {
       throw new Error("That document wasn't found");
     }
-    if (companyClientId) await markDocumentViewed(data.documentId, companyClientId);
+    if (companyClientId) {
+      await markDocumentViewed(data.documentId, companyClientId, companyAdmin?.agentId ?? null);
+    }
     const forClient = companyClientId ?? data.asClientId ?? null;
     return {
       title: doc.title,
@@ -1431,6 +1462,8 @@ export const signContractDocument = createServerFn({ method: "POST" })
           signed_body: signedBody,
           // Keep the first time it was opened; signing without opening counts as viewing.
           viewed_at: prior?.viewed_at ?? now,
+          // Signing without an earlier recorded view: the signer is also the first viewer.
+          ...(prior?.viewed_at ? {} : { viewed_by_agent: caller.agentId }),
           signed_at: now,
           signed_name: data.fullName,
           signed_email: (me as { email: string } | null)?.email ?? "",

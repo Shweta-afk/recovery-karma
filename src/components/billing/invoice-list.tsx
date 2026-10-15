@@ -36,7 +36,14 @@ export function DeliveryStatus({ invoice }: { invoice: InvoiceRecord }) {
         <span className="text-amber-600">Not sent</span>
       )}
       {invoice.viewedAt ? (
-        <span className="font-medium text-emerald-600">Viewed {whenLabel(invoice.viewedAt)}</span>
+        <span className="font-medium text-emerald-600" title={invoice.viewedBy?.email}>
+          Viewed {whenLabel(invoice.viewedAt)}
+          {invoice.viewedBy && (
+            <span className="block font-normal text-muted-foreground">
+              by {invoice.viewedBy.name}
+            </span>
+          )}
+        </span>
       ) : (
         <span className="text-muted-foreground">Not viewed yet</span>
       )}

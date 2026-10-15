@@ -63,13 +63,18 @@ function StageChip({ status }: { status: DocumentStatus | null }) {
       >
         <CheckCircle2 className="h-3 w-3" /> Signed {whenLabel(status!.signedAt!)} ·{" "}
         {status?.signedName}
+        {status?.signedEmail && <span className="font-normal">({status.signedEmail})</span>}
       </span>
     );
   }
   if (stage === "viewed") {
     return (
-      <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:text-sky-400">
-        Viewed {whenLabel(status!.viewedAt!)} · not signed
+      <span
+        className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:text-sky-400"
+        title={status?.viewedByEmail ?? undefined}
+      >
+        Viewed {whenLabel(status!.viewedAt!)}
+        {status?.viewedByName ? ` by ${status.viewedByName}` : ""} · not signed
       </span>
     );
   }

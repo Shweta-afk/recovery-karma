@@ -38,6 +38,9 @@ export interface DocumentStatus {
   sentTo: string | null;
   sentVia: "resend" | "mail_app" | null;
   viewedAt: string | null;
+  /** The company admin who first opened it (null for views recorded before 2026-10-16). */
+  viewedByName: string | null;
+  viewedByEmail: string | null;
   signedAt: string | null;
   signedName: string | null;
   signedEmail: string | null;
