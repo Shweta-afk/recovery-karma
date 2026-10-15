@@ -324,8 +324,14 @@ export const issueCreditNote = createServerFn({ method: "POST" })
         `At most ₹${creditable.toLocaleString("en-IN")} (before GST) can still be credited`,
       );
     }
-    // Same GST split as the invoice it corrects: same supplier state and place of supply.
-    const gst = gstBreakdown(taxable, invoice.supplier.stateCode ?? "", invoice.placeOfSupply);
+    // Same GST split as the invoice it corrects: same supplier state and place of supply, and no
+    // GST at all against a Bill of Supply.
+    const gst = gstBreakdown(
+      taxable,
+      invoice.supplier.stateCode ?? "",
+      invoice.placeOfSupply,
+      !!invoice.supplier.gstin,
+    );
     const issueDate = todayIstKey();
     const prefix = invoice.invoiceNumber.split("/")[0];
     const { data: row, error } = await raw().rpc("issue_credit_note", {

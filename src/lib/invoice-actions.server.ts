@@ -530,9 +530,10 @@ export const createInvoice = createServerFn({ method: "POST" })
     const admin = db();
 
     const supplier = await loadBillingProfile();
-    if (!supplier.legalName || !supplier.address || !supplier.stateCode || !supplier.gstin) {
+    // No GSTIN is allowed: the invoice is then a Bill of Supply with no GST (gstBreakdown).
+    if (!supplier.legalName || !supplier.address || !supplier.stateCode) {
       throw new Error(
-        "Fill in SamvadX's own billing details (legal name, GSTIN, address, state) on Superadmin → Invoices first",
+        "Fill in SamvadX's own billing details (legal name, address, state) on Superadmin → Invoices first",
       );
     }
 
@@ -596,7 +597,7 @@ export const createInvoice = createServerFn({ method: "POST" })
       sac = supplier.sacSetup;
     }
 
-    const gst = gstBreakdown(taxableAmount, supplier.stateCode, cb.state_code);
+    const gst = gstBreakdown(taxableAmount, supplier.stateCode, cb.state_code, !!supplier.gstin);
     const issueDate = todayIstKey();
     // The company's own payment terms when its price list sets them, else SamvadX's default.
     const companyTerms = (await loadPriceList(data.clientId)).paymentTermsDays;

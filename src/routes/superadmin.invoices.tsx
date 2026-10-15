@@ -173,12 +173,8 @@ function SuperadminInvoicesPage() {
     }
   };
 
-  const supplierReady = !!(
-    profile.legalName &&
-    profile.gstin &&
-    profile.address &&
-    profile.stateCode
-  );
+  // GSTIN is optional: without one, invoices are Bills of Supply with no GST.
+  const supplierReady = !!(profile.legalName && profile.address && profile.stateCode);
 
   const outstanding = useMemo(
     // What is still owed after payments and credit notes, not the face value of unpaid invoices.
@@ -331,11 +327,11 @@ function SuperadminInvoicesPage() {
                     <Input
                       value={profile.legalName}
                       onChange={(e) => set("legalName", e.target.value)}
-                      placeholder="Axiotta Technologies Private Limited"
+                      placeholder="Samvadx AI Technologies"
                       className="h-8 text-xs"
                     />
                   </Field>
-                  <Field label="GSTIN">
+                  <Field label="GSTIN (blank = not registered → Bill of Supply, no GST)">
                     <Input
                       value={profile.gstin ?? ""}
                       onChange={(e) => {
@@ -385,7 +381,7 @@ function SuperadminInvoicesPage() {
                       className="h-8 text-xs"
                     />
                   </Field>
-                  <Field label="Authorised signatory (agreement)">
+                  <Field label="Authorised signatory (agreement + invoices)">
                     <Input
                       value={profile.signatoryName ?? ""}
                       onChange={(e) => set("signatoryName", e.target.value)}

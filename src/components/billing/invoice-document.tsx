@@ -9,6 +9,7 @@ import { Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   amountInWords,
+  isBillOfSupply,
   stateName,
   type InvoiceParty,
   type InvoiceRecord,
@@ -49,12 +50,13 @@ function Party({
     <div className="space-y-0.5">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">{title}</p>
       <p className="font-semibold">{p.legalName}</p>
-      <p className="whitespace-pre-line">{p.address}</p>
+      {/* Line breaks typed into the address are joined, so it wraps evenly in the column. */}
+      <p>{p.address.replace(/\s*\n\s*/g, " ")}</p>
       <p>State: {stateLine(p.stateCode)}</p>
       <p>GSTIN: {p.gstin ?? noGstin}</p>
       {(p.pan || showPan) && <p>PAN: {p.pan || "—"}</p>}
-      {p.email && <p>{p.email}</p>}
-      {p.phone && <p>{p.phone}</p>}
+      {p.email && <p>Email: {p.email}</p>}
+      {p.phone && <p>Phone: {p.phone}</p>}
     </div>
   );
 }
@@ -76,6 +78,8 @@ export function InvoiceDocument({
 }) {
   const s = invoice.supplier;
   const intra = invoice.cgst > 0 || invoice.sgst > 0;
+  // No supplier GSTIN → a Bill of Supply: no GST is charged, so no tax rows or reverse charge.
+  const billOfSupply = isBillOfSupply(invoice);
   const cancelled = invoice.status === "cancelled";
   return (
     <div className="relative mx-auto w-full max-w-[800px] bg-white p-8 print:max-w-none print:p-0 text-[12px] leading-relaxed text-neutral-900">
@@ -92,7 +96,7 @@ export function InvoiceDocument({
           {/* Same file as the login screen's logo (public/logo.png, 500×125). */}
           <img src="/logo.png" alt="SamvadX" className="mb-3 h-9 w-auto" />
           <h1 className="text-xl font-bold tracking-tight">
-            {credit ? "CREDIT NOTE" : "TAX INVOICE"}
+            {credit ? "CREDIT NOTE" : billOfSupply ? "BILL OF SUPPLY" : "TAX INVOICE"}
           </h1>
           <p className="text-neutral-500">Original for recipient</p>
         </div>
@@ -119,7 +123,7 @@ export function InvoiceDocument({
       </div>
 
       <div className="grid grid-cols-2 gap-6 border-b border-neutral-300 py-4">
-        <Party title="Supplier" p={s} noGstin="—" showPan />
+        <Party title="Supplier" p={s} noGstin="Not registered under GST" showPan />
         <Party title="Bill to" p={invoice.recipient} noGstin="Unregistered" />
       </div>
 
@@ -132,8 +136,12 @@ export function InvoiceDocument({
       <p className="py-3">
         <span className="text-neutral-500">Place of supply:</span>{" "}
         {stateLine(invoice.placeOfSupply)}
-        <span className="mx-3 text-neutral-300">|</span>
-        <span className="text-neutral-500">Tax payable on reverse charge:</span> No
+        {!billOfSupply && (
+          <>
+            <span className="mx-3 text-neutral-300">|</span>
+            <span className="text-neutral-500">Tax payable on reverse charge:</span> No
+          </>
+        )}
       </p>
 
       <table className="w-full border-collapse">
@@ -141,9 +149,11 @@ export function InvoiceDocument({
           <tr className="border-y border-neutral-300 text-left text-[10px] uppercase tracking-wide text-neutral-500">
             <th className="py-2 pr-2 font-semibold">#</th>
             <th className="py-2 pr-2 font-semibold">Description</th>
-            <th className="py-2 pr-2 font-semibold">SAC</th>
+            {invoice.sac && <th className="py-2 pr-2 font-semibold">SAC</th>}
             <th className="py-2 pr-2 text-right font-semibold">Qty</th>
-            <th className="py-2 text-right font-semibold">Taxable value</th>
+            <th className="py-2 text-right font-semibold">
+              {billOfSupply ? "Amount" : "Taxable value"}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -160,7 +170,7 @@ export function InvoiceDocument({
                   </ul>
                 )}
               </td>
-              <td className="py-1.5 pr-2">{invoice.sac ?? "—"}</td>
+              {invoice.sac && <td className="py-1.5 pr-2">{invoice.sac}</td>}
               <td className="py-1.5 pr-2 text-right">
                 {line.quantity && line.rate ? `${line.quantity} × ${formatRupees(line.rate)}` : 1}
               </td>
@@ -171,8 +181,11 @@ export function InvoiceDocument({
       </table>
 
       <div className="ml-auto mt-3 w-full max-w-[320px] space-y-1 tabular-nums">
-        <Row label="Taxable value" value={formatRupees(invoice.taxable)} />
-        {intra ? (
+        <Row
+          label={billOfSupply ? "Amount" : "Taxable value"}
+          value={formatRupees(invoice.taxable)}
+        />
+        {billOfSupply ? null : intra ? (
           <>
             <Row label="CGST @ 9%" value={formatRupees(invoice.cgst)} />
             <Row label="SGST @ 9%" value={formatRupees(invoice.sgst)} />
@@ -188,6 +201,11 @@ export function InvoiceDocument({
 
       <p className="mt-3 border-b border-neutral-300 pb-4">
         <span className="text-neutral-500">Amount in words:</span> {amountInWords(invoice.total)}
+        {billOfSupply && (
+          <span className="mt-1 block text-neutral-500">
+            GST not charged — the supplier is not registered under GST.
+          </span>
+        )}
       </p>
 
       <div className="grid grid-cols-2 gap-6 pt-4">
@@ -207,7 +225,14 @@ export function InvoiceDocument({
         </div>
         <div className="flex flex-col items-end justify-end text-right">
           <p>For {s.legalName}</p>
-          <p className="mt-10 text-neutral-500">Authorised signatory</p>
+          <div className="mt-10">
+            {s.signatoryName && <p className="font-semibold">{s.signatoryName}</p>}
+            <p className="text-neutral-500">
+              {s.signatoryDesignation
+                ? `${s.signatoryDesignation} · Authorised signatory`
+                : "Authorised signatory"}
+            </p>
+          </div>
         </div>
       </div>
 

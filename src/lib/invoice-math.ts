@@ -143,14 +143,17 @@ export interface GstBreakdown {
 
 /** Splits 18% GST on a taxable value: same state → 9% CGST + 9% SGST, otherwise 18% IGST.
  * Amounts in our contracts are EXCLUSIVE of GST, so `taxable` is what the client agreed to pay
- * before tax. */
+ * before tax. A supplier with no GSTIN may not charge GST at all (`supplierRegistered` false):
+ * every tax is 0 and the document is a Bill of Supply, not a Tax Invoice. */
 export function gstBreakdown(
   taxable: number,
   supplierStateCode: string,
   placeOfSupplyCode: string,
+  supplierRegistered = true,
 ): GstBreakdown {
   const t = round2(taxable);
   const intraState = supplierStateCode === placeOfSupplyCode;
+  if (!supplierRegistered) return { taxable: t, intraState, cgst: 0, sgst: 0, igst: 0, total: t };
   const half = round2((t * GST_RATE) / 2 / 100);
   const cgst = intraState ? half : 0;
   const sgst = intraState ? half : 0;
@@ -246,6 +249,14 @@ export interface InvoiceParty {
   bankAccount?: string | null;
   bankIfsc?: string | null;
   terms?: string | null;
+  /** Supplier only — printed in the signature block (snapshotted with the rest). */
+  signatoryName?: string | null;
+  signatoryDesignation?: string | null;
+}
+
+/** An invoice from a supplier with no GSTIN is a Bill of Supply, with no GST on it. */
+export function isBillOfSupply(invoice: Pick<InvoiceRecord, "supplier">): boolean {
+  return !invoice.supplier.gstin;
 }
 
 export type InvoiceStatus = "unpaid" | "paid" | "cancelled";

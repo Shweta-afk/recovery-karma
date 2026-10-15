@@ -13,6 +13,17 @@ import {
 } from "../src/lib/invoice-math";
 
 describe("gstBreakdown", () => {
+  test("supplier without a GSTIN → no GST at all (Bill of Supply)", () => {
+    expect(gstBreakdown(10000, "27", "27", false)).toEqual({
+      taxable: 10000,
+      intraState: true,
+      cgst: 0,
+      sgst: 0,
+      igst: 0,
+      total: 10000,
+    });
+    expect(gstBreakdown(10000, "27", "29", false).total).toBe(10000);
+  });
   test("same state → 9% CGST + 9% SGST", () => {
     expect(gstBreakdown(10000, "27", "27")).toEqual({
       taxable: 10000,

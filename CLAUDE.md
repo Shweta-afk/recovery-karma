@@ -757,6 +757,11 @@ existed). Server: `invoice-actions.server.ts` (issue/cancel), `billing-actions.s
 (price lists, payments, credit notes), `price-list.server.ts` (`loadPriceList`, shared so
 billing ↔ contracts don't import each other). Rules: `invoice-math.ts` (pure, tested).
 
+- **No GSTIN yet → Bill of Supply (2026-10-16).** The supplier is Samvadx AI Technologies
+  (proprietorship, not GST-registered as of 2026-10-16). With `billing_profile.gstin` blank,
+  `gstBreakdown(..., supplierRegistered=false)` charges no GST, the document prints "BILL OF
+  SUPPLY" with no tax rows, and credit notes follow. Saving a GSTIN switches new invoices back to
+  Tax Invoices; issued ones keep their snapshot. Invoices print the signatory name/designation.
 - **Price list per company** (`client_price_lists`, company Billing tab): setup lines, monthly
   lines, per-agent-seat price, payment terms (NULL = supplier default). Invoices open prefilled
   from it. Insights prices stay in `profilex_settings.rate_card` — one place each.

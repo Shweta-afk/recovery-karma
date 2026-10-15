@@ -188,22 +188,20 @@ export function CompanyInvoicesCard({
 
   const check = checkCompanyDetails(details);
   const detailsComplete = check.missing.length === 0 && !Object.keys(check.invalid).length;
-  const supplierReady = !!(
-    supplier?.legalName &&
-    supplier.gstin &&
-    supplier.address &&
-    supplier.stateCode
-  );
+  // No GSTIN is fine: invoices are then Bills of Supply with no GST.
+  const supplierReady = !!(supplier?.legalName && supplier.address && supplier.stateCode);
   // What issuing actually needs (createInvoice); the rest is wanted, and flagged, but not blocking.
   const recipientReady = !!(details.legalName && details.address && details.stateCode);
   const canIssue = supplierReady && recipientReady;
 
   const gstHint =
-    supplier?.stateCode && details.stateCode
-      ? gstBreakdown(100, supplier.stateCode, details.stateCode).intraState
-        ? "Same state as SamvadX → 9% CGST + 9% SGST"
-        : "Different state from SamvadX → 18% IGST"
-      : null;
+    supplier && !supplier.gstin
+      ? "SamvadX has no GSTIN yet → Bill of Supply, no GST charged"
+      : supplier?.stateCode && details.stateCode
+        ? gstBreakdown(100, supplier.stateCode, details.stateCode).intraState
+          ? "Same state as SamvadX → 9% CGST + 9% SGST"
+          : "Different state from SamvadX → 18% IGST"
+        : null;
 
   const saveDetails = async () => {
     setTriedSave(true);
@@ -427,8 +425,11 @@ export function CompanyInvoicesCard({
         <CardHeader className="border-b border-border pb-3">
           <CardTitle className="text-sm font-semibold">New invoice</CardTitle>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Pick what it's for. Amounts are before GST; 18% GST is added. Preview it first — it
-            shows exactly what the company will receive.
+            Pick what it's for.{" "}
+            {supplier && !supplier.gstin
+              ? "No GST is added while SamvadX has no GSTIN."
+              : "Amounts are before GST; 18% GST is added."}{" "}
+            Preview it first — it shows exactly what the company will receive.
           </p>
         </CardHeader>
         <CardContent className="pt-4">
