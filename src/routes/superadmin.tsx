@@ -58,7 +58,10 @@ function SuperadminLayout() {
     }
   }, [user, loading, navigate]);
 
-  if (loading || !user) return null;
+  // AppShell shows "Loading…" and, once it's clear nobody is signed in, sends them to /login
+  // (returning here afterwards). Returning null instead left a signed-out visitor — e.g. one
+  // opening an invoice link from an email — on a blank page forever.
+  if (loading || !user) return <AppShell>{null}</AppShell>;
 
   if (user.role !== "superadmin") {
     return (

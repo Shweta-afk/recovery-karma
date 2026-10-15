@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { useAuth, homeRouteForRole, type Role, type AuthUser } from "@/lib/auth";
+import { afterLoginPath, NEXT_PARAM } from "@/lib/login-redirect";
 import { MOVED_PARAM } from "@/lib/company-address";
 
 // Same as setup.tsx: Supabase's email codes are 8 digits on this project.
@@ -63,9 +64,10 @@ function LoginPage() {
   const goHome = (loggedInUser: AuthUser | null) => {
     setTimeout(() => {
       const role = loggedInUser?.role ?? user?.role;
-      // Same helper the sidebar logo uses, so the two can never disagree about where a role
-      // lands.
-      navigate({ to: homeRouteForRole(role as Role | undefined) });
+      // The role's home (same helper the sidebar logo uses) — or, when they were sent here from
+      // a page in their own section (e.g. an invoice link), back to that page.
+      const next = new URLSearchParams(window.location.search).get(NEXT_PARAM);
+      navigate({ href: afterLoginPath(next, homeRouteForRole(role as Role | undefined)) });
     }, 150);
   };
 

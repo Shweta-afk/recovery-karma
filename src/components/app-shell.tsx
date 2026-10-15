@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useAuth } from "@/lib/auth";
+import { NEXT_PARAM } from "@/lib/login-redirect";
 import { useTheme } from "@/lib/theme";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { cn } from "@/lib/utils";
@@ -114,7 +115,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!loading && user === null) {
-      navigate({ to: "/login" });
+      // Remember the page (e.g. an invoice link from an email) so signing in returns to it.
+      const here = `${window.location.pathname}${window.location.search}`;
+      navigate({ href: `/login?${NEXT_PARAM}=${encodeURIComponent(here)}` });
     }
   }, [user, loading, navigate]);
 
