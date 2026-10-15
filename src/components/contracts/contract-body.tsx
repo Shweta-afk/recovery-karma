@@ -31,14 +31,20 @@ function Inline({ text }: { text: string }) {
 /** Laid out like the Word agreement it comes from (Samvadx Aggrement (1).docx): A4 with Word's
  *  margins (1" top, 0.9" sides), Calibri 12pt (Carlito — same metrics — where Calibri isn't
  *  installed), justified, and Word's own spacing in px at 96dpi: body 5pt after at 1.1 lines
- *  (= 1.34 for Calibri), headings 14pt/8pt before, recitals at 1.5 lines, the title 380pt down
- *  page 1 (left blank for stamp paper), gridded tables, page breaks and "<footer> — Page N". */
+ *  (= 1.34 for Calibri), headings 14pt/8pt before, recitals at 1.5 lines, gridded tables, page
+ *  breaks and "<footer> — Page N". Adds the SamvadX logo above the title and a faint logo
+ *  watermark on every page (user, 2026-10-16; the Word file's stamp-paper gap was dropped). */
+/** One A4 page at 96dpi, for spacing the on-screen watermarks a page apart. */
+const A4_HEIGHT_PX = 1123;
+const WATERMARK =
+  "absolute left-1/2 w-[60%] max-w-[460px] -translate-x-1/2 -rotate-[30deg] opacity-[0.07] select-none";
+
 export function ContractBody({ text }: { text: string }) {
   const blocks = parseTemplateBlocks(text);
   const footer = blocks.find((b) => b.type === "footer");
   return (
     <div
-      className="contract-paper mx-auto w-full max-w-[794px] bg-white px-[87px] pb-[87px] pt-[96px] text-justify text-[16px] leading-[1.34] text-black print:max-w-none print:p-0"
+      className="contract-paper relative isolate mx-auto w-full max-w-[794px] overflow-hidden bg-white px-[87px] pb-[87px] pt-[96px] text-justify text-[16px] leading-[1.34] text-black print:max-w-none print:p-0"
       style={{ fontFamily: 'Calibri, Carlito, "Segoe UI", Arial, sans-serif' }}
     >
       {footer?.type === "footer" && (
@@ -47,11 +53,31 @@ export function ContractBody({ text }: { text: string }) {
           `${footer.text} — Page `,
         )} counter(page); font: 10pt Calibri, Carlito, Arial, sans-serif; } } }`}</style>
       )}
+      {/* Watermark. On screen: one per A4 page height down the paper. In print: a single fixed
+          copy, which the browser repeats on every printed page. Behind the text (-z-10). */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 print:hidden">
+        {Array.from({ length: 30 }, (_, n) => (
+          <img
+            key={n}
+            src="/logo.png"
+            alt=""
+            className={WATERMARK}
+            style={{ top: 420 + n * A4_HEIGHT_PX }}
+          />
+        ))}
+      </div>
+      <img
+        aria-hidden
+        src="/logo.png"
+        alt=""
+        className={`${WATERMARK} !fixed !top-1/2 hidden -translate-y-1/2 print:block`}
+      />
+      <img src="/logo.png" alt="SamvadX" className="mx-auto mb-6 h-12 w-auto" />
       {blocks.map((b, i) => {
         switch (b.type) {
           case "h1":
             return (
-              <h1 key={i} className={`mb-4 text-center font-bold ${i === 0 ? "pt-[507px]" : ""}`}>
+              <h1 key={i} className="mb-4 text-center font-bold">
                 <Inline text={b.text} />
               </h1>
             );

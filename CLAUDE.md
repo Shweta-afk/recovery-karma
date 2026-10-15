@@ -841,7 +841,8 @@ sent / viewed / signed with typed name + email). Email text and links in `billin
   address (billing_profile), short name "Samvadx".
   **2026-10-16: the text is generated from the Word file and prints in its layout** — A4, Word's
   margins, Calibri/Carlito 12pt, justified, Word's spacing, lettered recitals, gridded tables,
-  the title 380pt down page 1 (stamp-paper space) and
+  the SamvadX logo above the title, a faint logo watermark on every page (stamp-paper gap
+  dropped, user 2026-10-16) and
   "<legal name> — Master Service Agreement — Page N". Markup: `### `, `^ ` centred, `+ ` lettered,
   `---page---`, `@footer` (contract-template.ts); renderer contract-body.tsx. When the Word file
   changes, regenerate the body from it (docx → markup, then party details → blanks) rather than
