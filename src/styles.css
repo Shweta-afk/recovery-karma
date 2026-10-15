@@ -185,6 +185,14 @@
     size: A4;
     margin: 12mm;
   }
+  /* Agreements print on Word's page: 1" top, 0.9" sides and bottom (contract-body.tsx). */
+  @page contract {
+    size: A4;
+    margin: 25.4mm 22.9mm 22.9mm;
+  }
+  .contract-paper {
+    page: contract;
+  }
   body.printing-invoice > *:not(.invoice-print-root) {
     display: none !important;
   }

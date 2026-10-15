@@ -2,7 +2,12 @@
 // SamvadX doesn't know) and must not hard-code either party — renaming SamvadX's company or a
 // client is supposed to flow through without editing the text.
 import { describe, expect, test } from "bun:test";
-import { entityPhrase, fillTemplate, templateValueMap } from "../src/lib/contract-template";
+import {
+  entityPhrase,
+  fillTemplate,
+  parseTemplateBlocks,
+  templateValueMap,
+} from "../src/lib/contract-template";
 import { DEFAULT_MASTER_AGREEMENT_BODY } from "../src/lib/master-agreement";
 
 const base = {
@@ -68,5 +73,33 @@ describe("entityPhrase — how each party is described", () => {
     ).text;
     expect(text).toContain("a sole proprietorship (Proprietor PAN: AAJPZ2623H");
     expect(text).not.toContain("incorporated under the Companies Act");
+  });
+});
+
+describe("Word layout markup", () => {
+  test("headings, centred lines, lettered items, page breaks and the footer parse", () => {
+    const blocks = parseTemplateBlocks(
+      "# T\n\n^ centred\n\n### Sub\n\n+ one\n+ two\n\n---page---\n\n@footer X — MSA",
+    );
+    expect(blocks).toEqual([
+      { type: "h1", text: "T" },
+      { type: "center", text: "centred" },
+      { type: "h3", text: "Sub" },
+      { type: "ol", items: ["one", "two"] },
+      { type: "pagebreak" },
+      { type: "footer", text: "X — MSA" },
+    ]);
+  });
+  test("a blank line between two tables keeps them two tables", () => {
+    const blocks = parseTemplateBlocks("| a | b |\n| 1 | 2 |\n\n| c |\n| 3 |");
+    expect(blocks.map((b) => b.type)).toEqual(["table", "table"]);
+  });
+  test("the agreement keeps the Word file's structure and no one company's details", () => {
+    const blocks = parseTemplateBlocks(DEFAULT_MASTER_AGREEMENT_BODY);
+    expect(blocks.filter((b) => b.type === "h2")).toHaveLength(26); // 21 sections + 5 annexures
+    expect(blocks.filter((b) => b.type === "table")).toHaveLength(4);
+    expect(blocks.filter((b) => b.type === "pagebreak")).toHaveLength(2);
+    expect(blocks.find((b) => b.type === "ol")).toMatchObject({ items: expect.any(Array) });
+    expect(DEFAULT_MASTER_AGREEMENT_BODY).not.toMatch(/GKB|Yogesh|BCOPB3579G|9th Oct|INSERT CIN/i);
   });
 });

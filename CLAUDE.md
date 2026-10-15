@@ -838,7 +838,14 @@ sent / viewed / signed with typed name + email). Email text and links in `billin
   (`entityPhrase`: CIN → company/LLP, PAN 4th letter P → sole proprietorship, F → firm) — SamvadX
   is a proprietorship, so never "incorporated under the Companies Act". Re-checked against
   "Samvadx Aggrement (1).docx" on 2026-10-16: same clauses; registered office is the Dharavi
-  address (billing_profile), short name "Samvadx". Signing freezes the
+  address (billing_profile), short name "Samvadx".
+  **2026-10-16: the text is generated from the Word file and prints in its layout** — A4, Word's
+  margins, Calibri/Carlito 12pt, justified, Word's spacing, lettered recitals, gridded tables,
+  page breaks before Annexures A and E, the title 380pt down page 1 (stamp-paper space) and
+  "<legal name> — Master Service Agreement — Page N". Markup: `### `, `^ ` centred, `+ ` lettered,
+  `---page---`, `@footer` (contract-template.ts); renderer contract-body.tsx. When the Word file
+  changes, regenerate the body from it (docx → markup, then party details → blanks) rather than
+  hand-editing, and check word-for-word against the file. Signing freezes the
   exact text in `contract_document_status.signed_body`. `master-agreement-panel.tsx` lists every
   company Not sent → Sent → Viewed → Signed, with "Their copy" and Send. Change notices record
   first view per company in `contract_change_views` (`migrations/20261012_master_agreement.sql`,

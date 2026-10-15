@@ -3,8 +3,13 @@
 // company is generated, not re-uploaded. The common legal terms stay an uploaded document
 // (the platform terms). Pure: contracts.server.ts gathers the values, this fills them.
 //
-// Body format (kept deliberately small so anyone can edit it in a textarea):
-//   "# Heading", "## Subheading", "- bullet", "| a | b |" table rows, blank line = new paragraph.
+// Body format (kept deliberately small so anyone can edit it in a textarea; it mirrors what a
+// Word agreement uses, so the master agreement prints like the Word file it came from):
+//   "# Title" (centred), "## Section heading", "### Sub-heading", "^ centred paragraph",
+//   "- bullet", "+ lettered item" (A., B., C. …), "| a | b |" table rows, "---page---" (page
+//   break when printed), "@footer text" (foot of every printed page, before the page number),
+//   **bold**; blank line = new paragraph, and it also ends a list or table
+//   (so two tables separated by a blank line stay two tables).
 // Table placeholders expand to "| … |" rows, so they render as tables.
 
 import { round2, sumLines, type InvoiceLine, type PriceList } from "./invoice-math";
@@ -61,6 +66,8 @@ export const PLACEHOLDERS: { key: string; meaning: string }[] = [
     meaning: "Your company's short name used through the agreement, e.g. Axiotta",
   },
   { key: "supplier_short_name_caps", meaning: "The same short name in CAPITALS" },
+  { key: "supplier_legal_name_caps", meaning: "Your company's legal name in CAPITALS" },
+  { key: "company_legal_name_caps", meaning: "The company's legal name in CAPITALS" },
   { key: "supplier_cin", meaning: "Your company's CIN" },
   {
     key: "supplier_entity",
@@ -145,6 +152,7 @@ export function templateValueMap(v: TemplateValues): Record<string, string> {
   return {
     company_name: v.companyName,
     company_legal_name: v.companyLegalName || v.companyName,
+    company_legal_name_caps: (v.companyLegalName || v.companyName).toUpperCase(),
     company_gstin: v.companyGstin || "Unregistered",
     company_address: v.companyAddress || "—",
     company_pan: v.companyPan || "—",
@@ -154,6 +162,7 @@ export function templateValueMap(v: TemplateValues): Record<string, string> {
     company_signatory_name: v.companySignatoryName || "—",
     company_signatory_designation: v.companySignatoryDesignation || "—",
     supplier_legal_name: v.supplierLegalName || "SamvadX",
+    supplier_legal_name_caps: (v.supplierLegalName || "SamvadX").toUpperCase(),
     supplier_short_name: v.supplierShortName || v.supplierLegalName || "SamvadX",
     supplier_short_name_caps: (
       v.supplierShortName ||
@@ -249,35 +258,62 @@ Prepared on {{today}}.`;
 // ── Rendering ────────────────────────────────────────────────────────────────
 
 export type TemplateBlock =
-  | { type: "h1" | "h2" | "p"; text: string }
-  | { type: "ul"; items: string[] }
-  | { type: "table"; rows: string[][] };
+  | { type: "h1" | "h2" | "h3" | "p" | "center"; text: string }
+  | { type: "ul" | "ol"; items: string[] }
+  | { type: "table"; rows: string[][] }
+  | { type: "pagebreak" }
+  /** "@footer text" — printed at the foot of every page, followed by the page number. */
+  | { type: "footer"; text: string };
 
 /** Splits filled text into blocks for display/print. */
 export function parseTemplateBlocks(text: string): TemplateBlock[] {
   const blocks: TemplateBlock[] = [];
   let para: string[] = [];
+  // A blank line closes the current list/table: the next row or item starts a new one.
+  let open = false;
   const flush = () => {
     if (para.length) blocks.push({ type: "p", text: para.join(" ") });
     para = [];
+  };
+  const listItem = (type: "ul" | "ol", item: string) => {
+    flush();
+    const last = blocks[blocks.length - 1];
+    if (open && last?.type === type) last.items.push(item);
+    else blocks.push({ type, items: [item] });
+    open = true;
   };
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (!line) {
       flush();
+      open = false;
       continue;
     }
-    if (line.startsWith("## ")) {
+    if (line !== "|" && !line.startsWith("|") && !line.startsWith("- ") && !line.startsWith("+ ")) {
+      open = false;
+    }
+    if (line.startsWith("@footer ")) {
+      flush();
+      blocks.push({ type: "footer", text: line.slice(8).trim() });
+    } else if (line === "---page---") {
+      flush();
+      blocks.push({ type: "pagebreak" });
+    } else if (line.startsWith("### ")) {
+      flush();
+      blocks.push({ type: "h3", text: line.slice(4) });
+    } else if (line.startsWith("^ ")) {
+      flush();
+      blocks.push({ type: "center", text: line.slice(2) });
+    } else if (line.startsWith("## ")) {
       flush();
       blocks.push({ type: "h2", text: line.slice(3) });
     } else if (line.startsWith("# ")) {
       flush();
       blocks.push({ type: "h1", text: line.slice(2) });
     } else if (line.startsWith("- ")) {
-      flush();
-      const last = blocks[blocks.length - 1];
-      if (last?.type === "ul") last.items.push(line.slice(2));
-      else blocks.push({ type: "ul", items: [line.slice(2)] });
+      listItem("ul", line.slice(2));
+    } else if (line.startsWith("+ ")) {
+      listItem("ol", line.slice(2));
     } else if (line.startsWith("|") && line.endsWith("|")) {
       flush();
       const cells = line
@@ -285,8 +321,9 @@ export function parseTemplateBlocks(text: string): TemplateBlock[] {
         .split("|")
         .map((c) => c.trim());
       const last = blocks[blocks.length - 1];
-      if (last?.type === "table") last.rows.push(cells);
+      if (open && last?.type === "table") last.rows.push(cells);
       else blocks.push({ type: "table", rows: [cells] });
+      open = true;
     } else {
       para.push(line);
     }
