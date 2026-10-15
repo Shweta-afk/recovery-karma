@@ -833,7 +833,12 @@ sent / viewed / signed with typed name + email). Email text and links in `billin
   Aggrement.docx" → `src/lib/master-agreement.ts`): published once as a platform
   `contract_documents` row with `{{blanks}}` (`publishMasterAgreement`); each company sees it
   filled with ITS details and SamvadX's own (`billing_profile` incl. `short_name`, `cin`,
-  `signatory_*` — set on Invoices → SamvadX details), via `bodyForCompany`. Signing freezes the
+  `signatory_*` — set on Invoices → SamvadX details), via `bodyForCompany`.
+  The opening describes each party from its CIN/PAN via `{{supplier_entity}}` / `{{company_entity}}`
+  (`entityPhrase`: CIN → company/LLP, PAN 4th letter P → sole proprietorship, F → firm) — SamvadX
+  is a proprietorship, so never "incorporated under the Companies Act". Re-checked against
+  "Samvadx Aggrement (1).docx" on 2026-10-16: same clauses; registered office is the Dharavi
+  address (billing_profile), short name "Samvadx". Signing freezes the
   exact text in `contract_document_status.signed_body`. `master-agreement-panel.tsx` lists every
   company Not sent → Sent → Viewed → Signed, with "Their copy" and Send. Change notices record
   first view per company in `contract_change_views` (`migrations/20261012_master_agreement.sql`,

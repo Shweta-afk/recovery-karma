@@ -26,6 +26,8 @@ export interface TemplateValues {
   /** SamvadX's own company, from Superadmin → Invoices → SamvadX details (billing_profile). */
   supplierShortName?: string;
   supplierCin?: string;
+  supplierPan?: string;
+  supplierGstin?: string | null;
   supplierAddress?: string;
   supplierSignatoryName?: string;
   supplierSignatoryDesignation?: string;
@@ -54,13 +56,28 @@ export const PLACEHOLDERS: { key: string; meaning: string }[] = [
   { key: "company_signatory_name", meaning: "Who signs for the company" },
   { key: "company_signatory_designation", meaning: "The signatory's designation" },
   { key: "supplier_legal_name", meaning: "Your company's legal name (Invoices → SamvadX details)" },
-  { key: "supplier_short_name", meaning: "Your company's short name used through the agreement, e.g. Axiotta" },
+  {
+    key: "supplier_short_name",
+    meaning: "Your company's short name used through the agreement, e.g. Axiotta",
+  },
   { key: "supplier_short_name_caps", meaning: "The same short name in CAPITALS" },
   { key: "supplier_cin", meaning: "Your company's CIN" },
+  {
+    key: "supplier_entity",
+    meaning: "What your business is, from its CIN/PAN — e.g. 'a sole proprietorship (PAN: …)'",
+  },
+  {
+    key: "company_entity",
+    meaning:
+      "What the company is, from its CIN/PAN — e.g. 'a company incorporated in India (CIN: …)'",
+  },
   { key: "supplier_address", meaning: "Your company's registered address" },
   { key: "supplier_signatory_name", meaning: "Who signs for your company" },
   { key: "supplier_signatory_designation", meaning: "Their designation" },
-  { key: "signed_by", meaning: "The name the client's admin typed when signing (blank until signed)" },
+  {
+    key: "signed_by",
+    meaning: "The name the client's admin typed when signing (blank until signed)",
+  },
   { key: "signed_date", meaning: "The date the client signed (blank until signed)" },
   { key: "effective_date", meaning: "The date this schedule takes effect" },
   { key: "today", meaning: "Today's date" },
@@ -74,6 +91,38 @@ export const PLACEHOLDERS: { key: string; meaning: string }[] = [
   { key: "insights_price_table", meaning: "Table of Insights services and their prices" },
   { key: "payment_terms_days", meaning: "Days to pay an invoice" },
 ];
+
+/** The 4th character of an Indian PAN says who holds it: P = an individual (so a proprietorship
+ *  when it's a business's PAN), F = a firm or LLP, C = a company. */
+const PAN_HOLDER: Record<string, string> = {
+  P: "a sole proprietorship",
+  F: "a partnership firm / LLP",
+  C: "a company incorporated in India",
+};
+
+/** How a party is described in the agreement's opening, from what it actually is: a CIN means a
+ *  company or LLP; otherwise the PAN says (a proprietor has no CIN, so "a company incorporated
+ *  under the Companies Act" would be untrue for one). */
+export function entityPhrase(p: {
+  cin?: string | null;
+  pan?: string | null;
+  gstin?: string | null;
+  /** Printed in place of a missing GSTIN (default "Unregistered"). */
+  gstinUnregistered?: string;
+}): string {
+  const cin = p.cin?.trim();
+  const pan = p.pan?.trim().toUpperCase();
+  const gstin = p.gstin?.trim() || p.gstinUnregistered || "Unregistered";
+  if (cin) {
+    const kind = /^[A-Z]{3}-\d{4}$/.test(cin)
+      ? "a limited liability partnership"
+      : "a company incorporated in India";
+    return `${kind} (CIN / LLPIN: ${cin}; PAN: ${pan || "—"}; GSTIN: ${gstin})`;
+  }
+  const kind = (pan && PAN_HOLDER[pan[3]]) || "a business registered in India";
+  const panLabel = pan?.[3] === "P" ? "Proprietor PAN" : "PAN";
+  return `${kind} (${panLabel}: ${pan || "—"}; GSTIN: ${gstin})`;
+}
 
 const rupees = (n: number) =>
   `₹${round2(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -106,8 +155,19 @@ export function templateValueMap(v: TemplateValues): Record<string, string> {
     company_signatory_designation: v.companySignatoryDesignation || "—",
     supplier_legal_name: v.supplierLegalName || "SamvadX",
     supplier_short_name: v.supplierShortName || v.supplierLegalName || "SamvadX",
-    supplier_short_name_caps: (v.supplierShortName || v.supplierLegalName || "SamvadX").toUpperCase(),
+    supplier_short_name_caps: (
+      v.supplierShortName ||
+      v.supplierLegalName ||
+      "SamvadX"
+    ).toUpperCase(),
     supplier_cin: v.supplierCin || "—",
+    supplier_entity: entityPhrase({
+      cin: v.supplierCin,
+      pan: v.supplierPan,
+      gstin: v.supplierGstin,
+      gstinUnregistered: "Not registered",
+    }),
+    company_entity: entityPhrase({ cin: v.companyCin, pan: v.companyPan, gstin: v.companyGstin }),
     supplier_address: v.supplierAddress || "—",
     supplier_signatory_name: v.supplierSignatoryName || "____________________",
     supplier_signatory_designation: v.supplierSignatoryDesignation || "____________________",

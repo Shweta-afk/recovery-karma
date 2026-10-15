@@ -965,6 +965,8 @@ async function templateValuesFor(
     payment_terms_days: number | null;
     address: string | null;
     cin?: string | null;
+    pan?: string | null;
+    gstin?: string | null;
     short_name?: string | null;
     signatory_name?: string | null;
     signatory_designation?: string | null;
@@ -984,6 +986,8 @@ async function templateValuesFor(
     supplierLegalName: profile?.legal_name ?? "",
     supplierShortName: profile?.short_name ?? "",
     supplierCin: profile?.cin ?? "",
+    supplierPan: profile?.pan ?? "",
+    supplierGstin: profile?.gstin ?? null,
     supplierAddress: profile?.address ?? "",
     supplierSignatoryName: profile?.signatory_name ?? "",
     supplierSignatoryDesignation: profile?.signatory_designation ?? "",
