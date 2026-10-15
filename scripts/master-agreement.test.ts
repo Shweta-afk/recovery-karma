@@ -96,9 +96,10 @@ describe("Word layout markup", () => {
   });
   test("the agreement keeps the Word file's structure and no one company's details", () => {
     const blocks = parseTemplateBlocks(DEFAULT_MASTER_AGREEMENT_BODY);
-    expect(blocks.filter((b) => b.type === "h2")).toHaveLength(26); // 21 sections + 5 annexures
-    expect(blocks.filter((b) => b.type === "table")).toHaveLength(4);
-    expect(blocks.filter((b) => b.type === "pagebreak")).toHaveLength(2);
+    expect(blocks.filter((b) => b.type === "h2")).toHaveLength(21); // annexures removed 2026-10-16
+    expect(blocks.filter((b) => b.type === "table")).toHaveLength(1);
+    expect(blocks.filter((b) => b.type === "pagebreak")).toHaveLength(0);
+    expect(DEFAULT_MASTER_AGREEMENT_BODY).not.toContain("## ANNEXURE");
     expect(blocks.find((b) => b.type === "ol")).toMatchObject({ items: expect.any(Array) });
     expect(DEFAULT_MASTER_AGREEMENT_BODY).not.toMatch(/GKB|Yogesh|BCOPB3579G|9th Oct|INSERT CIN/i);
   });

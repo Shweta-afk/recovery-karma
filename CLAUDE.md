@@ -841,11 +841,14 @@ sent / viewed / signed with typed name + email). Email text and links in `billin
   address (billing_profile), short name "Samvadx".
   **2026-10-16: the text is generated from the Word file and prints in its layout** — A4, Word's
   margins, Calibri/Carlito 12pt, justified, Word's spacing, lettered recitals, gridded tables,
-  page breaks before Annexures A and E, the title 380pt down page 1 (stamp-paper space) and
+  the title 380pt down page 1 (stamp-paper space) and
   "<legal name> — Master Service Agreement — Page N". Markup: `### `, `^ ` centred, `+ ` lettered,
   `---page---`, `@footer` (contract-template.ts); renderer contract-body.tsx. When the Word file
   changes, regenerate the body from it (docx → markup, then party details → blanks) rather than
-  hand-editing, and check word-for-word against the file. Signing freezes the
+  hand-editing, and check word-for-word against the file.
+  **Annexures A–E removed (user, 2026-10-16: "not needed for now")** — the agreement ends at
+  the signatures. Clauses 5.6, 10.2, 11.3, 13.2, 21.1 and 21.2 still mention annexures (wording
+  left as the user wrote it). Signing freezes the
   exact text in `contract_document_status.signed_body`. `master-agreement-panel.tsx` lists every
   company Not sent → Sent → Viewed → Signed, with "Their copy" and Send. Change notices record
   first view per company in `contract_change_views` (`migrations/20261012_master_agreement.sql`,
