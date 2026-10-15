@@ -13,6 +13,7 @@ import {
   type InvoiceRecord,
   type InvoiceBalance,
 } from "./invoice-math";
+import { appError } from "./app-error";
 
 const db = () => getSupabaseAdmin();
 
@@ -58,7 +59,7 @@ export const listMyInvoices = createServerFn({ method: "POST" })
       .eq("client_id", caller.clientId)
       .order("issue_date", { ascending: false })
       .order("created_at", { ascending: false });
-    if (error) throw new Error(`Could not load invoices (${error.message})`);
+    if (error) throw appError("SX-4401", "Could not load invoices.", error);
     return withBalance(
       (rows ?? []).map((r) => toInvoiceRecord(r as Parameters<typeof toInvoiceRecord>[0])),
     );

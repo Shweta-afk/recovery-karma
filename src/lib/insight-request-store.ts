@@ -6,6 +6,7 @@
 // trigger on debtor_traces closes the request and tells the agent once a lookup completes). See
 // migrations/20260926_insight_requests.sql.
 import { supabase, getMyAgentRow } from "./supabase";
+import { appError } from "./app-error";
 
 export const INSIGHT_FLAGS_UPDATED = "insight-flags-updated";
 
@@ -95,7 +96,8 @@ export async function requestInsights(debtorId: string, note?: string): Promise<
   });
   // 23505 = the one-open-request-per-debtor index: someone already asked, which is the outcome
   // the agent wanted anyway.
-  if (error && error.code !== "23505") throw new Error(error.message);
+  if (error && error.code !== "23505")
+    throw appError("SX-1018", "Could not send the request.", error);
   await refreshOpenRequest(debtorId);
 }
 
@@ -106,7 +108,7 @@ export async function dismissInsightRequest(debtorId: string, requestId: string)
     .from("insight_requests")
     .update({ status: "dismissed", resolved_at: new Date().toISOString(), resolved_by: me?.id })
     .eq("id", requestId);
-  if (error) throw new Error(error.message);
+  if (error) throw appError("SX-1019", "Could not update the request.", error);
   await refreshOpenRequest(debtorId);
 }
 

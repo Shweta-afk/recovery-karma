@@ -27,6 +27,7 @@ import {
   fmtContractDate,
 } from "@/components/contracts/contract-documents";
 import { ViewContractButton } from "@/components/contracts/contract-body";
+import { errorText } from "@/lib/app-error";
 
 /** Tells the admin-wide banner (admin.tsx) to recount after an acceptance. */
 export const CONTRACTS_UPDATED_EVENT = "contracts-updated";
@@ -41,7 +42,7 @@ export function AdminAgreements({ focusDocId }: { focusDocId?: string }) {
       const accessToken = await getAccessToken();
       setView(await getMyContracts({ data: { accessToken } }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not load your contracts");
+      toast.error(errorText(e, "Could not load your contracts"));
     } finally {
       setLoading(false);
     }
@@ -274,7 +275,7 @@ function PendingChange({
                 toast.success("Accepted — thank you");
                 await onAccepted();
               } catch (e) {
-                toast.error(e instanceof Error ? e.message : "Could not record your acceptance");
+                toast.error(errorText(e, "Could not record your acceptance"));
                 // Someone else may have accepted first — refresh either way.
                 await onAccepted();
               } finally {
@@ -438,9 +439,7 @@ function SignableDocument({
                         });
                         toast.success("Signed — thank you");
                       } catch (e) {
-                        toast.error(
-                          e instanceof Error ? e.message : "Could not record your signature",
-                        );
+                        toast.error(errorText(e, "Could not record your signature"));
                       } finally {
                         setSaving(false);
                         await onSigned();

@@ -22,6 +22,7 @@ import {
 import { serviceLabel } from "@/lib/profilex-store";
 import { downloadCsv } from "@/lib/csv-export";
 import { periodLabel, periodSince, type InsightsPeriod } from "@/lib/profilex/period";
+import { errorText } from "@/lib/app-error";
 
 interface UserUsage {
   agentId: string;
@@ -101,7 +102,7 @@ export function InsightsUsagePanel({ period = "this-month" }: { period?: Insight
         });
         setRows(res.rows);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load usage");
+        setError(errorText(e, "Could not load usage"));
       } finally {
         setLoading(false);
       }
@@ -318,7 +319,7 @@ function InsightsDetailLog({ period }: { period: InsightsPeriod }) {
         });
         setRows(res.rows);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load the detail log");
+        setError(errorText(e, "Could not load the detail log"));
       } finally {
         setLoading(false);
       }

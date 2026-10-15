@@ -38,6 +38,7 @@ import {
   validateCibilForm,
   type CibilForm,
 } from "@/lib/cibil/payprime";
+import { errorText } from "@/lib/app-error";
 
 export const rupees = (n: number) => `₹${n.toFixed(2)}`;
 
@@ -69,7 +70,7 @@ export function DownloadReportButton({ reportId }: { reportId: string }) {
         try {
           await saveCibilReportFile(reportId);
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Could not download the report");
+          toast.error(errorText(e, "Could not download the report"));
         } finally {
           setBusy(false);
         }
@@ -260,7 +261,7 @@ function ReportFields({ report }: { report: CibilReportSummary }) {
         const inner = r?.data?.data ?? r?.data ?? r;
         setLeaves(flatten(inner?.cibilData ?? inner));
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not load the report");
+        toast.error(errorText(e, "Could not load the report"));
         return;
       }
     }
@@ -379,7 +380,7 @@ export function CibilPanel({
       setShowForm(false);
       await load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "CIBIL report failed");
+      toast.error(errorText(e, "CIBIL report failed"));
     } finally {
       setRunning(false);
     }

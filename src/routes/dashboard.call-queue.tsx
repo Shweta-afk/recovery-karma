@@ -144,6 +144,7 @@ import {
   type FacetDim,
   type FacetGroup,
 } from "@/lib/debtor-page-store";
+import { errorText } from "@/lib/app-error";
 
 /** Everything the page's counts are built from, in one facet request. */
 const QUEUE_FACET_DIMS: FacetDim[] = [
@@ -632,7 +633,7 @@ export function CallQueueContent({
       );
       toast.success("Number added");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to add number");
+      toast.error(errorText(e, "Failed to add number"));
       throw e; // let the input keep what was typed instead of clearing on failure
     }
   };
@@ -762,7 +763,7 @@ export function CallQueueContent({
         time: now.toISOString(),
       };
       saveDisposition(record).catch((e) =>
-        toast.error(e instanceof Error ? e.message : "Failed to save call outcome"),
+        toast.error(errorText(e, "Failed to save call outcome")),
       );
 
       // 3 — PTP / callback: SMS the debtor and set an agent reminder for the scheduled date
@@ -791,9 +792,7 @@ export function CallQueueContent({
               : `Callback due — ${debtor.name} on ${dueDate}${dueTime ? ` at ${dueTime}` : ""}`,
             createdAt: now.toISOString(),
           };
-          saveReminder(reminder).catch((e) =>
-            toast.error(e instanceof Error ? e.message : "Failed to save reminder"),
-          );
+          saveReminder(reminder).catch((e) => toast.error(errorText(e, "Failed to save reminder")));
           toast(`Reminder set for ${dueDate}`, { icon: "🔔" });
         }
       } else {
@@ -1315,7 +1314,7 @@ export function CallQueueContent({
                     });
                   } catch (e) {
                     setActiveDialMode(null);
-                    toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
+                    toast.error(errorText(e, "Failed to start the dialer"));
                     return;
                   }
                   toast.success(
@@ -1394,7 +1393,7 @@ export function CallQueueContent({
                   } catch (e) {
                     setActiveDialMode(null);
                     setProductiveTargets([]);
-                    toast.error(e instanceof Error ? e.message : "Failed to start the dialer");
+                    toast.error(errorText(e, "Failed to start the dialer"));
                     return;
                   }
                   toast.success(
@@ -2193,9 +2192,7 @@ export function CallQueueContent({
             toast(`Transfer is not available yet — ${lc.debtor} is still on your line`);
           }}
           onEndLeg={(lc) => {
-            dialer
-              .endLeg(lc.id)
-              .catch((e) => toast.error(e instanceof Error ? e.message : "Failed to end call"));
+            dialer.endLeg(lc.id).catch((e) => toast.error(errorText(e, "Failed to end call")));
             toast.success(`Ended call with ${lc.debtor}`);
           }}
         />

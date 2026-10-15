@@ -80,6 +80,7 @@ import {
   refreshOpenRequests,
   type OpenInsightRequest,
 } from "@/lib/insight-request-store";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/manager/")({
   head: () => ({
@@ -860,9 +861,7 @@ function AgentAvailabilityGrid({ agents }: { agents: AgentComputedStat[] }) {
                             message: "Your manager nudged you — please check your queue.",
                           })
                             .then(() => toast.success(`Nudge sent to ${a.name}`))
-                            .catch((e) =>
-                              toast.error(e instanceof Error ? e.message : "Failed to send nudge"),
-                            );
+                            .catch((e) => toast.error(errorText(e, "Failed to send nudge")));
                         }}
                         className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-all"
                       >

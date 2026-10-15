@@ -10,6 +10,7 @@ import { getAccessToken } from "@/lib/access-token";
 import { parseTemplateBlocks } from "@/lib/contract-template";
 import { getContractDocumentBody } from "@/lib/contracts.server";
 import { PrintButton } from "@/components/billing/invoice-document";
+import { errorText } from "@/lib/app-error";
 
 /** **bold** → <strong>; everything else is plain text (no HTML from the template is trusted). */
 function Inline({ text }: { text: string }) {
@@ -110,7 +111,7 @@ export function ViewContractButton({ documentId, title }: { documentId: string; 
             const doc = await getContractDocumentBody({ data: { accessToken, documentId } });
             setBody(doc.body);
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : "Could not open the document");
+            toast.error(errorText(e, "Could not open the document"));
           } finally {
             setBusy(false);
           }

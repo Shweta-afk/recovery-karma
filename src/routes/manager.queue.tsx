@@ -83,6 +83,7 @@ import {
 } from "@/lib/portfolio-store";
 import { useStorageSync } from "@/lib/storage-sync";
 import { useAuth } from "@/lib/auth";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/manager/queue")({
   head: () => ({
@@ -243,7 +244,7 @@ function MyQueueTab({
       setManualNumber("");
       setManualName("");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to start manual dial");
+      toast.error(errorText(e, "Failed to start manual dial"));
     } finally {
       setDialingManual(false);
     }
@@ -468,7 +469,7 @@ function ManagerQueuePage() {
       );
       toast.success("Number added");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to add number");
+      toast.error(errorText(e, "Failed to add number"));
       throw e;
     }
   };
@@ -514,11 +515,11 @@ function ManagerQueuePage() {
         time: now.toISOString(),
       };
       saveDisposition(record).catch((e) =>
-        toast.error(e instanceof Error ? e.message : "Failed to save call outcome"),
+        toast.error(errorText(e, "Failed to save call outcome")),
       );
       if (activeEscalationId) {
         resolveEscalation(activeEscalationId).catch((e) =>
-          toast.error(e instanceof Error ? e.message : "Failed to resolve escalation"),
+          toast.error(errorText(e, "Failed to resolve escalation")),
         );
       }
 
@@ -549,9 +550,7 @@ function ManagerQueuePage() {
               : `Callback due — ${debtor.name} on ${dueDate}${dueTime ? ` at ${dueTime}` : ""}`,
             createdAt: now.toISOString(),
           };
-          saveReminder(reminder).catch((e) =>
-            toast.error(e instanceof Error ? e.message : "Failed to save reminder"),
-          );
+          saveReminder(reminder).catch((e) => toast.error(errorText(e, "Failed to save reminder")));
         }
       } else {
         toast.success(`Call logged — ${disposition.outcome}`);

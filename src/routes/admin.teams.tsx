@@ -38,6 +38,7 @@ import {
   type AgentRef,
 } from "@/lib/team-store";
 import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/admin/teams")({
   head: () => ({ meta: [{ title: "Teams · SamvadX Admin" }] }),
@@ -68,7 +69,7 @@ function AdminTeamsPage() {
       await deleteTeam(id);
       toast.success(`Team "${name}" removed`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to remove team");
+      toast.error(errorText(e, "Failed to remove team"));
     } finally {
       setDeletingId(null);
     }
@@ -296,7 +297,7 @@ function CreateTeamDialog({ open, onClose }: { open: boolean; onClose: () => voi
       setAgentSearch("");
       onClose();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to create team");
+      toast.error(errorText(e, "Failed to create team"));
     } finally {
       setSaving(false);
     }
@@ -519,7 +520,7 @@ function EditTeamDialog({ team, onClose }: { team: Team; onClose: () => void }) 
       toast.success(`"${name.trim()}" updated with ${selectedAgentIds.size} agents`);
       onClose();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update team");
+      toast.error(errorText(e, "Failed to update team"));
     } finally {
       setSaving(false);
     }

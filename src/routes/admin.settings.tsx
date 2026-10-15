@@ -13,6 +13,7 @@ import { getMyClient, updateCompanyName } from "@/lib/client-store";
 import { ProfilexSettingsCard } from "@/components/profilex/profilex-settings-card";
 import { CompanyWalletCard, ManagerWalletsCard } from "@/components/profilex/wallets-card";
 import { CompanyDetailsCard } from "@/components/company-details-card";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({ meta: [{ title: "Settings · SamvadX Admin" }] }),
@@ -92,7 +93,7 @@ function AdminSettingsPage() {
     try {
       await updateCompanyName(cfg.companyName);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save company name");
+      toast.error(errorText(err, "Could not save company name"));
       return;
     }
     saveOrgSettings(cfg);

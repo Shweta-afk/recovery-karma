@@ -34,6 +34,7 @@ import {
   type ContractChange,
   type ContractDocument,
 } from "./contracts";
+import { appError } from "./app-error";
 
 export const CONTRACTS_BUCKET = "contracts";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -209,7 +210,7 @@ async function ensureBucket(): Promise<void> {
   });
   // A concurrent upload may have just created it — only a genuine failure matters.
   if (error && !/already exists/i.test(error.message)) {
-    throw new Error(`Could not create the contracts storage bucket: ${error.message}`);
+    throw appError("SX-4301", "Could not create the contracts storage bucket.", error);
   }
 }
 
@@ -218,7 +219,7 @@ async function adminsOf(clientIds: string[] | null) {
   let q = db().from("agents").select("id, client_id, name, email, is_active").eq("role", "admin");
   if (clientIds) q = q.in("client_id", clientIds);
   const { data, error } = await q;
-  if (error) throw new Error(`Could not load company admins (${error.message})`);
+  if (error) throw appError("SX-4302", "Could not load company admins.", error);
   return (
     (data ?? []) as {
       id: string;
@@ -313,7 +314,7 @@ export const getSuperadminContracts = createServerFn({ method: "POST" })
         .order("updated_at", { ascending: false }),
     ]);
     for (const r of [clientsRes, docsRes, changesRes, accRes]) {
-      if (r.error) throw new Error(`Could not load contracts (${r.error.message})`);
+      if (r.error) throw appError("SX-4303", "Could not load contracts.", r.error);
     }
     const clients = (clientsRes.data ?? []) as {
       id: string;
@@ -409,7 +410,7 @@ export const createContractUpload = createServerFn({ method: "POST" })
     const { data: signed, error } = await db()
       .storage.from(CONTRACTS_BUCKET)
       .createSignedUploadUrl(path);
-    if (error || !signed) throw new Error(`Could not start the upload (${error?.message})`);
+    if (error || !signed) throw appError("SX-4304", "Could not start the upload.", error);
     return { bucket: CONTRACTS_BUCKET, path, token: signed.token, contentType: FILE_TYPES[ext] };
   });
 
@@ -458,7 +459,7 @@ export const saveContractDocument = createServerFn({ method: "POST" })
       })
       .select("id")
       .single();
-    if (error || !row) throw new Error(`Could not save the contract (${error?.message})`);
+    if (error || !row) throw appError("SX-4305", "Could not save the contract.", error);
 
     let companyName: string | null = null;
     if (data.clientId) {
@@ -548,7 +549,7 @@ export const publishContractChange = createServerFn({ method: "POST" })
       })
       .select("id")
       .single();
-    if (error || !row) throw new Error(`Could not publish the change (${error?.message})`);
+    if (error || !row) throw appError("SX-4306", "Could not publish the change.", error);
 
     const { admins, emailed } = await notifyChange({
       title: data.title,
@@ -595,7 +596,7 @@ export const withdrawContractChange = createServerFn({ method: "POST" })
       .is("withdrawn_at", null)
       .select("title")
       .maybeSingle();
-    if (error) throw new Error(`Could not withdraw the change (${error.message})`);
+    if (error) throw appError("SX-4307", "Could not withdraw the change.", error);
     if (!row) throw new Error("That change was already withdrawn");
     await logSuperadminActivity({
       superadminId: caller.superadminId,
@@ -646,7 +647,7 @@ async function loadAdminView(clientId: string): Promise<AdminContractsView> {
       .eq("client_id", clientId),
   ]);
   for (const r of [docsRes, changesRes, accRes]) {
-    if (r.error) throw new Error(`Could not load contracts (${r.error.message})`);
+    if (r.error) throw appError("SX-4308", "Could not load contracts.", r.error);
   }
   const companyName =
     (clientRes.data as { company_name: string } | null)?.company_name ?? "Your company";
@@ -747,7 +748,7 @@ export const acceptContractChange = createServerFn({ method: "POST" })
       if ((insErr as { code?: string }).code === "23505") {
         throw new Error("Someone at your company has already accepted this change");
       }
-      throw new Error(`Could not record your acceptance (${insErr.message})`);
+      throw appError("SX-4309", "Could not record your acceptance.", insErr);
     }
     return { ok: true };
   });
@@ -784,7 +785,7 @@ export const getContractFileUrl = createServerFn({ method: "POST" })
     const { data: signed, error: sErr } = await admin.storage
       .from(CONTRACTS_BUCKET)
       .createSignedUrl(doc.file_path, DOWNLOAD_LINK_SECONDS, { download: doc.file_name });
-    if (sErr || !signed) throw new Error(`Could not open the file (${sErr?.message})`);
+    if (sErr || !signed) throw appError("SX-4310", "Could not open the file.", sErr);
     return { url: signed.signedUrl };
   });
 
@@ -860,7 +861,7 @@ export const updateDraftChange = createServerFn({ method: "POST" })
       .eq("status", "draft")
       .select("id")
       .maybeSingle();
-    if (error) throw new Error(`Could not save the draft (${error.message})`);
+    if (error) throw appError("SX-4311", "Could not save the draft.", error);
     if (!row) throw new Error("That draft was already published or discarded");
     return { ok: true };
   });
@@ -878,7 +879,7 @@ export const publishDraftChange = createServerFn({ method: "POST" })
       .eq("status", "draft")
       .select(CHANGE_COLUMNS)
       .maybeSingle();
-    if (error) throw new Error(`Could not publish the draft (${error.message})`);
+    if (error) throw appError("SX-4312", "Could not publish the draft.", error);
     if (!row) throw new Error("That draft was already published or discarded");
     const change = toChange(row as ChangeRow);
     const { admins, emailed } = await notifyChange(change);
@@ -911,7 +912,7 @@ export const discardDraftChange = createServerFn({ method: "POST" })
       .eq("status", "draft")
       .select("id")
       .maybeSingle();
-    if (error) throw new Error(`Could not discard the draft (${error.message})`);
+    if (error) throw appError("SX-4313", "Could not discard the draft.", error);
     if (!row) throw new Error("That draft was already published or discarded");
     return { ok: true };
   });
@@ -943,11 +944,7 @@ async function templateValuesFor(
       .eq("id", clientId)
       .maybeSingle(),
     admin.from("client_billing").select("*").eq("client_id", clientId).maybeSingle(),
-    admin
-      .from("billing_profile")
-      .select("*")
-      .eq("id", "main")
-      .maybeSingle(),
+    admin.from("billing_profile").select("*").eq("id", "main").maybeSingle(),
     loadPriceList(clientId),
     loadSettings(clientId),
   ]);
@@ -1033,7 +1030,7 @@ export const saveContractTemplate = createServerFn({ method: "POST" })
           .from("contract_templates")
           .insert({ title: data.title, body: data.body, created_by: caller.superadminId });
     const { data: row, error } = await q.select("id").single();
-    if (error || !row) throw new Error(`Could not save the template (${error?.message})`);
+    if (error || !row) throw appError("SX-4314", "Could not save the template.", error);
     return { id: (row as { id: string }).id };
   });
 
@@ -1109,7 +1106,7 @@ export const generateCompanyContract = createServerFn({ method: "POST" })
       })
       .select("id")
       .single();
-    if (error || !row) throw new Error(`Could not save the document (${error?.message})`);
+    if (error || !row) throw appError("SX-4315", "Could not save the document.", error);
     await logSuperadminActivity({
       superadminId: caller.superadminId,
       action: "contract_generated",
@@ -1194,14 +1191,16 @@ export const getMasterAgreement = createServerFn({ method: "POST" })
         .limit(1),
       db().from("billing_profile").select("*").eq("id", "main").maybeSingle(),
     ]);
-    const latest = ((rows ?? []) as {
-      id: string;
-      title: string;
-      version_label: string | null;
-      effective_date: string;
-      body: string;
-      created_at: string;
-    }[])[0];
+    const latest = (
+      (rows ?? []) as {
+        id: string;
+        title: string;
+        version_label: string | null;
+        effective_date: string;
+        body: string;
+        created_at: string;
+      }[]
+    )[0];
     // What the agreement needs from SamvadX's own details, still missing.
     const p = (profile ?? {}) as Record<string, string | null>;
     const supplierMissing = [
@@ -1281,7 +1280,7 @@ export const publishMasterAgreement = createServerFn({ method: "POST" })
       })
       .select("id")
       .single();
-    if (error || !row) throw new Error(`Could not publish the agreement (${error?.message})`);
+    if (error || !row) throw appError("SX-4316", "Could not publish the agreement.", error);
     await logSuperadminActivity({
       superadminId: caller.superadminId,
       action: "master_agreement_published",
@@ -1357,7 +1356,7 @@ export const sendContractDocument = createServerFn({ method: "POST" })
       },
       { onConflict: "document_id,client_id" },
     );
-    if (error) throw new Error(`Could not record the send (${error.message})`);
+    if (error) throw appError("SX-4317", "Could not record the send.", error);
     await logSuperadminActivity({
       superadminId: caller.superadminId,
       action: "contract_sent",
@@ -1435,6 +1434,6 @@ export const signContractDocument = createServerFn({ method: "POST" })
         },
         { onConflict: "document_id,client_id", ignoreDuplicates: false },
       );
-    if (error) throw new Error(`Could not record your signature (${error.message})`);
+    if (error) throw appError("SX-4318", "Could not record your signature.", error);
     return { ok: true };
   });

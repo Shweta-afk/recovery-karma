@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/lib/supabase";
 import { getProfilexSettings } from "@/lib/profilex-actions.server";
 import { PROFILEX_SERVICES, priceFor, priceStatuses, statusLabel } from "@/lib/profilex/catalogue";
+import { errorText } from "@/lib/app-error";
 
 type RateCard = Record<string, Record<string, number>>;
 
@@ -40,7 +41,7 @@ export function ProfilexSettingsCard() {
         setRateCard((s.rate_card as RateCard) ?? {});
         setEnabledServices(s.enabled_services ?? []);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not load Insights settings");
+        toast.error(errorText(e, "Could not load Insights settings"));
       } finally {
         setLoading(false);
       }

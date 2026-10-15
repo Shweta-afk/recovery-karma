@@ -13,6 +13,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import { enforceRateLimit } from "./rate-limit.server";
 import type { Role } from "./auth";
+import { appError } from "./app-error";
 
 function generatePassword(): string {
   return randomBytes(12).toString("base64url"); // 16 chars, URL-safe
@@ -65,10 +66,16 @@ export const inviteUser = createServerFn({ method: "POST" })
             .eq("role", data.role),
         ]);
       if (clientErr) {
-        return { ok: false as const, error: `Could not verify seat limits (${clientErr.message})` };
+        return {
+          ok: false as const,
+          error: appError("SX-5201", "Could not verify seat limits.", clientErr).message,
+        };
       }
       if (countErr) {
-        return { ok: false as const, error: `Could not verify seat limits (${countErr.message})` };
+        return {
+          ok: false as const,
+          error: appError("SX-5202", "Could not verify seat limits.", countErr).message,
+        };
       }
       const limit = data.role === "agent" ? clientRow?.max_agents : clientRow?.max_managers;
       if (limit !== null && limit !== undefined && (currentCount ?? 0) >= limit) {
@@ -91,7 +98,10 @@ export const inviteUser = createServerFn({ method: "POST" })
       if (/already.*registered|already exists/i.test(msg)) {
         return { ok: false as const, error: "That email already has an account." };
       }
-      return { ok: false as const, error: msg || "Could not create the login." };
+      return {
+        ok: false as const,
+        error: appError("SX-5203", "Could not create the login.", authErr).message,
+      };
     }
     const authUserId = authData.user.id;
 
@@ -118,7 +128,7 @@ export const inviteUser = createServerFn({ method: "POST" })
         error:
           agentErr && /duplicate key|already exists/i.test(agentErr.message)
             ? "That email already has an account."
-            : (agentErr?.message ?? "Could not create the user."),
+            : appError("SX-5204", "Could not create the user.", agentErr).message,
       };
     }
 
@@ -159,7 +169,9 @@ async function addAgentToManagerTeam(
     .eq("client_id", clientId)
     .single();
   if (managerErr || !manager || manager.role !== "manager") {
-    return managerErr?.message ?? "Manager not found in this company.";
+    return managerErr
+      ? appError("SX-5205", "Could not check that manager.", managerErr).message
+      : "Manager not found in this company.";
   }
 
   const { data: existingTeam, error: findErr } = await admin
@@ -168,7 +180,7 @@ async function addAgentToManagerTeam(
     .eq("client_id", clientId)
     .eq("manager_id", managerId)
     .maybeSingle();
-  if (findErr) return findErr.message;
+  if (findErr) return appError("SX-5206", "Could not load the manager's team.", findErr).message;
 
   let teamId = existingTeam?.id as string | undefined;
   if (!teamId) {
@@ -177,14 +189,18 @@ async function addAgentToManagerTeam(
       .insert({ client_id: clientId, manager_id: managerId, name: `${manager.name}'s Team` })
       .select("id")
       .single();
-    if (createErr || !newTeam) return createErr?.message ?? "Could not create team.";
+    if (createErr || !newTeam) {
+      return appError("SX-5207", "Could not create the team.", createErr).message;
+    }
     teamId = newTeam.id as string;
   }
 
   const { error: memberErr } = await admin
     .from("team_agents")
     .upsert({ team_id: teamId, agent_id: agentId }, { onConflict: "team_id,agent_id" });
-  return memberErr?.message ?? null;
+  return memberErr
+    ? appError("SX-5208", "Could not add them to the team.", memberErr).message
+    : null;
 }
 
 /**
@@ -234,7 +250,10 @@ export const resetUserPassword = createServerFn({ method: "POST" })
         password: temporaryPassword,
       });
       if (updateErr) {
-        return { ok: false as const, error: updateErr.message };
+        return {
+          ok: false as const,
+          error: appError("SX-5209", "Could not reset the password.", updateErr).message,
+        };
       }
     } else {
       // No login yet — create one and link it, same as inviteUser.
@@ -244,7 +263,10 @@ export const resetUserPassword = createServerFn({ method: "POST" })
         email_confirm: true,
       });
       if (createErr || !authData.user) {
-        return { ok: false as const, error: createErr?.message ?? "Could not create the login." };
+        return {
+          ok: false as const,
+          error: appError("SX-5210", "Could not create the login.", createErr).message,
+        };
       }
       const { error: linkErr } = await admin
         .from("agents")
@@ -257,7 +279,10 @@ export const resetUserPassword = createServerFn({ method: "POST" })
             err,
           );
         });
-        return { ok: false as const, error: linkErr.message };
+        return {
+          ok: false as const,
+          error: appError("SX-5211", "Could not link the login.", linkErr).message,
+        };
       }
     }
 

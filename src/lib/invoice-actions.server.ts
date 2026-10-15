@@ -42,6 +42,7 @@ import {
 } from "./company-details";
 import { companyAppLink, invoiceEmail, mailtoLink } from "./billing-delivery";
 import { emailConfigured, sendEmails } from "./email.server";
+import { appError } from "./app-error";
 
 function db() {
   return getSupabaseAdmin();
@@ -111,7 +112,7 @@ async function loadBillingProfile(): Promise<BillingProfile> {
     .select("*")
     .eq("id", "main")
     .maybeSingle();
-  if (error) throw new Error(`Could not load billing details (${error.message})`);
+  if (error) throw appError("SX-4101", "Could not load billing details.", error);
   return {
     legalName: data?.legal_name ?? "",
     gstin: data?.gstin ?? null,
@@ -202,7 +203,7 @@ export const saveBillingProfile = createServerFn({ method: "POST" })
         updated_at: new Date().toISOString(),
         updated_by: caller.superadminId,
       });
-    if (error) throw new Error(`Could not save billing details (${error.message})`);
+    if (error) throw appError("SX-4102", "Could not save billing details.", error);
     void logSuperadminActivity({
       superadminId: caller.superadminId,
       action: "billing_profile_set",
@@ -293,9 +294,9 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
         .eq("id", data.clientId)
         .maybeSingle(),
     ]);
-    if (details.error) throw new Error(`Could not load billing details (${details.error.message})`);
-    if (invoices.error) throw new Error(`Could not load invoices (${invoices.error.message})`);
-    if (topups.error) throw new Error(`Could not load top-ups (${topups.error.message})`);
+    if (details.error) throw appError("SX-4103", "Could not load billing details.", details.error);
+    if (invoices.error) throw appError("SX-4104", "Could not load invoices.", invoices.error);
+    if (topups.error) throw appError("SX-4105", "Could not load top-ups.", topups.error);
 
     const records = (invoices.data ?? []).map(toInvoiceRecord);
     // A cancelled invoice frees its top-up to be invoiced again (e.g. after fixing a GSTIN).
@@ -391,7 +392,7 @@ export const saveCompanyBilling = createServerFn({ method: "POST" })
         updated_at: new Date().toISOString(),
         updated_by: caller.superadminId,
       });
-    if (error) throw new Error(`Could not save billing details (${error.message})`);
+    if (error) throw appError("SX-4106", "Could not save billing details.", error);
     void logSuperadminActivity({
       superadminId: caller.superadminId,
       action: "company_billing_set",
@@ -540,7 +541,7 @@ export const createInvoice = createServerFn({ method: "POST" })
       .select("*")
       .eq("client_id", data.clientId)
       .maybeSingle();
-    if (cbErr) throw new Error(`Could not load the company's billing details (${cbErr.message})`);
+    if (cbErr) throw appError("SX-4107", "Could not load the company's billing details.", cbErr);
     if (!cb?.legal_name || !cb.address || !cb.state_code) {
       throw new Error("Fill in this company's billing details (legal name, address, state) first");
     }
@@ -568,7 +569,7 @@ export const createInvoice = createServerFn({ method: "POST" })
         .select("id, scope, client_id, amount, created_at")
         .eq("id", data.walletLedgerId)
         .maybeSingle();
-      if (ledErr) throw new Error(`Could not load that top-up (${ledErr.message})`);
+      if (ledErr) throw appError("SX-4108", "Could not load that top-up.", ledErr);
       if (!led || led.scope !== "master_to_company" || led.client_id !== data.clientId) {
         throw new Error("That top-up isn't an Insights allocation to this company");
       }
@@ -678,7 +679,7 @@ export const createInvoice = createServerFn({ method: "POST" })
           "This company already has an invoice for that month — cancel it first to reissue",
         );
       }
-      throw new Error(`Could not create the invoice (${error.message})`);
+      throw appError("SX-4109", "Could not create the invoice.", error);
     }
     const invoice = toInvoiceRecord(row as Parameters<typeof toInvoiceRecord>[0]);
 
@@ -734,7 +735,7 @@ export const setInvoiceStatus = createServerFn({ method: "POST" })
       .from("invoices")
       .update({ status: data.status, paid_at: null })
       .eq("id", data.invoiceId);
-    if (error) throw new Error(`Could not update the invoice (${error.message})`);
+    if (error) throw appError("SX-4110", "Could not update the invoice.", error);
     void logSuperadminActivity({
       superadminId: caller.superadminId,
       action: "invoice_status_set",
@@ -765,7 +766,7 @@ export const listAllInvoices = createServerFn({ method: "POST" })
         .limit(1000),
       admin.from("clients").select("id, company_name"),
     ]);
-    if (error) throw new Error(`Could not load invoices (${error.message})`);
+    if (error) throw appError("SX-4111", "Could not load invoices.", error);
     const nameById = new Map((clients ?? []).map((c) => [c.id, c.company_name]));
     return withBalances(
       (rows ?? []).map((r) => ({

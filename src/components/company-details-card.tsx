@@ -15,6 +15,7 @@ import {
 } from "@/lib/company-details";
 import { getMyCompanyDetails, saveMyCompanyDetails } from "@/lib/company-details.server";
 import { CompanyDetailsForm } from "@/components/company-details-form";
+import { errorText } from "@/lib/app-error";
 
 export const COMPANY_DETAILS_UPDATED = "company-details-updated";
 
@@ -30,7 +31,7 @@ export function CompanyDetailsCard() {
         const res = await getMyCompanyDetails({ data: { accessToken: await getAccessToken() } });
         setDetails(res.details);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not load company details");
+        toast.error(errorText(e, "Could not load company details"));
       } finally {
         setLoading(false);
         // Arriving from the red banner (…/settings#company-details): bring the card into view.
@@ -64,7 +65,7 @@ export function CompanyDetailsCard() {
         toast.success("Company details saved");
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not save company details");
+      toast.error(errorText(e, "Could not save company details"));
     } finally {
       setSaving(false);
     }

@@ -75,6 +75,7 @@ import {
   type CallOutcome,
 } from "@/lib/disposition-store";
 import { getPortfolioRecovered, getPayments } from "@/lib/payments-store";
+import { errorText } from "@/lib/app-error";
 
 export interface Portfolio {
   id: string;
@@ -381,7 +382,7 @@ function AccountsTable({
       await transferDebtor(debtorId, value === UNASSIGNED ? null : value);
       toast.success("Account transferred");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to transfer account");
+      toast.error(errorText(e, "Failed to transfer account"));
     } finally {
       setTransferringId(null);
     }
@@ -396,7 +397,7 @@ function AccountsTable({
         description: `${confirmRemove.name} — restore it any time from Removed Accounts`,
       });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to remove account");
+      toast.error(errorText(e, "Failed to remove account"));
     } finally {
       setRemovingId(null);
       setConfirmRemove(null);
@@ -431,7 +432,7 @@ function AccountsTable({
       toast.success(`${ids.length} account${ids.length === 1 ? "" : "s"} transferred`);
       setSelected(new Set());
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to transfer accounts");
+      toast.error(errorText(e, "Failed to transfer accounts"));
     } finally {
       setBulkMoving(false);
     }
@@ -645,7 +646,7 @@ function RemovedAccountsPanel({ portfolioId }: { portfolioId: string }) {
     try {
       setRemoved(await getRemovedDebtors(portfolioId));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to load removed accounts");
+      toast.error(errorText(e, "Failed to load removed accounts"));
     } finally {
       setLoading(false);
     }
@@ -666,7 +667,7 @@ function RemovedAccountsPanel({ portfolioId }: { portfolioId: string }) {
       toast.success("Account restored", { description: d.name });
       setRemoved((prev) => (prev ? prev.filter((x) => x.id !== d.id) : prev));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to restore account");
+      toast.error(errorText(e, "Failed to restore account"));
     } finally {
       setRestoringId(null);
     }
@@ -743,7 +744,7 @@ function RetentionRequestsPanel({ portfolioId }: { portfolioId: string }) {
       await refreshRetentionRequests();
       setRequests(getRetentionRequests().filter((r) => r.portfolioId === portfolioId));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to load retention requests");
+      toast.error(errorText(e, "Failed to load retention requests"));
     } finally {
       setLoading(false);
     }
@@ -769,7 +770,7 @@ function RetentionRequestsPanel({ portfolioId }: { portfolioId: string }) {
       setRequests(getRetentionRequests().filter((x) => x.portfolioId === portfolioId));
       toast.success(decision === "approved" ? "Retention approved" : "Retention rejected");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update request");
+      toast.error(errorText(e, "Failed to update request"));
     } finally {
       setBusyId(null);
     }
@@ -806,7 +807,7 @@ function RetentionRequestsPanel({ portfolioId }: { portfolioId: string }) {
         `Exported ${toSend.length} account${toSend.length === 1 ? "" : "s"} — marked as sent to bank`,
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Exported, but failed to mark as sent");
+      toast.error(errorText(e, "Exported, but failed to mark as sent"));
     }
   };
 

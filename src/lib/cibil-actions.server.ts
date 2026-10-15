@@ -50,6 +50,7 @@ import {
   type CibilForm,
   type CibilOutcome,
 } from "./cibil/payprime";
+import { appError } from "./app-error";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST's fluent builder;
    the chain is `any` by necessity, as in profilex-actions.server.ts. */
@@ -93,7 +94,10 @@ async function cibilState(clientId: string): Promise<{ on: boolean; settings: Pr
 async function callerCanSeeDebtor(accessToken: string, debtorId: string): Promise<boolean> {
   const url = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!url || !anonKey) throw new Error("Missing SUPABASE_URL/SUPABASE_ANON_KEY (server env)");
+  if (!url || !anonKey)
+    throw appError("SX-2901", "This report is not available right now. Contact SamvadX support.", {
+      missing: "SUPABASE_URL/SUPABASE_ANON_KEY",
+    });
   const asUser = createClient(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -108,7 +112,7 @@ async function loadDebtor(debtorId: string, clientId: string) {
     .select("id, client_id, name, email, phone_primary, loan_reference, extra")
     .eq("id", debtorId)
     .maybeSingle();
-  if (error) throw new Error(`Could not load the borrower (${error.message})`);
+  if (error) throw appError("SX-2001", "Could not load the borrower.", error);
   if (!debtor) throw new Error("That borrower no longer exists");
   if (debtor.client_id !== clientId) throw new Error("That borrower belongs to another company");
   return debtor as Row;
@@ -172,10 +176,9 @@ async function callPayPrime(
 ): Promise<{ httpStatus: number; text: string; json: Row | null }> {
   const tokens = parseTokens(env("PAYPRIME_API_TOKEN"));
   if (!tokens.length) {
-    throw new Error(
-      "CIBIL reports are not configured. Set PAYPRIME_API_TOKEN in the server environment " +
-        "(and in Railway for production).",
-    );
+    throw appError("SX-2902", "CIBIL reports are not set up yet. Contact SamvadX support.", {
+      missing: "PAYPRIME_API_TOKEN",
+    });
   }
   const base = (env("PAYPRIME_BASE_URL") ?? "https://b2b.payprime.in").replace(/\/+$/, "");
   const path = getService(CIBIL_SERVICE)!.path;
@@ -222,43 +225,62 @@ function ledgerFields(outcome: CibilOutcome, httpStatus: number, text: string, c
   };
 }
 
-function failureMessage(outcome: CibilOutcome, httpStatus: number, text: string): string {
-  const hint =
-    httpStatus === 401 || httpStatus === 403 || /\bip\b|whitelist|not allowed/i.test(text)
-      ? " If PayPrime says the IP or domain is not allowed, this server's outbound IP is not on " +
-        "the list under Developer Setting → Api Token on the PayPrime portal."
-      : "";
-  const badParams = /bad parameter/i.test(outcome.message)
-    ? " PayPrime needs more of the person's details for this one — fill in gender, email and " +
-      "the address too, then try again."
-    : "";
+/** The error a manager/admin sees when no report came back. Says what to fix in plain words;
+ *  the provider's own message, HTTP status and any IP/allow-list hint go to the server log
+ *  under the code (docs/ERROR_CODES.md). */
+function failure(outcome: CibilOutcome, httpStatus: number, text: string): Error {
+  const detail = {
+    httpStatus,
+    provider: outcome.message,
+    txnId: outcome.txnId,
+    body: text.slice(0, 300),
+  };
+  const charged = outcome.billable
+    ? ` This may have been charged — reference ${outcome.txnId}.`
+    : " Nothing was charged.";
+  if (httpStatus === 401 || httpStatus === 403 || /\bip\b|whitelist|not allowed/i.test(text)) {
+    // Usually this server's outbound IP missing from the provider's allow-list.
+    return appError(
+      "SX-2104",
+      "CIBIL reports are not available right now. Contact SamvadX support.",
+      detail,
+    );
+  }
+  if (/no record/i.test(outcome.message)) {
+    return appError(
+      "SX-2101",
+      "No credit report was found for these details — check the PAN, date of birth and name " +
+        `against the PAN card.${charged}`,
+      detail,
+    );
+  }
   // Laravel-style validation ("The region field is required.") — rejected before any transaction.
   const missing = outcome.message.match(/the (\w+) field is required/i)?.[1];
-  const missingField = missing
-    ? ` PayPrime needs the ${{ region: "state", postal_code: "PIN code", street_address: "address" }[missing.toLowerCase()] ?? missing.replace(/_/g, " ")} filled in — add it and try again.`
-    : "";
-  const noRecord = /no record/i.test(outcome.message)
-    ? " The bureau has no record matching these details — check the PAN, date of birth and " +
-      "name spelling against the borrower's PAN card."
-    : "";
-  return (
-    `PayPrime did not return a report (${outcome.message}).` +
-    noRecord +
-    missingField +
-    badParams +
-    (outcome.billable
-      ? ` It issued transaction ${outcome.txnId}, so it may have been charged.`
-      : " Nothing was charged.") +
-    hint
-  );
+  if (missing) {
+    const field =
+      { region: "state", postal_code: "PIN code", street_address: "address" }[
+        missing.toLowerCase()
+      ] ?? missing.replace(/_/g, " ");
+    return appError("SX-2102", `Fill in the ${field} and try again.${charged}`, detail);
+  }
+  if (/bad parameter/i.test(outcome.message)) {
+    return appError(
+      "SX-2103",
+      `More of the person's details are needed — fill in gender, email and address, then try again.${charged}`,
+      detail,
+    );
+  }
+  return appError("SX-2105", `No report was returned.${charged}`, detail);
 }
 
 function unreachable(err: unknown): Error {
-  return new Error(
-    err instanceof Error && /not configured/.test(err.message)
-      ? err.message
-      : "Could not reach PayPrime — nothing was charged. Try again in a minute.",
-  );
+  return err instanceof Error && /\(SX-\d{4}\)$/.test(err.message)
+    ? err
+    : appError(
+        "SX-2106",
+        "Could not get the report right now — nothing was charged. Try again in a minute.",
+        err,
+      );
 }
 
 /** Save a copy of the report page PayPrime links to (htmlUrl), since such links can expire.
@@ -290,9 +312,11 @@ async function saveReport(fields: Row): Promise<CibilReportSummary> {
   if (error || !saved) {
     // Paid for, but not stored: say so with the transaction id rather than lose it silently.
     console.error("[cibil] report save failed:", error?.message);
-    throw new Error(
-      `The report was generated (transaction ${String(fields.txn_id)}) but could not be saved ` +
-        `(${error?.message ?? "unknown error"}). Contact SamvadX support with that id.`,
+    throw appError(
+      "SX-2003",
+      `The report was generated (reference ${String(fields.txn_id)}) but could not be saved. ` +
+        "Contact SamvadX support with that reference.",
+      error,
     );
   }
   return toSummary(saved as Row);
@@ -484,7 +508,7 @@ export const runCibilBorrower = createServerFn({ method: "POST" })
         .from("debtor_traces")
         .update({
           state: "failed",
-          error: `Could not reach PayPrime: ${err instanceof Error ? err.message : String(err)}`,
+          error: `Could not reach the provider: ${err instanceof Error ? err.message : String(err)}`,
           completed_at: new Date().toISOString(),
         })
         .eq("id", pending.id);
@@ -500,7 +524,7 @@ export const runCibilBorrower = createServerFn({ method: "POST" })
     await settle(cost);
 
     if (outcome.status !== "1") {
-      throw new Error(failureMessage(outcome, call.httpStatus, call.text));
+      throw failure(outcome, call.httpStatus, call.text);
     }
 
     const report = await saveReport({
@@ -603,7 +627,7 @@ export const runCibilManual = createServerFn({ method: "POST" })
         .from("insights_manual_lookups")
         .update({
           state: "failed",
-          error: `Could not reach PayPrime: ${err instanceof Error ? err.message : String(err)}`,
+          error: `Could not reach the provider: ${err instanceof Error ? err.message : String(err)}`,
           completed_at: new Date().toISOString(),
         })
         .eq("id", pending.id);
@@ -618,7 +642,7 @@ export const runCibilManual = createServerFn({ method: "POST" })
       .eq("id", pending.id);
 
     if (outcome.status !== "1") {
-      throw new Error(failureMessage(outcome, call.httpStatus, call.text));
+      throw failure(outcome, call.httpStatus, call.text);
     }
 
     const report = await saveReport({
@@ -647,7 +671,7 @@ async function loadVisibleReport(accessToken: string, reportId: string, columns:
     .select(`client_id, debtor_id, ${columns}`)
     .eq("id", reportId)
     .maybeSingle();
-  if (error) throw new Error(`Could not load the report (${error.message})`);
+  if (error) throw appError("SX-2002", "Could not load the report.", error);
   if (!row || row.client_id !== caller.clientId) throw new Error("Report not found");
   if (!(await cibilState(caller.clientId)).on) throw new Error("Report not found");
   const visible = row.debtor_id

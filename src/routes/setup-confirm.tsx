@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { supabase } from "@/lib/supabase";
+import { errorText } from "@/lib/app-error";
 
 const PENDING_SETUP_KEY_PREFIX = "samvadx-pending-setup:";
 
@@ -104,7 +105,7 @@ function SetupConfirmPage() {
       // getSession() above already left this browser signed in — no separate sign-in needed.
       navigate({ to: "/admin" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setError(errorText(err, "Something went wrong. Please try again."));
       setLoading(false);
     }
   };

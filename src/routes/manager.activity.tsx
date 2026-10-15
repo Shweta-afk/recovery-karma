@@ -69,6 +69,7 @@ import {
 } from "@/lib/agent-time-stats";
 import { formatINR } from "@/lib/mock-debtors";
 import { cn } from "@/lib/utils";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/manager/activity")({
   head: () => ({
@@ -563,7 +564,7 @@ function ManageTeamDialog({
       if (!team) onCreated(id);
       onClose();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save team");
+      toast.error(errorText(e, "Failed to save team"));
     } finally {
       setSaving(false);
     }
@@ -584,7 +585,7 @@ function ManageTeamDialog({
       toast.success(`Team "${team.name}" removed`);
       onDeleted();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to remove team");
+      toast.error(errorText(e, "Failed to remove team"));
     } finally {
       setDeleting(false);
     }

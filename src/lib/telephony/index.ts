@@ -5,6 +5,7 @@ import type { TelephonyProvider } from "./types";
 import { kookooProvider } from "./kookoo-provider";
 import { skycrmProvider } from "./skycrm-provider";
 import { createSimProvider, type SimProvider } from "./sim-provider";
+import { appError } from "../app-error";
 
 export * from "./types";
 export * from "./call-machine";
@@ -35,9 +36,10 @@ export function getTelephonyProvider(): TelephonyProvider {
     (typeof process !== "undefined" ? process.env?.TELEPHONY_PROVIDER : undefined) ?? "sim";
   const factory = PROVIDERS[key];
   if (!factory) {
-    throw new Error(
-      `Unknown TELEPHONY_PROVIDER "${key}" — expected one of: ${Object.keys(PROVIDERS).join(", ")}`,
-    );
+    throw appError("SX-3002", "Calling is not set up yet. Contact SamvadX support.", {
+      TELEPHONY_PROVIDER: key,
+      expected: Object.keys(PROVIDERS),
+    });
   }
   return factory();
 }

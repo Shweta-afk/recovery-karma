@@ -42,6 +42,7 @@ import { refreshPayments } from "@/lib/payments-store";
 // read-only here (no per-agent edit/reassign in admin's remit), so onEdit/onReassign/
 // onUploadPaid are simply omitted, which PortfolioDetail renders as a view-only dashboard.
 import { PortfolioDetail, toPortfolio } from "@/components/portfolio/portfolio-dashboard";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/admin/portfolio")({
   head: () => ({
@@ -168,7 +169,7 @@ function PortfolioAssignmentPage() {
         return next;
       });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to assign portfolio");
+      toast.error(errorText(e, "Failed to assign portfolio"));
     } finally {
       setAssigning(null);
     }

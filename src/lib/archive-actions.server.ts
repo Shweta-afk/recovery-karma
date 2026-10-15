@@ -14,6 +14,7 @@ import { enforceRateLimit } from "./rate-limit.server";
 import { monthsBetween } from "./archive-shared";
 import { archiveDeadAccounts, signedDeadAccountFileUrl } from "./dead-account-archive.server";
 import { snapshotDebtorVersions } from "./archive-snapshot.server";
+import { appError } from "./app-error";
 
 interface LooseDb {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- no generated Database types
@@ -64,7 +65,15 @@ export const runArchiveNow = createServerFn({ method: "POST" })
         p_month: month,
         p_client: caller.clientId,
       });
-      results.push(error ? { month, ok: false, error: error.message } : { month, ok: true });
+      results.push(
+        error
+          ? {
+              month,
+              ok: false,
+              error: appError("SX-6301", `Could not archive ${month}.`, error).message,
+            }
+          : { month, ok: true },
+      );
     }
 
     // Account versions for this month, in batches (one statement for every account timed out —

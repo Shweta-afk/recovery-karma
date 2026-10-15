@@ -47,6 +47,7 @@ import {
 import { toOutcomeRow, type OutcomeRpcRow } from "./profilex/outcome";
 import { buildLoanLookupData, type LoanTraceInput } from "./profilex/loan-lookup-data";
 import { fetchAllRows } from "./fetch-all-rows";
+import { appError } from "./app-error";
 
 // This project has no generated Supabase `Database` types, so every `.from(...)` resolves to
 // `never` and each column read is a type error (the older stores simply live with ~300 of
@@ -71,7 +72,9 @@ function asCaller(accessToken: string): LooseDb {
   const url = typeof process !== "undefined" ? process.env?.SUPABASE_URL : undefined;
   const anonKey = typeof process !== "undefined" ? process.env?.SUPABASE_ANON_KEY : undefined;
   if (!url || !anonKey) {
-    throw new Error("Missing SUPABASE_URL/SUPABASE_ANON_KEY (server env) for a caller-scoped read");
+    throw appError("SX-1901", "This page is not available right now. Contact SamvadX support.", {
+      missing: "SUPABASE_URL/SUPABASE_ANON_KEY (caller-scoped read)",
+    });
   }
   return createClient(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -224,10 +227,9 @@ async function callProfilex(
   const accessKey = env("PROFILEX_ACCESS_KEY");
 
   if (!clientUserId || !secretKey || !accessKey) {
-    throw new Error(
-      "Insights is not configured. Set PROFILEX_CLIENT_HASH_ID, PROFILEX_SECRET_KEY and " +
-        "PROFILEX_ACCESS_KEY in the server environment (and in Railway for production).",
-    );
+    throw appError("SX-1902", "Insights is not set up yet. Contact SamvadX support.", {
+      missing: "PROFILEX_CLIENT_HASH_ID / PROFILEX_SECRET_KEY / PROFILEX_ACCESS_KEY",
+    });
   }
 
   const headers: Record<string, string> = {
@@ -421,7 +423,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       .select("id, client_id, name, phone_primary, alt_phones")
       .eq("id", data.debtorId)
       .maybeSingle();
-    if (debtorErr) throw new Error(`Could not load the debtor (${debtorErr.message})`);
+    if (debtorErr) throw appError("SX-1001", "Could not load the debtor.", debtorErr);
     if (!debtor) throw new Error("That debtor no longer exists");
     if (debtor.client_id !== caller.clientId) {
       throw new Error("That debtor belongs to another organisation");
@@ -556,7 +558,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         .select("balance")
         .eq("manager_id", caller.agentId)
         .maybeSingle();
-      if (walletErr) throw new Error(`Could not check your Insights wallet (${walletErr.message})`);
+      if (walletErr) throw appError("SX-1002", "Could not check your Insights wallet.", walletErr);
       const balance = Number(wallet?.balance ?? 0);
       const worstCase = priceFor(service, null, settings.rate_card);
       if (balance < worstCase) {
@@ -625,11 +627,11 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
             completed_at: new Date().toISOString(),
           })
           .eq("id", pending.id);
-        throw new Error(
-          holdErr
-            ? `Could not reserve funds for this lookup (${holdErr.message})`
-            : "Your Insights wallet does not have enough left for this lookup. Ask an admin to top it up in Settings.",
-        );
+        throw holdErr
+          ? appError("SX-1016", "Could not reserve funds for this lookup.", holdErr)
+          : new Error(
+              "Your Insights wallet does not have enough left for this lookup. Ask an admin to top it up in Settings.",
+            );
       }
       held = worstCase;
     }
@@ -731,16 +733,17 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
       // means the service is not on the account — say that, rather than making a manager decode
       // "You Dont Have UAT Access!!!".
       if (/UAT Access/i.test(providerMessage)) {
-        throw new Error(
-          `"${service.label}" is not enabled on your account with the data provider, so this ` +
-            `lookup cannot run. Nothing was charged. An admin needs to ask them to enable it — ` +
-            `other lookups may still work.`,
+        throw appError(
+          "SX-1903",
+          `"${service.label}" is not available right now. Nothing was charged. Contact SamvadX support — other lookups may still work.`,
+          { service: service.id, httpStatus, providerMessage },
         );
       }
 
-      throw new Error(
-        `The data provider rejected this request (HTTP ${httpStatus}: ${providerMessage}). ` +
-          `This is a fault on their side, not a "nothing found" result — nothing was charged.`,
+      throw appError(
+        "SX-1904",
+        "This lookup could not be completed. Nothing was charged — please try again later.",
+        { service: service.id, httpStatus, providerMessage },
       );
     }
 
@@ -830,7 +833,7 @@ export const getMyWallet = createServerFn({ method: "POST" })
       .select("balance")
       .eq("manager_id", caller.agentId)
       .maybeSingle();
-    if (error) throw new Error(`Could not load your Insights wallet (${error.message})`);
+    if (error) throw appError("SX-1003", "Could not load your Insights wallet.", error);
     return { balance: Number(wallet?.balance ?? 0) };
   });
 
@@ -869,8 +872,8 @@ export const getManagerWallets = createServerFn({ method: "POST" })
         .select("manager_id, balance, updated_at")
         .eq("client_id", caller.clientId),
     ]);
-    if (mErr) throw new Error(`Could not load managers (${mErr.message})`);
-    if (wErr) throw new Error(`Could not load wallets (${wErr.message})`);
+    if (mErr) throw appError("SX-1004", "Could not load managers.", mErr);
+    if (wErr) throw appError("SX-1005", "Could not load wallets.", wErr);
     const balanceByManager = new Map(
       ((wallets ?? []) as { manager_id: string; balance: number; updated_at: string }[]).map(
         (w) => [w.manager_id, w],
@@ -911,7 +914,7 @@ export const getCompanyWallet = createServerFn({ method: "POST" })
       .select("balance, updated_at")
       .eq("client_id", caller.clientId)
       .maybeSingle();
-    if (error) throw new Error(`Could not load your company's Insights budget (${error.message})`);
+    if (error) throw appError("SX-1006", "Could not load your company's Insights budget.", error);
     return { balance: Number(wallet?.balance ?? 0), updatedAt: wallet?.updated_at ?? null };
   });
 
@@ -943,7 +946,7 @@ export const allocateToManager = createServerFn({ method: "POST" })
       .select("id, client_id, role")
       .eq("id", data.managerId)
       .maybeSingle();
-    if (mErr) throw new Error(`Could not verify that manager (${mErr.message})`);
+    if (mErr) throw appError("SX-1007", "Could not verify that manager.", mErr);
     if (!manager || manager.client_id !== caller.clientId || manager.role !== "manager") {
       throw new Error("That manager was not found in your organisation");
     }
@@ -959,7 +962,7 @@ export const allocateToManager = createServerFn({ method: "POST" })
       if (/insufficient/i.test(error.message)) {
         throw new Error("Your company's Insights budget doesn't have enough left for that top-up.");
       }
-      throw new Error(`Could not update the wallet (${error.message})`);
+      throw appError("SX-1008", "Could not update the wallet.", error);
     }
     return { balance: Number(newBalance) };
   });
@@ -993,7 +996,7 @@ export const getProfilexUsage = createServerFn({ method: "POST" })
     const asUser = asCaller(data.accessToken);
     const since = data.since ?? istMonthStart().toISOString();
     const { data: rows, error } = await asUser.rpc("profilex_usage_by_user", { p_since: since });
-    if (error) throw new Error(`Could not load Insights usage (${error.message})`);
+    if (error) throw appError("SX-1009", "Could not load Insights usage.", error);
     return { since, rows: (rows as UsageRow[] | null) ?? [] };
   });
 
@@ -1040,7 +1043,7 @@ export const getProfilexUsageDetail = createServerFn({ method: "POST" })
       p_limit: data.limit ?? 200,
       p_offset: data.offset ?? 0,
     });
-    if (error) throw new Error(`Could not load Insights detail log (${error.message})`);
+    if (error) throw appError("SX-1010", "Could not load Insights detail log.", error);
     return { since, rows: (rows as UsageDetailRow[] | null) ?? [] };
   });
 
@@ -1078,11 +1081,9 @@ export const getInsightsOutcomeReport = createServerFn({ method: "POST" })
       p_limit: OUTCOME_REPORT_LIMIT,
     });
     if (error) {
-      throw new Error(
-        /insights_outcome_report/.test(error.message)
-          ? "The outcome report isn't set up yet — run migrations/20260927_insights_outcome_report.sql"
-          : `Could not load the Insights outcome report (${error.message})`,
-      );
+      // A message naming insights_outcome_report means the function is missing —
+      // migrations/20260927_insights_outcome_report.sql was not applied.
+      throw appError("SX-1017", "Could not load the Insights outcome report.", error);
     }
     const list = ((rows as OutcomeRpcRow[] | null) ?? []).map(toOutcomeRow);
     return { since, rows: list, truncated: list.length >= OUTCOME_REPORT_LIMIT };
@@ -1103,7 +1104,7 @@ export const listInsightsPortfolios = createServerFn({ method: "POST" })
       .from("portfolios")
       .select("id, name, lender_name, product_type, closed_at")
       .order("uploaded_at", { ascending: false });
-    if (error) throw new Error(`Could not load portfolios (${error.message})`);
+    if (error) throw appError("SX-1011", "Could not load portfolios.", error);
     return {
       portfolios: ((rows ?? []) as Row[]).map((p) => ({
         id: String(p.id),
@@ -1138,7 +1139,7 @@ async function loadPortfolioLookupData(accessToken: string, portfolioId: string)
   // full bag if this runs against a database without it, like debtor-extra.ts does.
   let res = await read("extra_named");
   if (res.error && /extra_named/.test(res.error.message)) res = await read("extra");
-  if (res.error) throw new Error(`Could not load lookup data (${res.error.message})`);
+  if (res.error) throw appError("SX-1012", "Could not load lookup data.", res.error);
 
   const traces: LoanTraceInput[] = res.data.map((t) => {
     const d = (t.debtors ?? {}) as Row;
@@ -1261,7 +1262,7 @@ async function requireVisiblePortfolio(accessToken: string, portfolioId: string)
     .select("id")
     .eq("id", portfolioId)
     .maybeSingle();
-  if (error) throw new Error(`Could not check the portfolio (${error.message})`);
+  if (error) throw appError("SX-1013", "Could not check the portfolio.", error);
   if (!data) throw new Error("Portfolio not found");
 }
 
@@ -1300,7 +1301,7 @@ export const requestLookupExport = createServerFn({ method: "POST" })
       });
     // 23505: someone else's request landed first (one pending per portfolio) — that's fine.
     if (error && !/duplicate key|23505/.test(error.message)) {
-      throw new Error(`Could not send the request (${error.message})`);
+      throw appError("SX-1014", "Could not send the request.", error);
     }
     return exportStatus(caller.clientId, data.portfolioId);
   });
@@ -1498,14 +1499,16 @@ export const runManualInsight = createServerFn({ method: "POST" })
       const providerMessage =
         typeof json?.message === "string" ? json.message : raw.slice(0, 200) || "no detail given";
       if (/UAT Access/i.test(providerMessage)) {
-        throw new Error(
-          `"${service.label}" is not enabled on the data provider account, so this lookup cannot ` +
-            `run. Nothing was charged.`,
+        throw appError(
+          "SX-1905",
+          `"${service.label}" is not available right now. Nothing was charged. Contact SamvadX support.`,
+          { service: service.id, httpStatus, providerMessage },
         );
       }
-      throw new Error(
-        `The data provider rejected this request (HTTP ${httpStatus}: ${providerMessage}). ` +
-          `Nothing was charged.`,
+      throw appError(
+        "SX-1906",
+        "This lookup could not be completed. Nothing was charged — please try again later.",
+        { service: service.id, httpStatus, providerMessage },
       );
     }
 
@@ -1531,7 +1534,7 @@ export const listManualInsights = createServerFn({ method: "POST" })
       .neq("service_id", CIBIL_SERVICE)
       .order("created_at", { ascending: false })
       .limit(data.limit ?? 50);
-    if (error) throw new Error(`Could not load lookups (${error.message})`);
+    if (error) throw appError("SX-1015", "Could not load lookups.", error);
     return {
       rows: (rows as ManualLookupRow[] | null) ?? [],
       settings: await loadSettings(caller.clientId),

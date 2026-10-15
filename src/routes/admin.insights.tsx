@@ -34,6 +34,7 @@ import {
 } from "@/lib/profilex-actions.server";
 import { PROFILEX_SERVICES, priceLine, type ProfilexService } from "@/lib/profilex/catalogue";
 import { flatten } from "@/components/profilex/trace-panel";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/admin/insights")({
   head: () => ({ meta: [{ title: "Insights · SamvadX" }] }),
@@ -73,7 +74,11 @@ function ResultView({ row }: { row: ManualLookupRow }) {
   );
 
   if (row.state === "failed") {
-    return <p className="text-xs text-destructive break-words">{row.error ?? "Lookup failed."}</p>;
+    return (
+      <p className="text-xs text-destructive break-words">
+        {row.error ? errorText(row.error, "Lookup failed") : "Lookup failed."}
+      </p>
+    );
   }
   return (
     <div className="space-y-2">
@@ -146,7 +151,7 @@ function AdminInsightsPage() {
       setPlan(settings.enabled_services);
       setRateCard(settings.rate_card);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not load Insights");
+      toast.error(errorText(err, "Could not load Insights"));
     } finally {
       setLoading(false);
     }
@@ -189,7 +194,7 @@ function AdminInsightsPage() {
       toast.success(`${service.label} done — charged ${inr(res.cost)}`);
       setShownId(res.lookup?.id ?? null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Lookup failed");
+      toast.error(errorText(err, "Lookup failed"));
     } finally {
       setRunning(false);
       await load();

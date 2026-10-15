@@ -39,6 +39,7 @@ import { TracePanel } from "@/components/profilex/trace-panel";
 import { getDispositions, refreshDispositions } from "@/lib/disposition-store";
 import { useFullExtra } from "@/lib/debtor-extra";
 import { requestRetention, getRetentionRequestsFor } from "@/lib/retention-store";
+import { errorText } from "@/lib/app-error";
 
 const CALL_OUTCOME_LABEL: Record<string, string> = {
   paid: "Paid",
@@ -269,7 +270,7 @@ export function DebtorProfile({
       setRetentionOpen(false);
       setRetentionReason("");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to request retention");
+      toast.error(errorText(e, "Failed to request retention"));
     } finally {
       setRetentionSubmitting(false);
     }

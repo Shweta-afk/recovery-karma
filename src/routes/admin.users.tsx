@@ -50,6 +50,7 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { refreshRoster } from "@/lib/team-store";
 import type { Role } from "@/lib/auth";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/admin/users")({
   head: () => ({ meta: [{ title: "User Management · SamvadX Admin" }] }),
@@ -117,7 +118,7 @@ function AdminUsersPage() {
       .order("created_at", { ascending: false });
 
     if (err) {
-      setError(err.message);
+      setError(errorText(err, "Could not load users"));
       setLoading(false);
       return;
     }
@@ -147,7 +148,7 @@ function AdminUsersPage() {
       .eq("id", agent.id);
 
     if (err) {
-      toast.error("Failed to update role: " + err.message);
+      toast.error(errorText(err, "Failed to update role"));
       return;
     }
     setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, role: newRole } : a)));
@@ -185,7 +186,7 @@ function AdminUsersPage() {
       .eq("id", agent.id);
 
     if (err) {
-      toast.error(`Failed to ${next ? "reactivate" : "deactivate"}: ` + err.message);
+      toast.error(errorText(err, `Failed to ${next ? "reactivate" : "deactivate"}`));
       return;
     }
     // Kept in the list rather than filtered out — an admin has to be able to see and undo this.

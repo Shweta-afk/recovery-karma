@@ -18,6 +18,7 @@ import {
 import { InvoiceStatusBadge } from "@/components/billing/invoice-list";
 import { AdminAgreements } from "@/components/contracts/admin-agreements";
 import { CONTRACTS_VISIBLE_TO_COMPANIES } from "@/lib/contracts";
+import { errorText } from "@/lib/app-error";
 
 type BillingTab = "invoices" | "agreements";
 
@@ -85,7 +86,7 @@ function MyInvoices({ openId }: { openId?: string }) {
     try {
       setInvoices(await listMyInvoices({ data: { accessToken: await getAccessToken() } }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not load invoices");
+      toast.error(errorText(e, "Could not load invoices"));
       setInvoices([]);
     }
   }, []);
@@ -97,7 +98,7 @@ function MyInvoices({ openId }: { openId?: string }) {
         await openMyInvoice({ data: { accessToken: await getAccessToken(), invoiceId: id } }),
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not open the invoice");
+      toast.error(errorText(e, "Could not open the invoice"));
     } finally {
       setOpening(null);
     }

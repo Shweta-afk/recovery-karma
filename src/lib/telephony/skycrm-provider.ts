@@ -37,6 +37,7 @@ import type {
   CallStatusEvent,
   CallStatus,
 } from "./types";
+import { appError } from "../app-error";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -59,12 +60,11 @@ const TOKEN_TTL_SECONDS = 3600;
 
 function requireCredentials() {
   if (!SKYCRM_SECRET || !SKYCRM_USER || !SKYCRM_PASS) {
-    // Surfaced to an agent's toast on a failed call — names the env vars an operator needs
-    // without naming the vendor to the agent (see CLAUDE.md: keep the vendor name out of the UI).
-    throw new Error(
-      "Telephony is not configured — SKYCRM_SECRET / SKYCRM_USER / SKYCRM_PASS are unset. " +
-        "Ask your platform team to add them to the environment.",
-    );
+    // Surfaced to an agent's toast; the missing settings (SKYCRM_SECRET / SKYCRM_USER /
+    // SKYCRM_PASS) go to the server log only — see docs/ERROR_CODES.md.
+    throw appError("SX-3001", "Calling is not set up yet. Contact SamvadX support.", {
+      missing: ["SKYCRM_SECRET", "SKYCRM_USER", "SKYCRM_PASS"].filter((k) => !env(k)),
+    });
   }
 }
 
@@ -146,8 +146,10 @@ async function post(
       body: form,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Telephony request to ${path} failed: ${msg}`);
+    throw appError("SX-3102", "Could not reach the calling service. Please try again.", {
+      path,
+      error: err,
+    });
   }
 
   const text = await response.text();
@@ -155,21 +157,26 @@ async function post(
   try {
     data = JSON.parse(text) as SkyCrmResponse;
   } catch {
-    // A non-JSON body is almost always the vendor's Django 500 HTML page — don't echo the whole
-    // thing back into a toast; surface the HTTP code and a short prefix.
-    throw new Error(
-      `Telephony ${path} returned a non-JSON response (${response.status}): ${text.slice(0, 120)}`,
-    );
+    // A non-JSON body is almost always the vendor's Django 500 HTML page — log it, never toast it.
+    throw appError("SX-3103", "The calling service had a problem. Please try again.", {
+      path,
+      status: response.status,
+      body: text.slice(0, 300),
+    });
   }
 
   const logicalStatus = Number(data.status);
   if (logicalStatus === 401) {
-    throw new Error(`Telephony auth rejected on ${path}: ${data.message ?? "Invalid token"}`);
+    throw appError("SX-3101", "Calling is not available right now. Contact SamvadX support.", {
+      path,
+      response: data,
+    });
   }
   if (logicalStatus >= 300) {
-    throw new Error(
-      `Telephony ${path} failed: ${data.Error ?? data.error ?? data.message ?? text.slice(0, 120)}`,
-    );
+    throw appError("SX-3104", "The call could not be placed. Please try again.", {
+      path,
+      response: data.Error ?? data.error ?? data.message ?? text.slice(0, 300),
+    });
   }
   return data;
 }
@@ -260,7 +267,7 @@ export const skycrmProvider: TelephonyProvider = {
   async sendSms(_req: SendSmsRequest): Promise<SendSmsResult> {
     // SkyCRM v1.2 exposes no SMS endpoint (voice + inbound-queue control only). SMS stays on the
     // existing provider — don't silently pretend it sent.
-    throw new Error("SMS is not supported by this telephony provider.");
+    throw appError("SX-3105", "SMS is not available yet.");
   },
 
   parseStatusWebhook(payload: unknown): CallStatusEvent {

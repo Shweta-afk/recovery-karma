@@ -66,6 +66,7 @@ import {
   type StdFieldKey,
 } from "@/lib/csv-fields";
 import { useAuth } from "@/lib/auth";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/manager/upload")({
   head: () => ({ meta: [{ title: "Portfolio Upload · SamvadX" }] }),
@@ -440,7 +441,7 @@ function PortfolioUploadPage() {
       clearInterval(tick);
       setUploading(false);
       setUploadProgress(0);
-      toast.error(e instanceof Error ? e.message : "Upload failed");
+      toast.error(errorText(e, "Upload failed"));
     }
   };
 

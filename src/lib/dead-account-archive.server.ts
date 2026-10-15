@@ -28,6 +28,7 @@ import {
   type SheetData,
   type TraceLite,
 } from "./dead-accounts-shared";
+import { appError } from "./app-error";
 
 export const DEAD_ACCOUNTS_BUCKET = "dead-accounts";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -139,7 +140,7 @@ async function archivePortfolio(
       .order("id")
       .range(from, to),
   );
-  if (dErr) throw new Error(`debtors: ${dErr.message}`);
+  if (dErr) throw appError("SX-6101", "Could not read accounts for the archive.", dErr);
   if (!debtorRows.length) return result;
   const ids = debtorRows.map((d) => d.id);
 
@@ -222,7 +223,7 @@ async function archivePortfolio(
   const { error: upErr } = await admin.storage
     .from(DEAD_ACCOUNTS_BUCKET)
     .upload(filePath, bytes, { contentType: XLSX_MIME, upsert: false });
-  if (upErr) throw new Error(`upload: ${upErr.message}`);
+  if (upErr) throw appError("SX-6102", "Could not save the archive file.", upErr);
 
   const { error: ledgerErr } = await admin.from("dead_account_files").insert({
     client_id: clientId,
@@ -237,7 +238,7 @@ async function archivePortfolio(
     // No ledger entry means no admin can find the file — remove it and leave the accounts
     // untouched, so the next run redoes the whole thing cleanly.
     await admin.storage.from(DEAD_ACCOUNTS_BUCKET).remove([filePath]);
-    throw new Error(`ledger: ${ledgerErr.message}`);
+    throw appError("SX-6103", "Could not record the archive file.", ledgerErr);
   }
 
   // The file is safely stored and findable — now strip. `archived_at IS NULL` makes a retry
@@ -249,7 +250,12 @@ async function archivePortfolio(
       .update({ extra: {}, email: null, archived_at: stampedAt })
       .in("id", part)
       .is("archived_at", null);
-    if (stripErr) throw new Error(`strip (file already saved at ${filePath}): ${stripErr.message}`);
+    if (stripErr)
+      throw appError(
+        "SX-6104",
+        "The archive file was saved, but the accounts could not be cleared.",
+        { filePath, error: stripErr },
+      );
     result.archived += part.length;
   }
   result.filePath = filePath;
@@ -266,7 +272,11 @@ async function archiveClient(clientId: string): Promise<ClientArchiveResult> {
     .select("id, name, closed_at")
     .eq("client_id", clientId)
     .not("closed_at", "is", null);
-  if (pErr) return { ...out, error: `portfolios: ${pErr.message}` };
+  if (pErr)
+    return {
+      ...out,
+      error: appError("SX-6105", "Could not load portfolios for the archive.", pErr).message,
+    };
   const due = ((closed ?? []) as { id: string; name: string; closed_at: string }[]).filter((p) =>
     isPastDeadCutoff(p.closed_at, todayKey),
   );
@@ -318,7 +328,7 @@ export function archiveDeadAccounts(clientId?: string): Promise<ClientArchiveRes
         clientIds = [clientId];
       } else {
         const { data, error } = await db().from("clients").select("id");
-        if (error) throw new Error(`clients: ${error.message}`);
+        if (error) throw appError("SX-6106", "Could not load companies for the archive.", error);
         clientIds = ((data ?? []) as { id: string }[]).map((c) => c.id);
       }
       const results: ClientArchiveResult[] = [];
@@ -340,7 +350,7 @@ export async function signedDeadAccountFileUrl(clientId: string, fileId: string)
     .select("client_id, file_path")
     .eq("id", fileId)
     .maybeSingle();
-  if (error) throw new Error(`Could not load that file (${error.message})`);
+  if (error) throw appError("SX-6107", "Could not load that file.", error);
   if (!row || row.client_id !== clientId || !String(row.file_path).startsWith(`${clientId}/`)) {
     throw new Error("That file does not exist");
   }
@@ -348,6 +358,6 @@ export async function signedDeadAccountFileUrl(clientId: string, fileId: string)
     .from(DEAD_ACCOUNTS_BUCKET)
     .createSignedUrl(row.file_path, 300, { download: true });
   if (sErr || !data?.signedUrl)
-    throw new Error(`Could not create a download link (${sErr?.message})`);
+    throw appError("SX-6108", "Could not create a download link.", sErr);
   return data.signedUrl;
 }

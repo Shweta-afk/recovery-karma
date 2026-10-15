@@ -100,6 +100,7 @@ import { buildDispositionSms } from "@/lib/sms-templates";
 import { toast } from "sonner";
 import { TraceSummary } from "@/components/profilex/trace-summary";
 import { AssignedAgentLine } from "@/components/assigned-agent";
+import { errorText } from "@/lib/app-error";
 
 // Active-call UI cluster extracted from dashboard.call-queue.tsx: the live-call panel/modal,
 // disposition form, PTP tracker, script/recording panels, and the escalation modal. The debtor
@@ -2192,7 +2193,7 @@ export function EscalationModal({
       notes,
       agentId,
       agentName,
-    }).catch((e) => toast.error(e instanceof Error ? e.message : "Failed to send escalation"));
+    }).catch((e) => toast.error(errorText(e, "Failed to send escalation")));
     setSubmitted(true);
     setTimeout(() => {
       onClose();

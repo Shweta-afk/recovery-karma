@@ -52,6 +52,7 @@ import {
   type CallSentiment,
 } from "@/lib/disposition-store";
 import { useStorageSync } from "@/lib/storage-sync";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/manager/audit")({
   head: () => ({ meta: [{ title: "Call Audit · SamvadX" }] }),
@@ -224,7 +225,7 @@ function AiSentimentPanel({
       });
       toast.success("AI sentiment analysis complete");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "AI analysis failed");
+      toast.error(errorText(e, "AI analysis failed"));
     } finally {
       setAnalyzing(false);
     }
@@ -364,7 +365,7 @@ function CallDetailSheet({
       });
       toast.success(`Marked ${SENTIMENT_META[sentiment].label.toLowerCase()}`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save sentiment");
+      toast.error(errorText(e, "Failed to save sentiment"));
     } finally {
       setSaving(false);
     }
@@ -537,7 +538,7 @@ function CallAuditPage() {
       await setCallSentiment(call.id, sentiment, managerId);
       toast.success(`${call.debtorName}: marked ${SENTIMENT_META[sentiment].label.toLowerCase()}`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save sentiment");
+      toast.error(errorText(e, "Failed to save sentiment"));
     } finally {
       setSavingId(null);
     }

@@ -51,6 +51,7 @@ import {
   requestInsights,
 } from "@/lib/insight-request-store";
 import { CibilPanel } from "@/components/profilex/cibil-panel";
+import { errorText } from "@/lib/app-error";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -425,7 +426,7 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
       await requestInsights(debtorId, service.label);
       toast.success("Request sent to your manager");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not send the request");
+      toast.error(errorText(e, "Could not send the request"));
     } finally {
       setRequesting(null);
     }
@@ -437,7 +438,7 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
       await dismissInsightRequest(debtorId, openRequest.id);
       toast.success("Request dismissed");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not dismiss the request");
+      toast.error(errorText(e, "Could not dismiss the request"));
     }
   }
 
@@ -483,7 +484,7 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
             : `${service.label} complete`,
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : `${service.label} failed`);
+      toast.error(errorText(e, `${service.label} failed`));
     } finally {
       setRunning(null);
     }

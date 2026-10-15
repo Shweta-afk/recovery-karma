@@ -15,6 +15,7 @@ import {
   companyDetailsToRow,
   type CompanyDetails,
 } from "./company-details";
+import { appError } from "./app-error";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- new columns aren't in the
    generated types until they're regenerated after migrations/20261011_company_details.sql. */
@@ -33,7 +34,7 @@ async function loadDetails(clientId: string): Promise<CompanyDetails> {
     .select("*")
     .eq("client_id", clientId)
     .maybeSingle();
-  if (error) throw new Error(`Could not load company details (${error.message})`);
+  if (error) throw appError("SX-5101", "Could not load company details.", error);
   return data
     ? companyDetailsFromRow(data as Record<string, unknown>)
     : { ...EMPTY_COMPANY_DETAILS };
@@ -114,6 +115,6 @@ export const saveMyCompanyDetails = createServerFn({ method: "POST" })
         },
         { onConflict: "client_id" },
       );
-    if (error) throw new Error(`Could not save company details (${error.message})`);
+    if (error) throw appError("SX-5102", "Could not save company details.", error);
     return { check };
   });

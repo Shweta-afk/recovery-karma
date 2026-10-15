@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { supabase } from "@/lib/supabase";
 import { PLATFORM_SUBDOMAIN, addressFor, subdomainFromHostname } from "@/lib/company-address";
+import { errorText } from "@/lib/app-error";
 
 const RESEND_COOLDOWN_SECONDS = 45;
 const PENDING_SETUP_KEY_PREFIX = "samvadx-pending-setup:";
@@ -96,7 +97,7 @@ function SetupPage() {
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
       setStep("otp");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send the verification code.");
+      setError(errorText(err, "Could not send the verification code."));
     } finally {
       setLoading(false);
     }
@@ -110,7 +111,7 @@ function SetupPage() {
       await sendOtp(adminEmail.trim().toLowerCase());
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not resend the verification code.");
+      setError(errorText(err, "Could not resend the verification code."));
     } finally {
       setLoading(false);
     }
@@ -129,7 +130,11 @@ function SetupPage() {
         type: "email",
       });
       if (verifyErr || !verifyData.session) {
-        setError(verifyErr?.message ?? "That code didn't work — check it and try again.");
+        setError(
+          verifyErr
+            ? errorText(verifyErr, "That code didn't work — check it and try again")
+            : "That code didn't work — check it and try again.",
+        );
         setLoading(false);
         return;
       }
@@ -158,7 +163,7 @@ function SetupPage() {
       // verifyOtp already signed this browser in — no separate signInWithPassword needed.
       navigate({ to: "/admin" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setError(errorText(err, "Something went wrong. Please try again."));
       setLoading(false);
     }
   };

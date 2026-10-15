@@ -69,6 +69,7 @@ import {
   refreshDispositions,
   type DispositionRecord,
 } from "@/lib/disposition-store";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/dashboard/messages")({
   head: () => ({ meta: [{ title: "Messages · SamvadX" }] }),
@@ -293,7 +294,7 @@ function MessagesPage() {
       setInput("");
       setTemplate("");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to send message");
+      toast.error(errorText(e, "Failed to send message"));
     } finally {
       setSending(false);
     }

@@ -131,6 +131,7 @@ import {
   StatCard,
   PortfolioDetail,
 } from "@/components/portfolio/portfolio-dashboard";
+import { errorText } from "@/lib/app-error";
 
 /* ─── Reassign dialog ───────────────────────────────────────────────────── */
 
@@ -172,7 +173,7 @@ function ReassignDialog({
       toast.success("Assignment saved");
       onClose();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save assignment");
+      toast.error(errorText(e, "Failed to save assignment"));
     } finally {
       setSaving(false);
     }
@@ -311,7 +312,7 @@ function EditPortfolioDialog({
     setExtrasLoading(true);
     fetchPortfolioFullExtra(portfolioId)
       .then((byId) => setFullExtras({ portfolioId, byId }))
-      .catch((e) => toast.error(e instanceof Error ? e.message : "Couldn't load file columns"))
+      .catch((e) => toast.error(errorText(e, "Couldn't load file columns")))
       .finally(() => setExtrasLoading(false));
   };
   const extraKeys = useMemo(
@@ -348,7 +349,7 @@ function EditPortfolioDialog({
       toast.success("Portfolio updated");
       onClose();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save portfolio");
+      toast.error(errorText(e, "Failed to save portfolio"));
     } finally {
       setSaving(false);
     }
@@ -375,7 +376,7 @@ function EditPortfolioDialog({
       setCsvKey((k) => k + 1);
       setRemoveMissing(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to import accounts");
+      toast.error(errorText(e, "Failed to import accounts"));
     } finally {
       setImporting(false);
     }
@@ -391,7 +392,7 @@ function EditPortfolioDialog({
       });
       onArchived();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to archive portfolio");
+      toast.error(errorText(e, "Failed to archive portfolio"));
     } finally {
       setDeleting(false);
     }
@@ -410,7 +411,7 @@ function EditPortfolioDialog({
       });
       onArchived();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to delete portfolio");
+      toast.error(errorText(e, "Failed to delete portfolio"));
     } finally {
       setRemoving(false);
     }
@@ -455,7 +456,7 @@ function EditPortfolioDialog({
         toast.error("An account with this Loan / Account ID already exists in this portfolio");
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to add account");
+      toast.error(errorText(e, "Failed to add account"));
     } finally {
       setAddingManual(false);
     }
@@ -473,7 +474,7 @@ function EditPortfolioDialog({
       });
       setRemap(identityRemap());
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to remap fields");
+      toast.error(errorText(e, "Failed to remap fields"));
     } finally {
       setRemapping(false);
     }
@@ -1158,7 +1159,7 @@ function BulkPaidUploadDialog({
           (res.notFound ? ` · ${res.notFound} not found in this portfolio` : ""),
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to apply the paid file");
+      toast.error(errorText(e, "Failed to apply the paid file"));
     } finally {
       setUploading(false);
     }

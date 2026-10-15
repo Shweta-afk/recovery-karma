@@ -34,6 +34,7 @@ import {
 } from "./portfolio-store";
 import type { DPDBucket } from "./mock-debtors";
 import type { CallOutcome, QueueDebtor } from "./call-queue/types";
+import { errorText } from "./app-error";
 
 export const DEBTOR_PAGE_UPDATED = "debtor-page-updated";
 export const PAGE_SIZE = 100;
@@ -501,7 +502,7 @@ export function useDebtorList(
         await refreshDebtorPage(query, page);
         if (!cancelled) setError(null);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setError(errorText(e, "Something went wrong"));
       }
       if (withCount)
         refreshDebtorCount(query).catch((e) => console.error("[debtor-list] count", e));

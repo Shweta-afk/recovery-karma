@@ -11,6 +11,7 @@ import { todayIstKey } from "@/lib/date-filter";
 import { currentDocument, fileSizeLabel, type ContractDocument } from "@/lib/contracts";
 import { getContractDocumentBody, getContractFileUrl } from "@/lib/contracts.server";
 import { ContractViewerDialog, ViewContractButton } from "./contract-body";
+import { errorText } from "@/lib/app-error";
 
 export async function openContractFile(documentId: string) {
   const accessToken = await getAccessToken();
@@ -43,14 +44,14 @@ export function DownloadContractButton({
           try {
             await openContractFile(documentId);
           } catch (e) {
-            const msg = e instanceof Error ? e.message : "";
+            const msg = errorText(e, "");
             if (/generated/i.test(msg)) {
               try {
                 const accessToken = await getAccessToken();
                 const doc = await getContractDocumentBody({ data: { accessToken, documentId } });
                 setViewer({ title: doc.title, body: doc.body });
               } catch (e2) {
-                toast.error(e2 instanceof Error ? e2.message : "Could not open the document");
+                toast.error(errorText(e2, "Could not open the document"));
               }
             } else {
               toast.error(msg || "Could not open the file");

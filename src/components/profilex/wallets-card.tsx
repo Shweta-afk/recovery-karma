@@ -16,6 +16,7 @@ import {
   allocateToManager,
   type ManagerWalletRow,
 } from "@/lib/profilex-actions.server";
+import { errorText } from "@/lib/app-error";
 
 /** Standalone, prominent display of this company's own Insights budget — what a superadmin
  *  allocated to this company (see profilex_company_wallets / getCompanyWallet), as opposed to
@@ -38,7 +39,7 @@ export function CompanyWalletCard() {
         setBalance(res.balance);
         setUpdatedAt(res.updatedAt ?? null);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not load your company's wallet");
+        toast.error(errorText(e, "Could not load your company's wallet"));
       } finally {
         setLoading(false);
       }
@@ -101,7 +102,7 @@ export function ManagerWalletsCard() {
       setRows(walletsRes.rows);
       setCompanyBalance(companyRes.balance);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not load manager wallets");
+      toast.error(errorText(e, "Could not load manager wallets"));
     } finally {
       setLoading(false);
     }
@@ -142,7 +143,7 @@ export function ManagerWalletsCard() {
       });
       toast.success(`Added ₹${amount.toFixed(2)} to ${row.name}'s Insights wallet`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not update the wallet");
+      toast.error(errorText(e, "Could not update the wallet"));
     } finally {
       setSavingId(null);
     }

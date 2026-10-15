@@ -49,6 +49,7 @@ import {
   type Compare,
   type LoanLookupRow,
 } from "@/lib/profilex/loan-lookup-data";
+import { errorText } from "@/lib/app-error";
 
 interface PortfolioOption {
   id: string;
@@ -124,7 +125,7 @@ export function LoanLookupReport() {
         const stored = readStored();
         if (stored && res.portfolios.some((p) => p.id === stored)) setPortfolioId(stored);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load portfolios");
+        setError(errorText(e, "Could not load portfolios"));
       }
     })();
   }, []);
@@ -150,7 +151,7 @@ export function LoanLookupReport() {
         setRows(res.rows);
         setExportState(status);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load lookup data");
+        if (!cancelled) setError(errorText(e, "Could not load lookup data"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -208,7 +209,7 @@ export function LoanLookupReport() {
       setRequestNote("");
       toast.success("Request sent — you'll be notified when it's approved");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not send the request");
+      toast.error(errorText(e, "Could not send the request"));
     } finally {
       setRequesting(false);
     }
@@ -261,7 +262,7 @@ export function LoanLookupReport() {
         setExportState({ ...exportState, request: { ...r, downloadCount: r.downloadCount + 1 } });
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Download failed");
+      toast.error(errorText(e, "Download failed"));
     } finally {
       setExporting(false);
     }

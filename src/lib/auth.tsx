@@ -8,6 +8,7 @@ import {
 } from "./session-actions.server";
 import { roleNeedsEmailOtp, tokenHasEmailOtp } from "./login-otp";
 import { loginUrlFor, wrongAddressRedirect } from "./company-address";
+import { errorText } from "./app-error";
 
 export type Role = "agent" | "manager" | "admin" | "superadmin";
 
@@ -412,7 +413,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) {
       setLoading(false);
       loggingInRef.current = false;
-      return { error: error.message, user: null };
+      return { error: errorText(error, "Could not sign in"), user: null };
     }
     // Company addresses (company-address.ts, session-actions.server.ts's
     // verifySubdomainAccess): each company signs in only at its own address; anyone on the
@@ -484,7 +485,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email,
       options: { shouldCreateUser: false },
     });
-    return { error: error ? `Couldn't send your sign-in code: ${error.message}` : null };
+    return { error: error ? errorText(error, "Couldn't send your sign-in code") : null };
   }
 
   const resendLoginOtp = (email: string) => sendLoginOtp(email);

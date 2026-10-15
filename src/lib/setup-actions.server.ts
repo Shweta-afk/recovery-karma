@@ -15,6 +15,7 @@ import { z, tokenSchema, shortText, emailSchema, passwordSchema } from "./schema
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin } from "./supabase-admin.server";
 import { enforceRateLimit } from "./rate-limit.server";
+import { appError } from "./app-error";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -118,7 +119,10 @@ export const createCompany = createServerFn({ method: "POST" })
       password: adminPassword,
     });
     if (pwErr) {
-      return { ok: false as const, error: pwErr.message || "Could not set your password." };
+      return {
+        ok: false as const,
+        error: appError("SX-5301", "Could not set your password.", pwErr).message,
+      };
     }
 
     const { data: client, error: clientErr } = await admin
@@ -130,7 +134,10 @@ export const createCompany = createServerFn({ method: "POST" })
       // Unlike the old direct-createUser path, authUserId is a real, OTP-verified login that
       // predates this handler — don't delete it on a failed company row. The caller can just
       // retry (a fresh OTP re-verifies the same account) rather than losing their login.
-      return { ok: false as const, error: clientErr?.message ?? "Could not create the company." };
+      return {
+        ok: false as const,
+        error: appError("SX-5302", "Could not create the company.", clientErr).message,
+      };
     }
 
     const { error: agentErr } = await admin.from("agents").insert({
@@ -158,7 +165,7 @@ export const createCompany = createServerFn({ method: "POST" })
         ok: false as const,
         error: /duplicate key|already exists/i.test(agentErr.message)
           ? "That email already has an account."
-          : agentErr.message,
+          : appError("SX-5303", "Could not create your account.", agentErr).message,
       };
     }
 

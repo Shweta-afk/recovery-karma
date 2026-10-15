@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useWebphone } from "@/lib/dialer/use-webphone";
+import { errorText } from "@/lib/app-error";
 
 const REG_LABEL: Record<string, { text: string; className: string }> = {
   unregistered: { text: "Unregistered", className: "bg-muted text-muted-foreground" },
@@ -80,7 +81,7 @@ export function WebphonePanel() {
       {wp.regDetail && <p className="text-xs text-muted-foreground">{wp.regDetail}</p>}
       {wp.error && (
         <p className="rounded bg-red-50 p-2 text-xs text-red-700" role="alert">
-          {wp.error}
+          {errorText(wp.error, "The phone could not connect")}
         </p>
       )}
 

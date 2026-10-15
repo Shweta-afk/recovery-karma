@@ -49,6 +49,7 @@ import {
   type OutcomeTotals,
   type Turnout,
 } from "@/lib/profilex/outcome";
+import { errorText } from "@/lib/app-error";
 
 const ALL = "all";
 const DETAIL_ROWS_SHOWN = 500;
@@ -196,7 +197,7 @@ export function InsightsOutcomeReport({
         setRows(res.rows);
         setTruncated(res.truncated);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load the report");
+        if (!cancelled) setError(errorText(e, "Could not load the report"));
       } finally {
         if (!cancelled) setLoading(false);
       }

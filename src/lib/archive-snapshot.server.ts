@@ -7,6 +7,7 @@
 // migrations/20260923_archive_debtor_versions_batched.sql.
 import { getSupabaseAdmin } from "./supabase-admin.server";
 import { fetchAllRows } from "./fetch-all-rows";
+import { appError } from "./app-error";
 
 /** Accounts per archive_debtor_versions() call — ~1.2s each worst case, well inside 8s even as
  * rows get wider. */
@@ -38,7 +39,7 @@ export function istMonthOf(d: Date): string {
  * one company and month. Throws on failure. */
 export async function archiveMonth(clientId: string, month: string): Promise<void> {
   const { error } = await db().rpc("archive_month", { p_month: month, p_client: clientId });
-  if (error) throw new Error(`archive_month(${month}): ${error.message}`);
+  if (error) throw appError("SX-6201", "Could not save this month's archive.", error);
 }
 
 /**
@@ -58,7 +59,7 @@ export async function snapshotDebtorVersions(
     const { data, error } = await fetchAllRows<{ id: string }>((from, to) =>
       admin.from("debtors").select("id").eq("client_id", clientId).order("id").range(from, to),
     );
-    if (error) throw new Error(`debtor ids: ${error.message}`);
+    if (error) throw appError("SX-6202", "Could not read accounts for the archive.", error);
     ids = data.map((r) => r.id);
   }
   let saved = 0;
@@ -68,7 +69,7 @@ export async function snapshotDebtorVersions(
       p_client: clientId,
       p_debtor_ids: ids.slice(i, i + DEBTOR_VERSION_BATCH),
     });
-    if (error) throw new Error(`archive_debtor_versions(${month}): ${error.message}`);
+    if (error) throw appError("SX-6203", "Could not save account history for the archive.", error);
     saved += Number(data ?? 0);
   }
   return saved;

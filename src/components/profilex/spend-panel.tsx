@@ -17,6 +17,7 @@ import { getProfilexSpend } from "@/lib/profilex-actions.server";
 import { serviceLabel } from "@/lib/profilex-store";
 
 import type { ServiceSpendRow as ServiceSpend } from "@/lib/profilex-actions.server";
+import { errorText } from "@/lib/app-error";
 
 export function ProfilexSpendPanel({ period = "this-month" }: { period?: InsightsPeriod }) {
   const label = periodLabel(period).toLowerCase();
@@ -43,7 +44,7 @@ export function ProfilexSpendPanel({ period = "this-month" }: { period?: Insight
         setTotalSpend(Number(res.totalSpend));
         setBudget(Number(res.monthlyBudget));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load Insights spend");
+        setError(errorText(e, "Could not load Insights spend"));
       } finally {
         if (!cancelled) setLoading(false);
       }

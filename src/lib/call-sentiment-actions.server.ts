@@ -7,6 +7,7 @@ import { z, tokenSchema, idSchema } from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import { fetchPublicBlob } from "./safe-fetch.server";
+import { appError } from "./app-error";
 
 const SENTIMENT_LABELS = ["happy", "neutral", "frustrated", "rude"] as const;
 type SentimentLabel = (typeof SENTIMENT_LABELS)[number];
@@ -46,7 +47,11 @@ async function transcribeWithGroq(audioBlob: Blob): Promise<string> {
     headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
     body: form,
   });
-  if (!res.ok) throw new Error(`Groq transcription failed: ${await res.text()}`);
+  if (!res.ok)
+    throw appError("SX-3201", "Could not transcribe this recording. Please try again.", {
+      status: res.status,
+      body: (await res.text()).slice(0, 300),
+    });
   const json = (await res.json()) as { text: string };
   return json.text;
 }
@@ -78,13 +83,22 @@ async function analyzeWithGemini(transcript: string, retries = 3): Promise<AiSen
       await sleep(2 ** attempt * 1000);
       continue;
     }
-    if (!res.ok) throw new Error(`Gemini sentiment analysis failed: ${await res.text()}`);
+    if (!res.ok)
+      throw appError("SX-3202", "Could not analyse this call. Please try again.", {
+        status: res.status,
+        body: (await res.text()).slice(0, 300),
+      });
     const json = await res.json();
     const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error("Gemini returned no content");
+    if (!text)
+      throw appError("SX-3203", "Could not analyse this call. Please try again.", "empty response");
     return JSON.parse(text) as AiSentimentResult;
   }
-  throw new Error("Gemini sentiment analysis failed after retries");
+  throw appError(
+    "SX-3204",
+    "Call analysis is busy right now. Please try again in a minute.",
+    "gave up after retries",
+  );
 }
 
 export const analyzeCallSentiment = createServerFn({ method: "POST" })

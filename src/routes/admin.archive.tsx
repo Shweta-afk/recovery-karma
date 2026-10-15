@@ -10,6 +10,7 @@ import { getAccessToken } from "@/lib/access-token";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { runArchiveNow, getDeadAccountFileUrl } from "@/lib/archive-actions.server";
 import { ARCHIVE_SHEETS, shapeSheet } from "@/lib/archive-shared";
+import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/admin/archive")({
   head: () => ({ meta: [{ title: "Archive History · SamvadX" }] }),
@@ -68,7 +69,7 @@ function AdminArchivePage() {
     ]);
     if (runsRes.error) {
       // Almost always "relation does not exist": the migration has not been applied yet.
-      toast.error(`Could not load the archive: ${runsRes.error.message}`);
+      toast.error(errorText(runsRes.error, "Could not load the archive"));
       setRuns([]);
     } else {
       setRuns((runsRes.data ?? []) as unknown as RunRow[]);
@@ -89,16 +90,23 @@ function AdminArchivePage() {
       });
       const failed = results.filter((r) => !r.ok);
       if (failed.length) {
-        toast.error(`${failed.length} month(s) failed: ${failed[0].error}`);
+        toast.error(
+          `${failed.length} month(s) failed: ${errorText(failed[0].error, "Something went wrong")}`,
+        );
       } else {
         toast.success(`Archived ${results.length} month${results.length === 1 ? "" : "s"}.`);
       }
-      if (accounts.error) toast.error(`Account details were not saved: ${accounts.error}`);
+      if (accounts.error)
+        toast.error(
+          `Account details were not saved: ${errorText(accounts.error, "Something went wrong")}`,
+        );
       if (deadAccounts.error) {
-        toast.error(`Closed accounts were not archived: ${deadAccounts.error}`);
+        toast.error(
+          `Closed accounts were not archived: ${errorText(deadAccounts.error, "Something went wrong")}`,
+        );
       } else if (deadAccounts.failed.length) {
         toast.error(
-          `${deadAccounts.failed[0].portfolio}: ${deadAccounts.failed[0].error}` +
+          `${deadAccounts.failed[0].portfolio}: ${errorText(deadAccounts.failed[0].error, "Something went wrong")}` +
             (deadAccounts.failed.length > 1 ? ` (+${deadAccounts.failed.length - 1} more)` : ""),
         );
       } else if (deadAccounts.archived) {
@@ -108,7 +116,7 @@ function AdminArchivePage() {
       }
       await load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Archive failed");
+      toast.error(errorText(e, "Archive failed"));
     } finally {
       setArchiving(false);
     }
@@ -161,7 +169,7 @@ function AdminArchivePage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Download failed");
+      toast.error(errorText(e, "Download failed"));
     } finally {
       setDownloading(null);
     }
@@ -178,7 +186,7 @@ function AdminArchivePage() {
       a.rel = "noopener";
       a.click();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Download failed");
+      toast.error(errorText(e, "Download failed"));
     } finally {
       setFileDownloading(null);
     }
@@ -242,7 +250,7 @@ function AdminArchivePage() {
                       <td className="py-2 pr-4">
                         <Badge
                           variant={r.status === "failed" ? "destructive" : "secondary"}
-                          title={r.error ?? undefined}
+                          title={r.error ? errorText(r.error, "Failed") : undefined}
                         >
                           {r.status === "done"
                             ? "Saved"

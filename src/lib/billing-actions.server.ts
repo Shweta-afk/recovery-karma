@@ -26,6 +26,7 @@ import {
   type PaymentMethod,
   type PriceList,
 } from "./invoice-math";
+import { appError } from "./app-error";
 
 const db = () => getSupabaseAdmin();
 /** The new tables aren't in the generated Database types until they are regenerated after the
@@ -80,7 +81,7 @@ export const savePriceList = createServerFn({ method: "POST" })
       updated_at: new Date().toISOString(),
       updated_by: caller.superadminId,
     });
-    if (error) throw new Error(`Could not save the price list (${error.message})`);
+    if (error) throw appError("SX-4201", "Could not save the price list.", error);
 
     const changes = priceListChanges(before, after);
     // Only a price list that existed before is a "change" worth a contract update — filling one
@@ -179,8 +180,8 @@ async function loadInvoiceLedger(invoiceId: string) {
       .order("issue_date", { ascending: true }),
   ]);
   if (inv.error || !inv.data) throw new Error("Invoice not found");
-  if (pay.error) throw new Error(`Could not load payments (${pay.error.message})`);
-  if (cn.error) throw new Error(`Could not load credit notes (${cn.error.message})`);
+  if (pay.error) throw appError("SX-4202", "Could not load payments.", pay.error);
+  if (cn.error) throw appError("SX-4203", "Could not load credit notes.", cn.error);
   const invoice = toInvoiceRecord(inv.data);
   const payments = ((pay.data ?? []) as PaymentRow[]).map(toPayment);
   const creditNotes = ((cn.data ?? []) as CreditNoteRow[]).map(toCreditNote);
@@ -209,7 +210,7 @@ async function syncInvoiceStatus(invoiceId: string) {
       paid_at: settled && lastPaid ? new Date(`${lastPaid}T12:00:00+05:30`).toISOString() : null,
     })
     .eq("id", invoiceId);
-  if (error) throw new Error(`Could not update the invoice status (${error.message})`);
+  if (error) throw appError("SX-4204", "Could not update the invoice status.", error);
 }
 
 export const getInvoiceLedger = createServerFn({ method: "POST" })
@@ -258,7 +259,7 @@ export const recordPayment = createServerFn({ method: "POST" })
         notes: data.notes || null,
         created_by: caller.superadminId,
       });
-    if (error) throw new Error(`Could not record the payment (${error.message})`);
+    if (error) throw appError("SX-4205", "Could not record the payment.", error);
     await syncInvoiceStatus(invoice.id);
     void logSuperadminActivity({
       superadminId: caller.superadminId,
@@ -287,7 +288,7 @@ export const deletePayment = createServerFn({ method: "POST" })
       .eq("id", data.paymentId)
       .select("invoice_id, client_id, amount, received_on")
       .maybeSingle();
-    if (error) throw new Error(`Could not remove the payment (${error.message})`);
+    if (error) throw appError("SX-4206", "Could not remove the payment.", error);
     if (!row) throw new Error("That payment wasn't found");
     const p = row as { invoice_id: string; client_id: string; amount: number; received_on: string };
     await syncInvoiceStatus(p.invoice_id);
@@ -349,7 +350,7 @@ export const issueCreditNote = createServerFn({ method: "POST" })
       p_recipient: invoice.recipient,
       p_superadmin_id: caller.superadminId,
     });
-    if (error) throw new Error(`Could not issue the credit note (${error.message})`);
+    if (error) throw appError("SX-4207", "Could not issue the credit note.", error);
     const cn = toCreditNote(row as CreditNoteRow);
     await syncInvoiceStatus(invoice.id);
     void logSuperadminActivity({

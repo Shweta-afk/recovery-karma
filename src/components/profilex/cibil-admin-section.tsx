@@ -34,6 +34,7 @@ import {
   rupees,
   saveCibilReportFile,
 } from "@/components/profilex/cibil-panel";
+import { errorText } from "@/lib/app-error";
 
 const MOBILE_RE = /^[6-9]\d{9}$/;
 
@@ -87,10 +88,10 @@ export function CibilAdminSection() {
       await load();
       // The point of a manual pull is the file: save it straight to their computer.
       await saveCibilReportFile(res.report.id).catch((e) =>
-        toast.error(e instanceof Error ? e.message : "Could not download the report"),
+        toast.error(errorText(e, "Could not download the report")),
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "CIBIL report failed");
+      toast.error(errorText(e, "CIBIL report failed"));
     } finally {
       setRunning(false);
     }
