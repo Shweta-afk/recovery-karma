@@ -34,6 +34,7 @@ import {
 } from "@/lib/profilex-actions.server";
 import { PROFILEX_SERVICES, priceLine, type ProfilexService } from "@/lib/profilex/catalogue";
 import { flatten } from "@/components/profilex/trace-panel";
+import { NewTag } from "@/components/profilex/new-tag";
 import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/admin/insights")({
@@ -64,7 +65,7 @@ function valueField(s: ProfilexService): {
 }
 
 const needsName = (s: ProfilexService) =>
-  s.input === "mobile+name" || s.input === "mobile+firstName";
+  s.input === "mobile+name" || s.input === "mobile+firstName" || s.input === "mobile+fullName";
 
 function ResultView({ row }: { row: ManualLookupRow }) {
   const [raw, setRaw] = useState(false);
@@ -188,7 +189,10 @@ function AdminInsightsPage() {
           serviceId: service.id,
           value: value.trim(),
           firstName: needsName(service) ? firstName.trim() : undefined,
-          lastName: service.input === "mobile+name" ? lastName.trim() : undefined,
+          lastName:
+            service.input === "mobile+name" || service.input === "mobile+fullName"
+              ? lastName.trim()
+              : undefined,
         },
       });
       toast.success(`${service.label} done — charged ${inr(res.cost)}`);
@@ -248,6 +252,7 @@ function AdminInsightsPage() {
                   {services.map((s) => (
                     <SelectItem key={s.id} value={s.id}>
                       {s.label}
+                      {s.isNew && <NewTag className="ml-1.5" />}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -284,7 +289,7 @@ function AdminInsightsPage() {
                     />
                   </div>
                 )}
-                {service.input === "mobile+name" && (
+                {(service.input === "mobile+name" || service.input === "mobile+fullName") && (
                   <div className="space-y-1.5">
                     <Label htmlFor="ins-last">Last name (optional)</Label>
                     <Input

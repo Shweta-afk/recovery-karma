@@ -16,6 +16,7 @@ import { supabase } from "@/lib/supabase";
 import { getProfilexSettings } from "@/lib/profilex-actions.server";
 import { PROFILEX_SERVICES, priceFor, priceStatuses, statusLabel } from "@/lib/profilex/catalogue";
 import { errorText } from "@/lib/app-error";
+import { NewTag } from "@/components/profilex/new-tag";
 
 type RateCard = Record<string, Record<string, number>>;
 
@@ -121,7 +122,10 @@ export function ProfilexSettingsCard() {
               <div className="space-y-2">
                 {PROFILEX_SERVICES.filter((s) => enabledServices.includes(s.id)).map((s) => (
                   <div key={s.id} className="flex items-center justify-between gap-3">
-                    <span className="text-xs text-foreground truncate">{s.label}</span>
+                    <span className="text-xs text-foreground truncate flex items-center gap-1.5">
+                      {s.label}
+                      {s.isNew && <NewTag />}
+                    </span>
                     <div className="flex items-center gap-3 flex-shrink-0">
                       {priceStatuses(s, rateCard).map((status, _i, all) => (
                         <div key={status} className="flex items-center gap-1.5">

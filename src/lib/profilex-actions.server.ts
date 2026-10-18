@@ -299,6 +299,13 @@ async function writebackPhones(
     .eq("id", debtor.id as string);
 }
 
+/** The phone half of a request body: `mobile` (or `phone`, for the endpoints that name it so),
+ *  with the 91 prefix for a service that documents it. `mobile` is the 10-digit number. */
+function phoneBody(service: ProfilexService, mobile: string): Record<string, string> {
+  const value = service.mobileWithCountryCode ? `91${mobile}` : mobile;
+  return service.input === "phone" ? { phone: value } : { mobile: value };
+}
+
 /** Looks for a lookup this company already paid for on the same phone + service — first on other
  * debtor rows (an earlier upload of the same borrower), then in the monthly archive. Returns
  * null when nothing usable exists, including when the archive table has not been created yet
@@ -315,7 +322,10 @@ async function findReusableTrace(
     settings: { hit_ttl_hours: number; miss_ttl_hours: number };
   },
 ): Promise<ReuseCandidate | null> {
-  const nameSensitive = a.service.input === "mobile+name" || a.service.input === "mobile+firstName";
+  const nameSensitive =
+    a.service.input === "mobile+name" ||
+    a.service.input === "mobile+firstName" ||
+    a.service.input === "mobile+fullName";
   const candidates: ReuseCandidate[] = [];
 
   const { data: live } = await admin
@@ -441,7 +451,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 
     // Resolve the input, still without trusting the browser for any of it.
     let requestBody: Record<string, string>;
-    const PHONE_INPUTS = ["mobile", "phone", "mobile+name", "mobile+firstName"];
+    const PHONE_INPUTS = ["mobile", "phone", "mobile+name", "mobile+firstName", "mobile+fullName"];
     if (PHONE_INPUTS.includes(service.input)) {
       const mobile = normalisePhone(debtor.phone_primary as string);
       if (!/^[6-9]\d{9}$/.test(mobile)) {
@@ -450,8 +460,12 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         );
       }
       // Same number either way; a couple of endpoints just name the field `phone`.
-      requestBody = service.input === "phone" ? { phone: mobile } : { mobile };
-      if (service.input === "mobile+name" || service.input === "mobile+firstName") {
+      requestBody = phoneBody(service, mobile);
+      if (
+        service.input === "mobile+name" ||
+        service.input === "mobile+firstName" ||
+        service.input === "mobile+fullName"
+      ) {
         // Split the stored name rather than asking for one: the provider requires firstName,
         // and anything typed in the browser would be an input we cannot vouch for.
         const parts = String(debtor.name ?? "")
@@ -461,9 +475,13 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
         if (parts.length === 0) {
           throw new Error(`${debtor.name || "This debtor"} has no name on file to look up with.`);
         }
-        requestBody.firstName = parts[0];
-        // Send exactly the fields each endpoint documents — skip tracing takes firstName only.
-        if (service.input === "mobile+name") requestBody.lastName = parts.slice(1).join(" ");
+        if (service.input === "mobile+fullName") {
+          requestBody.name = parts.join(" ");
+        } else {
+          requestBody.firstName = parts[0];
+          // Send exactly the fields each endpoint documents — skip tracing takes firstName only.
+          if (service.input === "mobile+name") requestBody.lastName = parts.slice(1).join(" ");
+        }
       }
     } else {
       const from = service.derivedFrom;
@@ -1383,18 +1401,30 @@ export const runManualInsight = createServerFn({ method: "POST" })
     // Build the request body from what was typed, validating each shape before any money moves.
     let requestBody: Record<string, string>;
     let queryKey: string;
-    if (["mobile", "phone", "mobile+name", "mobile+firstName"].includes(service.input)) {
+    if (
+      ["mobile", "phone", "mobile+name", "mobile+firstName", "mobile+fullName"].includes(
+        service.input,
+      )
+    ) {
       const mobile = normalisePhone(data.value);
       if (!/^[6-9]\d{9}$/.test(mobile)) {
         throw new Error("Enter a valid 10-digit Indian mobile number (starting 6–9).");
       }
       queryKey = mobile;
-      requestBody = service.input === "phone" ? { phone: mobile } : { mobile };
-      if (service.input === "mobile+name" || service.input === "mobile+firstName") {
+      requestBody = phoneBody(service, mobile);
+      if (
+        service.input === "mobile+name" ||
+        service.input === "mobile+firstName" ||
+        service.input === "mobile+fullName"
+      ) {
         const first = data.firstName?.trim();
         if (!first) throw new Error(`"${service.label}" also needs the person's first name.`);
-        requestBody.firstName = first;
-        if (service.input === "mobile+name") requestBody.lastName = data.lastName?.trim() ?? "";
+        if (service.input === "mobile+fullName") {
+          requestBody.name = [first, data.lastName?.trim()].filter(Boolean).join(" ");
+        } else {
+          requestBody.firstName = first;
+          if (service.input === "mobile+name") requestBody.lastName = data.lastName?.trim() ?? "";
+        }
       }
     } else if (service.input === "uan") {
       const uan = data.value.replace(/\s+/g, "");

@@ -24,6 +24,9 @@ export type ProfilexInput =
   | "phone"
   | "mobile+name"
   | "mobile+firstName"
+  /** The number plus the whole stored name in one `name` field (the Financial Behaviour
+   *  lookups) — not split into firstName/lastName like the two inputs above. */
+  | "mobile+fullName"
   | "uan"
   | "gstin"
   | "din"
@@ -76,6 +79,12 @@ export interface ProfilexService {
    *  client via profilex_settings.rate_card — these are the published list prices. */
   defaultPrices: Record<string, number>;
   blurb: string;
+  /** Send the number as `91XXXXXXXXXX` rather than 10 digits — the CRIF report's documented
+   *  shape. Only the request body changes; matching and reuse still use the 10-digit number. */
+  mobileWithCountryCode?: boolean;
+  /** Recently added — shows a small "New" tag beside the label wherever services are listed.
+   *  Remove once it has been around a while; it carries no behaviour. */
+  isNew?: boolean;
 }
 
 const readUan = (d: Record<string, unknown>) => (d?.uan ? String(d.uan) : null);
@@ -219,6 +228,51 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     blurb:
       "The debtor's gas connection: name, full registered address and consumer number. Charged " +
       "the same whether or not anything is found.",
+  },
+  {
+    id: "mobile-to-esic",
+    label: "ESIC Details",
+    // The console card "VRE Mobile to esic details". Added 2026-10-19 from ProfileX's Postman
+    // collection (VRE folder) — not the non-VRE "Mobile to ESIC details" (/validation-service/).
+    path: "/core-svc/api/v2/vre/exp/mobile-to-esic-details",
+    serviceId: "e4d84bf0-cfed-4f30-9fe3-1419526de64c",
+    input: "mobile",
+    defaultPrices: { "1": 9, "2": 9 },
+    blurb:
+      "The debtor's ESIC (Employee State Insurance) record from their phone number — shows " +
+      "whether an employer is paying ESIC for them, which points to salaried work. Charged the " +
+      "same whether or not anything is found.",
+    isNew: true,
+  },
+  {
+    id: "financial-behaviour",
+    label: "Financial Behaviour Analysis",
+    // The console card "VRE Financial Behaviour Analysis" (Financial Suite). Added 2026-10-19
+    // from the Postman collection's VRE folder; body is { mobile, name }.
+    path: "/core-svc/api/v2/vre/exp/financial-behaviour-analysis",
+    serviceId: "94dd7927-2c10-4ccf-8817-23c0d70d17b9",
+    input: "mobile+fullName",
+    defaultPrices: { "1": 11.25, "2": 11.25 },
+    blurb:
+      "How the debtor handles money, from their phone number and name: their financial " +
+      "behaviour across loans and accounts. Charged the same whether or not anything is found.",
+    isNew: true,
+  },
+  {
+    id: "financial-behaviour-crif",
+    label: "Financial Behaviour — CRIF Report",
+    // The console card "Financial Behaviour Analysis [Crif Report]". Added 2026-10-19 from the
+    // Postman collection; its example sends the number as "91XXXXXXXXXX" with the full name.
+    path: "/core-svc/api/v2/exp/credit-report/v2",
+    serviceId: "abcd8882-1424-4e04-9b6f-0aaecafc0aff",
+    input: "mobile+fullName",
+    mobileWithCountryCode: true,
+    // The console lists ₹11.25 for status 1 only; an unpriced status resolves to ₹11.25.
+    defaultPrices: { "1": 11.25 },
+    blurb:
+      "The debtor's credit history from the CRIF bureau, found from their phone number and " +
+      "name — loans, repayment record and enquiries, without needing a PAN.",
+    isNew: true,
   },
   {
     id: "mobile-to-gst",
