@@ -6,7 +6,7 @@
 create temp table _v(u text, t text, n bigint, h text);
 grant all on _v to authenticated;
 do $$
-declare uid text; tbl text; n bigint; h text; is_admin boolean;
+declare uid text; tbl text; k text; n bigint; h text; is_admin boolean;
 begin
   foreach uid in array string_to_array('<auth_user_id>,<auth_user_id>,...', ',') loop
     select role='admin' into is_admin from agents where auth_user_id=uid::uuid limit 1;
@@ -14,7 +14,8 @@ begin
       'amr', case when is_admin then json_build_array(json_build_object('method','otp')) else '[]'::json end)::text, true);
     set local role authenticated;
     foreach tbl in array array['debtors','call_logs','debtor_traces','insight_requests','portfolios','agents','payments','messages','ptp_escalations','teams','team_agents','settlement_requests','disputes'] loop
-      execute format('select count(*), md5(coalesce(string_agg(id::text, '','' order by id),'''')) from %I', tbl) into n, h;
+      k := case tbl when 'team_agents' then 'team_id::text||agent_id::text' else 'id::text' end;
+      execute format('select count(*), md5(coalesce(string_agg(%s, '','' order by %s),'''')) from %I', k, k, tbl) into n, h;
       insert into _v values (uid, tbl, n, left(h,8));
     end loop;
     foreach tbl in array array['auth_client_debtor_ids','auth_visible_debtor_ids','auth_my_debtor_ids','auth_client_agent_ids','auth_visible_team_ids'] loop

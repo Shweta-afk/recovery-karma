@@ -244,6 +244,16 @@ of taking the app down. It fails on:
    fixes). Per the Postgres docs it makes a query _error_ instead of applying a policy; it only
    ever looked load-bearing because the roles involved were already exempt. The real mechanism
    is `SECURITY DEFINER` + an owner that can bypass RLS (here `postgres`, `rolbypassrls=true`).
+3. **Never call an `auth_*()` function per row (2026-10-18).** In a policy write
+   `(SELECT auth_client_id())`, not `auth_client_id()` — the subquery runs once per query, the
+   bare call once per row checked. In a helper, read the caller into a variable first and use
+   `= ANY (array)` rather than `IN (SELECT set-returning fn)`. Breaking this made reading 66
+   call_logs take 9.8 s (limit 8 s) and timed out queries app-wide; fixed by
+   `20261018_rls_helpers_evaluate_once.sql` (live). Before/after any policy change, compare
+   `scripts/debug/rls-visibility-fingerprint.sql` output — identical fingerprints = nobody's
+   visibility changed. Rollback: `scripts/debug/rollback_20261018_rls_helpers_evaluate_once.sql`.
+   Other policies (`payments`, `ptp_escalations`, `live_calls`, `teams`, …) still have bare
+   calls; harmless while their tables are small.
 
 **Diagnose with a smoke test over ALL tables at once**, never one 500 at a time — see
 `scripts/debug/rls-smoke-test.sql`. Which _relation_ each error names tells you where the cycle
