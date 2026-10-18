@@ -994,6 +994,14 @@ await saveDisposition({ ...data });
   `payments`. The two fields themselves survive only as the fallback for an ad-hoc manual call
   (no debtor row behind it) and go away with the `MOCK_DEBTORS` array.
 
+**Done (2026-10-18):** no store reads the whole `debtors` table just to label its own rows any
+more — settlements, retention requests, reminders, messages and disputes use
+`fetchDebtorsByIds` (the last four used an unpaged read that silently stopped at 1,000 debtors, so
+rows on later debtors showed no name). `refreshPortfolios()` reads the newer debtor columns on its
+main read instead of three more whole-table passes (120 → 30 requests for a 29,813-debtor
+company), falling back to the passes only if a column is missing. Same day, `ANALYZE` was run on
+`debtors`/`payments`/`portfolios`: `debtors` had never been analysed.
+
 **Done (2026-08-27):** the agent Reports page was listed as an unwired placeholder for weeks
 while being fully wired — check a page before believing this file about it. Manual Dial moved
 out of Call Queue into `ManualDialDock`. Notes/feedback surfaced during a call from real

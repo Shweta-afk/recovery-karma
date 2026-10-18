@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { fetchDebtorsByIds } from "./debtors-fetch";
 
 export type DisputeType =
   "payment" | "identity" | "amount" | "legal_threat" | "harassment_claim" | "other";
@@ -35,12 +36,21 @@ export function getDisputes(): DisputeRecord[] {
  * already lives in fetch-debtors.ts (one debtor's history tab); this is the client-wide roll-up
  * for Admin Reports. Mirrors payments-store.refreshPayments()'s join-and-cache shape. */
 export async function refreshDisputes(): Promise<void> {
-  const [disputes, debtors, portfolios, agents] = await Promise.all([
+  const [disputes, portfolios, agents] = await Promise.all([
     supabase.from("disputes").select("*").order("created_at", { ascending: false }),
-    supabase.from("debtors").select("id, name, portfolio_id, loan_reference"),
     supabase.from("portfolios").select("id, name"),
     supabase.from("agents").select("id, name"),
   ]);
+  // Debtors fetched by id (fetchDebtorsByIds), not `select ... from debtors`: that unpaged read
+  // returned only the first 1,000 debtors, so for a larger company a row on any other debtor
+  // showed no name, and it downloaded 1,000 debtors to label a handful of rows (2026-10-18).
+  const debtors = disputes.error
+    ? { data: [] as Awaited<ReturnType<typeof fetchDebtorsByIds>>["data"], error: null }
+    : await fetchDebtorsByIds(
+        ((disputes.data ?? []) as { debtor_id: string | null }[])
+          .map((d) => d.debtor_id)
+          .filter((id): id is string => !!id),
+      );
 
   const named = [
     ["disputes", disputes] as const,

@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { fetchDebtorsByIds } from "./debtors-fetch";
 import { sendSms } from "@/lib/telephony/server";
 import { getAccessToken } from "@/lib/access-token";
 
@@ -35,11 +36,20 @@ export function getMessages(): MessageRecord[] {
 /** Pulls the `messages` table (joined against debtors/agents) and refreshes the cache.
  * Mirrors disposition-store.refreshDispositions(). */
 export async function refreshMessages(): Promise<void> {
-  const [messages, debtors, agents] = await Promise.all([
+  const [messages, agents] = await Promise.all([
     supabase.from("messages").select("*").order("sent_at", { ascending: true }),
-    supabase.from("debtors").select("id, name, phone_primary"),
     supabase.from("agents").select("id, name"),
   ]);
+  // Debtors fetched by id (fetchDebtorsByIds), not `select ... from debtors`: that unpaged read
+  // returned only the first 1,000 debtors, so for a larger company a row on any other debtor
+  // showed no name, and it downloaded 1,000 debtors to label a handful of rows (2026-10-18).
+  const debtors = messages.error
+    ? { data: [] as Awaited<ReturnType<typeof fetchDebtorsByIds>>["data"], error: null }
+    : await fetchDebtorsByIds(
+        ((messages.data ?? []) as { debtor_id: string | null }[])
+          .map((m) => m.debtor_id)
+          .filter((id): id is string => !!id),
+      );
 
   const named = [
     ["messages", messages] as const,

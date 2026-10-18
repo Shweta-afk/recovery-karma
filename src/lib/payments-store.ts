@@ -213,13 +213,20 @@ export async function refreshPayments(): Promise<void> {
 
 /** Pulls `settlement_requests` (joined against debtors/agents) and refreshes the cache. */
 export async function refreshSettlements(): Promise<void> {
-  const [settlements, debtors, agents] = await Promise.all([
+  // Debtors fetched by id, like refreshPayments() above: this used to page the whole debtors
+  // table (30 requests for a 29,813-debtor company, on every Payments / Admin Reports load)
+  // just to label the settlement rows with a name and loan ID.
+  const [settlements, agents] = await Promise.all([
     supabase.from("settlement_requests").select("*").order("created_at", { ascending: false }),
-    fetchAllRows((from, to) =>
-      supabase.from("debtors").select("id, name, loan_reference").range(from, to),
-    ),
     supabase.from("agents").select("id, name, email, role"),
   ]);
+  const debtors = settlements.error
+    ? { data: [] as Awaited<ReturnType<typeof fetchDebtorsByIds>>["data"], error: null }
+    : await fetchDebtorsByIds(
+        ((settlements.data ?? []) as { debtor_id: string | null }[])
+          .map((s) => s.debtor_id)
+          .filter((id): id is string => !!id),
+      );
 
   const named = [
     ["settlement_requests", settlements] as const,

@@ -221,7 +221,7 @@ export function getPortfolios(): UploadedPortfolio[] {
 export async function refreshPortfolios(): Promise<void> {
   const [
     { data: portfolioRows, error: pErr },
-    { data: debtorRows, error: dErr },
+    { data: debtorRows, error: dErr, withOptional },
     { data: agentRows },
   ] = await Promise.all([
     supabase
@@ -267,14 +267,22 @@ export async function refreshPortfolios(): Promise<void> {
     // ignore — targets are supplementary, not required for the rest of the app to work
   }
 
+  // The three blocks below read newer debtor columns. Normally they arrived on the main read
+  // (fetchDebtorsShared's OPTIONAL_COLUMNS, `withOptional`); each block's own whole-table pass
+  // now runs only on a database missing one of them. Those passes cost 90 extra requests per
+  // refresh for a 29,813-debtor company (2026-10-18).
+  const fromMainRead = { data: debtorRows, error: null };
+
   // Best-effort, same reasoning as targetsByPortfolio above: alt_phones is a newer column
   // (migrations/20260807_debtors_alt_phones.sql) that may not exist in the live DB yet —
   // queried separately and defaulted to [] on failure so it never blocks portfolio sync.
   const altPhonesById = new Map<string, string[]>();
   try {
-    const { data: altRows, error: aErr } = await fetchAllRows((from, to) =>
-      supabase.from("debtors").select("id, alt_phones").range(from, to),
-    );
+    const { data: altRows, error: aErr } = withOptional
+      ? fromMainRead
+      : await fetchAllRows((from, to) =>
+          supabase.from("debtors").select("id, alt_phones").range(from, to),
+        );
     if (!aErr && altRows) {
       for (const r of altRows) {
         altPhonesById.set(r.id as string, (r.alt_phones as string[] | null) ?? []);
@@ -292,12 +300,14 @@ export async function refreshPortfolios(): Promise<void> {
   const emiAmountById = new Map<string, number>();
   const productCodeById = new Map<string, string>();
   try {
-    const { data: principalRows, error: prErr } = await fetchAllRows((from, to) =>
-      supabase
-        .from("debtors")
-        .select("id, principal_amount, emi_amount, product_code")
-        .range(from, to),
-    );
+    const { data: principalRows, error: prErr } = withOptional
+      ? fromMainRead
+      : await fetchAllRows((from, to) =>
+          supabase
+            .from("debtors")
+            .select("id, principal_amount, emi_amount, product_code")
+            .range(from, to),
+        );
     if (!prErr && principalRows) {
       for (const r of principalRows) {
         principalAmountById.set(r.id as string, Number(r.principal_amount ?? 0));
@@ -324,9 +334,11 @@ export async function refreshPortfolios(): Promise<void> {
       supabase
         .from("portfolios")
         .select("id, replaces_portfolio_id, closed_at, end_date, total_accounts"),
-      fetchAllRows((from, to) =>
-        supabase.from("debtors").select("id, retained_from_portfolio_id").range(from, to),
-      ),
+      withOptional
+        ? fromMainRead
+        : fetchAllRows((from, to) =>
+            supabase.from("debtors").select("id, retained_from_portfolio_id").range(from, to),
+          ),
     ]);
     if (!cErr && cycleRows) {
       for (const p of cycleRows) {

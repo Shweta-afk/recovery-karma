@@ -6,6 +6,7 @@
 // Same localStorage-cache-over-Supabase shape as escalation-store.ts.
 
 import { supabase, getMyAgentRow } from "./supabase";
+import { fetchDebtorsByIds } from "./debtors-fetch";
 
 export type RetentionStatus =
   "pending_manager" | "approved" | "rejected" | "sent_to_bank" | "carried" | "not_honored";
@@ -50,23 +51,22 @@ export function getPendingRetentionRequests(portfolioId?: string): RetentionRequ
 }
 
 export async function refreshRetentionRequests(): Promise<void> {
-  const [
-    { data: rows, error },
-    { data: debtorRows },
-    { data: portfolioRows },
-    { data: agentRows },
-  ] = await Promise.all([
+  const [{ data: rows, error }, { data: portfolioRows }, { data: agentRows }] = await Promise.all([
     supabase
       .from("retention_requests")
       .select(
         "id, debtor_id, portfolio_id, requested_by, reason, status, reviewed_by, reviewed_at, sent_to_bank_at, carried_at, created_at",
       )
       .order("created_at", { ascending: false }),
-    supabase.from("debtors").select("id, name, phone_primary, loan_reference"),
     supabase.from("portfolios").select("id, name"),
     supabase.from("agents").select("id, name"),
   ]);
-  if (error || !rows || !debtorRows || !portfolioRows || !agentRows) return;
+  if (error || !rows || !portfolioRows || !agentRows) return;
+  // Debtors fetched by id (fetchDebtorsByIds), not `select ... from debtors`: that unpaged read
+  // returned only the first 1,000 debtors, so for a larger company a row on any other debtor
+  // showed no name, and it downloaded 1,000 debtors to label a handful of rows (2026-10-18).
+  const { data: debtorRows, error: dErr } = await fetchDebtorsByIds(rows.map((r) => r.debtor_id));
+  if (dErr) return;
 
   const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
   const portfolioById = new Map(portfolioRows.map((p) => [p.id, p]));

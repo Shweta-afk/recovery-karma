@@ -4,9 +4,9 @@ import { selectWithSlimExtra, slimExtraFromRow } from "./debtor-extra";
 
 /** Every debtor column any of the three stores needs, unioned into one selection.
  * portfolio-store's set is already a superset of disposition-store's and payments-store's, so
- * this is exactly what portfolio-store asked for on its own. `alt_phones` and
- * `retained_from_portfolio_id` are deliberately absent: they live behind migrations that may
- * not be applied, so portfolio-store keeps fetching those separately and best-effort.
+ * this is exactly what portfolio-store asked for on its own. The newer columns (`alt_phones`,
+ * `retained_from_portfolio_id`, …) are not in it: fetchDebtorsShared() adds them as
+ * OPTIONAL_COLUMNS, with a fallback for a database that lacks them.
  *
  * (2026-09-23) disposition-store and payments-store no longer read this via
  * fetchDebtorsShared() below — see fetchDebtorsByIds(). Kept as one shared column list so the
@@ -35,12 +35,34 @@ export interface SharedDebtorRow {
   extra: Record<string, string> | null;
   assigned_agent_id: string | null;
   status: string | null;
+  /** Only from fetchDebtorsShared(), and only when `withOptional` is true. */
+  alt_phones?: string[] | null;
+  principal_amount?: number | string | null;
+  emi_amount?: number | string | null;
+  product_code?: string | null;
+  retained_from_portfolio_id?: string | null;
 }
 
 type DebtorRow = SharedDebtorRow;
 
+/** Newer columns portfolio-store used to read in three more whole-table passes of their own
+ * (alt phones, principal/EMI/product code, retained-from), each best-effort in case its
+ * migration was missing. All exist live (2026-10-18), so they ride on the one shared read; for
+ * a 29,813-debtor company that is 30 requests instead of 120. If a database lacks any of them,
+ * the read is repeated without them and `withOptional` is false, so portfolio-store falls back
+ * to its separate passes. */
+const OPTIONAL_COLUMNS =
+  "alt_phones, principal_amount, emi_amount, product_code, retained_from_portfolio_id";
+let optionalAvailable = true;
+
+type SharedResult = {
+  data: DebtorRow[];
+  error: { message: string } | null;
+  withOptional: boolean;
+};
+
 /** Set only while a fetch is in flight. */
-let inFlight: Promise<{ data: DebtorRow[]; error: { message: string } | null }> | null = null;
+let inFlight: Promise<SharedResult> | null = null;
 
 /**
  * One paginated read of the WHOLE `debtors` table, shared by every caller that asks while it
@@ -59,27 +81,34 @@ let inFlight: Promise<{ data: DebtorRow[]; error: { message: string } | null }> 
  * refreshX() immediately afterwards and must see its own write — a TTL would hand back the
  * pre-write snapshot instead. The win is concurrency, not caching.
  */
-export function fetchDebtorsShared(): Promise<{
-  data: DebtorRow[];
-  error: { message: string } | null;
-}> {
+export function fetchDebtorsShared(): Promise<SharedResult> {
   if (inFlight) return inFlight;
   const run = (async () => {
     try {
-      const result = await selectWithSlimExtra(false, (extraColumns) =>
-        fetchAllRows<DebtorRow>(
-          (from, to) =>
-            supabase
-              .from("debtors")
-              .select(`${COLUMNS}, ${extraColumns}`)
-              .range(from, to) as unknown as PromiseLike<{
-              data: DebtorRow[] | null;
-              error: { message: string } | null;
-            }>,
-        ),
-      );
+      const read = (optional: boolean) =>
+        selectWithSlimExtra(false, (extraColumns) =>
+          fetchAllRows<DebtorRow>(
+            (from, to) =>
+              supabase
+                .from("debtors")
+                .select(`${COLUMNS}, ${optional ? `${OPTIONAL_COLUMNS}, ` : ""}${extraColumns}`)
+                .range(from, to) as unknown as PromiseLike<{
+                data: DebtorRow[] | null;
+                error: { message: string } | null;
+              }>,
+          ),
+        );
+      let withOptional = optionalAvailable;
+      let result = await read(withOptional);
+      // Only a missing column turns the optional set off; any other error is returned as-is.
+      if (withOptional && result.error && /column .* does not exist/i.test(result.error.message)) {
+        optionalAvailable = withOptional = false;
+        console.warn("[debtors-fetch] newer debtor columns missing — reading them separately");
+        result = await read(false);
+      }
       return {
         ...result,
+        withOptional,
         data: result.data.map((r) => ({ ...r, extra: slimExtraFromRow(r) })),
       };
     } finally {

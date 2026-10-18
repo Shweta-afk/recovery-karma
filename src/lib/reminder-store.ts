@@ -3,6 +3,7 @@
 
 import { supabase, getMyAgentRow } from "./supabase";
 import { isUuid } from "./disposition-store";
+import { fetchDebtorsByIds } from "./debtors-fetch";
 
 export type ReminderKind = "ptp" | "callback";
 
@@ -33,16 +34,22 @@ export function getReminders(): Reminder[] {
 }
 
 export async function refreshReminders(): Promise<void> {
-  const [{ data: rows, error }, { data: debtorRows }, { data: agentRows }] = await Promise.all([
+  const [{ data: rows, error }, { data: agentRows }] = await Promise.all([
     supabase
       .from("reminders")
       .select(
         "id, agent_id, debtor_id, kind, amount, due_date, due_time, message, notified, created_at",
       ),
-    supabase.from("debtors").select("id, name, phone_primary"),
     supabase.from("agents").select("id, email"),
   ]);
-  if (error || !rows || !debtorRows || !agentRows) return;
+  if (error || !rows || !agentRows) return;
+  // Debtors fetched by id (fetchDebtorsByIds), not `select ... from debtors`: that unpaged read
+  // returned only the first 1,000 debtors, so for a larger company a row on any other debtor
+  // showed no name, and it downloaded 1,000 debtors to label a handful of rows (2026-10-18).
+  const { data: debtorRows, error: dErr } = await fetchDebtorsByIds(
+    rows.map((r) => r.debtor_id).filter((id): id is string => !!id),
+  );
+  if (dErr) return;
 
   const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
   const emailById = new Map(agentRows.map((a) => [a.id, a.email]));
