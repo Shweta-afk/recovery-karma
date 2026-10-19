@@ -85,6 +85,11 @@ export interface ProfilexService {
   /** Recently added — shows a small "New" tag beside the label wherever services are listed.
    *  Remove once it has been around a while; it carries no behaviour. */
   isNew?: boolean;
+  /** Listed (on plans, with prices) but not callable yet: the provider's console card exists, but
+   *  its path and service-id are not in the published Postman collection, so `path` is blank.
+   *  Hidden from every Run button and refused server-side. Fill in path/serviceId from the
+   *  console's "Try out" page and delete this flag to switch it on. */
+  awaitingEndpoint?: boolean;
 }
 
 const readUan = (d: Record<string, unknown>) => (d?.uan ? String(d.uan) : null);
@@ -172,6 +177,37 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     // This one returns status 3 rather than 2 for "not found".
     defaultPrices: { "1": 5, "2": 1, "3": 1 },
     blurb: "Full employment history across employers, not just the current one.",
+  },
+  {
+    id: "employment-premium-mobile",
+    label: "Employment — Latest (by mobile)",
+    // The console card "VRE Employment Premium through mobile" (User Profiling, ₹2.25/₹2.25).
+    // Not the UAN-based "Employment — Latest" above: this one starts from the phone number, so it
+    // needs no Mobile to UAN first. Added 2026-10-19 WITHOUT its endpoint — it is not in the
+    // published Postman collection (all 169 endpoints checked).
+    path: "",
+    input: "mobile",
+    awaitingEndpoint: true,
+    defaultPrices: { "1": 2.25, "2": 2.25 },
+    blurb:
+      "Current employer details straight from the debtor's phone number — no UAN needed. " +
+      "Charged the same whether or not anything is found.",
+    isNew: true,
+  },
+  {
+    id: "employment-history-mobile",
+    label: "Employment — History (by mobile)",
+    // The console card "VRE Employment History through mobile" (Employment, ₹9/₹9): employment
+    // and EPFO history from the phone number. Same situation as the one above — added
+    // 2026-10-19 without its endpoint, which the published collection does not carry.
+    path: "",
+    input: "mobile",
+    awaitingEndpoint: true,
+    defaultPrices: { "1": 9, "2": 9 },
+    blurb:
+      "Employment and EPFO history across employers, straight from the debtor's phone number — " +
+      "no UAN needed. Charged the same whether or not anything is found.",
+    isNew: true,
   },
   {
     id: "phone-to-prefill",

@@ -125,6 +125,11 @@ export function ProfilexSettingsCard() {
                     <span className="text-xs text-foreground truncate flex items-center gap-1.5">
                       {s.label}
                       {s.isNew && <NewTag />}
+                      {s.awaitingEndpoint && (
+                        <span className="text-[9px] uppercase tracking-wide text-muted-foreground">
+                          · coming soon
+                        </span>
+                      )}
                     </span>
                     <div className="flex items-center gap-3 flex-shrink-0">
                       {priceStatuses(s, rateCard).map((status, _i, all) => (

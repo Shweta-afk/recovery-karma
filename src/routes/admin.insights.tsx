@@ -165,7 +165,8 @@ function AdminInsightsPage() {
   // CIBIL (provider "payprime") has its own section below — it runs against a debtor, not a
   // typed-in value.
   const services = useMemo(
-    () => PROFILEX_SERVICES.filter((s) => plan.includes(s.id) && !s.provider),
+    () =>
+      PROFILEX_SERVICES.filter((s) => plan.includes(s.id) && !s.provider && !s.awaitingEndpoint),
     [plan],
   );
   const service = services.find((s) => s.id === serviceId);

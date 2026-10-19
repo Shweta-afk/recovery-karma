@@ -595,96 +595,97 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
       {/* CIBIL (provider "payprime") has its own card above (cibil-panel.tsx). */}
       {/* manualOnly services (e.g. DIN to Contact) have no debtor field to run against — they
           only ever appear on Admin > Insights, where an admin types the value in. */}
-      {PROFILEX_SERVICES.filter((service) => !service.manualOnly && !service.provider).map(
-        (service) => {
-          const trace = latest.get(service.id);
-          const needsSource = missingSource(service);
-          // Runnable only if Insights is on AND the company's plan includes this service. A result
-          // already on file still shows after a service is removed from the plan — it was paid for.
-          const onPlan = enabled === true && allowed.includes(service.id);
-          const runnable = canRun && onPlan;
-          // Agents see the same list, but can only ask their manager to run it.
-          const requestable = !canRun && onPlan;
-          if (!runnable && !requestable && !trace) return null;
+      {/* awaitingEndpoint services are on plans but can't be called until their path is known. */}
+      {PROFILEX_SERVICES.filter(
+        (service) => !service.manualOnly && !service.provider && !service.awaitingEndpoint,
+      ).map((service) => {
+        const trace = latest.get(service.id);
+        const needsSource = missingSource(service);
+        // Runnable only if Insights is on AND the company's plan includes this service. A result
+        // already on file still shows after a service is removed from the plan — it was paid for.
+        const onPlan = enabled === true && allowed.includes(service.id);
+        const runnable = canRun && onPlan;
+        // Agents see the same list, but can only ask their manager to run it.
+        const requestable = !canRun && onPlan;
+        if (!runnable && !requestable && !trace) return null;
 
-          return (
-            <div key={service.id} className="rounded-lg border border-border p-3">
-              <div className="flex items-start justify-between gap-3 mb-2">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    {service.label}
-                    {service.isNew && <NewTag />}
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">{service.blurb}</p>
-                </div>
-                {runnable && (
-                  <Button
-                    size="sm"
-                    variant={trace ? "outline" : "default"}
-                    disabled={running !== null || !!needsSource}
-                    onClick={() => setConfirming(service)}
-                    className="flex-shrink-0 h-7 text-xs"
-                    title={needsSource ? `Run ${needsSource} first` : service.blurb}
-                  >
-                    {running === service.id ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : trace ? (
-                      "Re-run"
-                    ) : (
-                      "Run"
-                    )}
-                  </Button>
-                )}
-                {requestable && (
-                  <Button
-                    size="sm"
-                    variant={openRequest ? "outline" : trace ? "outline" : "default"}
-                    disabled={requesting !== null || !!openRequest}
-                    onClick={() => sendRequest(service)}
-                    className="flex-shrink-0 h-7 text-xs"
-                    title={
-                      openRequest ? "Already requested — waiting on your manager" : service.blurb
-                    }
-                  >
-                    {requesting === service.id ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : openRequest ? (
-                      <>
-                        <Check className="h-3 w-3 mr-1" />
-                        Requested
-                      </>
-                    ) : (
-                      "Request to manager"
-                    )}
-                  </Button>
-                )}
-              </div>
-
-              {runnable && (needsSource || showCost) && (
-                <p className="text-[10px] text-muted-foreground flex items-center gap-1 mb-2">
-                  {!needsSource && <IndianRupee className="h-3 w-3" />}
-                  {needsSource ? `Run ${needsSource} first` : priceLine(service, rateCard)}
+        return (
+          <div key={service.id} className="rounded-lg border border-border p-3">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  {service.label}
+                  {service.isNew && <NewTag />}
                 </p>
+                <p className="text-[11px] text-muted-foreground">{service.blurb}</p>
+              </div>
+              {runnable && (
+                <Button
+                  size="sm"
+                  variant={trace ? "outline" : "default"}
+                  disabled={running !== null || !!needsSource}
+                  onClick={() => setConfirming(service)}
+                  className="flex-shrink-0 h-7 text-xs"
+                  title={needsSource ? `Run ${needsSource} first` : service.blurb}
+                >
+                  {running === service.id ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : trace ? (
+                    "Re-run"
+                  ) : (
+                    "Run"
+                  )}
+                </Button>
               )}
-
-              {trace ? (
-                <div>
-                  <ResultBody trace={trace} />
-                  <AllFields trace={trace} />
-                  <p className="text-[10px] text-muted-foreground mt-2">
-                    {new Date(trace.createdAt).toLocaleString("en-IN")}
-                    {showCost && trace.billable && ` · ₹${trace.cost.toFixed(2)}`}
-                  </p>
-                </div>
-              ) : (
-                (runnable || requestable) && (
-                  <p className="text-xs text-muted-foreground italic">Not looked up yet.</p>
-                )
+              {requestable && (
+                <Button
+                  size="sm"
+                  variant={openRequest ? "outline" : trace ? "outline" : "default"}
+                  disabled={requesting !== null || !!openRequest}
+                  onClick={() => sendRequest(service)}
+                  className="flex-shrink-0 h-7 text-xs"
+                  title={
+                    openRequest ? "Already requested — waiting on your manager" : service.blurb
+                  }
+                >
+                  {requesting === service.id ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : openRequest ? (
+                    <>
+                      <Check className="h-3 w-3 mr-1" />
+                      Requested
+                    </>
+                  ) : (
+                    "Request to manager"
+                  )}
+                </Button>
               )}
             </div>
-          );
-        },
-      )}
+
+            {runnable && (needsSource || showCost) && (
+              <p className="text-[10px] text-muted-foreground flex items-center gap-1 mb-2">
+                {!needsSource && <IndianRupee className="h-3 w-3" />}
+                {needsSource ? `Run ${needsSource} first` : priceLine(service, rateCard)}
+              </p>
+            )}
+
+            {trace ? (
+              <div>
+                <ResultBody trace={trace} />
+                <AllFields trace={trace} />
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  {new Date(trace.createdAt).toLocaleString("en-IN")}
+                  {showCost && trace.billable && ` · ₹${trace.cost.toFixed(2)}`}
+                </p>
+              </div>
+            ) : (
+              (runnable || requestable) && (
+                <p className="text-xs text-muted-foreground italic">Not looked up yet.</p>
+              )
+            )}
+          </div>
+        );
+      })}
 
       <AlertDialog open={!!confirming} onOpenChange={(o) => !o && setConfirming(null)}>
         <AlertDialogContent>

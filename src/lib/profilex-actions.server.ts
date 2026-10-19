@@ -415,6 +415,9 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     // Defense in depth: trace-panel.tsx already hides a manualOnly service from the debtor Trace
     // tab, since nothing on a debtor row can supply its input (e.g. a DIN). Refuse it here too,
     // in case this is ever called directly.
+    if (service.awaitingEndpoint) {
+      throw new Error(`"${service.label}" isn't switched on yet.`);
+    }
     if (service.manualOnly) {
       throw new Error(`"${service.label}" can only be run from Admin > Insights.`);
     }
@@ -1384,6 +1387,9 @@ export const runManualInsight = createServerFn({ method: "POST" })
 
     const service = getService(data.serviceId);
     if (!service) throw new Error(`Unknown lookup service "${data.serviceId}"`);
+    if (service.awaitingEndpoint) {
+      throw new Error(`"${service.label}" isn't switched on yet.`);
+    }
     // A CIBIL report is always pulled against a debtor in the company's portfolio, never from a
     // typed-in number (cibil-actions.server.ts).
     if (service.provider) {

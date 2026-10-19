@@ -268,6 +268,14 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                         {s.label}
                       </span>
                       {s.isNew && <NewTag />}
+                      {s.awaitingEndpoint && (
+                        <span
+                          className="text-[9px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1 flex-shrink-0"
+                          title="Listed with its price, but its API details aren't connected yet — nobody can run it until they are"
+                        >
+                          Not live yet
+                        </span>
+                      )}
                       {s.id === CIBIL_SERVICE && (
                         <span
                           className="text-[9px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1 flex-shrink-0"
