@@ -52,7 +52,7 @@ import {
 } from "@/lib/insight-request-store";
 import { CibilPanel } from "@/components/profilex/cibil-panel";
 import { errorText } from "@/lib/app-error";
-import { NewTag } from "@/components/profilex/new-tag";
+import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -616,6 +616,7 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
                 <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                   {service.label}
                   {service.isNew && <NewTag />}
+                  {service.isRecommended && <RecommendedTag />}
                 </p>
                 <p className="text-[11px] text-muted-foreground">{service.blurb}</p>
               </div>

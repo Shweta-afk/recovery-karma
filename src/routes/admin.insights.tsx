@@ -34,7 +34,7 @@ import {
 } from "@/lib/profilex-actions.server";
 import { PROFILEX_SERVICES, priceLine, type ProfilexService } from "@/lib/profilex/catalogue";
 import { flatten } from "@/components/profilex/trace-panel";
-import { NewTag } from "@/components/profilex/new-tag";
+import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
 import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/admin/insights")({
@@ -254,6 +254,7 @@ function AdminInsightsPage() {
                     <SelectItem key={s.id} value={s.id}>
                       {s.label}
                       {s.isNew && <NewTag className="ml-1.5" />}
+                      {s.isRecommended && <RecommendedTag className="ml-1" />}
                     </SelectItem>
                   ))}
                 </SelectContent>

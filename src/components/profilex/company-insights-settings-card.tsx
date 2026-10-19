@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Search, Save, Loader2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
-import { NewTag } from "@/components/profilex/new-tag";
+import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -268,6 +268,7 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                         {s.label}
                       </span>
                       {s.isNew && <NewTag />}
+                      {s.isRecommended && <RecommendedTag />}
                       {s.awaitingEndpoint && (
                         <span
                           className="text-[9px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1 flex-shrink-0"

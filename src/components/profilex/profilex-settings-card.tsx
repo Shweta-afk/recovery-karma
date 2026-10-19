@@ -16,7 +16,7 @@ import { supabase } from "@/lib/supabase";
 import { getProfilexSettings } from "@/lib/profilex-actions.server";
 import { PROFILEX_SERVICES, priceFor, priceStatuses, statusLabel } from "@/lib/profilex/catalogue";
 import { errorText } from "@/lib/app-error";
-import { NewTag } from "@/components/profilex/new-tag";
+import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
 
 type RateCard = Record<string, Record<string, number>>;
 
@@ -125,6 +125,7 @@ export function ProfilexSettingsCard() {
                     <span className="text-xs text-foreground truncate flex items-center gap-1.5">
                       {s.label}
                       {s.isNew && <NewTag />}
+                      {s.isRecommended && <RecommendedTag />}
                       {s.awaitingEndpoint && (
                         <span className="text-[9px] uppercase tracking-wide text-muted-foreground">
                           · coming soon

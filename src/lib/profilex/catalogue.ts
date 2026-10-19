@@ -85,6 +85,8 @@ export interface ProfilexService {
   /** Recently added — shows a small "New" tag beside the label wherever services are listed.
    *  Remove once it has been around a while; it carries no behaviour. */
   isNew?: boolean;
+  /** Shows a "Recommended" tag beside the label wherever services are listed. Display only. */
+  isRecommended?: boolean;
   /** Listed (on plans, with prices) but not callable yet: the provider's console card exists, but
    *  its path and service-id are not in the published Postman collection, so `path` is blank.
    *  Hidden from every Run button and refused server-side. Fill in path/serviceId from the
@@ -193,6 +195,7 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
       "Current employer details straight from the debtor's phone number — no UAN needed. " +
       "Charged the same whether or not anything is found.",
     isNew: true,
+    isRecommended: true,
   },
   {
     id: "employment-history-mobile",
@@ -208,6 +211,7 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
       "Employment and EPFO history across employers, straight from the debtor's phone number — " +
       "no UAN needed. Charged the same whether or not anything is found.",
     isNew: true,
+    isRecommended: true,
   },
   {
     id: "phone-to-prefill",
