@@ -65,7 +65,7 @@ import { todayIstKey } from "@/lib/date-filter";
 import { istDayKey } from "@/lib/monthly-trend";
 import { CompanyDetailsForm } from "@/components/company-details-form";
 import { InvoiceTable } from "./invoice-list";
-import { formatRupees } from "./invoice-document";
+import { formatIsoDate, formatRupees } from "./invoice-document";
 import { CompanyPriceListCard } from "./company-price-list-card";
 import { InvoicePreviewDialog } from "./invoice-preview-dialog";
 import { SendInvoiceDialog } from "./send-invoice-dialog";
@@ -504,8 +504,14 @@ export function CompanyInvoicesCard({
                   onChange={(e) => setSetupChargedOn(e.target.value)}
                   className="h-8 w-40 text-xs"
                 />
-                <span className="text-[11px] text-muted-foreground">Printed on the invoice</span>
               </label>
+              <p className="text-xs">
+                <span className="font-medium text-foreground">Invoice date</span>{" "}
+                <span className="tabular-nums">{formatIsoDate(today)}</span>
+                <span className="ml-2 text-[11px] text-muted-foreground">
+                  the day you issue it — both dates print on the invoice
+                </span>
+              </p>
               <div className="space-y-1">
                 <p className="text-[11px] text-muted-foreground">
                   What it includes — printed as a list under the fee, without separate prices:
@@ -531,7 +537,8 @@ export function CompanyInvoicesCard({
             <TabsContent value="insights" className="space-y-3">
               <p className="text-[11px] text-muted-foreground">
                 One invoice per Insights wallet top-up given to this company. Top-ups already
-                invoiced aren't listed.
+                invoiced aren't listed. Each prints two dates: the invoice date (the day you issue
+                it, {formatIsoDate(today)}) and the recharge date below.
               </p>
               {!topups.length ? (
                 <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">

@@ -73,6 +73,7 @@ export function InvoiceDocument({
   const intra = invoice.cgst > 0 || invoice.sgst > 0;
   // No supplier GSTIN → a Bill of Supply: no GST is charged, so no tax rows or reverse charge.
   const billOfSupply = isBillOfSupply(invoice);
+  const chargedOn = invoice.lines.find((l) => l.chargedOn)?.chargedOn;
   const cancelled = invoice.status === "cancelled";
   return (
     <div className="relative mx-auto w-full max-w-[800px] bg-white p-8 print:max-w-none print:p-0 text-[12px] leading-relaxed text-neutral-900">
@@ -102,6 +103,15 @@ export function InvoiceDocument({
             <span className="text-neutral-500">{credit ? "Date" : "Invoice date"}</span>{" "}
             {formatIsoDate(invoice.issueDate)}
           </p>
+          {/* The second date: when the charge itself was taken (setup fee / wallet recharge). */}
+          {!credit && chargedOn && (
+            <p>
+              <span className="text-neutral-500">
+                {invoice.kind === "insights_topup" ? "Wallet recharged on" : "Setup fee charged on"}
+              </span>{" "}
+              {formatIsoDate(chargedOn)}
+            </p>
+          )}
           {credit ? (
             <p>
               <span className="text-neutral-500">Against invoice</span> {credit.againstNumber}{" "}
@@ -155,12 +165,6 @@ export function InvoiceDocument({
               <td className="py-1.5 pr-2">{n + 1}</td>
               <td className="py-1.5 pr-2">
                 {line.description}
-                {line.chargedOn && (
-                  <p className="text-[11px] text-neutral-600">
-                    {invoice.kind === "insights_topup" ? "Wallet recharged on" : "Charged on"}{" "}
-                    {formatIsoDate(line.chargedOn)}
-                  </p>
-                )}
                 {line.includes && line.includes.length > 0 && (
                   <ul className="mt-1 list-disc pl-4 text-[11px] text-neutral-600">
                     {line.includes.map((item) => (

@@ -780,8 +780,9 @@ billing ↔ contracts don't import each other). Rules: `invoice-math.ts` (pure, 
   month). Due date uses the company's terms, else the supplier's.
 - **Charge date (2026-10-20)**: setup and top-up invoices carry the day the charge was actually
   taken, as `chargedOn` ("YYYY-MM-DD" IST) on the line inside `invoices.lines` (jsonb — no
-  column, no migration), printed under the charge ("Charged on" / "Wallet recharged on") and in
-  the description. Setup: typed in by the superadmin, **required** (nothing in the app records
+  column, no migration). The invoice header prints TWO dates: "Invoice date" (`issue_date`, the
+  day it is issued) and "Setup fee charged on" / "Wallet recharged on"; it is also in the
+  description. Setup: typed in by the superadmin, **required** (nothing in the app records
   when a setup fee was taken). Top-up: prefilled from the wallet ledger row's `created_at`,
   editable; the server falls back to that date if none is sent. Future dates refused on both
   sides. It is NOT the invoice date. Invoices issued before this have no `chargedOn`.
