@@ -5,11 +5,13 @@ import {
   setupPackage,
   amountInWords,
   financialYear,
+  formatIsoDate,
   formatInvoiceNumber,
   gstBreakdown,
   invoiceDisclaimer,
   stateFromGstin,
   sumLines,
+  toInvoiceRecord,
 } from "../src/lib/invoice-math";
 
 describe("gstBreakdown", () => {
@@ -143,5 +145,42 @@ describe("setup fee = one total plus what it includes (2026-10-12)", () => {
   test("a new-style line round-trips", () => {
     const line = setupLine(25000, ["A", "B"]);
     expect(setupPackage([line])).toEqual({ amount: 25000, includes: ["A", "B"] });
+  });
+});
+
+describe("charge date on a line (2026-10-20)", () => {
+  test("formatIsoDate prints the calendar day with no time-zone shift", () => {
+    expect(formatIsoDate("2026-10-01")).toBe("01 Oct 2026");
+  });
+
+  test("chargedOn survives the round trip through the stored row", () => {
+    const row = {
+      id: "i",
+      client_id: "c",
+      invoice_number: "SX/2627/0001",
+      kind: "setup",
+      issue_date: "2026-10-20",
+      due_date: "2026-11-04",
+      description: "SamvadX platform setup (charged 01 Oct 2026)",
+      lines: [{ description: SETUP_FEE_LABEL, amount: "25000", chargedOn: "2026-10-01" }],
+      sac: null,
+      place_of_supply: "27",
+      taxable_amount: 25000,
+      cgst: 0,
+      sgst: 0,
+      igst: 0,
+      total: 25000,
+      supplier: {},
+      recipient: {},
+      wallet_ledger_id: null,
+      status: "unpaid",
+      paid_at: null,
+      notes: null,
+      created_at: "2026-10-20T00:00:00Z",
+    };
+    expect(toInvoiceRecord(row).lines[0].chargedOn).toBe("2026-10-01");
+    // Invoices issued before the field existed simply have none.
+    const old = toInvoiceRecord({ ...row, lines: [{ description: "x", amount: 1 }] });
+    expect(old.lines[0].chargedOn).toBeUndefined();
   });
 });

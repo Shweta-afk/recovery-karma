@@ -9,6 +9,7 @@ import { Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   amountInWords,
+  formatIsoDate,
   isBillOfSupply,
   stateName,
   type InvoiceParty,
@@ -19,15 +20,7 @@ export function formatRupees(n: number): string {
   return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function formatIsoDate(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
+export { formatIsoDate };
 
 function stateLine(code: string | null) {
   return code ? `${stateName(code) ?? "—"} (${code})` : "—";
@@ -162,6 +155,12 @@ export function InvoiceDocument({
               <td className="py-1.5 pr-2">{n + 1}</td>
               <td className="py-1.5 pr-2">
                 {line.description}
+                {line.chargedOn && (
+                  <p className="text-[11px] text-neutral-600">
+                    {invoice.kind === "insights_topup" ? "Wallet recharged on" : "Charged on"}{" "}
+                    {formatIsoDate(line.chargedOn)}
+                  </p>
+                )}
                 {line.includes && line.includes.length > 0 && (
                   <ul className="mt-1 list-disc pl-4 text-[11px] text-neutral-600">
                     {line.includes.map((item) => (

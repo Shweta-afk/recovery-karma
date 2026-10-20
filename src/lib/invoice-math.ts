@@ -17,6 +17,10 @@ export interface InvoiceLine {
   /** What the charge covers, printed as a list under it with no amounts of their own — the
    *  setup fee is ONE charge that includes several things (user, 2026-10-12). */
   includes?: string[];
+  /** "YYYY-MM-DD" (IST) the charge was actually taken — the setup fee's charge date, or the day
+   *  the Insights wallet was recharged. Entered by the superadmin, since only they know it for a
+   *  setup fee; printed under the line. Not the invoice date. */
+  chargedOn?: string;
 }
 
 export const SETUP_FEE_LABEL = "SamvadX platform setup";
@@ -351,6 +355,7 @@ export function toInvoiceRecord(r: {
               quantity?: number | string;
               rate?: number | string;
               includes?: unknown;
+              chargedOn?: unknown;
             }[]
           ).map((l) => ({
             description: String(l.description),
@@ -358,6 +363,7 @@ export function toInvoiceRecord(r: {
             ...(l.quantity != null ? { quantity: Number(l.quantity) } : {}),
             ...(l.rate != null ? { rate: Number(l.rate) } : {}),
             ...(Array.isArray(l.includes) ? { includes: l.includes.map(String) } : {}),
+            ...(typeof l.chargedOn === "string" ? { chargedOn: l.chargedOn } : {}),
           }))
         : [{ description: r.description, amount: Number(r.taxable_amount) }],
     sac: r.sac,
@@ -450,6 +456,17 @@ export const EMPTY_PRICE_LIST: PriceList = {
 };
 
 /** "2026-10" → "October 2026" */
+/** "12 Oct 2026" for a "YYYY-MM-DD" day key (read as a calendar day, no time zone shift). */
+export function formatIsoDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function monthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", {

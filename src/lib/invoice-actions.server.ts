@@ -10,6 +10,7 @@ import { z, tokenSchema, idSchema, amountSchema, noteSchema } from "./schemas";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { logSuperadminActivity } from "./superadmin-actions.server";
 import { todayIstKey } from "./date-filter";
+import { istDayKey } from "./monthly-trend";
 import {
   GSTIN_RE,
   INVOICE_KIND_LABEL,
@@ -25,6 +26,7 @@ import {
   round2,
   sumLines,
   monthLabel,
+  formatIsoDate,
   invoiceBalance,
   type InvoiceBalance,
   type InvoiceLine,
@@ -484,6 +486,13 @@ export const sendInvoiceEmail = createServerFn({ method: "POST" })
 
 /** A charged row as sent by the browser. A per-unit line's amount is recomputed from
  *  quantity × rate on the server, so the printed maths can't disagree with the total. */
+/** The day a charge was taken ("YYYY-MM-DD", IST) — never in the future. */
+const chargedOnSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), "Not a real date")
+  .refine((d) => d <= todayIstKey(), "The charge date can't be in the future");
+
 const lineSchema = z
   .object({
     description: z.string().trim().min(1).max(200),
@@ -513,6 +522,9 @@ export const createInvoice = createServerFn({ method: "POST" })
           clientId: idSchema,
           kind: z.literal("insights_topup"),
           walletLedgerId: idSchema,
+          /** When the wallet was recharged — prefilled from the top-up, editable. Defaults to the
+           *  top-up's own date when left out. */
+          chargedOn: chargedOnSchema.optional(),
           notes: noteSchema.optional(),
           preview: z.boolean().optional(),
         }),
@@ -522,6 +534,8 @@ export const createInvoice = createServerFn({ method: "POST" })
           kind: z.literal("setup"),
           // The charged rows — prefilled from the company's price list (before GST).
           lines: z.array(lineSchema).min(1).max(20),
+          /** When the setup fee was charged — only the superadmin knows this, so it is typed in. */
+          chargedOn: chargedOnSchema,
           notes: noteSchema.optional(),
           preview: z.boolean().optional(),
         }),
@@ -589,14 +603,9 @@ export const createInvoice = createServerFn({ method: "POST" })
       }
       taxableAmount = Number(led.amount);
       walletLedgerId = led.id;
-      const credited = new Date(led.created_at).toLocaleDateString("en-IN", {
-        timeZone: "Asia/Kolkata",
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      });
-      description = `Insights prepaid wallet top-up (credited ${credited})`;
-      lines = [{ description, amount: taxableAmount }];
+      const chargedOn = data.chargedOn ?? istDayKey(led.created_at);
+      description = `Insights prepaid wallet top-up (recharged ${formatIsoDate(chargedOn)})`;
+      lines = [{ description: "Insights prepaid wallet top-up", amount: taxableAmount, chargedOn }];
       sac = supplier.sacInsights;
     } else if (data.kind === "monthly") {
       lines = data.lines;
@@ -604,9 +613,9 @@ export const createInvoice = createServerFn({ method: "POST" })
       description = `SamvadX monthly fee — ${monthLabel(data.periodMonth)}`;
       sac = supplier.sacMonthly ?? supplier.sacSetup;
     } else {
-      lines = data.lines;
+      lines = data.lines.map((l) => ({ ...l, chargedOn: data.chargedOn }));
       taxableAmount = sumLines(lines);
-      description = "SamvadX platform setup";
+      description = `SamvadX platform setup (charged ${formatIsoDate(data.chargedOn)})`;
       sac = supplier.sacSetup;
     }
 

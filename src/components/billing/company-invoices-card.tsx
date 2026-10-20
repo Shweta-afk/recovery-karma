@@ -62,6 +62,7 @@ import {
   type CompanyDetails,
 } from "@/lib/company-details";
 import { todayIstKey } from "@/lib/date-filter";
+import { istDayKey } from "@/lib/monthly-trend";
 import { CompanyDetailsForm } from "@/components/company-details-form";
 import { InvoiceTable } from "./invoice-list";
 import { formatRupees } from "./invoice-document";
@@ -91,8 +92,8 @@ const setupFrom = (prices: PriceList) => {
 
 /** What "Issue" sends to createInvoice for each kind (and "Preview" with preview: true). */
 type Draft =
-  | { kind: "insights_topup"; walletLedgerId: string }
-  | { kind: "setup"; lines: { description: string; amount: number }[] }
+  | { kind: "insights_topup"; walletLedgerId: string; chargedOn: string }
+  | { kind: "setup"; lines: { description: string; amount: number }[]; chargedOn: string }
   | {
       kind: "monthly";
       periodMonth: string;
@@ -128,11 +129,17 @@ export function CompanyInvoicesCard({
   const [seats, setSeats] = useState("");
   const [setupAmount, setSetupAmount] = useState("");
   const [setupItems, setSetupItems] = useState<string[]>([...SETUP_LINE_ITEMS]);
+  // When the setup fee was actually charged — nothing in the app records it, so it is typed in.
+  const [setupChargedOn, setSetupChargedOn] = useState("");
   const resetSetup = (prices: PriceList) => {
     const s = setupFrom(prices);
     setSetupAmount(s.amount);
     setSetupItems(s.items);
+    setSetupChargedOn("");
   };
+  // Recharge date per top-up, prefilled from the top-up itself; the superadmin may correct it.
+  const [topupChargedOn, setTopupChargedOn] = useState<Record<string, string>>({});
+  const today = todayIstKey();
 
   const [busy, setBusy] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ draft: Draft; invoice: InvoiceRecord } | null>(null);
@@ -488,6 +495,17 @@ export function CompanyInvoicesCard({
                   className="h-8 w-40 text-right text-xs"
                 />
               </label>
+              <label className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-medium text-foreground">Setup fee charged on</span>
+                <Input
+                  type="date"
+                  max={today}
+                  value={setupChargedOn}
+                  onChange={(e) => setSetupChargedOn(e.target.value)}
+                  className="h-8 w-40 text-xs"
+                />
+                <span className="text-[11px] text-muted-foreground">Printed on the invoice</span>
+              </label>
               <div className="space-y-1">
                 <p className="text-[11px] text-muted-foreground">
                   What it includes — printed as a list under the fee, without separate prices:
@@ -495,8 +513,17 @@ export function CompanyInvoicesCard({
                 <IncludedItemsEditor items={setupItems} onChange={setSetupItems} />
               </div>
               {actions(
-                setupCharged.length ? { kind: "setup", lines: setupCharged } : null,
-                blocked ?? (setupCharged.length ? null : "Enter the setup fee"),
+                setupCharged.length && setupChargedOn
+                  ? { kind: "setup", lines: setupCharged, chargedOn: setupChargedOn }
+                  : null,
+                blocked ??
+                  (!setupCharged.length
+                    ? "Enter the setup fee"
+                    : !setupChargedOn
+                      ? "Enter the date the setup fee was charged"
+                      : setupChargedOn > today
+                        ? "The charge date can't be in the future"
+                        : null),
               )}
             </TabsContent>
 
@@ -513,7 +540,17 @@ export function CompanyInvoicesCard({
               ) : (
                 <ul className="divide-y divide-border rounded-md border border-border text-xs">
                   {topups.map((t) => {
-                    const draft: Draft = { kind: "insights_topup", walletLedgerId: t.ledgerId };
+                    const chargedOn = topupChargedOn[t.ledgerId] ?? istDayKey(t.createdAt);
+                    const dateProblem = !chargedOn
+                      ? "Enter the recharge date"
+                      : chargedOn > today
+                        ? "The recharge date can't be in the future"
+                        : null;
+                    const draft: Draft = {
+                      kind: "insights_topup",
+                      walletLedgerId: t.ledgerId,
+                      chargedOn,
+                    };
                     return (
                       <li
                         key={t.ledgerId}
@@ -532,12 +569,27 @@ export function CompanyInvoicesCard({
                             {t.note ? ` · ${t.note}` : ""}
                           </span>
                         </span>
-                        <span className="flex gap-1.5">
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            Recharged on
+                            <Input
+                              type="date"
+                              max={today}
+                              value={chargedOn}
+                              onChange={(e) =>
+                                setTopupChargedOn((m) => ({ ...m, [t.ledgerId]: e.target.value }))
+                              }
+                              className="h-7 w-36 text-xs"
+                            />
+                          </label>
+                          {dateProblem && (
+                            <span className="text-[11px] text-amber-600">{dateProblem}</span>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"
                             className="h-7 gap-1 text-xs"
-                            disabled={!!blocked || busy !== null}
+                            disabled={!!blocked || !!dateProblem || busy !== null}
                             onClick={() => openPreview(draft)}
                           >
                             <Eye className="h-3 w-3" /> Preview
@@ -545,7 +597,7 @@ export function CompanyInvoicesCard({
                           <Button
                             size="sm"
                             className="h-7 text-xs"
-                            disabled={!!blocked || busy !== null}
+                            disabled={!!blocked || !!dateProblem || busy !== null}
                             onClick={() => {
                               if (
                                 window.confirm(
