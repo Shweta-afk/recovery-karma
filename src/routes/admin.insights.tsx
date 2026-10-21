@@ -33,7 +33,7 @@ import {
   type ManualLookupRow,
 } from "@/lib/profilex-actions.server";
 import { PROFILEX_SERVICES, priceLine, type ProfilexService } from "@/lib/profilex/catalogue";
-import { flatten } from "@/components/profilex/trace-panel";
+import { ReportView } from "@/components/profilex/report-view";
 import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
 import { errorText } from "@/lib/app-error";
 
@@ -69,10 +69,6 @@ const needsName = (s: ProfilexService) =>
 
 function ResultView({ row }: { row: ManualLookupRow }) {
   const [raw, setRaw] = useState(false);
-  const leaves = useMemo(
-    () => flatten((row.response as { data?: unknown } | null)?.data),
-    [row.response],
-  );
 
   if (row.state === "failed") {
     return (
@@ -83,23 +79,11 @@ function ResultView({ row }: { row: ManualLookupRow }) {
   }
   return (
     <div className="space-y-2">
-      {leaves.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          The provider returned no details for this value.
-        </p>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-          {leaves.map((l, i) => (
-            <div
-              key={i}
-              className="flex justify-between gap-3 py-0.5 text-xs border-b border-border/40"
-            >
-              <span className="text-muted-foreground shrink-0">{l.label}</span>
-              <span className="font-medium text-foreground text-right break-all">{l.value}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      <ReportView
+        response={row.response}
+        title={serviceLabel(row.service_id)}
+        empty="No record found for this value — the provider returned no details. A lookup that runs is still billed."
+      />
       <button
         type="button"
         onClick={() => setRaw((r) => !r)}

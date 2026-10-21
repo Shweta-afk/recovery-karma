@@ -429,7 +429,17 @@ export function priceFor(
   status: string | null,
   rateCard?: Record<string, Record<string, number>> | null,
 ): number {
-  const prices = { ...service.defaultPrices, ...(rateCard?.[service.id] ?? {}) };
+  const own = rateCard?.[service.id];
+  if (own && Object.keys(own).length) {
+    if (status !== null && status in own) return own[status];
+    // A status the company's price list leaves blank costs the company's own "found" price —
+    // never the provider's list price, which is SamvadX's cost, not the company's (user,
+    // 2026-10-21: Financial Behaviour priced ₹15 for found only was charging ₹11.25 for a miss).
+    if (status !== null && status in service.defaultPrices && "1" in own) return own["1"];
+    // Unrecognised or missing status: fail expensive, as below — but within the company's prices.
+    return Math.max(...Object.values(own));
+  }
+  const prices = service.defaultPrices;
   if (status !== null && status in prices) return prices[status];
   return Math.max(...Object.values(prices));
 }

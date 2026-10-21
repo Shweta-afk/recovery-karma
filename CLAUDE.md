@@ -425,6 +425,22 @@ GST→Contact. Note a couple of
 endpoints name the debtor's number `phone` rather than `mobile` in the body — that is what
 `input: "phone"` means; sending the wrong key returns "Missing required input fields: phone".
 
+**A blank price on a company's price list = that company's "found" price (user, 2026-10-21).**
+`priceFor(service, status, rateCard)`: a status the company's `rate_card` sets → that price; a
+known status it leaves blank → its `"1"` price; unknown/null status → the highest of ITS prices.
+The provider's `defaultPrices` apply only when the company has no price at all for the service.
+Before this, Financial Behaviour priced ₹15 for found only was quoted and charged the provider's
+₹11.25 for a miss. Both price editors show a blank box at the price it will actually charge.
+
+**Every report on screen is tables, not a flat list (2026-10-21).** `lib/profilex/report-layout.ts`
+(pure, tested in `scripts/report-layout.test.ts`) peels response envelopes, turns each object into
+a section with a label/value table and each list (loan accounts, enquiries, `{VARIATION: [...]}`
+wrappers) into a row table; `components/profilex/report-view.tsx` renders it. Used by the debtor's
+Insights tab (`FullReport` — open by default for services with no hand-picked summary), Admin →
+Insights, the CIBIL panel, and the downloadable CIBIL file (`reportLayoutHtml`). `flatten()` is
+still the format for Excel exports. A credit-report lookup that comes back `"OK"` with empty data
+is a not-found (the bureau has no record for that number + name) and is shown and charged as one.
+
 **Each company only gets the services a superadmin puts on its plan** —
 `profilex_settings.enabled_services`, set per company on the superadmin company page, and enforced
 in `runProfilexTrace` (not just by hiding buttons). It is an allow-list: empty means none, never

@@ -6,6 +6,12 @@
 // API spec: b2b.payprime.in/cibilDocs (checked 2026-10-10). POST /api/cibil-report, JSON body
 // with the API token inside it. PayPrime only accepts calls from the IPs/domain registered under
 // Developer Setting → Api Token, so it works only from a server whose outbound IP is listed.
+import {
+  buildReportLayout,
+  countValues,
+  reportLayoutHtml,
+  REPORT_HTML_CSS,
+} from "../profilex/report-layout";
 
 export interface CibilForm {
   firstName: string;
@@ -416,20 +422,22 @@ export function buildReportHtml(r: {
   createdAt: string;
   txnId: string | null;
   htmlUrl: string | null;
-  fields: { label: string; value: string }[];
+  /** The report's structured data (cibilData), laid out as tables by report-layout.ts. */
+  data: unknown;
 }): string {
-  const rows = r.fields
-    .map((f) => `<tr><th>${esc(f.label)}</th><td>${esc(f.value)}</td></tr>`)
-    .join("");
+  const layout = buildReportLayout(r.data, "Report details");
+  const body =
+    countValues(layout) > 0
+      ? reportLayoutHtml(layout)
+      : "<p>No structured fields were returned.</p>";
   return `<!doctype html><html><head><meta charset="utf-8"><title>CIBIL report — ${esc(r.subject)}</title>
 <style>body{font:14px/1.45 system-ui,sans-serif;margin:32px;color:#111}h1{font-size:20px;margin:0 0 4px}
 .meta{color:#555;margin-bottom:20px}.score{font-size:40px;font-weight:700;margin:8px 0 20px}
-table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}
-th{width:40%;color:#444;font-weight:500}@media print{body{margin:12mm}}</style></head><body>
+${REPORT_HTML_CSS}@media print{body{margin:12mm}}</style></head><body>
 <h1>CIBIL report</h1><div class="meta">${esc(r.subject)} · pulled ${esc(new Date(r.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))}${r.txnId ? ` · ${esc(r.txnId)}` : ""}</div>
 <div>CIBIL score</div><div class="score">${r.score ?? "—"}</div>
 ${r.htmlUrl ? `<p>Full report online: <a href="${esc(r.htmlUrl)}">${esc(r.htmlUrl)}</a></p>` : ""}
-${rows ? `<table>${rows}</table>` : "<p>No structured fields were returned.</p>"}
+${body}
 </body></html>`;
 }
 

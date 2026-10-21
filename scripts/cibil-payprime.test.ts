@@ -289,11 +289,13 @@ describe("download", () => {
       createdAt: "2026-10-11T06:00:00Z",
       txnId: "PP1",
       htmlUrl: null,
-      fields: [{ label: "Name", value: "<script>" }],
+      data: { Applicant: { Name: "<script>" }, Accounts: [{ Type: "PL" }, { Type: "CC" }] },
     });
     expect(html).toContain("Ravi &lt;b&gt;");
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("742");
+    // Lists come out as a table, not one line per field.
+    expect(html).toContain('<table class="grid">');
   });
   test("file name", () => {
     expect(reportFileName("Ravi Kumar · ABCDE1234F", "2026-10-10T20:00:00Z")).toBe(

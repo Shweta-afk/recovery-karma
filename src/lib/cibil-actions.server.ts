@@ -35,7 +35,6 @@ import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 import { normalisePhone } from "./profilex/billing";
 import { CIBIL_SERVICE, getService, priceFor } from "./profilex/catalogue";
 import { buildLoanLookupData } from "./profilex/loan-lookup-data";
-import { flatten } from "./profilex/flatten";
 import {
   buildPrefill,
   buildReportHtml,
@@ -725,7 +724,7 @@ export const downloadCibilReport = createServerFn({ method: "POST" })
         createdAt: summary.createdAt,
         txnId: summary.txnId,
         htmlUrl: summary.htmlUrl,
-        fields: flatten(cibilDataOf(row.response)),
+        data: cibilDataOf(row.response),
       });
     }
     return { fileName: reportFileName(summary.subject, summary.createdAt), html };

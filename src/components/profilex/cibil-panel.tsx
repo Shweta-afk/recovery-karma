@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { getAccessToken } from "@/lib/access-token";
-import { flatten } from "@/lib/profilex/flatten";
+import { ReportView } from "@/components/profilex/report-view";
 import {
   downloadCibilReport,
   getCibilBorrower,
@@ -247,19 +247,18 @@ export function CibilFormFields({
 
 function ReportFields({ report }: { report: CibilReportSummary }) {
   const [open, setOpen] = useState(false);
-  const [leaves, setLeaves] = useState<{ label: string; value: string }[] | null>(null);
+  const [data, setData] = useState<unknown>(undefined);
 
   const toggle = async () => {
-    if (!open && leaves === null) {
+    if (!open && data === undefined) {
       try {
         const res = await getCibilReportData({
           data: { accessToken: await getAccessToken(), reportId: report.id },
         });
-        // Start at cibilData: the envelope (status, txn id, htmlUrl) is shown above, and
-        // flatten() stops at depth 6, which CIBIL's nesting reaches quickly.
+        // Start at cibilData: the envelope (status, txn id, htmlUrl) is shown above.
         const r = res.response as Record<string, any> | null; // eslint-disable-line @typescript-eslint/no-explicit-any
         const inner = r?.data?.data ?? r?.data ?? r;
-        setLeaves(flatten(inner?.cibilData ?? inner));
+        setData(inner?.cibilData ?? inner ?? null);
       } catch (e) {
         toast.error(errorText(e, "Could not load the report"));
         return;
@@ -276,23 +275,11 @@ function ReportFields({ report }: { report: CibilReportSummary }) {
         className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
       >
         <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
-        {open ? "Hide" : "Show"} all fields returned
+        {open ? "Hide" : "Show"} full report
       </button>
-      {open && leaves && (
-        <div className="mt-2 max-h-80 overflow-y-auto rounded border border-border/60">
-          {leaves.length === 0 ? (
-            <p className="p-2 text-[11px] text-muted-foreground">No structured fields.</p>
-          ) : (
-            leaves.map((l, i) => (
-              <div
-                key={i}
-                className="flex justify-between gap-4 px-2 py-1 border-b border-border/40 last:border-0"
-              >
-                <span className="text-[11px] text-muted-foreground">{l.label}</span>
-                <span className="text-[11px] text-foreground text-right break-all">{l.value}</span>
-              </div>
-            ))
-          )}
+      {open && data !== undefined && (
+        <div className="mt-2">
+          <ReportView response={data} title="CIBIL report" empty="No structured fields." />
         </div>
       )}
     </div>

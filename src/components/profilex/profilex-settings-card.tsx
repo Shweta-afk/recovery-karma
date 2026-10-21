@@ -139,7 +139,7 @@ export function ProfilexSettingsCard() {
                             {statusLabel(status, all)}
                           </span>
                           <span className="text-xs text-foreground">
-                            ₹{priceOf(s.id, status, priceFor(s, status)).toFixed(2)}
+                            ₹{priceOf(s.id, status, priceFor(s, status, rateCard)).toFixed(2)}
                           </span>
                         </div>
                       ))}

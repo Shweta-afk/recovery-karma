@@ -304,9 +304,10 @@ export function CompanyInsightsSettingsCard({ clientId }: { clientId: string }) 
                             type="number"
                             min={0}
                             step="0.5"
-                            // Defaults to what a lookup with this status costs today, so leaving
-                            // it alone changes nothing and typing over it records the real price.
-                            value={priceOf(s.id, status, priceFor(s, status))}
+                            // Shows what a lookup with this status costs today — a blank box
+                            // takes the company's own "found" price (priceFor) — so leaving it
+                            // alone changes nothing and typing over it records the real price.
+                            value={priceOf(s.id, status, priceFor(s, status, rateCard))}
                             onChange={(e) => setPrice(s.id, status, +e.target.value)}
                             className="w-16 h-7 text-xs text-right"
                           />

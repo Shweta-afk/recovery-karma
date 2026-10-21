@@ -53,6 +53,7 @@ import {
 import { CibilPanel } from "@/components/profilex/cibil-panel";
 import { errorText } from "@/lib/app-error";
 import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
+import { ReportView, hasReportValues } from "@/components/profilex/report-view";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -67,31 +68,42 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 // without importing a React component; re-exported here for existing importers.
 export { flatten };
 
-function AllFields({ trace }: { trace: TraceRecord }) {
-  const [open, setOpen] = useState(false);
-  const leaves = flatten((trace.response as Record<string, unknown> | null)?.data);
-  if (leaves.length === 0) return null;
+// Services with a short hand-picked summary above (ResultBody). Every other service has none,
+// so its full report is shown open rather than behind a click.
+const SUMMARISED = new Set([
+  UAN_SOURCE_SERVICE,
+  SKIP_TRACING_SERVICE,
+  "mobile-to-prefill-ext",
+  "phone-to-prefill",
+  "get-alternate-phone",
+  "mobile-to-multiple-upi",
+  "mobile-to-lpg-advance",
+  "get-alternate-address",
+  "mobile-to-gst",
+  "gst-to-contact",
+  "employment-latest",
+  "employment-history",
+]);
+
+/** Everything the lookup returned, as tables (ReportView). Hidden when there is nothing. */
+function FullReport({ trace, label }: { trace: TraceRecord; label: string }) {
+  const summarised = SUMMARISED.has(trace.serviceId);
+  const [open, setOpen] = useState(!summarised);
+  if (!hasReportValues(trace.response)) return null;
 
   return (
-    <div className="mt-3 pt-3 border-t border-border/60">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
-      >
-        <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
-        {open ? "Hide" : "Show"} all {leaves.length} fields returned
-      </button>
-      {open && (
-        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
-          {leaves.map((l, i) => (
-            <div key={i} className="flex justify-between gap-3 py-0.5 text-[11px]">
-              <span className="text-muted-foreground shrink-0">{l.label}</span>
-              <span className="font-medium text-foreground text-right break-all">{l.value}</span>
-            </div>
-          ))}
-        </div>
+    <div className={cn(summarised && "mt-3 pt-3 border-t border-border/60")}>
+      {summarised && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1 mb-2"
+        >
+          <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+          {open ? "Hide" : "Show"} full report
+        </button>
       )}
+      {open && <ReportView response={trace.response} title={label} />}
     </div>
   );
 }
@@ -137,9 +149,12 @@ function GstRows({ block }: { block: unknown }) {
 
 function ResultBody({ trace }: { trace: TraceRecord }) {
   if (trace.providerStatus && trace.providerStatus !== "1") {
+    // Not an error: the lookup ran, and the provider (for the credit reports, the bureau) had
+    // nothing for this borrower's number and name as written in the bank file.
     return (
       <p className="text-xs text-muted-foreground italic">
-        No record found. This lookup was still billed.
+        No record found for this borrower&apos;s number and name. The lookup ran and was still
+        billed.
       </p>
     );
   }
@@ -673,7 +688,7 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
             {trace ? (
               <div>
                 <ResultBody trace={trace} />
-                <AllFields trace={trace} />
+                <FullReport trace={trace} label={service.label} />
                 <p className="text-[10px] text-muted-foreground mt-2">
                   {new Date(trace.createdAt).toLocaleString("en-IN")}
                   {showCost && trace.billable && ` · ₹${trace.cost.toFixed(2)}`}

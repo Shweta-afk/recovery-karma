@@ -55,8 +55,35 @@ describe("priceFor", () => {
   test("a client rate card overrides list price per status", () => {
     const card = { "employment-latest": { "1": 4.5 } };
     expect(priceFor(employment, "1", card)).toBe(4.5);
-    // Statuses the card doesn't mention keep the catalogue price.
-    expect(priceFor(employment, "2", card)).toBe(1);
+    // A status the card leaves blank costs the company's found price, never the provider's
+    // list price (user, 2026-10-21).
+    expect(priceFor(employment, "2", card)).toBe(4.5);
+  });
+
+  test("Financial Behaviour priced ₹15 for found only costs ₹15 for a miss too", () => {
+    // The bug: the company was quoted and charged the provider's ₹11.25 for status 2.
+    const fb = getService("financial-behaviour")!;
+    const card = { "financial-behaviour": { "1": 15 } };
+    expect(priceFor(fb, "1", card)).toBe(15);
+    expect(priceFor(fb, "2", card)).toBe(15);
+    expect(priceFor(fb, "OK", card)).toBe(15);
+    expect(priceFor(fb, null, card)).toBe(15);
+    expect(priceLine(fb, card)).toBe("₹15 if found, ₹15 if not");
+  });
+
+  test("a miss price the company did set is kept, including ₹0", () => {
+    const card = { "employment-latest": { "1": 7, "2": 2 }, "mobile-to-uan": { "1": 5, "2": 0 } };
+    expect(priceFor(employment, "2", card)).toBe(2);
+    expect(priceFor(uan, "2", card)).toBe(0);
+  });
+
+  test("with no price for the service at all, the list price still applies", () => {
+    expect(priceFor(employment, "2", { "mobile-to-uan": { "1": 5 } })).toBe(1);
+  });
+
+  test("an unknown status fails expensive within the company's own prices", () => {
+    const card = { "employment-latest": { "1": 7, "2": 2 } };
+    expect(priceFor(employment, "99", card)).toBe(7);
   });
 });
 
@@ -385,8 +412,9 @@ describe("priceLine — what an admin is quoted must be what they are charged", 
   };
 
   test("quotes the company's price, not the provider's list price", () => {
-    expect(priceLine(getService("mobile-to-uan")!, marked)).toBe("₹5 if found, free if not");
-    expect(priceLine(getService("phone-to-prefill")!, marked)).toBe("₹8 if found, ₹5 if not");
+    // Only the found price is set, so a miss costs the same (user, 2026-10-21).
+    expect(priceLine(getService("mobile-to-uan")!, marked)).toBe("₹5 if found, ₹5 if not");
+    expect(priceLine(getService("phone-to-prefill")!, marked)).toBe("₹8 if found, ₹8 if not");
   });
 
   test("falls back to list price for a company with no override", () => {
