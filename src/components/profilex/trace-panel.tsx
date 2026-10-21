@@ -55,11 +55,58 @@ import { errorText } from "@/lib/app-error";
 import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
 import { ReportView, hasReportValues } from "@/components/profilex/report-view";
 
+// One line of a lookup's summary — the same label/value table look as the full report
+// (ReportView), so the summary and the tables under it read as one document.
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex justify-between gap-4 py-1.5 border-b border-border/50 last:border-0">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-xs font-medium text-foreground text-right">{value ?? "—"}</span>
+    <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] border-b border-border/60 last:border-0 text-xs">
+      <div className="bg-muted/40 px-2.5 py-1.5 font-medium text-muted-foreground">{label}</div>
+      <div className="px-2.5 py-1.5 font-medium text-foreground break-words">{value ?? "—"}</div>
+    </div>
+  );
+}
+
+/** A short list in a lookup's summary (addresses, employers, GST registrations) as a table. */
+function ListTable({
+  title,
+  columns,
+  rows,
+}: {
+  title?: string;
+  columns: string[];
+  rows: string[][];
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="space-y-1 py-2 px-2.5">
+      {title && <p className="text-[11px] font-semibold text-foreground">{title}</p>}
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full text-xs">
+          <thead className="bg-muted">
+            <tr>
+              {columns.map((c) => (
+                <th
+                  key={c}
+                  className="whitespace-nowrap px-2 py-1.5 text-left font-semibold text-muted-foreground"
+                >
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-t border-border/60 even:bg-muted/20">
+                {r.map((c, j) => (
+                  <td key={j} className="px-2 py-1.5 align-top text-foreground">
+                    {c || <span className="text-muted-foreground/50">—</span>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -137,12 +184,10 @@ function GstRows({ block }: { block: unknown }) {
   const result = (block as { result?: { gstin?: string; legal_name?: string }[] } | null)?.result;
   if (!Array.isArray(result) || result.length === 0) return null;
   return (
-    <Row
-      label={result.length === 1 ? "GST registration" : `GST registrations (${result.length})`}
-      value={result
-        .slice(0, 3)
-        .map((r) => [r.legal_name, r.gstin].filter(Boolean).join(" · "))
-        .join("; ")}
+    <ListTable
+      title={`GST registrations (${result.length})`}
+      columns={["Legal name", "GSTIN"]}
+      rows={result.map((r) => [r.legal_name ?? "", r.gstin ?? ""])}
     />
   );
 }
@@ -276,17 +321,15 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
     if (addresses.length === 0)
       return <p className="text-xs text-muted-foreground italic">No addresses returned.</p>;
     return (
-      <div className="space-y-1.5">
-        {addresses.map((a, i) => (
-          <div key={i} className="text-xs border-b border-border/50 pb-1.5 last:border-0">
-            <div className="text-foreground">{a.address_text ?? "—"}</div>
-            <div className="text-[10px] text-muted-foreground">
-              {a.confidence_score != null && `confidence ${a.confidence_score}`}
-              {a.last_seen && ` · last seen ${String(a.last_seen).slice(0, 10)}`}
-            </div>
-          </div>
-        ))}
-      </div>
+      <ListTable
+        title={`Addresses (${addresses.length})`}
+        columns={["Address", "Confidence", "Last seen"]}
+        rows={addresses.map((a) => [
+          a.address_text ?? "",
+          a.confidence_score != null ? String(a.confidence_score) : "",
+          a.last_seen ? String(a.last_seen).slice(0, 10) : "",
+        ])}
+      />
     );
   }
   if (trace.serviceId === "mobile-to-gst") return <GstRows block={data} />;
@@ -325,20 +368,16 @@ function ResultBody({ trace }: { trace: TraceRecord }) {
       <Row label="Joined" value={emp.dateOfJoining} />
       <Row label="Exit marked" value={emp.dateOfExit || "—"} />
       {emp.history.length > 1 && (
-        <div className="mt-3">
-          <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-1.5">
-            Employment history
-          </p>
-          {emp.history.map((h, i) => (
-            <div key={i} className="text-xs py-1.5 border-b border-border/50 last:border-0">
-              <div className="font-medium text-foreground">{h.employer}</div>
-              <div className="text-muted-foreground">
-                {h.dateOfJoining || "?"} → {h.dateOfExit || "present"}
-                {h.months != null && ` · ${h.months} months`}
-              </div>
-            </div>
-          ))}
-        </div>
+        <ListTable
+          title="Employment history"
+          columns={["Employer", "Joined", "Left", "Months"]}
+          rows={emp.history.map((h) => [
+            h.employer ?? "",
+            h.dateOfJoining ?? "",
+            h.dateOfExit || "present",
+            h.months != null ? String(h.months) : "",
+          ])}
+        />
       )}
     </>
   );
@@ -687,7 +726,10 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
 
             {trace ? (
               <div>
-                <ResultBody trace={trace} />
+                {/* Bordered only when the summary has rows — a bare "No record found" line stays plain. */}
+                <div className="overflow-hidden has-[>div]:rounded-md has-[>div]:border has-[>div]:border-border">
+                  <ResultBody trace={trace} />
+                </div>
                 <FullReport trace={trace} label={service.label} />
                 <p className="text-[10px] text-muted-foreground mt-2">
                   {new Date(trace.createdAt).toLocaleString("en-IN")}
