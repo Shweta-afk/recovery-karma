@@ -108,7 +108,7 @@ export interface BillingProfile extends InvoiceParty {
   paymentTermsDays: number;
 }
 
-async function loadBillingProfile(): Promise<BillingProfile> {
+export async function loadBillingProfile(): Promise<BillingProfile> {
   const { data, error } = await db()
     .from("billing_profile")
     .select("*")

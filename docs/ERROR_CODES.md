@@ -96,45 +96,55 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 
 All are database errors on the action named; the database message is in the log.
 
-| Code    | User sees                                      | File                        |
-| ------- | ---------------------------------------------- | --------------------------- |
-| SX-4101 | Could not load billing details.                | `invoice-actions.server.ts` |
-| SX-4102 | Could not save billing details.                | `invoice-actions.server.ts` |
-| SX-4103 | Could not load billing details.                | `invoice-actions.server.ts` |
-| SX-4104 | Could not load invoices.                       | `invoice-actions.server.ts` |
-| SX-4105 | Could not load top-ups.                        | `invoice-actions.server.ts` |
-| SX-4106 | Could not save billing details.                | `invoice-actions.server.ts` |
-| SX-4107 | Could not load the company's billing details.  | `invoice-actions.server.ts` |
-| SX-4108 | Could not load that top-up.                    | `invoice-actions.server.ts` |
-| SX-4109 | Could not create the invoice.                  | `invoice-actions.server.ts` |
-| SX-4110 | Could not update the invoice.                  | `invoice-actions.server.ts` |
-| SX-4111 | Could not load invoices.                       | `invoice-actions.server.ts` |
-| SX-4201 | Could not save the price list.                 | `billing-actions.server.ts` |
-| SX-4202 | Could not load payments.                       | `billing-actions.server.ts` |
-| SX-4203 | Could not load credit notes.                   | `billing-actions.server.ts` |
-| SX-4204 | Could not update the invoice status.           | `billing-actions.server.ts` |
-| SX-4205 | Could not record the payment.                  | `billing-actions.server.ts` |
-| SX-4206 | Could not remove the payment.                  | `billing-actions.server.ts` |
-| SX-4207 | Could not issue the credit note.               | `billing-actions.server.ts` |
-| SX-4301 | Could not create the contracts storage bucket. | `contracts.server.ts`       |
-| SX-4302 | Could not load company admins.                 | `contracts.server.ts`       |
-| SX-4303 | Could not load contracts.                      | `contracts.server.ts`       |
-| SX-4304 | Could not start the upload.                    | `contracts.server.ts`       |
-| SX-4305 | Could not save the contract.                   | `contracts.server.ts`       |
-| SX-4306 | Could not publish the change.                  | `contracts.server.ts`       |
-| SX-4307 | Could not withdraw the change.                 | `contracts.server.ts`       |
-| SX-4308 | Could not load contracts.                      | `contracts.server.ts`       |
-| SX-4309 | Could not record your acceptance.              | `contracts.server.ts`       |
-| SX-4310 | Could not open the file.                       | `contracts.server.ts`       |
-| SX-4311 | Could not save the draft.                      | `contracts.server.ts`       |
-| SX-4312 | Could not publish the draft.                   | `contracts.server.ts`       |
-| SX-4313 | Could not discard the draft.                   | `contracts.server.ts`       |
-| SX-4314 | Could not save the template.                   | `contracts.server.ts`       |
-| SX-4315 | Could not save the document.                   | `contracts.server.ts`       |
-| SX-4316 | Could not publish the agreement.               | `contracts.server.ts`       |
-| SX-4317 | Could not record the send.                     | `contracts.server.ts`       |
-| SX-4318 | Could not record your signature.               | `contracts.server.ts`       |
-| SX-4401 | Could not load invoices.                       | `company-billing.server.ts` |
+| Code    | User sees                                                 | File                        |
+| ------- | --------------------------------------------------------- | --------------------------- |
+| SX-4101 | Could not load billing details.                           | `invoice-actions.server.ts` |
+| SX-4102 | Could not save billing details.                           | `invoice-actions.server.ts` |
+| SX-4103 | Could not load billing details.                           | `invoice-actions.server.ts` |
+| SX-4104 | Could not load invoices.                                  | `invoice-actions.server.ts` |
+| SX-4105 | Could not load top-ups.                                   | `invoice-actions.server.ts` |
+| SX-4106 | Could not save billing details.                           | `invoice-actions.server.ts` |
+| SX-4107 | Could not load the company's billing details.             | `invoice-actions.server.ts` |
+| SX-4108 | Could not load that top-up.                               | `invoice-actions.server.ts` |
+| SX-4109 | Could not create the invoice.                             | `invoice-actions.server.ts` |
+| SX-4110 | Could not update the invoice.                             | `invoice-actions.server.ts` |
+| SX-4111 | Could not load invoices.                                  | `invoice-actions.server.ts` |
+| SX-4201 | Could not save the price list.                            | `billing-actions.server.ts` |
+| SX-4202 | Could not load payments.                                  | `billing-actions.server.ts` |
+| SX-4203 | Could not load credit notes.                              | `billing-actions.server.ts` |
+| SX-4204 | Could not update the invoice status.                      | `billing-actions.server.ts` |
+| SX-4205 | Could not record the payment.                             | `billing-actions.server.ts` |
+| SX-4206 | Could not remove the payment.                             | `billing-actions.server.ts` |
+| SX-4207 | Could not issue the credit note.                          | `billing-actions.server.ts` |
+| SX-4301 | Could not create the contracts storage bucket.            | `contracts.server.ts`       |
+| SX-4302 | Could not load company admins.                            | `contracts.server.ts`       |
+| SX-4303 | Could not load contracts.                                 | `contracts.server.ts`       |
+| SX-4304 | Could not start the upload.                               | `contracts.server.ts`       |
+| SX-4305 | Could not save the contract.                              | `contracts.server.ts`       |
+| SX-4306 | Could not publish the change.                             | `contracts.server.ts`       |
+| SX-4307 | Could not withdraw the change.                            | `contracts.server.ts`       |
+| SX-4308 | Could not load contracts.                                 | `contracts.server.ts`       |
+| SX-4309 | Could not record your acceptance.                         | `contracts.server.ts`       |
+| SX-4310 | Could not open the file.                                  | `contracts.server.ts`       |
+| SX-4311 | Could not save the draft.                                 | `contracts.server.ts`       |
+| SX-4312 | Could not publish the draft.                              | `contracts.server.ts`       |
+| SX-4313 | Could not discard the draft.                              | `contracts.server.ts`       |
+| SX-4314 | Could not save the template.                              | `contracts.server.ts`       |
+| SX-4315 | Could not save the document.                              | `contracts.server.ts`       |
+| SX-4316 | Could not publish the agreement.                          | `contracts.server.ts`       |
+| SX-4317 | Could not record the send.                                | `contracts.server.ts`       |
+| SX-4318 | Could not record your signature.                          | `contracts.server.ts`       |
+| SX-4401 | Could not load invoices.                                  | `company-billing.server.ts` |
+| SX-4501 | This is not available right now. Contact SamvadX support. | `data-purge.server.ts`      |
+| SX-4502 | Could not check the portfolio.                            | `data-purge.server.ts`      |
+| SX-4503 | Could not load the certificate request.                   | `data-purge.server.ts`      |
+| SX-4504 | Could not send the request.                               | `data-purge.server.ts`      |
+| SX-4505 | Could not load the requests.                              | `data-purge.server.ts`      |
+| SX-4506 | Could not load the portfolio.                             | `data-purge.server.ts`      |
+| SX-4507 | Could not count the portfolio's accounts.                 | `data-purge.server.ts`      |
+| SX-4508 | Could not load the request.                               | `data-purge.server.ts`      |
+| SX-4509 | Could not issue the certificate.                          | `data-purge.server.ts`      |
+| SX-4510 | Could not decline the request.                            | `data-purge.server.ts`      |
 
 ### Company, users, sign-up (5xxx)
 

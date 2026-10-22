@@ -12,7 +12,9 @@ import {
   Undo2,
   EyeOff,
   Megaphone,
+  FileCheck2,
 } from "lucide-react";
+import { PurgeRequestsPanel } from "@/components/data-purge/purge-requests-panel";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -178,7 +180,16 @@ function SuperadminContractsPage() {
               <FileText className="mr-1.5 h-3.5 w-3.5" />
               Other documents
             </TabsTrigger>
+            <TabsTrigger value="purging" className="text-xs">
+              <FileCheck2 className="mr-1.5 h-3.5 w-3.5" />
+              Data purging
+            </TabsTrigger>
           </TabsList>
+
+          {/* 4. Data purging certificates companies have asked for, per portfolio. */}
+          <TabsContent value="purging">
+            <PurgeRequestsPanel />
+          </TabsContent>
 
           {/* 1. The one agreement every company signs, and who has. */}
           <TabsContent value="agreements">

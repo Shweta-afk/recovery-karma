@@ -896,6 +896,26 @@ sent / viewed / signed with typed name + email). Email text and links in `billin
   Views recorded before this date have no name.
 - Email is OFF until `RESEND_API_KEY` + `EMAIL_FROM` are set on Railway (not set as of 2026-10-12).
 
+### Data purging certificates — 2026-10-20
+
+One per portfolio, **from SamvadX to the company** (user's choices, 2026-10-20), modelled on a
+lender's "Data Purging" letter ("North Data Purging-.docx"): To-block + date, "Subject: - Data
+Purging <Month-YYYY>", allocation table by DPD bucket (accounts + outstanding, empty buckets
+dropped, buckets in `PURGE_BUCKETS`), assurance, SamvadX signatory. **A document only — issuing
+deletes no data** (user's decision); the letter's "we have purged" wording is the user's to stand
+behind. Flow: manager/admin clicks **Request purging certificate** on the portfolio header
+(`PurgeRequestButton` in `PortfolioDetail`) → **Superadmin → Contracts → Data purging**
+(`purge-requests-panel.tsx`) fills the letter, superadmin edits date / month / lender / To-lines,
+Issue (or Decline with a reason) → requester notified → the button becomes "Data purging
+certificate" (open + print; each open counted). The allocation and both parties are FROZEN into
+`data_purge_requests.certificate` at issue time, so later stripping/archiving doesn't change it.
+Table server-only (`migrations/20261020_data_purge_certificates.sql`; one pending per portfolio);
+server `data-purge.server.ts`, pure rules + wording `data-purge.ts` (tested in
+`scripts/data-purge.test.ts`), document `components/data-purge/purge-certificate-document.tsx`.
+⚠️ The superadmin sees the portfolio's **outstanding totals** here — a deliberate exception to the
+"usage only" rule, since SamvadX issues this letter itself. Outstanding = `outstanding_balance`
+(a copy of `loan_amount`, see "Numbers that are NOT measured").
+
 ### Contracts (Admin → Contracts, Superadmin → Contracts) — 2026-10-09
 
 Tables `contract_documents` / `contract_changes` / `contract_acceptances`
