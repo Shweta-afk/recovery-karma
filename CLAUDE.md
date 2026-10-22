@@ -1038,6 +1038,16 @@ await saveDisposition({ ...data });
   `payments`. The two fields themselves survive only as the fallback for an ad-hoc manual call
   (no debtor row behind it) and go away with the `MOCK_DEBTORS` array.
 
+**Closing and reopening portfolios (2026-10-22).** Picking an old portfolio under "Continues
+portfolio" on the upload page closes it the moment the new file is saved (`createPortfolio`) —
+on 2026-10-22 a 1-account RBL test file closed "AU BANK" (594 accounts, 470 lookups), which looked
+deleted and had to be reopened in SQL. Now the picker shows what will close (red when
+`lendersDiffer`, `src/lib/portfolio-continuation.ts`, tested in
+`scripts/portfolio-continuation.test.ts`), and the upload button asks first, counting the
+accounts / lookups / calls (`getPortfolioFootprint`). Admins get **Reopen** on a closed
+portfolio's header (`ReopenPortfolioButton` → `reopenPortfolio`, which only clears `closed_at` —
+closing never changed anything else). Not shown for a portfolio that merely passed its end date.
+
 **Done (2026-10-18):** no store reads the whole `debtors` table just to label its own rows any
 more — settlements, retention requests, reminders, messages and disputes use
 `fetchDebtorsByIds` (the last four used an unpaged read that silently stopped at 1,000 debtors, so

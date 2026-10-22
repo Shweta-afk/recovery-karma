@@ -9,7 +9,24 @@ import {
   ArrowRight,
   RefreshCw,
   Sliders,
+  AlertTriangle,
+  Loader2,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  describeFootprint,
+  lendersDiffer,
+  type PortfolioFootprint,
+} from "@/lib/portfolio-continuation";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,6 +53,7 @@ import { cn, parseCsvText } from "@/lib/utils";
 import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
 import {
   createPortfolio,
+  getPortfolioFootprint,
   dpd2bucket,
   DEFAULT_PORTFOLIO_SETTINGS,
   type UploadedPortfolio,
@@ -194,6 +212,13 @@ function PortfolioUploadPage() {
         .sort((a, b) => ((a.uploadedAt ?? "") < (b.uploadedAt ?? "") ? 1 : -1)),
     [existingPortfolios],
   );
+  // The portfolio this upload would close, and whether its lender looks like a different bank —
+  // a one-account RBL test file saved as continuing "AU BANK" closed 594 accounts on 2026-10-22.
+  const replacedPortfolio = continuablePortfolios.find((p) => p.id === replacesPortfolioId);
+  const lenderMismatch = !!replacedPortfolio && lendersDiffer(lenderName, replacedPortfolio.lender);
+  // Confirmation before an upload that closes a portfolio; footprint = what it holds.
+  const [confirmReplace, setConfirmReplace] = useState(false);
+  const [replaceFootprint, setReplaceFootprint] = useState<PortfolioFootprint | null>(null);
 
   // CSV state
   const [fileName, setFileName] = useState("");
@@ -645,6 +670,24 @@ function PortfolioUploadPage() {
                     carried forward automatically if it's in this file, and the old portfolio closes
                     out.
                   </p>
+                  {replacedPortfolio && (
+                    <p
+                      className={cn(
+                        "flex items-start gap-1.5 rounded-md border px-2.5 py-2 text-[11px]",
+                        lenderMismatch
+                          ? "border-destructive/40 bg-destructive/10 text-destructive"
+                          : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                      )}
+                    >
+                      <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-px" />
+                      <span>
+                        Uploading will <strong>close &ldquo;{replacedPortfolio.name}&rdquo;</strong>{" "}
+                        — its accounts leave the call queue and every list.
+                        {lenderMismatch &&
+                          ` Its lender is "${replacedPortfolio.lender}", not "${lenderName}" — check this is really the same bank's next cycle.`}
+                      </span>
+                    </p>
+                  )}
                 </div>
                 {step === "meta" && (
                   <div className="flex items-end">
@@ -1087,7 +1130,18 @@ function PortfolioUploadPage() {
                     </div>
                   )}
 
-                  <Button className="w-full gap-2" onClick={handleUpload} disabled={uploading}>
+                  <Button
+                    className="w-full gap-2"
+                    onClick={() => {
+                      if (!replacedPortfolio) return void handleUpload();
+                      setReplaceFootprint(null);
+                      setConfirmReplace(true);
+                      getPortfolioFootprint(replacedPortfolio.id)
+                        .then(setReplaceFootprint)
+                        .catch(() => setReplaceFootprint({ accounts: 0, lookups: 0, calls: 0 }));
+                    }}
+                    disabled={uploading}
+                  >
                     <Upload className="h-4 w-4" />
                     Upload &amp; Assign {mappedRows.length - rowIssues.length} Account
                     {mappedRows.length - rowIssues.length === 1 ? "" : "s"}
@@ -1096,6 +1150,51 @@ function PortfolioUploadPage() {
                 </CardContent>
               </Card>
             )}
+
+            <AlertDialog open={confirmReplace} onOpenChange={setConfirmReplace}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Close &ldquo;{replacedPortfolio?.name}&rdquo;?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription asChild>
+                    <div className="space-y-2">
+                      <p>
+                        You picked it under &ldquo;Continues portfolio&rdquo;, so saving &ldquo;
+                        {portfolioName}&rdquo; closes it.{" "}
+                        {replaceFootprint ? (
+                          <>
+                            Its <strong>{describeFootprint(replaceFootprint)}</strong> leave the
+                            call queue and every list.
+                          </>
+                        ) : (
+                          <span className="inline-flex items-center gap-1">
+                            <Loader2 className="h-3 w-3 animate-spin" /> Counting its accounts…
+                          </span>
+                        )}{" "}
+                        Nothing is deleted, and an admin can reopen it.
+                      </p>
+                      {lenderMismatch && replacedPortfolio && (
+                        <p className="font-medium text-destructive">
+                          Different lender: &ldquo;{replacedPortfolio.lender}&rdquo; is being
+                          replaced by &ldquo;{lenderName}&rdquo;. If this is a new bank or a test
+                          file, cancel and choose &ldquo;Not a continuation&rdquo;.
+                        </p>
+                      )}
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className={cn(lenderMismatch && "bg-destructive hover:bg-destructive/90")}
+                    onClick={() => void handleUpload()}
+                  >
+                    Upload and close it
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
 
           {/* Sidebar — bucket preview */}
