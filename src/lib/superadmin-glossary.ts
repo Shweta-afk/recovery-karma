@@ -75,6 +75,10 @@ export const GLOSSARY = {
     term: "Insights wallet",
     text: "The company's Insights balance right now (not affected by the date filter). Lookups stop working when it reaches zero — top it up from Insights Wallet.",
   },
+  managerBudget: {
+    term: "Budget by manager",
+    text: "The company's admin passes its Insights budget on to managers. Allocated = what each manager was given, Spent = what their lookups cost, Balance now = what they have left. A manager's lookups stop when their own balance runs out, even if the company wallet still has money. All time, not the date filter.",
+  },
 
   // ── Company status ───────────────────────────────────────────────────────
   health: {
@@ -372,6 +376,7 @@ export const HELP_SECTIONS: { title: string; keys: GlossaryKey[] }[] = [
       "profilexCost",
       "insightsMargin",
       "wallet",
+      "managerBudget",
     ],
   },
   {

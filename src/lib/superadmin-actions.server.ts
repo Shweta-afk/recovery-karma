@@ -940,6 +940,159 @@ export const getWalletLedger = createServerFn({ method: "POST" })
     return { rows: result };
   });
 
+/** One manager's share of a company's Insights budget, all time. */
+export interface ManagerBudgetRow {
+  managerId: string;
+  name: string;
+  email: string;
+  role: string;
+  isActive: boolean;
+  /** Σ company_to_manager — what the company admin has handed this manager. */
+  allocated: number;
+  /** Σ manager_charge — what this manager's lookups (and their team's) actually cost. */
+  spent: number;
+  lookups: number;
+  /** profilex_wallets.balance right now. */
+  balance: number;
+  lastAllocatedAt: string | null;
+  lastSpentAt: string | null;
+}
+
+/** How one company's Insights budget is split between its managers: what SamvadX allocated to
+ *  the company, what its admin passed on to each manager, what each spent and what is left.
+ *  All time, not the date filter — balances only make sense against the full history. */
+export const getCompanyManagerBudgets = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    const admin = db();
+
+    type LedgerRow = {
+      scope: string;
+      manager_id: string | null;
+      amount: number;
+      created_at: string;
+    };
+    const [
+      ledgerRes,
+      { data: wallets, error: wErr },
+      { data: company, error: cErr },
+      { data: people, error: pErr },
+    ] = await Promise.all([
+      fetchAllRows<LedgerRow>((from, to) =>
+        admin
+          .from("profilex_wallet_ledger")
+          .select("scope, manager_id, amount, created_at")
+          .eq("client_id", data.clientId)
+          .in("scope", ["master_to_company", "company_to_manager", "manager_charge"])
+          .order("id")
+          .range(from, to),
+      ),
+      admin.from("profilex_wallets").select("manager_id, balance").eq("client_id", data.clientId),
+      admin
+        .from("profilex_company_wallets")
+        .select("balance")
+        .eq("client_id", data.clientId)
+        .maybeSingle(),
+      admin
+        .from("agents")
+        .select("id, name, email, role, is_active")
+        .eq("client_id", data.clientId),
+    ]);
+    if (ledgerRes.error)
+      throw new Error(`Could not load the wallet ledger (${ledgerRes.error.message})`);
+    if (wErr) throw new Error(`Could not load manager wallets (${wErr.message})`);
+    if (cErr) throw new Error(`Could not load the company wallet (${cErr.message})`);
+    if (pErr) throw new Error(`Could not load users (${pErr.message})`);
+
+    const balanceById = new Map(
+      ((wallets ?? []) as { manager_id: string; balance: number }[]).map((w) => [
+        w.manager_id,
+        Number(w.balance),
+      ]),
+    );
+    const byManager = new Map<
+      string,
+      {
+        allocated: number;
+        spent: number;
+        lookups: number;
+        lastAllocatedAt: string | null;
+        lastSpentAt: string | null;
+      }
+    >();
+    let receivedFromSamvadx = 0;
+    for (const r of ledgerRes.data) {
+      const amount = Number(r.amount);
+      if (r.scope === "master_to_company") {
+        receivedFromSamvadx += amount;
+        continue;
+      }
+      if (!r.manager_id) continue;
+      const m = byManager.get(r.manager_id) ?? {
+        allocated: 0,
+        spent: 0,
+        lookups: 0,
+        lastAllocatedAt: null,
+        lastSpentAt: null,
+      };
+      if (r.scope === "company_to_manager") {
+        m.allocated += amount;
+        if (!m.lastAllocatedAt || r.created_at > m.lastAllocatedAt)
+          m.lastAllocatedAt = r.created_at;
+      } else {
+        m.spent += amount;
+        m.lookups += 1;
+        if (!m.lastSpentAt || r.created_at > m.lastSpentAt) m.lastSpentAt = r.created_at;
+      }
+      byManager.set(r.manager_id, m);
+    }
+
+    // Every manager, funded or not, plus anyone else who ever held a wallet (e.g. a manager since
+    // made an admin) so no allocation silently drops out of the split.
+    const rows: ManagerBudgetRow[] = (
+      (people ?? []) as {
+        id: string;
+        name: string;
+        email: string;
+        role: string;
+        is_active: boolean;
+      }[]
+    )
+      .filter((p) => p.role === "manager" || byManager.has(p.id) || balanceById.has(p.id))
+      .map((p) => {
+        const m = byManager.get(p.id);
+        return {
+          managerId: p.id,
+          name: p.name,
+          email: p.email,
+          role: p.role,
+          isActive: p.is_active,
+          allocated: m?.allocated ?? 0,
+          spent: m?.spent ?? 0,
+          lookups: m?.lookups ?? 0,
+          balance: balanceById.get(p.id) ?? 0,
+          lastAllocatedAt: m?.lastAllocatedAt ?? null,
+          lastSpentAt: m?.lastSpentAt ?? null,
+        };
+      })
+      .sort((a, b) => b.allocated - a.allocated || a.name.localeCompare(b.name));
+
+    return {
+      receivedFromSamvadx,
+      unallocated: Number((company as { balance: number } | null)?.balance ?? 0),
+      rows,
+    };
+  });
+
 /** Ledger scopes that are actually a superadmin doing something, as opposed to automatic
  *  per-lookup debits (company_to_manager/manager_charge are a company admin/manager's own
  *  activity, not a superadmin's — deliberately left out of this feed). actual_charge is

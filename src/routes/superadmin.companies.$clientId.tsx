@@ -44,6 +44,7 @@ import {
 import { CompanyInsightsSettingsCard } from "@/components/profilex/company-insights-settings-card";
 import { CompanyInvoicesCard } from "@/components/billing/company-invoices-card";
 import { DailyUsageChart } from "@/components/superadmin/daily-usage-chart";
+import { ManagerBudgetCard } from "@/components/superadmin/manager-budget-card";
 import { InfoTip, PageGuide } from "@/components/superadmin/help";
 import {
   comparisonLabel,
@@ -737,6 +738,8 @@ function SuperadminCompanyDetailPage() {
           </Card>
 
           <CompanyInvoicesCard clientId={clientId} />
+
+          <ManagerBudgetCard clientId={clientId} companyName={companyName} />
 
           <Card>
             <CardHeader className="border-b border-border pb-3">
