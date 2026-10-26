@@ -1,6 +1,8 @@
-// Superadmin: a company's share of the shared SkyCRM account — enablement, extensions, channels,
-// inbound DID/queue, calling hours — plus per-user extension assignment.
+// Superadmin: a company's share of the shared SkyCRM account — enablement, extensions, lines
+// (guaranteed + most at once), inbound queue, calling hours — plus per-user extension assignment.
+// Its phone numbers are handed out on Superadmin → Numbers & Lines and listed here read-only.
 import { useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Phone, Save, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -14,12 +16,12 @@ import {
   setAgentExtension,
   type CompanyTelephony,
 } from "@/lib/telephony-actions.server";
-import { GLOBAL_CHANNEL_LIMIT } from "@/lib/telephony/guard-rules";
 
 interface Draft {
   enabled: boolean;
   seatLimit: string;
   channelLimit: string;
+  channelReserved: string;
   inboundDid: string;
   inboundQueue: string;
   callWindowStart: string;
@@ -32,6 +34,7 @@ function draftFrom(t: CompanyTelephony): Draft {
     enabled: s?.enabled ?? false,
     seatLimit: s?.seat_limit == null ? "" : String(s.seat_limit),
     channelLimit: String(s?.channel_limit ?? 0),
+    channelReserved: String(s?.channel_reserved ?? 0),
     inboundDid: s?.inbound_did ?? "",
     inboundQueue: s?.inbound_queue ?? "",
     callWindowStart: (s?.call_window_start ?? "08:00").slice(0, 5),
@@ -72,8 +75,13 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
     if (!draft) return;
     const seatLimit = draft.seatLimit.trim() === "" ? null : Number(draft.seatLimit);
     const channelLimit = Number(draft.channelLimit);
-    if ((seatLimit !== null && !(seatLimit >= 0)) || !(channelLimit >= 0)) {
-      toast.error("Extensions and channels must be non-negative numbers");
+    const channelReserved = Number(draft.channelReserved);
+    if (
+      (seatLimit !== null && !(seatLimit >= 0)) ||
+      !(channelLimit >= 0) ||
+      !(channelReserved >= 0)
+    ) {
+      toast.error("Extensions and lines must be non-negative numbers");
       return;
     }
     setSaving(true);
@@ -85,6 +93,7 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
           enabled: draft.enabled,
           seatLimit,
           channelLimit,
+          channelReserved,
           inboundDid: draft.inboundDid.trim() || null,
           inboundQueue: draft.inboundQueue.trim() || null,
           callWindowStart: draft.callWindowStart,
@@ -122,7 +131,8 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
   };
 
   const assigned = data?.agents.filter((a) => a.extension).length ?? 0;
-  const available = data ? GLOBAL_CHANNEL_LIMIT - data.otherCompaniesChannels : GLOBAL_CHANNEL_LIMIT;
+  const outboundLines = data ? data.trunk.totalChannels - data.trunk.inboundReserve : 0;
+  const canGuarantee = data ? Math.max(0, outboundLines - data.otherCompaniesReserved) : 0;
 
   return (
     <Card>
@@ -158,27 +168,61 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
                 />
               </Field>
               <Field
-                label="Concurrent channels"
-                hint={`Up to ${available} free of ${GLOBAL_CHANNEL_LIMIT} (other companies hold ${data.otherCompaniesChannels})`}
+                label="Guaranteed lines"
+                hint={`Always theirs, however busy others are. Up to ${canGuarantee} free (others are guaranteed ${data.otherCompaniesReserved})`}
               >
                 <Input
                   type="number"
                   min={0}
-                  max={available}
+                  max={canGuarantee}
+                  value={draft.channelReserved}
+                  onChange={(e) => up({ channelReserved: e.target.value })}
+                  className="h-8 text-xs"
+                />
+              </Field>
+              <Field
+                label="Most lines at once"
+                hint={`Above the guarantee they borrow free lines. Max ${outboundLines} (${data.trunk.totalChannels} on the trunk, ${data.trunk.inboundReserve} kept for inbound) · ${data.activeOutbound} in use now`}
+              >
+                <Input
+                  type="number"
+                  min={0}
+                  max={outboundLines}
                   value={draft.channelLimit}
                   onChange={(e) => up({ channelLimit: e.target.value })}
                   className="h-8 text-xs"
                 />
               </Field>
-              <Field label="Inbound DID" hint="Number borrowers call back on">
-                <Input
-                  value={draft.inboundDid}
-                  onChange={(e) => up({ inboundDid: e.target.value })}
-                  placeholder="None"
-                  className="h-8 text-xs"
-                />
-              </Field>
-              <Field label="Inbound queue" hint="Queue number assigned by the vendor">
+              <div className="space-y-1 sm:col-span-2">
+                <p className="text-xs text-muted-foreground">Phone numbers</p>
+                {data.numbers.length === 0 ? (
+                  <p className="text-xs">
+                    None yet — calls go out on the vendor's default number.{" "}
+                    <Link to="/superadmin/numbers" className="text-primary underline">
+                      Give this company numbers
+                    </Link>
+                  </p>
+                ) : (
+                  <p className="text-xs">
+                    {data.numbers.length} number{data.numbers.length === 1 ? "" : "s"}:{" "}
+                    <span className="font-mono">
+                      {data.numbers
+                        .slice(0, 6)
+                        .map((n) => n.number)
+                        .join(", ")}
+                      {data.numbers.length > 6 ? ` +${data.numbers.length - 6} more` : ""}
+                    </span>{" "}
+                    ·{" "}
+                    <Link to="/superadmin/numbers" className="text-primary underline">
+                      Manage
+                    </Link>
+                  </p>
+                )}
+              </div>
+              <Field
+                label="Inbound queue"
+                hint="Vendor queue for numbers that have none of their own"
+              >
                 <Input
                   value={draft.inboundQueue}
                   onChange={(e) => up({ inboundQueue: e.target.value })}

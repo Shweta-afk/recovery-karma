@@ -63,9 +63,15 @@ export function IncomingCallPopup() {
           "No matching account in your portfolios."
         )}
       </p>
-      {!answered && (
-        <p className="mt-2 text-xs text-muted-foreground">Answer on your softphone.</p>
+      {call.assignedTo && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Usually handled by <span className="font-medium text-foreground">{call.assignedTo}</span>.
+        </p>
       )}
+      {call.didNumber && (
+        <p className="mt-1 text-xs text-muted-foreground">Called your number {call.didNumber}.</p>
+      )}
+      {!answered && <p className="mt-2 text-xs text-muted-foreground">Answer on your softphone.</p>}
     </div>
   );
 }

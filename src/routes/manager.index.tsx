@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { MissedCallsCard } from "@/components/telephony/missed-calls-card";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Phone,
@@ -1470,6 +1471,8 @@ function ManagerDashboardPage() {
           </div>
 
           <InsightRequestsCard teamAgentIds={teamAgentIds} />
+
+          <MissedCallsCard />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
             <Card className="lg:col-span-3">

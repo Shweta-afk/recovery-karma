@@ -75,6 +75,8 @@ export interface CallStatusEvent {
   direction?: CallDirection;
   /** A vendor storage path that is NOT a fetchable URL (SkyCRM recordfile) */
   recordingPath?: string;
+  /** Inbound: the number the borrower dialled (our DID) — decides which company the call is for. */
+  didNumber?: string;
 }
 
 /** What hangup needs beyond the call id for providers that key hangup off the call's parties. */

@@ -21,6 +21,7 @@ const PAGES: { key: PageGuideKey; to: string }[] = [
   { key: "overview", to: "/superadmin" },
   { key: "companies", to: "/superadmin/companies" },
   { key: "company", to: "/superadmin/companies" },
+  { key: "numbers", to: "/superadmin/numbers" },
   { key: "revenue", to: "/superadmin/revenue" },
   { key: "wallet", to: "/superadmin/wallet" },
   { key: "insights", to: "/superadmin/insights" },

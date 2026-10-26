@@ -69,7 +69,7 @@ import { CompanyTelephonyCard } from "@/components/telephony/company-telephony-c
 type EditableRole = "agent" | "manager" | "admin";
 type CompanyStatus = "pending" | "approved" | "rejected";
 
-const TABS = ["overview", "users", "billing", "settings"] as const;
+const TABS = ["overview", "users", "billing", "calling", "settings"] as const;
 type CompanyTab = (typeof TABS)[number];
 
 const STATUS_BADGE: Record<
@@ -400,6 +400,7 @@ function SuperadminCompanyDetailPage() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="users">Users ({users.length})</TabsTrigger>
           <TabsTrigger value="billing">Billing</TabsTrigger>
+          <TabsTrigger value="calling">Calling</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
 
@@ -806,6 +807,11 @@ function SuperadminCompanyDetailPage() {
         </TabsContent>
 
         {/* ── Settings ─────────────────────────────────────────────────────── */}
+        {/* ── Calling ──────────────────────────────────────────────────────── */}
+        <TabsContent value="calling" className="space-y-6 pt-2">
+          <CompanyTelephonyCard clientId={clientId} />
+        </TabsContent>
+
         <TabsContent value="settings" className="space-y-6 pt-2">
           <Card>
             <CardHeader className="border-b border-border pb-3">

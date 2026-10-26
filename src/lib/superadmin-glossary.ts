@@ -200,6 +200,60 @@ export const GLOSSARY = {
     text: "How many of the companies the change applies to have accepted it. Open a change to see who accepted for each company, or to email the admins who still haven't.",
   },
 
+  // ── Numbers & lines ──────────────────────────────────────────────────────
+  trunkLines: {
+    term: "Lines on the trunk",
+    text: "How many calls can be live at the same moment across every company, incoming and outgoing together. It is what the calling vendor's contract gives you — more phone numbers do not add lines.",
+  },
+  linesInUse: {
+    term: "In use now",
+    text: "Calls live right now. Refreshes every 20 seconds.",
+  },
+  inboundReserve: {
+    term: "Kept for incoming",
+    text: "Lines outgoing calls may never take, so a borrower calling back still gets through when every company is dialling. Incoming calls can use more than this if lines are free.",
+  },
+  guaranteedLines: {
+    term: "Guaranteed lines",
+    text: "Lines a company always gets, however busy other companies are. All guarantees together plus the lines kept for incoming can't be more than the trunk.",
+  },
+  mostLines: {
+    term: "Most lines at once",
+    text: "The most calls a company may have live at once. Above its guarantee it borrows from the shared pool, only while lines there are free.",
+  },
+  sharedLines: {
+    term: "Shared pool",
+    text: "Lines nobody is guaranteed: the trunk minus incoming's lines minus every company's guarantee. Companies above their guarantee take turns on these.",
+  },
+  canOpenNow: {
+    term: "Can open now",
+    text: "How many more calls this company could start this second: what is left of its guarantee, plus free shared lines, never above its most.",
+  },
+  waitedForLine: {
+    term: "Waited today",
+    text: "Minutes today (IST) when this company's agents were free but no line was: 'own limit' means it hit its most — raise it; 'all busy' means the shared pool was empty — the trunk is too small. 'No number free' means every number was at its daily limit or resting.",
+  },
+  didStatus: {
+    term: "Number status",
+    text: "Free: can be given to a company. In use: a company holds it. Resting after release: taken back, and no one else gets it until the date shown, so the old company's borrowers don't reach a new company. Blocked / Retired: out of use.",
+  },
+  didCallsToday: {
+    term: "Today",
+    text: "Outgoing calls made from this number since midnight IST, out of its daily limit. At the limit the system uses the company's other numbers.",
+  },
+  didPickUp: {
+    term: "Picked up (7d)",
+    text: "Share of this number's outgoing calls in the last 7 days that were answered.",
+  },
+  didHealth: {
+    term: "Health",
+    text: "Compares a number's pick-up rate with the company's other numbers (after 50+ calls). 'Rest it' = far fewer pick-ups, usually because phones now show it as spam — rest it for a week, or replace it. 'Watch' = somewhat lower.",
+  },
+  coolingOff: {
+    term: "Rest after release",
+    text: "Borrowers call back on numbers they were called from, sometimes weeks later. A number taken back from one company rests before another company gets it, so those calls never reach the wrong company.",
+  },
+
   excel: {
     term: "Download Excel",
     text: "Saves what the table shows, for the dates you picked, as an Excel file.",
@@ -282,6 +336,15 @@ export const PAGE_GUIDES = {
       "Change notices: tell companies about a new feature or price. Each one shows who has seen it and who has accepted it.",
     ],
   },
+  numbers: {
+    title: "Numbers & Lines",
+    points: [
+      "Lines are how many calls can be live at once; numbers are what borrowers see and call back on. They are separate — more numbers don't add lines.",
+      "Each company gets guaranteed lines and a most-at-once on its page → Calling tab. Between the two it borrows free lines from the shared pool.",
+      "Paste the vendor's numbers with 'Add numbers', tick some and 'Give' them to a company. A borrower is always called from the same number where possible, and calling it back reaches that company.",
+      "'Waited today' says a company's agents sat without a line — raise its lines or the trunk. 'Rest it' on a number means its pick-ups dropped (likely marked spam).",
+    ],
+  },
   activity: {
     title: "Superadmin Activity",
     points: [
@@ -328,6 +391,24 @@ export const HELP_SECTIONS: { title: string; keys: GlossaryKey[] }[] = [
     ],
   },
   { title: "Overview", keys: ["needsAttention", "dailyUsage", "topCompanies"] },
+  {
+    title: "Numbers & lines",
+    keys: [
+      "trunkLines",
+      "linesInUse",
+      "inboundReserve",
+      "guaranteedLines",
+      "mostLines",
+      "sharedLines",
+      "canOpenNow",
+      "waitedForLine",
+      "didStatus",
+      "didCallsToday",
+      "didPickUp",
+      "didHealth",
+      "coolingOff",
+    ],
+  },
   {
     title: "Revenue",
     keys: [

@@ -30,7 +30,8 @@ import {
   ledgerByProviderCallId,
   loadTelephonySettings,
   prepareCall,
-  remainingChannels,
+  channelsFor,
+  recordRefusal,
   updateLedger,
   type DialAgent,
 } from "./guard.server";
@@ -168,7 +169,10 @@ async function companyAgentPhones(caller: VerifiedCaller): Promise<DialAgent[]> 
     is_active: boolean | null;
   };
   const query = (cols: string) =>
-    getSupabaseAdmin().from("agents").select(cols).eq("client_id", caller.clientId) as unknown as Promise<{
+    getSupabaseAdmin()
+      .from("agents")
+      .select(cols)
+      .eq("client_id", caller.clientId) as unknown as Promise<{
       data: Row[] | null;
       error: { message?: string } | null;
     }>;
@@ -251,10 +255,15 @@ async function resolveTargets(
     const chunk = unknownIds.slice(i, i + 150);
     const { data, error } = (await getSupabaseAdmin()
       .from("debtors")
-      .select("id, phone_primary, alt_phones")
+      .select("id, phone_primary, alt_phones, portfolio_id")
       .eq("client_id", caller.clientId)
       .in("id", chunk)) as {
-      data: Array<{ id: string; phone_primary: string | null; alt_phones: string[] | null }> | null;
+      data: Array<{
+        id: string;
+        phone_primary: string | null;
+        alt_phones: string[] | null;
+        portfolio_id: string | null;
+      }> | null;
       error: unknown;
     };
     if (error) throw new Error("Could not verify the dial list");
@@ -265,6 +274,8 @@ async function resolveTargets(
       known.set(row.id, {
         ...(src as DialTarget),
         phone,
+        // From the database, not the request: it decides which numbers the call may go out on.
+        portfolioId: row.portfolio_id ?? undefined,
         altPhones: (row.alt_phones ?? [])
           .map((p) => p.replace(/[\s()-]/g, ""))
           .filter((p) => /^\+?\d{10,15}$/.test(p)),
@@ -273,7 +284,16 @@ async function resolveTargets(
   }
   const resolved = targets.flatMap((t) => {
     const trusted = known!.get(t.id);
-    return trusted ? [{ ...t, phone: trusted.phone, altPhones: trusted.altPhones }] : [];
+    return trusted
+      ? [
+          {
+            ...t,
+            phone: trusted.phone,
+            altPhones: trusted.altPhones,
+            portfolioId: trusted.portfolioId,
+          },
+        ]
+      : [];
   });
   // Do-not-call numbers never enter the plan, so they can't occupy a slot every tick.
   // prepareCall re-checks each leg, which also catches numbers added mid-run.
@@ -297,7 +317,8 @@ function ensureSubscribed(): void {
   // The provider pushes normalized events; route each to whichever run owns the leg.
   getTelephonyProvider().subscribe?.((event: TelephonyEvent) => {
     applyEventToRuns(event);
-    if (event.type === "hangup") void closeLedgerFor(event.providerCallId, event.result, event.durationSeconds);
+    if (event.type === "hangup")
+      void closeLedgerFor(event.providerCallId, event.result, event.durationSeconds);
   });
 }
 
@@ -375,8 +396,12 @@ async function dial(
   const free = agentNumbers.filter(
     (n) => !busyAgents.has(n) && (prov.name !== "skycrm" || !!agentFor(n)?.extension),
   );
-  const lines = await remainingChannels(clientId, settings);
+  const { lines, atCompanyCeiling } = await channelsFor(clientId, settings);
   const assignable = batch.slice(0, Math.min(free.length, lines));
+  if (lines < Math.min(free.length, batch.length)) {
+    // Agents are free but there is no line for them: the number that says the share is too small.
+    void recordRefusal(clientId, atCompanyCeiling ? "company_limit" : "platform_busy");
+  }
   const unassigned = batch.length - assignable.length;
   if (!assignable.length) {
     return {
@@ -402,12 +427,15 @@ async function dial(
         debtorPhone: leg.phone,
         refId: leg.id,
         settings,
+        debtorId: leg.debtorId,
+        portfolioId: t?.portfolioId,
+        requestedCallerId: callerId,
       });
       ledgerId = prepared.ledgerId;
       const { providerCallId } = await prov.startCall({
         agentNumber: prepared.agentHandle,
         debtorNumber: leg.phone,
-        callerId,
+        callerId: prepared.callerId ?? callerId,
         callLogId: leg.id,
         requestId: ledgerId || undefined,
         hints: {
@@ -652,6 +680,22 @@ export const hangupDialerLeg = createServerFn({ method: "POST" })
 
 // ─── Single-call + SMS wrappers ──────────────────────────────────────────────────
 
+/** For a single call, callLogId is the debtor's id (manual dials off-queue send something else).
+ *  Only a debtor of the caller's own company counts. */
+async function debtorForCall(
+  clientId: string,
+  callLogId: string,
+): Promise<{ id: string; portfolio_id: string | null } | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(callLogId)) return null;
+  const { data } = (await getSupabaseAdmin()
+    .from("debtors")
+    .select("id, portfolio_id")
+    .eq("client_id", clientId)
+    .eq("id", callLogId)
+    .maybeSingle()) as { data: { id: string; portfolio_id: string | null } | null };
+  return data ?? null;
+}
+
 export const startCall = createServerFn({ method: "POST" })
   .inputValidator(
     (d: {
@@ -675,12 +719,17 @@ export const startCall = createServerFn({ method: "POST" })
     await authorizeAgentNumbers(caller, [agentNumber]);
     const [agent] = await dialAgentsFor(caller, [agentNumber]);
     const prov = getTelephonyProvider();
-    const { ledgerId, agentHandle } = await prepareCall({
+    const requestedCallerId = typeof data.callerId === "string" ? data.callerId : undefined;
+    const debtor = await debtorForCall(caller.clientId, data.callLogId);
+    const { ledgerId, agentHandle, callerId } = await prepareCall({
       clientId: caller.clientId,
       provider: prov.name,
       agent: agent ?? { id: "", phone: agentNumber, extension: null },
       debtorPhone: debtorNumber,
       refId: data.callLogId,
+      debtorId: debtor?.id,
+      portfolioId: debtor?.portfolio_id,
+      requestedCallerId,
     });
 
     ensureSubscribed();
@@ -689,7 +738,7 @@ export const startCall = createServerFn({ method: "POST" })
       ({ providerCallId } = await prov.startCall({
         agentNumber: agentHandle,
         debtorNumber,
-        callerId: typeof data.callerId === "string" ? data.callerId : undefined,
+        callerId: callerId ?? requestedCallerId,
         callLogId: data.callLogId,
         requestId: ledgerId || undefined,
         hints: { aiScore: data.aiScore, ivr: data.ivr },

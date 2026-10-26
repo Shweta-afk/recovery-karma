@@ -380,6 +380,31 @@ code — always go through this.
   company page's Telephony card; a trigger blocks self-edits). Presence `available` joins and
   unpauses the company's inbound queue; any other status pauses it.
 
+### Phone numbers (DIDs) and shared lines (2026-10-26, branch `skycrm-calling`, NOT live)
+
+The vendor supplies ~200 DIDs and a trunk of ~60 channels for every company.
+`migrations/20261026_telephony_dids_channels.sql` is **not applied anywhere** as of 2026-10-26;
+the code falls back to the old behaviour without it (v1 reservation, no numbers, no guarantees).
+Rules are pure and tested (`scripts/telephony-numbers.test.ts`); the SQL was checked on PGlite.
+
+- **One owner per number** (`telephony_dids`, server-only). The DIALLED number decides an inbound
+  call's company (`recordInbound` in `webhook-reconcile.server.ts`); the extension says who
+  answered. A number taken back rests `did_cooling_days` (default 60) before anyone else gets it,
+  so the old company's borrowers never reach a new one. History: `telephony_did_assignments`.
+- **Which number a call goes out on**: `pickDid` (`did-rules.ts`), called from `prepareCall`:
+  same number this borrower was last called from, else the least used today; never another
+  company's, never inbound-only, under each number's daily cap (IST day), not resting; a
+  portfolio with numbers of its own uses only those. A company with no numbers → vendor default.
+- **Lines**: `channel_reserved` (guaranteed) + `channel_limit` (most at once) per company, and
+  `telephony_platform.inbound_reserve` kept for incoming. `channelHeadroom` (`channel-plan.ts`)
+  and `telephony_reserve_channel_v2` are the same rule — change them together.
+- ⚠️ **SkyCRM per-call caller ID is UNCONFIRMED.** The chosen DID is sent only when
+  `SKYCRM_CALLER_ID_FIELD` names the form field. The webhook's dialled-number field is also a
+  guess (`did`/`dnid`/… in `parseStatusWebhook`) — check against a real inbound event.
+- Screens: Superadmin → **Numbers & Lines** (`superadmin.numbers.tsx`), company page → **Calling**
+  tab, and a **Missed calls** card on agent/manager home (`listMissedCalls`; an entry clears once
+  anyone calls that number back). "Assigned agent rings first" on inbound needs the vendor's ACD.
+
 **Tata SmartFlo was evaluated, went live briefly, then was fully removed on 2026-08-06** ("nothing we did was working and aligning with our goals" — user's call). If you see "Tata" or "SmartFlo" referenced anywhere outside this note, it's stale.
 
 ### ⚠️ Decision (2026-09-07): moving off Exotel for voice too — vendor not chosen yet

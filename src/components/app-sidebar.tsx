@@ -90,6 +90,7 @@ const adminItems = [
 const superadminItems = [
   { title: "Overview", url: "/superadmin", icon: LayoutDashboard },
   { title: "Companies", url: "/superadmin/companies", icon: Building2 },
+  { title: "Numbers & Lines", url: "/superadmin/numbers", icon: PhoneCall },
   { title: "Insights Wallet", url: "/superadmin/wallet", icon: Wallet },
   { title: "Insights Activity", url: "/superadmin/insights", icon: Sparkles },
   { title: "Invoices", url: "/superadmin/invoices", icon: FileText },

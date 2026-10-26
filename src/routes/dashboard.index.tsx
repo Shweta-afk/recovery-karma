@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { MissedCallsCard } from "@/components/telephony/missed-calls-card";
 import { createContext, useContext, useState, useEffect, useMemo } from "react";
 import {
   PhoneCall,
@@ -404,6 +405,8 @@ export function AgentDashboardContent({
             )}
           </div>
         </div>
+
+        <MissedCallsCard />
 
         {/* ── Collections: Target / Shortfall / DRR / EOD Projection ── */}
         {(() => {

@@ -3,7 +3,13 @@
 // only by webhook-handler.ts, so none of this reaches the browser bundle.
 import { getSupabaseAdmin } from "@/lib/supabase-admin.server";
 import { getTelephonyProvider } from "./index";
-import { insertInboundLedger, ledgerForWebhook, updateLedger } from "./guard.server";
+import {
+  debtorByPhone,
+  didByNumber,
+  insertInboundLedger,
+  ledgerForWebhook,
+  updateLedger,
+} from "./guard.server";
 import type { CallStatusEvent } from "./types";
 
 /** Swap a vendor-keyed webhook event onto our providerCallId and keep the ledger current.
@@ -17,25 +23,10 @@ export async function reconcileWithLedger(
     agentHandle: status.agentHandle,
   }).catch(() => null);
 
-  if (!ledger && status.direction === "inbound" && status.agentHandle && status.vendorCallId) {
-    // agent_extension isn't in database.types.ts until `bun run gen:types` runs post-migration.
-    const { data } = (await (getSupabaseAdmin() as any)
-      .from("agents")
-      .select("id, client_id")
-      .eq("agent_extension", status.agentHandle)
-      .maybeSingle()) as { data: { id: string; client_id: string } | null };
-    if (data) {
-      ledger = await insertInboundLedger({
-        clientId: data.client_id,
-        agentId: data.id,
-        provider: getTelephonyProvider().name,
-        agentHandle: status.agentHandle,
-        remotePhone: status.remotePhone ?? null,
-        vendorCallId: status.vendorCallId,
-      });
-      // Lost a race with a simultaneous event for the same call (unique vendor_callid).
-      ledger ??= await ledgerForWebhook({ vendorCallId: status.vendorCallId }).catch(() => null);
-    }
+  if (!ledger && status.direction === "inbound" && status.vendorCallId) {
+    ledger = await recordInbound(status);
+    // Lost a race with a simultaneous event for the same call (unique vendor_callid).
+    ledger ??= await ledgerForWebhook({ vendorCallId: status.vendorCallId }).catch(() => null);
   }
   if (!ledger) return { status };
 
@@ -59,6 +50,18 @@ export async function reconcileWithLedger(
     if (status.durationSeconds !== undefined) patch.duration_seconds = status.durationSeconds;
   }
   if (status.recordingPath) patch.recording_path = status.recordingPath;
+  if (ledger.direction === "inbound" && !ledger.agent_id && status.agentHandle) {
+    // Recorded from the dialled number while still in the queue; now an extension has it.
+    const { data: agent } = (await (getSupabaseAdmin() as any)
+      .from("agents")
+      .select("id, client_id")
+      .eq("agent_extension", status.agentHandle)
+      .maybeSingle()) as { data: { id: string; client_id: string } | null };
+    if (agent?.client_id === ledger.client_id) {
+      patch.agent_id = agent.id;
+      patch.agent_handle = status.agentHandle;
+    }
+  }
   await updateLedger(ledger.id, patch);
   return {
     status: { ...status, providerCallId: ours, customIdentifier: ours },
@@ -66,3 +69,52 @@ export async function reconcileWithLedger(
   };
 }
 
+/**
+ * A new inbound call. The DIALLED NUMBER decides the company: each number belongs to one company
+ * at a time (telephony_dids), so a borrower calling back always reaches the company that called
+ * them. The extension that rang says which agent picked up. Before the inventory exists, or for a
+ * number not in it, the extension's company is used (the previous behaviour).
+ */
+async function recordInbound(status: CallStatusEvent) {
+  const did = status.didNumber ? await didByNumber(status.didNumber).catch(() => null) : null;
+  const agent = status.agentHandle
+    ? ((
+        await (getSupabaseAdmin() as any)
+          .from("agents")
+          .select("id, client_id")
+          .eq("agent_extension", status.agentHandle)
+          .maybeSingle()
+      ).data as { id: string; client_id: string } | null)
+    : null;
+
+  const clientId = did?.client_id ?? agent?.client_id ?? null;
+  if (!clientId) {
+    if (status.didNumber) {
+      console.warn(
+        `[telephony-webhook] inbound call on ${status.didNumber} — number not assigned to any company; not recorded`,
+      );
+    }
+    return null;
+  }
+  let agentId = agent?.id ?? null;
+  if (agent && agent.client_id !== clientId) {
+    // The vendor queue for this number rang another company's extension: a queue set up wrongly.
+    // Record the call for the number's company, but not against an agent who can't see its borrowers.
+    console.error(
+      `[telephony-webhook] number ${did?.number} belongs to company ${clientId} but rang extension ${status.agentHandle} of company ${agent.client_id} — check the number's queue in SkyCRM`,
+    );
+    agentId = null;
+  }
+  const debtor = await debtorByPhone(clientId, status.remotePhone).catch(() => null);
+  return insertInboundLedger({
+    clientId,
+    agentId,
+    provider: getTelephonyProvider().name,
+    agentHandle: agentId ? (status.agentHandle ?? null) : null,
+    remotePhone: status.remotePhone ?? null,
+    vendorCallId: status.vendorCallId as string,
+    didId: did?.id ?? null,
+    didNumber: did?.number ?? null,
+    debtorId: debtor?.id ?? null,
+  });
+}

@@ -2,16 +2,20 @@
 // (superadmin), the do-not-call list (company users), and the agent-side SkyCRM calls —
 // disposition sync, inbound queue presence, and the incoming-call screen pop.
 import { createServerFn } from "@tanstack/react-start";
+import { createClient } from "@supabase/supabase-js";
 import { z, tokenSchema, idSchema, noteSchema } from "./schemas";
 import { getSupabaseAdmin, verifyCaller, verifySuperadminCaller } from "./supabase-admin.server";
 import { logSuperadminActivity } from "./superadmin-actions.server";
 import { getTelephonyProvider } from "./telephony";
-import { ledgerByProviderCallId, loadTelephonySettings } from "./telephony/guard.server";
 import {
-  channelAllocationError,
-  normalisePhone,
-  type TelephonySettingsRow,
-} from "./telephony/guard-rules";
+  debtorByPhone,
+  ledgerByProviderCallId,
+  loadChannelState,
+  loadTelephonySettings,
+} from "./telephony/guard.server";
+import { normalisePhone, type TelephonySettingsRow } from "./telephony/guard-rules";
+import { shareError, type TrunkSettings } from "./telephony/channel-plan";
+import { groupMissedCalls } from "./telephony/missed-calls";
 import {
   pauseQueue,
   registerQueue,
@@ -26,7 +30,10 @@ import {
 const db = () => getSupabaseAdmin() as any;
 
 const timeSchema = z.string().regex(/^\d{2}:\d{2}$/);
-const extensionSchema = z.string().trim().regex(/^\d{3,6}$/, "Extensions are 3–6 digits");
+const extensionSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{3,6}$/, "Extensions are 3–6 digits");
 
 async function requireCaller(accessToken: string) {
   const caller = await verifyCaller(accessToken);
@@ -44,10 +51,27 @@ async function requireSuperadmin(accessToken: string) {
 
 export interface CompanyTelephony {
   provider: string;
-  settings: TelephonySettingsRow | null;
-  /** channel_limit held by every OTHER company — the trunk is shared */
-  otherCompaniesChannels: number;
-  agents: Array<{ id: string; name: string; email: string; role: string; extension: string | null }>;
+  settings: (TelephonySettingsRow & { channel_reserved: number }) | null;
+  trunk: TrunkSettings;
+  /** Lines guaranteed to every OTHER company — the trunk is shared */
+  otherCompaniesReserved: number;
+  /** Open outbound calls for this company right now. */
+  activeOutbound: number;
+  /** This company's phone numbers (empty until 20261026 is applied). */
+  numbers: Array<{
+    number: string;
+    use: string;
+    label: string | null;
+    vendorQueue: string | null;
+    restingUntil: string | null;
+  }>;
+  agents: Array<{
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    extension: string | null;
+  }>;
 }
 
 export const getCompanyTelephony = createServerFn({ method: "POST" })
@@ -56,9 +80,14 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }): Promise<CompanyTelephony> => {
     await requireSuperadmin(data.accessToken);
-    const [settings, others, agents] = await Promise.all([
+    const [settings, state, nums, agents] = await Promise.all([
       loadTelephonySettings(data.clientId),
-      db().from("telephony_settings").select("channel_limit").neq("client_id", data.clientId),
+      loadChannelState(),
+      db()
+        .from("telephony_dids")
+        .select("number, use, label, vendor_queue, resting_until")
+        .eq("client_id", data.clientId)
+        .order("number"),
       db()
         .from("agents")
         .select("id, name, email, role, agent_extension, is_active")
@@ -66,12 +95,29 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
         .order("name"),
     ]);
     if (agents.error) throw new Error(`Could not load users (${agents.error.message})`);
+    const me = state.companies.find((c) => c.clientId === data.clientId);
     return {
       provider: getTelephonyProvider().name,
-      settings,
-      otherCompaniesChannels: ((others.data ?? []) as Array<{ channel_limit: number }>).reduce(
-        (sum, r) => sum + (r.channel_limit ?? 0),
-        0,
+      settings: settings ? { ...settings, channel_reserved: me?.reserved ?? 0 } : null,
+      trunk: state.trunk,
+      otherCompaniesReserved: state.companies
+        .filter((c) => c.clientId !== data.clientId && c.enabled)
+        .reduce((sum, c) => sum + c.reserved, 0),
+      activeOutbound: me?.activeOutbound ?? 0,
+      numbers: ((nums.error ? [] : nums.data) ?? []).map(
+        (n: {
+          number: string;
+          use: string;
+          label: string | null;
+          vendor_queue: string | null;
+          resting_until: string | null;
+        }) => ({
+          number: n.number,
+          use: n.use,
+          label: n.label,
+          vendorQueue: n.vendor_queue,
+          restingUntil: n.resting_until,
+        }),
       ),
       agents: (
         agents.data as Array<{
@@ -102,7 +148,10 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
         clientId: idSchema,
         enabled: z.boolean(),
         seatLimit: z.number().int().min(0).max(100000).nullable(),
+        /** The most lines this company may use at once. */
         channelLimit: z.number().int().min(0).max(1000),
+        /** Lines it always gets, whatever other companies are doing. */
+        channelReserved: z.number().int().min(0).max(1000),
         inboundDid: z.string().trim().max(20).nullable(),
         inboundQueue: z.string().trim().max(50).nullable(),
         callWindowStart: timeSchema,
@@ -113,21 +162,24 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const caller = await requireSuperadmin(data.accessToken);
     if (data.callWindowStart < "08:00" || data.callWindowEnd > "19:00") {
-      throw new Error("Calling hours must stay within 08:00–19:00 IST (RBI rule for recovery calls).");
+      throw new Error(
+        "Calling hours must stay within 08:00–19:00 IST (RBI rule for recovery calls).",
+      );
     }
     if (data.callWindowStart >= data.callWindowEnd) {
       throw new Error("The calling window must start before it ends.");
     }
 
-    const { data: others } = await db()
-      .from("telephony_settings")
-      .select("channel_limit")
-      .neq("client_id", data.clientId);
-    const otherTotal = ((others ?? []) as Array<{ channel_limit: number }>).reduce(
-      (s, r) => s + (r.channel_limit ?? 0),
-      0,
-    );
-    const allocError = channelAllocationError(otherTotal, data.channelLimit);
+    const state = await loadChannelState();
+    const othersReserved = state.companies
+      .filter((c) => c.clientId !== data.clientId && c.enabled)
+      .reduce((s, c) => s + c.reserved, 0);
+    const allocError = shareError({
+      trunk: state.trunk,
+      reserved: data.enabled ? data.channelReserved : 0,
+      max: data.channelLimit,
+      othersReserved,
+    });
     if (allocError) throw new Error(allocError);
 
     if (data.seatLimit !== null) {
@@ -148,20 +200,32 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
       enabled: data.enabled,
       seat_limit: data.seatLimit,
       channel_limit: data.channelLimit,
+      channel_reserved: data.channelReserved,
       inbound_did: data.inboundDid || null,
       inbound_queue: data.inboundQueue || null,
       call_window_start: data.callWindowStart,
       call_window_end: data.callWindowEnd,
       updated_at: new Date().toISOString(),
     };
-    const { error } = await db().from("telephony_settings").upsert(row, { onConflict: "client_id" });
+    let { error } = await db().from("telephony_settings").upsert(row, { onConflict: "client_id" });
+    if (error && /channel_reserved/.test(error.message ?? "")) {
+      if (data.channelReserved > 0) {
+        throw new Error(
+          "Guaranteed lines need migrations/20261026_telephony_dids_channels.sql applied first.",
+        );
+      }
+      const { channel_reserved: _drop, ...legacy } = row;
+      ({ error } = await db()
+        .from("telephony_settings")
+        .upsert(legacy, { onConflict: "client_id" }));
+    }
     if (error) throw new Error(`Could not save telephony settings (${error.message})`);
 
     await logSuperadminActivity({
       superadminId: caller.superadminId,
       action: "telephony_settings_set",
       clientId: data.clientId,
-      summary: `Telephony ${data.enabled ? "enabled" : "disabled"}: ${data.channelLimit} channels, ${data.seatLimit ?? "unlimited"} extensions, ${data.callWindowStart}–${data.callWindowEnd} IST`,
+      summary: `Telephony ${data.enabled ? "enabled" : "disabled"}: ${data.channelReserved} guaranteed / ${data.channelLimit} most lines, ${data.seatLimit ?? "unlimited"} extensions, ${data.callWindowStart}–${data.callWindowEnd} IST`,
       detail: { ...row, updated_at: null },
     });
     return { ok: true };
@@ -223,7 +287,10 @@ export const setAgentExtension = createServerFn({ method: "POST" })
       summary: data.extension
         ? `Assigned extension ${data.extension} to ${prior.name}`
         : `Removed extension ${prior.agent_extension ?? ""} from ${prior.name}`,
-      detail: { agentId: data.agentId, extension: { from: prior.agent_extension, to: data.extension } },
+      detail: {
+        agentId: data.agentId,
+        extension: { from: prior.agent_extension, to: data.extension },
+      },
     });
     return { ok: true };
   });
@@ -312,7 +379,8 @@ export const addDoNotCall = createServerFn({ method: "POST" })
         .eq("client_id", caller.clientId)
         .maybeSingle();
       if (!debtor) throw new Error("That account is not in your company");
-      if (!phone) phone = normalisePhone((debtor as { phone_primary: string | null }).phone_primary ?? "");
+      if (!phone)
+        phone = normalisePhone((debtor as { phone_primary: string | null }).phone_primary ?? "");
     }
     if (phone.length !== 10) throw new Error("Enter a valid 10-digit phone number");
 
@@ -368,7 +436,12 @@ export const reportDisposition = createServerFn({ method: "POST" })
     const caller = await requireCaller(data.accessToken);
     if (!isSkycrm()) return { ok: true, skipped: true };
     const ledger = await ledgerByProviderCallId(data.providerCallId);
-    if (!ledger || ledger.client_id !== caller.clientId || !ledger.agent_handle || !ledger.remote_phone) {
+    if (
+      !ledger ||
+      ledger.client_id !== caller.clientId ||
+      !ledger.agent_handle ||
+      !ledger.remote_phone
+    ) {
       return { ok: false, skipped: true };
     }
     try {
@@ -394,7 +467,11 @@ export const reportDisposition = createServerFn({ method: "POST" })
 
 async function callerExtension(agentId: string | null): Promise<string | null> {
   if (!agentId) return null;
-  const { data } = await db().from("agents").select("agent_extension").eq("id", agentId).maybeSingle();
+  const { data } = await db()
+    .from("agents")
+    .select("agent_extension")
+    .eq("id", agentId)
+    .maybeSingle();
   return (data as { agent_extension: string | null } | null)?.agent_extension?.trim() || null;
 }
 
@@ -434,6 +511,10 @@ export interface IncomingCall {
   phone: string | null;
   status: string;
   debtor: { id: string; name: string } | null;
+  /** The borrower's own agent, when that isn't the person this call rang. */
+  assignedTo: string | null;
+  /** The number they dialled. */
+  didNumber: string | null;
 }
 
 /** The caller's live inbound call, if any, with the matching account in their company.
@@ -452,42 +533,220 @@ async function findIncomingCall(clientId: string, agentId: string): Promise<Inco
   {
     const caller = { clientId, agentId };
     const since = new Date(Date.now() - 15 * 60_000).toISOString();
-    const { data: row } = await db()
-      .from("telephony_calls")
-      .select("id, provider_call_id, remote_phone, status")
-      .eq("client_id", caller.clientId)
-      .eq("agent_id", caller.agentId)
-      .eq("direction", "inbound")
-      .is("ended_at", null)
-      .gt("started_at", since)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const query = (cols: string) =>
+      db()
+        .from("telephony_calls")
+        .select(cols)
+        .eq("client_id", caller.clientId)
+        .eq("agent_id", caller.agentId)
+        .eq("direction", "inbound")
+        .is("ended_at", null)
+        .gt("started_at", since)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    let { data: row, error } = await query(
+      "id, provider_call_id, remote_phone, status, did_number",
+    );
+    // did_number arrives with 20261026_telephony_dids_channels.sql.
+    if (error) ({ data: row } = await query("id, provider_call_id, remote_phone, status"));
     if (!row) return null;
     const call = row as {
       id: string;
       provider_call_id: string | null;
       remote_phone: string | null;
       status: string;
+      did_number?: string | null;
     };
 
-    let debtor: IncomingCall["debtor"] = null;
-    const last10 = call.remote_phone ? normalisePhone(call.remote_phone) : "";
-    if (last10.length === 10) {
-      const { data: match } = await db()
-        .from("debtors")
-        .select("id, name")
-        .eq("client_id", caller.clientId)
-        .like("phone_primary", `%${last10}`)
-        .limit(1)
+    const match = await debtorByPhone(caller.clientId, call.remote_phone).catch(() => null);
+    let assignedTo: string | null = null;
+    if (match?.assigned_agent_id && match.assigned_agent_id !== caller.agentId) {
+      const { data: owner } = await db()
+        .from("agents")
+        .select("name")
+        .eq("id", match.assigned_agent_id)
         .maybeSingle();
-      if (match) debtor = match as { id: string; name: string };
+      assignedTo = (owner as { name: string } | null)?.name ?? null;
     }
+    const debtor: IncomingCall["debtor"] = match ? { id: match.id, name: match.name } : null;
     return {
       providerCallId: call.provider_call_id ?? call.id,
       phone: call.remote_phone,
       status: call.status,
       debtor,
+      assignedTo,
+      didNumber: call.did_number ?? null,
     };
   }
 }
+
+// ─── Missed inbound calls → callbacks ───────────────────────────────────────────
+
+/** Reads AS the caller, so RLS decides which borrowers they may see. */
+function asCaller(accessToken: string) {
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!url || !anonKey) throw new Error("Missed calls are not available right now.");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return createClient(url, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  }) as any;
+}
+
+export interface MissedCallEntry {
+  phone: string;
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  didNumber: string | null;
+  debtor: {
+    id: string;
+    name: string;
+    loanReference: string | null;
+    assignedAgentName: string | null;
+  } | null;
+}
+
+/**
+ * Borrowers who called and reached nobody, not yet called back — last `days` days. Agents see
+ * callers who are their own borrowers; managers and admins also see unknown numbers. Entries drop
+ * off by themselves once anyone at the company calls the number (groupMissedCalls).
+ */
+export const listMissedCalls = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({ accessToken: tokenSchema, days: z.number().int().min(1).max(30).default(7) })
+      .parse(d),
+  )
+  .handler(async ({ data }): Promise<{ ready: boolean; entries: MissedCallEntry[] }> => {
+    const caller = await requireCaller(data.accessToken);
+    const since = new Date(Date.now() - data.days * 86_400_000).toISOString();
+    const { data: rows, error } = await db()
+      .from("telephony_calls")
+      .select("id, remote_phone, started_at, debtor_id, did_number")
+      .eq("client_id", caller.clientId)
+      .eq("direction", "inbound")
+      .is("answered_at", null)
+      .not("ended_at", "is", null)
+      .is("callback_done_at", null)
+      .gte("started_at", since)
+      .order("started_at", { ascending: false })
+      .limit(1000);
+    if (error) {
+      // debtor_id / callback_done_at arrive with 20261026_telephony_dids_channels.sql.
+      return { ready: false, entries: [] };
+    }
+    const missed = (rows ?? []) as Array<{
+      id: string;
+      remote_phone: string | null;
+      started_at: string;
+      debtor_id: string | null;
+      did_number: string | null;
+    }>;
+    const phones = [
+      ...new Set(
+        missed.map((r) => normalisePhone(r.remote_phone ?? "")).filter((p) => p.length === 10),
+      ),
+    ];
+    if (!phones.length) return { ready: true, entries: [] };
+
+    const outbound: Array<{ phone: string; startedAt: string }> = [];
+    for (let i = 0; i < phones.length; i += 100) {
+      const ors = phones
+        .slice(i, i + 100)
+        .map((p) => `remote_phone.like.%${p}`)
+        .join(",");
+      const { data: out } = await db()
+        .from("telephony_calls")
+        .select("remote_phone, started_at")
+        .eq("client_id", caller.clientId)
+        .eq("direction", "outbound")
+        .gte("started_at", since)
+        .or(ors)
+        .limit(1000);
+      for (const o of (out ?? []) as Array<{ remote_phone: string; started_at: string }>) {
+        outbound.push({ phone: o.remote_phone, startedAt: o.started_at });
+      }
+    }
+    const groups = groupMissedCalls(
+      missed.map((r) => ({
+        id: r.id,
+        phone: r.remote_phone ?? "",
+        startedAt: r.started_at,
+        debtorId: r.debtor_id,
+        didNumber: r.did_number,
+      })),
+      outbound,
+    );
+
+    // Which of those borrowers this user may see — RLS, as the caller.
+    const debtorIds = [...new Set(groups.map((g) => g.debtorId).filter(Boolean))] as string[];
+    const visible = new Map<string, MissedCallEntry["debtor"]>();
+    if (debtorIds.length) {
+      const { data: ds } = await asCaller(data.accessToken)
+        .from("debtors")
+        .select("id, name, loan_reference, assigned_agent_id, agents:assigned_agent_id(name)")
+        .in("id", debtorIds);
+      for (const d of (ds ?? []) as Array<{
+        id: string;
+        name: string;
+        loan_reference: string | null;
+        assigned_agent_id: string | null;
+        agents: { name: string } | null;
+      }>) {
+        // An agent's list is their own borrowers — a teammate's caller isn't theirs to call back.
+        if (caller.role === "agent" && d.assigned_agent_id !== caller.agentId) continue;
+        visible.set(d.id, {
+          id: d.id,
+          name: d.name,
+          loanReference: d.loan_reference,
+          assignedAgentName: d.agents?.name ?? null,
+        });
+      }
+    }
+    const seesUnknown = caller.role === "manager" || caller.role === "admin";
+    const entries = groups.flatMap((g): MissedCallEntry[] => {
+      const debtor = g.debtorId ? visible.get(g.debtorId) : undefined;
+      if (g.debtorId ? !debtor : !seesUnknown) return [];
+      return [
+        {
+          phone: g.phone,
+          count: g.count,
+          firstAt: g.firstAt,
+          lastAt: g.lastAt,
+          didNumber: g.didNumber,
+          debtor: debtor ?? null,
+        },
+      ];
+    });
+    return { ready: true, entries };
+  });
+
+/** "Handled" without calling back through SamvadX (e.g. reached on WhatsApp). */
+export const dismissMissedCall = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, phone: z.string().trim().min(10).max(20) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    const last10 = normalisePhone(data.phone);
+    if (last10.length !== 10) throw new Error("Not a phone number");
+    if (caller.role === "agent") {
+      const debtor = await debtorByPhone(caller.clientId, last10);
+      if (!debtor || debtor.assigned_agent_id !== caller.agentId) {
+        throw new Error("Only this borrower's agent or a manager can clear this missed call.");
+      }
+    }
+    const { error } = await db()
+      .from("telephony_calls")
+      .update({ callback_done_at: new Date().toISOString(), callback_by: caller.agentId })
+      .eq("client_id", caller.clientId)
+      .eq("direction", "inbound")
+      .is("answered_at", null)
+      .is("callback_done_at", null)
+      .like("remote_phone", `%${last10}`);
+    if (error) throw new Error(`Could not update (${error.message})`);
+    return { ok: true };
+  });

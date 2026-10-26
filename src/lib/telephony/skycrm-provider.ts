@@ -42,6 +42,9 @@ const SKYCRM_PASS = env("SKYCRM_PASS");
 /** Dialing prefix the vendor assigns (spec example: 24). Prepended by their switch, passed
  * through on dialing_phone / hangup_phone. */
 const SKYCRM_PREFIX = env("SKYCRM_PREFIX") ?? "";
+/** Form field dialing_phone takes a per-call caller ID in, if the vendor supports one. UNCONFIRMED
+ *  (asked 2026-10-26): leave unset and the DID configured on the extension is used, as before. */
+const SKYCRM_CALLER_ID_FIELD = env("SKYCRM_CALLER_ID_FIELD")?.trim() || undefined;
 /** Seconds a minted token stays valid. Short-lived; a fresh token is minted per request. */
 const TOKEN_TTL_SECONDS = 3600;
 
@@ -208,12 +211,21 @@ export const skycrmProvider: TelephonyProvider = {
 
   async startCall(req: StartCallRequest): Promise<StartCallResult> {
     // agentNumber is the agent's SkyCRM extension (server.ts resolves it from agents.agent_extension).
-    // callerId is not a SkyCRM concept — the DID is set per extension on their switch.
+    // callerId is the DID the guard picked (telephony_dids). It is sent only once the vendor names
+    // the field (SKYCRM_CALLER_ID_FIELD); until then the DID set on the extension applies.
     const extension = req.agentNumber;
     const perId = req.requestId || req.callLogId;
     await post(
       "dialing_phone",
-      { phone_number: req.debtorNumber, extension, prefix: SKYCRM_PREFIX, per_id: perId },
+      {
+        phone_number: req.debtorNumber,
+        extension,
+        prefix: SKYCRM_PREFIX,
+        per_id: perId,
+        ...(SKYCRM_CALLER_ID_FIELD && req.callerId
+          ? { [SKYCRM_CALLER_ID_FIELD]: req.callerId }
+          : {}),
+      },
       extension,
     );
     return { providerCallId: perId };
@@ -281,14 +293,26 @@ export const skycrmProvider: TelephonyProvider = {
       // CDR has no extension/phone fields: the extension is whichever of src/dst is short.
       const src = pick("src");
       const dst = pick("dst");
-      if (!agentHandle) agentHandle = looksLikeExtension(dst) ? dst : looksLikeExtension(src) ? src : undefined;
+      if (!agentHandle)
+        agentHandle = looksLikeExtension(dst) ? dst : looksLikeExtension(src) ? src : undefined;
       if (!remotePhone) remotePhone = agentHandle === dst ? src : dst;
     } else {
       status = LIVE_STATUS[(pick("status") ?? "").toLowerCase()] ?? "failed";
     }
 
     const billsec = pick("billsec");
+    // The dialled number on an inbound call. The spec doesn't name the field; these are the names
+    // Asterisk-based switches use. Confirm against a real inbound event and trim the list.
+    let didNumber =
+      direction === "inbound"
+        ? pick("did", "did_number", "didnumber", "dnid", "called_number", "callednumber")
+        : undefined;
+    if (!didNumber && direction === "inbound" && isCdr) {
+      const dst = pick("dst");
+      if (dst && !looksLikeExtension(dst) && dst !== remotePhone) didNumber = dst;
+    }
     return {
+      didNumber,
       // Placeholder: server.ts swaps in our providerCallId after matching the ledger.
       providerCallId: callid,
       vendorCallId: callid,
@@ -305,7 +329,9 @@ export const skycrmProvider: TelephonyProvider = {
 /** Our call outcome → SkyCRM's two top-level dispositions (it accepts only these two). A wrong
  *  number reached someone, but not the borrower, so it counts as not contacted. */
 export function skycrmDispositionFor(outcome: string): "Contacted" | "Non-Contacted" {
-  return ["no_answer", "voicemail", "wrong_number"].includes(outcome) ? "Non-Contacted" : "Contacted";
+  return ["no_answer", "voicemail", "wrong_number"].includes(outcome)
+    ? "Non-Contacted"
+    : "Contacted";
 }
 
 // ─── Auxiliary SkyCRM calls (not part of TelephonyProvider) ─────────────────────
