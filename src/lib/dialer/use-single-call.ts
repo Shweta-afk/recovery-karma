@@ -52,6 +52,8 @@ function callStateFor(status: CallStatus): CallState {
       return "connected";
     case "no_answer":
       return "no_answer";
+    case "busy":
+      return "busy";
     case "completed":
       return "completed";
     default:

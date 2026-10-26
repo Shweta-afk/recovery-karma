@@ -1236,6 +1236,18 @@ function ActiveCallContent({
                       Escalate to manager
                     </span>
                   </label>
+                  <label
+                    className="flex items-center gap-2 cursor-pointer select-none"
+                    title="The borrower asked not to be called. Blocks every future call to this number for your company."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={disposition.doNotCall}
+                      onChange={(e) => up({ doNotCall: e.target.checked })}
+                      className="rounded"
+                    />
+                    <span className="text-sm">Do not call again</span>
+                  </label>
                   <Button
                     className="gap-1.5 px-6"
                     onClick={handleSaveClose}

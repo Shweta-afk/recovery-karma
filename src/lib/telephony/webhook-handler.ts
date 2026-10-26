@@ -36,11 +36,23 @@ export async function handleTelephonyWebhook(request: Request): Promise<Response
     return json({ error: "Unauthorized" }, 401);
   }
 
+  // SkyCRM's docs show webhook payloads but not their encoding, and its own API is form-only,
+  // so accept both JSON and form bodies.
   let payload: unknown;
+  const contentType = request.headers.get("content-type") ?? "";
   try {
-    payload = await request.json();
+    if (
+      contentType.includes("application/x-www-form-urlencoded") ||
+      contentType.includes("multipart/form-data")
+    ) {
+      payload = Object.fromEntries(
+        [...(await request.formData()).entries()].map(([k, v]) => [k, String(v)]),
+      );
+    } else {
+      payload = await request.json();
+    }
   } catch {
-    return json({ error: "Body is not valid JSON" }, 400);
+    return json({ error: "Body is not valid JSON or form data" }, 400);
   }
 
   if (typeof payload !== "object" || payload === null) {
@@ -51,13 +63,16 @@ export async function handleTelephonyWebhook(request: Request): Promise<Response
 
   try {
     // Imported lazily so the SSR entry doesn't pull the dialer engine in on cold boot.
-    const [{ getTelephonyProvider }, { ingestCallStatusEvent }] = await Promise.all([
-      import("./index"),
-      import("./server"),
-    ]);
+    const [{ getTelephonyProvider }, { ingestCallStatusEvent }, { reconcileWithLedger }] =
+      await Promise.all([import("./index"), import("./server"), import("./webhook-reconcile.server")]);
 
-    const status = getTelephonyProvider().parseStatusWebhook(payload);
-    await ingestCallStatusEvent(status);
+    const parsed = getTelephonyProvider().parseStatusWebhook(payload);
+    const { status, ownerClientId, stale } = await reconcileWithLedger(parsed);
+    if (stale) {
+      console.log(`[webhook] ignored late ${status.status} for an ended call`);
+      return json({ ok: true, ignored: "late event for an ended call" });
+    }
+    await ingestCallStatusEvent(status, ownerClientId);
     console.log(`[webhook] ingested ${status.status}`);
     return json({ ok: true });
   } catch (err) {

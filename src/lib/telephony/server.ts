@@ -25,6 +25,16 @@ import type { SimProvider } from "./sim-provider";
 import { isTerminal } from "./call-machine";
 import type { TelephonyEvent, CallStatusEvent } from "./types";
 import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-disposition";
+import {
+  doNotCallSet,
+  ledgerByProviderCallId,
+  loadTelephonySettings,
+  prepareCall,
+  remainingChannels,
+  updateLedger,
+  type DialAgent,
+} from "./guard.server";
+import { evaluateCall, normalisePhone } from "./guard-rules";
 
 // ─── Process-wide state + event fan-out ─────────────────────────────────────────
 //
@@ -50,6 +60,8 @@ const g = globalThis as typeof globalThis & {
     owners: Map<string, string>;
     /** run id → debtor id → the dialable row WE loaded from the database for that debtor. */
     runTargets: Map<string, Map<string, DialTarget>>;
+    /** run id → last time a server function or event touched it; drives sweepRuns(). */
+    runTouchedAt: Map<string, number>;
   };
 };
 
@@ -60,14 +72,59 @@ g.__recoveryaiTelephony ??= {
   latestStatus: new Map(),
   owners: new Map(),
   runTargets: new Map(),
+  runTouchedAt: new Map(),
 };
 // A hot-reloaded module can inherit a global created before these fields existed.
 g.__recoveryaiTelephony.owners ??= new Map();
 g.__recoveryaiTelephony.runTargets ??= new Map();
+g.__recoveryaiTelephony.runTouchedAt ??= new Map();
 
 const runs = g.__recoveryaiTelephony.runs;
 const owners = g.__recoveryaiTelephony.owners;
 const runTargets = g.__recoveryaiTelephony.runTargets;
+const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
+
+// ─── Run retention ───────────────────────────────────────────────────────────────
+// Runs used to live in `runs` until the process restarted, and every status event walked all of
+// them — so with many companies dialing all day, each webhook got slower and memory only grew.
+// A stopped run is kept briefly (a late hangup/recording event, the final poll); a run nobody has
+// ticked for hours is one whose manager closed the tab without pressing stop.
+const STOPPED_RUN_TTL_MS = 10 * 60_000;
+const IDLE_RUN_TTL_MS = 2 * 60 * 60_000;
+const SWEEP_EVERY_MS = 60_000;
+let lastSweep = 0;
+
+function saveRun(run: DialerRun): void {
+  runs.set(run.id, run);
+  runTouchedAt.set(run.id, Date.now());
+}
+
+function sweepRuns(now = Date.now()): void {
+  if (now - lastSweep < SWEEP_EVERY_MS) return;
+  lastSweep = now;
+  for (const [id, run] of runs) {
+    const idle = now - (runTouchedAt.get(id) ?? run.startedAt);
+    if ((!run.running && idle > STOPPED_RUN_TTL_MS) || idle > IDLE_RUN_TTL_MS) {
+      runs.delete(id);
+      runTouchedAt.delete(id);
+      loggedLegs.delete(id);
+      runTargets.delete(id);
+    }
+  }
+}
+
+/** Apply a provider event only to the runs holding that call, and return the ones it changed. */
+function applyEventToRuns(event: TelephonyEvent): DialerRun[] {
+  const changed: DialerRun[] = [];
+  if (event.type === "sms_status") return changed;
+  for (const [id, run] of runs) {
+    if (!run.legs.some((l) => l.providerCallId === event.providerCallId)) continue;
+    const next = engine.applyLegEvent(run, event);
+    runs.set(id, next);
+    changed.push(next);
+  }
+  return changed;
+}
 
 // ─── Authorization ───────────────────────────────────────────────────────────────
 // TanStack server functions are ordinary HTTP endpoints whose ids ship in the client bundle, so
@@ -103,20 +160,50 @@ const sameNumber = (a: string, b: string) => a.replace(/\D/g, "") === b.replace(
 
 /** Phones of active agents in the caller's own company, straight from the database. An agent
  *  number sent by the browser is only ever accepted if it is on this list. */
-async function companyAgentPhones(
-  caller: VerifiedCaller,
-): Promise<Array<{ id: string; phone: string }>> {
-  const { data, error } = (await getSupabaseAdmin()
-    .from("agents")
-    .select("id, agent_phone, is_active")
-    .eq("client_id", caller.clientId)) as {
-    data: Array<{ id: string; agent_phone: string | null; is_active: boolean | null }> | null;
-    error: unknown;
+async function companyAgentPhones(caller: VerifiedCaller): Promise<DialAgent[]> {
+  type Row = {
+    id: string;
+    agent_phone: string | null;
+    agent_extension?: string | null;
+    is_active: boolean | null;
   };
+  const query = (cols: string) =>
+    getSupabaseAdmin().from("agents").select(cols).eq("client_id", caller.clientId) as unknown as Promise<{
+      data: Row[] | null;
+      error: { message?: string } | null;
+    }>;
+  let { data, error } = await query("id, agent_phone, agent_extension, is_active");
+  // Deployed ahead of 20260926_skycrm_telephony.sql: no extension column yet.
+  if (error && /agent_extension/.test(error.message ?? "")) {
+    ({ data, error } = await query("id, agent_phone, is_active"));
+  }
   if (error || !data) throw new Error("Could not verify the agent's phone number");
   return data
     .filter((a) => a.is_active !== false && a.agent_phone?.trim())
-    .map((a) => ({ id: a.id, phone: a.agent_phone!.trim() }));
+    .map((a) => ({
+      id: a.id,
+      phone: a.agent_phone!.trim(),
+      extension: a.agent_extension?.trim() || null,
+    }));
+}
+
+/** The agent records behind already-authorized agent numbers, in the same order. */
+async function dialAgentsFor(caller: VerifiedCaller, numbers: string[]): Promise<DialAgent[]> {
+  const pool = await companyAgentPhones(caller);
+  return numbers.flatMap((n) => pool.filter((p) => sameNumber(p.phone, n)).slice(0, 1));
+}
+
+/** Hang up through the provider with whatever it needs from the ledger, then close the ledger row. */
+async function providerHangup(providerCallId: string): Promise<void> {
+  const ledger = await ledgerByProviderCallId(providerCallId).catch(() => null);
+  await getTelephonyProvider().hangup(providerCallId, {
+    agentHandle: ledger?.agent_handle,
+    remotePhone: ledger?.remote_phone,
+    direction: ledger?.direction,
+  });
+  if (ledger && !ledger.ended_at) {
+    await updateLedger(ledger.id, { ended_at: new Date().toISOString(), status: "canceled" });
+  }
 }
 
 /** Which of `numbers` the caller may ring. Agents: only their own number. Managers and admins:
@@ -184,9 +271,22 @@ async function resolveTargets(
       });
     }
   }
-  return targets.flatMap((t) => {
+  const resolved = targets.flatMap((t) => {
     const trusted = known!.get(t.id);
     return trusted ? [{ ...t, phone: trusted.phone, altPhones: trusted.altPhones }] : [];
+  });
+  // Do-not-call numbers never enter the plan, so they can't occupy a slot every tick.
+  // prepareCall re-checks each leg, which also catches numbers added mid-run.
+  const blocked = await doNotCallSet(
+    caller.clientId,
+    resolved.flatMap((t) => [t.phone, ...(t.altPhones ?? [])]),
+  );
+  if (!blocked.size) return resolved;
+  const allowed = (p: string) => !blocked.has(normalisePhone(p));
+  return resolved.flatMap((t) => {
+    const altPhones = (t.altPhones ?? []).filter(allowed);
+    if (allowed(t.phone)) return [{ ...t, altPhones }];
+    return altPhones.length ? [{ ...t, phone: altPhones[0], altPhones: altPhones.slice(1) }] : [];
   });
 }
 
@@ -196,7 +296,22 @@ function ensureSubscribed(): void {
   subscribed = true;
   // The provider pushes normalized events; route each to whichever run owns the leg.
   getTelephonyProvider().subscribe?.((event: TelephonyEvent) => {
-    for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, event));
+    applyEventToRuns(event);
+    if (event.type === "hangup") void closeLedgerFor(event.providerCallId, event.result, event.durationSeconds);
+  });
+}
+
+async function closeLedgerFor(
+  providerCallId: string,
+  status: string,
+  durationSeconds?: number,
+): Promise<void> {
+  const ledger = await ledgerByProviderCallId(providerCallId).catch(() => null);
+  if (!ledger || ledger.ended_at) return;
+  await updateLedger(ledger.id, {
+    ended_at: new Date().toISOString(),
+    status,
+    duration_seconds: durationSeconds ?? null,
   });
 }
 
@@ -237,14 +352,39 @@ async function dial(
   idPrefix: string,
   agentNumbers: string[],
   clientId: string,
-  callerId?: string,
-): Promise<{ run: DialerRun; unassigned: number }> {
+  callerId: string | undefined,
+  agents: DialAgent[],
+): Promise<{ run: DialerRun; unassigned: number; blocked?: string }> {
   const prov = getTelephonyProvider();
   releaseAgentsForTerminalLegs(run);
+  if (!batch.length) return { run, unassigned: 0 };
 
-  const free = agentNumbers.filter((n) => !busyAgents.has(n));
-  const assignable = batch.slice(0, free.length);
+  const settings = await loadTelephonySettings(clientId);
+  // Company-wide rules (enabled, calling window) are checked once, so a closed window doesn't
+  // turn every planned debtor into a "failed" attempt.
+  const pre = evaluateCall({
+    settings,
+    provider: prov.name,
+    agentExtension: "-",
+    onDoNotCall: false,
+    now: new Date(),
+  });
+  if (!pre.ok) return { run, unassigned: batch.length, blocked: pre.message };
+
+  const agentFor = (n: string) => agents.find((a) => sameNumber(a.phone, n));
+  const free = agentNumbers.filter(
+    (n) => !busyAgents.has(n) && (prov.name !== "skycrm" || !!agentFor(n)?.extension),
+  );
+  const lines = await remainingChannels(clientId, settings);
+  const assignable = batch.slice(0, Math.min(free.length, lines));
   const unassigned = batch.length - assignable.length;
+  if (!assignable.length) {
+    return {
+      run,
+      unassigned,
+      blocked: lines === 0 ? "All calling lines for your company are busy." : undefined,
+    };
+  }
 
   const { run: withLegs, opened } = engine.openLegs(run, assignable, { idPrefix });
   let next = withLegs;
@@ -252,12 +392,24 @@ async function dial(
   for (const [i, leg] of opened.entries()) {
     const agentNumber = free[i];
     const t = assignable.find((x) => x.id === leg.debtorId);
+    let ledgerId = "";
     try {
+      const agent = agentFor(agentNumber) ?? { id: "", phone: agentNumber, extension: null };
+      const prepared = await prepareCall({
+        clientId,
+        provider: prov.name,
+        agent,
+        debtorPhone: leg.phone,
+        refId: leg.id,
+        settings,
+      });
+      ledgerId = prepared.ledgerId;
       const { providerCallId } = await prov.startCall({
-        agentNumber,
+        agentNumber: prepared.agentHandle,
         debtorNumber: leg.phone,
         callerId,
         callLogId: leg.id,
+        requestId: ledgerId || undefined,
         hints: {
           aiScore: t?.aiScore,
           bestContactTime: t?.bestContactTime,
@@ -266,8 +418,10 @@ async function dial(
       });
       busyAgents.set(agentNumber, leg.id);
       rememberOwner(clientId, providerCallId, leg.id);
+      await updateLedger(ledgerId, { provider_call_id: providerCallId });
       next = engine.bindProviderCall(next, leg.id, providerCallId);
     } catch (err) {
+      await updateLedger(ledgerId, { ended_at: new Date().toISOString(), status: "failed" });
       // One debtor's number being unreachable must not abort the whole batch.
       console.error(
         `[dialer] startCall failed for leg ${leg.id}:`,
@@ -341,6 +495,7 @@ export const startDialerRun = createServerFn({ method: "POST" })
       filter: true,
     });
     const targets = await resolveTargets(caller, data.runId, data.targets);
+    const agents = await dialAgentsFor(caller, agentNumbers);
     rememberOwner(caller.clientId, `run:${data.runId}`);
 
     const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
@@ -356,18 +511,21 @@ export const startDialerRun = createServerFn({ method: "POST" })
             ),
             inFlight: 0,
           });
-    const { run, unassigned } = await dial(
+    const { run, unassigned, blocked } = await dial(
       base,
       batch,
       data.runId,
       agentNumbers,
       caller.clientId,
       data.callerId,
+      agents,
     );
+    if (blocked && !run.legs.length) throw new Error(blocked);
     if (unassigned > 0) {
       console.warn(`[dialer] ${unassigned} target(s) not dialed — no free agent leg available`);
     }
-    runs.set(run.id, run);
+    sweepRuns();
+    saveRun(run);
     return run;
   });
 
@@ -397,6 +555,7 @@ export const tickDialerRun = createServerFn({ method: "POST" })
         filter: true,
       });
       const targets = await resolveTargets(caller, data.runId, data.targets);
+      const agents = await dialAgentsFor(caller, agentNumbers);
       // Productive needs the full leg history to decide "primary vs next alt number vs next
       // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
       // modes can, so it gets the whole target list every tick instead of `remaining`.
@@ -425,13 +584,14 @@ export const tickDialerRun = createServerFn({ method: "POST" })
           agentNumbers,
           caller.clientId,
           data.callerId,
+          agents,
         );
         run = res.run;
       }
     }
 
     await persistLoggableLegs(run); // log any AI/IVR legs that just went terminal
-    runs.set(run.id, run);
+    saveRun(run);
     return run;
   });
 
@@ -444,13 +604,13 @@ export const stopDialerRun = createServerFn({ method: "POST" })
     if (!run) return null;
     const prov = getTelephonyProvider();
     for (const leg of run.legs) {
-      if (!isTerminal(leg.state) && leg.providerCallId) await prov.hangup(leg.providerCallId);
+      if (!isTerminal(leg.state) && leg.providerCallId) await providerHangup(leg.providerCallId);
     }
     const stopped = engine.stopDialerRun(run);
     await persistLoggableLegs(stopped);
     loggedLegs.delete(data.runId);
     runTargets.delete(data.runId);
-    runs.set(stopped.id, stopped);
+    saveRun(stopped);
     return stopped;
   });
 
@@ -472,7 +632,7 @@ export const hangupDialerLeg = createServerFn({ method: "POST" })
     const leg = run.legs.find((l) => l.id === data.legId);
     if (!leg || isTerminal(leg.state) || !leg.providerCallId) return run;
 
-    await getTelephonyProvider().hangup(leg.providerCallId);
+    await providerHangup(leg.providerCallId);
 
     const now = Date.now();
     const durationSeconds = leg.connectedAt ? Math.round((now - leg.connectedAt) / 1000) : 0;
@@ -486,7 +646,7 @@ export const hangupDialerLeg = createServerFn({ method: "POST" })
       durationSeconds,
     });
     await persistLoggableLegs(updated);
-    runs.set(updated.id, updated);
+    saveRun(updated);
     return updated;
   });
 
@@ -513,15 +673,32 @@ export const startCall = createServerFn({ method: "POST" })
     const debtorNumber = cleanNumber(data.debtorNumber, "Debtor number");
     if (typeof data.callLogId !== "string" || !data.callLogId) throw new Error("Missing callLogId");
     await authorizeAgentNumbers(caller, [agentNumber]);
+    const [agent] = await dialAgentsFor(caller, [agentNumber]);
+    const prov = getTelephonyProvider();
+    const { ledgerId, agentHandle } = await prepareCall({
+      clientId: caller.clientId,
+      provider: prov.name,
+      agent: agent ?? { id: "", phone: agentNumber, extension: null },
+      debtorPhone: debtorNumber,
+      refId: data.callLogId,
+    });
 
     ensureSubscribed();
-    const { providerCallId } = await getTelephonyProvider().startCall({
-      agentNumber,
-      debtorNumber,
-      callerId: typeof data.callerId === "string" ? data.callerId : undefined,
-      callLogId: data.callLogId,
-      hints: { aiScore: data.aiScore, ivr: data.ivr },
-    });
+    let providerCallId: string;
+    try {
+      ({ providerCallId } = await prov.startCall({
+        agentNumber: agentHandle,
+        debtorNumber,
+        callerId: typeof data.callerId === "string" ? data.callerId : undefined,
+        callLogId: data.callLogId,
+        requestId: ledgerId || undefined,
+        hints: { aiScore: data.aiScore, ivr: data.ivr },
+      }));
+    } catch (err) {
+      await updateLedger(ledgerId, { ended_at: new Date().toISOString(), status: "failed" });
+      throw err;
+    }
+    await updateLedger(ledgerId, { provider_call_id: providerCallId });
     rememberOwner(caller.clientId, providerCallId, data.callLogId);
     return { providerCallId };
   });
@@ -544,7 +721,7 @@ export const hangupCall = createServerFn({ method: "POST" })
     const caller = await requireCaller(data?.accessToken);
     // Only the company that placed a call may end it.
     if (!owns(caller, data.providerCallId)) throw new Error("Call not found");
-    await getTelephonyProvider().hangup(data.providerCallId);
+    await providerHangup(data.providerCallId);
     return { ok: true };
   });
 
@@ -612,7 +789,14 @@ export const getCallStatus = createServerFn({ method: "POST" })
     return null;
   });
 
-export async function ingestCallStatusEvent(status: CallStatusEvent): Promise<void> {
+/** `status` must already be keyed by our providerCallId (webhook-reconcile.server.ts does that for
+ *  SkyCRM). Keep this function free of provider/database imports: it is exported from a module
+ *  the browser also imports, and anything it references ships in the client bundle. */
+export async function ingestCallStatusEvent(
+  status: CallStatusEvent,
+  ownerClientId?: string,
+): Promise<void> {
+  if (ownerClientId) rememberOwner(ownerClientId, status.providerCallId);
   rememberStatus(status);
   const at = Date.now();
   let event: TelephonyEvent;
@@ -630,11 +814,15 @@ export async function ingestCallStatusEvent(status: CallStatusEvent): Promise<vo
           ? "completed"
           : status.status === "failed"
             ? "failed"
-            : "no_answer",
+            : status.status === "busy"
+              ? "busy"
+              : "no_answer",
       durationSeconds: status.durationSeconds ?? 0,
     };
   }
-  for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, event));
+  sweepRuns();
+  // Only the runs holding this call can change, so only they need re-checking for loggable legs.
+  const touched = new Map(applyEventToRuns(event).map((r) => [r.id, r]));
   if (status.recordingUrl) {
     const rec: TelephonyEvent = {
       type: "recording",
@@ -642,7 +830,7 @@ export async function ingestCallStatusEvent(status: CallStatusEvent): Promise<vo
       at,
       recordingUrl: status.recordingUrl,
     };
-    for (const [id, run] of runs) runs.set(id, engine.applyLegEvent(run, rec));
+    for (const r of applyEventToRuns(rec)) touched.set(r.id, r);
   }
-  for (const run of runs.values()) await persistLoggableLegs(run);
+  for (const run of touched.values()) await persistLoggableLegs(run);
 }

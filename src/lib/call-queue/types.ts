@@ -90,6 +90,8 @@ export interface DispositionForm {
   settlementDate: string;
   settlementWaiver: string;
   escalate: boolean;
+  /** Borrower asked not to be called again — adds their number to the company's do-not-call list */
+  doNotCall: boolean;
   notes: string;
   followUpDate: string;
 }
@@ -110,6 +112,7 @@ export const EMPTY_DISPOSITION: DispositionForm = {
   settlementDate: "",
   settlementWaiver: "",
   escalate: false,
+  doNotCall: false,
   notes: "",
   followUpDate: "",
 };

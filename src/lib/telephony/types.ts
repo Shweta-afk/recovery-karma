@@ -18,6 +18,9 @@ export interface StartCallRequest {
   callerId?: string;
   /** Our internal call_logs row id, so the webhook can report status against it */
   callLogId: string;
+  /** Our telephony_calls ledger row id, unique per call. Providers that get no call id back at
+   * dial time (SkyCRM) send it as their tracking id and return it as providerCallId. */
+  requestId?: string;
   /** Optional advisory metadata. Real providers ignore this; the simulated provider uses
    * it to emulate a realistic outcome (answer likelihood, whether an IVR menu is played). */
   hints?: {
@@ -50,7 +53,7 @@ export interface SendSmsResult {
 }
 
 /** Legacy coarse status used by parseStatusWebhook. Mapped to CallState at the boundary. */
-export type CallStatus = "ringing" | "connected" | "no_answer" | "failed" | "completed";
+export type CallStatus = "ringing" | "connected" | "no_answer" | "busy" | "failed" | "completed";
 
 export interface CallStatusEvent {
   providerCallId: string;
@@ -63,6 +66,22 @@ export interface CallStatusEvent {
   durationSeconds?: number;
   /** Playable/downloadable recording URL, only present once the call has ended */
   recordingUrl?: string;
+  /** Provider's own call id when it differs from providerCallId (SkyCRM's "1756471568.293338") */
+  vendorCallId?: string;
+  /** Our-side leg the provider reports (SkyCRM extension) — used to match events to a call */
+  agentHandle?: string;
+  /** The debtor/caller number on the event */
+  remotePhone?: string;
+  direction?: CallDirection;
+  /** A vendor storage path that is NOT a fetchable URL (SkyCRM recordfile) */
+  recordingPath?: string;
+}
+
+/** What hangup needs beyond the call id for providers that key hangup off the call's parties. */
+export interface HangupContext {
+  agentHandle?: string | null;
+  remotePhone?: string | null;
+  direction?: CallDirection;
 }
 
 // ─── Domain model: call lifecycle, participants, channels ─────────────────────
@@ -152,7 +171,7 @@ export interface TelephonyProvider {
   name: string;
   startCall(req: StartCallRequest): Promise<StartCallResult>;
   /** End a live/ringing leg (agent hangup, abandon, or manual stop) */
-  hangup(providerCallId: string): Promise<void>;
+  hangup(providerCallId: string, ctx?: HangupContext): Promise<void>;
   sendSms(req: SendSmsRequest): Promise<SendSmsResult>;
   /** Parses a provider's raw webhook payload into our normalized coarse shape */
   parseStatusWebhook(payload: unknown): CallStatusEvent;

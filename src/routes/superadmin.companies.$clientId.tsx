@@ -64,6 +64,7 @@ import { contactRate } from "@/lib/platform-usage";
 import { rangeInstants, rangeLabel } from "@/lib/superadmin-range";
 import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
 import { PLATFORM_SUBDOMAIN, addressFor } from "@/lib/company-address";
+import { CompanyTelephonyCard } from "@/components/telephony/company-telephony-card";
 
 type EditableRole = "agent" | "manager" | "admin";
 type CompanyStatus = "pending" | "approved" | "rejected";
