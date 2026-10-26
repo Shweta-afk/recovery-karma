@@ -27,6 +27,10 @@ export type ProfilexInput =
   /** The number plus the whole stored name in one `name` field (the Financial Behaviour
    *  lookups) — not split into firstName/lastName like the two inputs above. */
   | "mobile+fullName"
+  /** The number plus the borrower's PAN. The PAN is never typed in on a debtor lookup: it is read
+   *  from the bank file's PAN column, else from an earlier lookup that returned one (Skip
+   *  Tracing) — the same sources the CIBIL panel prefills from. */
+  | "mobile+pan"
   | "uan"
   | "gstin"
   | "din"
@@ -185,11 +189,12 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     label: "Employment — Latest (by mobile)",
     // The console card "VRE Employment Premium through mobile" (User Profiling, ₹2.25/₹2.25).
     // Not the UAN-based "Employment — Latest" above: this one starts from the phone number, so it
-    // needs no Mobile to UAN first. Added 2026-10-19 WITHOUT its endpoint — it is not in the
-    // published Postman collection (all 169 endpoints checked).
-    path: "",
+    // needs no Mobile to UAN first. Not in the published Postman collection; the path was found
+    // 2026-10-26 by empty-body probes (free: "Missing required input fields: mobile") using the
+    // console's service id for the card.
+    path: "/core-svc/api/v2/vre/exp/employment-premium-by-mobile",
+    serviceId: "2f8af9c9-6376-4e16-bdcf-33b9c9a71006",
     input: "mobile",
-    awaitingEndpoint: true,
     defaultPrices: { "1": 2.25, "2": 2.25 },
     blurb:
       "Current employer details straight from the debtor's phone number — no UAN needed. " +
@@ -201,15 +206,17 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     id: "employment-history-mobile",
     label: "Employment — History (by mobile)",
     // The console card "VRE Employment History through mobile" (Employment, ₹9/₹9): employment
-    // and EPFO history from the phone number. Same situation as the one above — added
-    // 2026-10-19 without its endpoint, which the published collection does not carry.
-    path: "",
-    input: "mobile",
-    awaitingEndpoint: true,
+    // and EPFO history. Found the same way as the one above (2026-10-26); unlike it, this one
+    // also requires the PAN ("Missing required input fields: mobile, pan"), as the console's
+    // Try out form shows.
+    path: "/core-svc/api/v2/vre/exp/employment-history-by-mobile",
+    serviceId: "6a9ca088-b828-4cdd-aaea-9337ebc5c633",
+    input: "mobile+pan",
     defaultPrices: { "1": 9, "2": 9 },
     blurb:
-      "Employment and EPFO history across employers, straight from the debtor's phone number — " +
-      "no UAN needed. Charged the same whether or not anything is found.",
+      "Employment and EPFO history across employers, from the debtor's phone number and PAN — " +
+      "no UAN needed. The PAN comes from the bank file or an earlier Skip Tracing. Charged the " +
+      "same whether or not anything is found.",
     isNew: true,
     isRecommended: true,
   },

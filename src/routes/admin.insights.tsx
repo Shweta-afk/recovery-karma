@@ -122,6 +122,7 @@ function AdminInsightsPage() {
   const [value, setValue] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [pan, setPan] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
   const [shownId, setShownId] = useState<string | null>(null);
@@ -161,7 +162,10 @@ function AdminInsightsPage() {
 
   const field = service ? valueField(service) : null;
   const canRun =
-    !!service && value.trim().length > 0 && (!needsName(service) || firstName.trim().length > 0);
+    !!service &&
+    value.trim().length > 0 &&
+    (!needsName(service) || firstName.trim().length > 0) &&
+    (service.input !== "mobile+pan" || pan.trim().length === 10);
 
   const run = async () => {
     if (!service) return;
@@ -178,6 +182,7 @@ function AdminInsightsPage() {
             service.input === "mobile+name" || service.input === "mobile+fullName"
               ? lastName.trim()
               : undefined,
+          pan: service.input === "mobile+pan" ? pan.trim().toUpperCase() : undefined,
         },
       });
       toast.success(`${service.label} done — charged ${inr(res.cost)}`);
@@ -282,6 +287,19 @@ function AdminInsightsPage() {
                       id="ins-last"
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
+                    />
+                  </div>
+                )}
+                {service.input === "mobile+pan" && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="ins-pan">PAN</Label>
+                    <Input
+                      id="ins-pan"
+                      value={pan}
+                      maxLength={10}
+                      placeholder="ABCDE1234F"
+                      className="uppercase"
+                      onChange={(e) => setPan(e.target.value)}
                     />
                   </div>
                 )}
