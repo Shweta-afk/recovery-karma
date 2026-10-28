@@ -544,10 +544,13 @@ typed-in, CIBIL — was priced in its ledger but moved no wallet. Now every path
 `holdInsightsSpend` (`src/lib/insights-wallet.server.ts`): manager → own wallet, admin →
 `profilex_company_wallets` via `profilex_company_hold`/`profilex_company_settle`
 (`migrations/20261028_company_wallet_admin_charges.sql`, live), ledger scope `admin_charge`. An
-admin can't run a lookup the company wallet doesn't cover. Past admin spend (13 companies,
-≈₹24,370, to 28 Oct 2026 18:13 IST) was charged once by hand as one `admin_charge` row per
-company — deliberately NOT in a migration, so a replay never charges twice. Axiotta, Demo, Kuber
-and Kothule went negative (user's call); Demo/Kothule got wallet rows for it.
+admin can't run a lookup the company wallet doesn't cover. Past admin spend — 2,390 lookups,
+₹24,359.81, 20 Sep–28 Oct 2026 18:13 IST, ALL typed-in (Admin → Insights), none from a borrower
+tab — was charged once by hand on 2026-10-28: one `admin_charge` row per company whose note
+carries the dates, counts and amounts. Deliberately NOT in a migration, so a replay never charges
+twice. **Wallets were not allowed below ₹0** (user's call): ₹18,102.92 deducted, ₹6,256.89 left
+to bill manually — Axiotta ₹3,593.37 (₹100 deducted), Demo ₹1,672.52, Kuber ₹578, Kothule ₹413
+(those three had nothing to deduct, so no ledger row; Demo/Kothule got ₹0 wallet rows).
 
 Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the
 `profilex_settings` table, **not** `org-settings-store.ts`, which is localStorage-only and so
