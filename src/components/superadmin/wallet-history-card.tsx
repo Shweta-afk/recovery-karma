@@ -30,6 +30,7 @@ const SCOPE_LABEL: Record<string, string> = {
   master_to_company: "Allocated to company",
   company_to_manager: "Allocated to manager",
   manager_charge: "Insights lookup spend",
+  admin_charge: "Admin lookup spend",
   actual_topup: "ProfileX top-up recorded",
   actual_charge: "ProfileX charge",
 };

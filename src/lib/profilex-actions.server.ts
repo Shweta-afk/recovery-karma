@@ -49,6 +49,7 @@ import { buildLoanLookupData, type LoanTraceInput } from "./profilex/loan-lookup
 import { buildPrefill } from "./cibil/payprime";
 import { fetchAllRows } from "./fetch-all-rows";
 import { appError } from "./app-error";
+import { holdInsightsSpend } from "./insights-wallet.server";
 
 // This project has no generated Supabase `Database` types, so every `.from(...)` resolves to
 // `never` and each column read is a type error (the older stores simply live with ~300 of
@@ -625,9 +626,8 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     }
 
     // Wallet. Managers spend from their own prepaid balance (migrations/20260907_profilex_
-    // manager_wallets.sql) — replaces the old org-wide monthly_budget check. Admins are not
-    // wallet-gated: they're the ones who fund every manager's wallet, so there is nothing to
-    // check against. Pre-checked against the WORST-CASE price for this service — the real
+    // manager_wallets.sql) — replaces the old org-wide monthly_budget check. Admins pay from the
+    // company wallet (since 2026-10-28; held below — no friendly pre-check needed). Pre-checked against the WORST-CASE price for this service — the real
     // provider status, and so the real cost, isn't known until after the call below, and
     // letting a lookup start only to fail on charging afterward would mean it already spent
     // real money with the provider with nothing to show for it in the manager's own balance.
@@ -687,43 +687,21 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 
     // Hold the worst-case price in ONE conditional UPDATE (it cannot go below zero, and two
     // concurrent lookups cannot both spend the same funds — the read-then-charge check above is
-    // only a friendly early message). Settled below with what the provider really billed.
-    let held = 0;
-    if (caller.role === "manager" && caller.agentId) {
-      const worstCase = priceFor(service, null, settings.rate_card);
-      const { data: ok, error: holdErr } = await admin.rpc("profilex_wallet_hold", {
-        p_manager_id: caller.agentId,
-        p_amount: worstCase,
-      });
-      if (holdErr || !ok) {
-        await admin
-          .from("debtor_traces")
-          .update({
-            state: "failed",
-            error: holdErr
-              ? `Wallet hold failed: ${holdErr.message}`
-              : "Insufficient wallet balance",
-            completed_at: new Date().toISOString(),
-          })
-          .eq("id", pending.id);
-        throw holdErr
-          ? appError("SX-1016", "This lookup could not be started. Please try again.", holdErr)
-          : new Error(
-              "Your Insights wallet does not have enough left for this lookup. Ask an admin to top it up in Settings.",
-            );
-      }
-      held = worstCase;
-    }
-    /** Give back whatever part of the hold was not actually spent. Never throws. */
-    const settle = async (cost: number) => {
-      if (!held || !caller.agentId) return;
-      const { error: settleErr } = await admin.rpc("profilex_wallet_settle", {
-        p_manager_id: caller.agentId,
-        p_hold: held,
-        p_cost: Math.min(cost, held),
-      });
-      if (settleErr) console.error("[profilex] wallet settle failed:", settleErr.message);
-    };
+    // only a friendly early message). A manager's own wallet, an admin's company wallet.
+    // Settled below with what the provider really billed.
+    const { settle } = await holdInsightsSpend(
+      caller,
+      priceFor(service, null, settings.rate_card),
+      {
+        note: `${service.label} · ${debtor.name}`,
+        onRefused: async (reason) => {
+          await admin
+            .from("debtor_traces")
+            .update({ state: "failed", error: reason, completed_at: new Date().toISOString() })
+            .eq("id", pending.id);
+        },
+      },
+    );
 
     let httpStatus = 0;
     let json: Row | null = null;
@@ -1554,12 +1532,28 @@ export const runManualInsight = createServerFn({ method: "POST" })
       throw new Error(`A ${service.label} lookup for that value is already running.`);
     }
 
+    // Comes off the company's Insights wallet — see holdInsightsSpend.
+    const { settle } = await holdInsightsSpend(
+      caller,
+      priceFor(service, null, settings.rate_card),
+      {
+        note: `${service.label} · typed-in lookup`,
+        onRefused: async (reason) => {
+          await admin
+            .from("insights_manual_lookups")
+            .update({ state: "failed", error: reason, completed_at: new Date().toISOString() })
+            .eq("id", pending.id);
+        },
+      },
+    );
+
     let httpStatus = 0;
     let json: Row | null = null;
     let raw = "";
     try {
       ({ httpStatus, json, text: raw } = await callProfilex(service, requestBody));
     } catch (err) {
+      await settle(0);
       await admin
         .from("insights_manual_lookups")
         .update({
@@ -1591,6 +1585,7 @@ export const runManualInsight = createServerFn({ method: "POST" })
       .eq("id", pending.id)
       .select()
       .single();
+    await settle(cost);
 
     if (billable) {
       const realCost = priceFor(service, providerStatus, null);

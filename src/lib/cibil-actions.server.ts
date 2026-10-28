@@ -50,6 +50,7 @@ import {
   type CibilOutcome,
 } from "./cibil/payprime";
 import { appError } from "./app-error";
+import { holdInsightsSpend } from "./insights-wallet.server";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST's fluent builder;
    the chain is `any` by necessity, as in profilex-actions.server.ts. */
@@ -461,41 +462,17 @@ export const runCibilBorrower = createServerFn({ method: "POST" })
       );
     }
 
-    // Managers pay from their Insights wallet — hold the price up front, settle after (same RPCs
-    // as runProfilexTrace). Admins fund the wallets and aren't wallet-gated.
-    let held = 0;
-    if (caller.role === "manager" && caller.agentId) {
-      const { data: ok, error: holdErr } = await admin.rpc("profilex_wallet_hold", {
-        p_manager_id: caller.agentId,
-        p_amount: worstCase,
-      });
-      if (holdErr || !ok) {
+    // Managers pay from their Insights wallet, admins from the company's — hold the price up
+    // front, settle after (holdInsightsSpend, same as runProfilexTrace).
+    const { settle } = await holdInsightsSpend(caller, worstCase, {
+      note: `CIBIL report · ${debtor.name}`,
+      onRefused: async (reason) => {
         await admin
           .from("debtor_traces")
-          .update({
-            state: "failed",
-            error: holdErr
-              ? `Wallet hold failed: ${holdErr.message}`
-              : "Insufficient wallet balance",
-            completed_at: new Date().toISOString(),
-          })
+          .update({ state: "failed", error: reason, completed_at: new Date().toISOString() })
           .eq("id", pending.id);
-        throw new Error(
-          `Your Insights wallet needs at least ₹${worstCase.toFixed(2)} for a CIBIL report. ` +
-            "Ask an admin to top it up.",
-        );
-      }
-      held = worstCase;
-    }
-    const settle = async (cost: number) => {
-      if (!held || !caller.agentId) return;
-      const { error } = await admin.rpc("profilex_wallet_settle", {
-        p_manager_id: caller.agentId,
-        p_hold: held,
-        p_cost: Math.min(cost, held),
-      });
-      if (error) console.error("[cibil] wallet settle failed:", error.message);
-    };
+      },
+    });
 
     const body = cibilRequestBody(form, phone);
     let call: Awaited<ReturnType<typeof callPayPrime>>;
@@ -617,11 +594,26 @@ export const runCibilManual = createServerFn({ method: "POST" })
       .single();
     if (claimErr || !pending) throw new Error("A report for this PAN is already being pulled.");
 
+    const { settle } = await holdInsightsSpend(
+      caller,
+      priceFor(service, null, settings.rate_card),
+      {
+        note: "CIBIL report · typed-in",
+        onRefused: async (reason) => {
+          await admin
+            .from("insights_manual_lookups")
+            .update({ state: "failed", error: reason, completed_at: new Date().toISOString() })
+            .eq("id", pending.id);
+        },
+      },
+    );
+
     const body = cibilRequestBody(form, phone);
     let call: Awaited<ReturnType<typeof callPayPrime>>;
     try {
       call = await callPayPrime(body);
     } catch (err) {
+      await settle(0);
       await admin
         .from("insights_manual_lookups")
         .update({
@@ -639,6 +631,7 @@ export const runCibilManual = createServerFn({ method: "POST" })
       .from("insights_manual_lookups")
       .update(ledgerFields(outcome, call.httpStatus, call.text, cost))
       .eq("id", pending.id);
+    await settle(cost);
 
     if (outcome.status !== "1") {
       throw failure(outcome, call.httpStatus, call.text);

@@ -538,6 +538,17 @@ settlements reference them with no cascade and Reports' past months read payment
 Admin → Archive History ("Archive now") and daily via `POST /api/cron/archive` (needs
 `ARCHIVE_CRON_SECRET`; 503 without it).
 
+**Admin lookups come off the company wallet (2026-10-28).** Until then only managers were
+charged (their `profilex_wallets`); an admin's lookup — borrower Insights tab, Admin → Insights
+typed-in, CIBIL — was priced in its ledger but moved no wallet. Now every path goes through
+`holdInsightsSpend` (`src/lib/insights-wallet.server.ts`): manager → own wallet, admin →
+`profilex_company_wallets` via `profilex_company_hold`/`profilex_company_settle`
+(`migrations/20261028_company_wallet_admin_charges.sql`, live), ledger scope `admin_charge`. An
+admin can't run a lookup the company wallet doesn't cover. Past admin spend (13 companies,
+≈₹24,370, to 28 Oct 2026 18:13 IST) was charged once by hand as one `admin_charge` row per
+company — deliberately NOT in a migration, so a replay never charges twice. Axiotta, Demo, Kuber
+and Kothule went negative (user's call); Demo/Kothule got wallet rows for it.
+
 Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the
 `profilex_settings` table, **not** `org-settings-store.ts`, which is localStorage-only and so
 unreadable by the server): manager/admin role gate, per-client monthly budget in IST, a
