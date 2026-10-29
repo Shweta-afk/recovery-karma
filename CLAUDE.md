@@ -593,6 +593,22 @@ vestigial; don't build against them without confirming this has changed.
 **WhatsApp/SMS now go through Exotel — this section was stale until 2026-08-27.**
 `messages-store.ts`'s `sendMessage()` calls `sendWhatsAppMessage` / SMS in
 `telephony/server.ts`, which hit Exotel's real API before the row is written; `status` records
+**SamvadX keeps its own copy of every company archive (2026-10-29, NOT live until
+`migrations/20261029_saved_archive_files.sql` is applied).** So a company that forgot to download
+an archive can be handed one. Private Storage bucket `saved-archives` (created on first use) +
+server-only ledger `saved_archive_files`; job `src/lib/saved-archives.server.ts`, rules
+`saved-archives.ts` (tested in `scripts/saved-archives.test.ts`), screen **Superadmin → Saved
+Archives** (`superadmin.archives.tsx`, actions `saved-archive-actions.server.ts`). Two kinds:
+`portfolio_end` — the daily archive run saves, for each portfolio that ENDED (closed, or end date
+passed) within the last `AUTO_SAVE_WINDOW_DAYS` (7), a full Excel: every account with the whole
+bank file, calls, Insights, payments, settlements, disputes. One copy per ending (reopen + close
+on another day = a second copy). Runs BEFORE the dead-account strip, so the bank file is intact.
+`month` — on the 1st, the company's Archive History file for the month that just ended, frozen
+(Admin "Archive now" can otherwise rebuild past months). Older endings/months are never
+back-filled automatically: they show under "Not saved yet" with a "Save copy" button. Chosen over
+a local MacBook folder (off/asleep laptop, no backup, one person's disk); a local mirror could be
+added later as a script that downloads new files. Copying data never changes company data.
+
 **Insights outcome report + lookup feedback (2026-09-27).** `insights_outcome_report` RPC
 (`migrations/20260927_insights_outcome_report.sql`, applied live) gives one row per lookup with the
 calls/contacts/PTPs/payments on that account AFTER it — attribution by time, not causation; logic
@@ -750,7 +766,7 @@ promise_date" as promises would start counting callbacks.
 
 The view for SamvadX/Axiotta itself, across every company. Pages (sidebar order): **Overview**
 (`/superadmin`, the home page), **Companies** (`/superadmin/companies`), **Insights Wallet**,
-**Insights Activity**, **Invoices**, **Revenue**, **Contracts**, **Superadmin Activity**, **Help**.
+**Insights Activity**, **Invoices**, **Revenue**, **Contracts**, **Saved Archives**, **Superadmin Activity**, **Help**.
 
 ⚠️ **Feature usage only — never a company's collections.** No payments, promise amounts,
 recovery figures or anything a company collected from borrowers appears in this portal (product
@@ -999,6 +1015,7 @@ server on first upload; the browser uploads straight to a signed upload URL).
 | `superadmin/` (Overview), `superadmin/companies`, company detail tabs, `superadmin/revenue` | ✅ Real (2026-10-09) — usage via `superadmin_usage_totals`, revenue via `invoices`. See "Superadmin portal" above                                                                                                                                                 |
 | `superadmin/wallet`, `superadmin/insights`, `superadmin/invoices`, `superadmin/activity`    | ✅ Real; shared date filter + Excel added 2026-10-09. Invoices: payments, credit notes and "Still owed" since 2026-10-10                                                                                                                                          |
 | `superadmin/contracts`, `superadmin/help`                                                   | ✅ Real. Contracts = uploads, templates, drafts, published changes + acceptances; superadmin-only for now (`CONTRACTS_VISIBLE_TO_COMPANIES`). Help = glossary + page guides                                                                                       |
+| `superadmin/archives` (Saved Archives)                                                      | ✅ Built 2026-10-29, needs its migration applied: SamvadX's own copies of portfolio-end and month archives; download + "Save copy"                                                                                                                                 |
 | `admin/billing` (Billing & Agreements)                                                      | ✅ Real (2026-10-12): the company's invoices (opening = Viewed) and terms/agreements with Sign. `admin/contracts` redirects here                                                                                                                                  |
 
 ---

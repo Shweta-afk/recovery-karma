@@ -1,11 +1,14 @@
 # Archive: monthly history + closed ("dead") accounts
 
-Two jobs, one daily schedule:
+Three jobs, one daily schedule:
 
 1. **Monthly archive** — permanent copy of every Insights lookup, call log (notes + feedback),
    payment, message, dispute, settlement, account and portfolio, per company, per month (IST).
    Also the store that lets a re-uploaded borrower reuse an earlier paid lookup.
-2. **Dead accounts** — 60 days after a portfolio is closed, each account with nothing still open
+2. **SamvadX's own copies** — the day after a portfolio ends, a full Excel of it; on the 1st, the
+   month's Archive History file. Kept in the private `saved-archives` bucket for superadmins to
+   hand over (Superadmin → Saved Archives). See the section at the end.
+3. **Dead accounts** — 60 days after a portfolio is closed, each account with nothing still open
    on it is saved to a slim Excel file in Supabase Storage and then **stripped** (not deleted).
 
 | Piece | Where |
@@ -15,6 +18,7 @@ Two jobs, one daily schedule:
 | `debtors.archived_at` + `dead_account_files` ledger | `src/supabase/migrations/20260923_dead_account_archive.sql` |
 | Dead-account rules + sheet contents (pure, tested) | `src/lib/dead-accounts-shared.ts`, `scripts/dead-accounts.test.ts` |
 | Dead-account job (Excel, upload, strip) | `src/lib/dead-account-archive.server.ts` |
+| SamvadX copies (table, job, rules, tests) | `20261029_saved_archive_files.sql`, `src/lib/saved-archives.server.ts`, `src/lib/saved-archives.ts`, `scripts/saved-archives.test.ts` |
 | Daily schedule endpoint | `POST /api/cron/archive` — `src/lib/archive-cron.server.ts` |
 | Lookup reuse | `findReusableTrace()` in `src/lib/profilex-actions.server.ts` |
 | Admin UI | **Admin → Archive History** (`/admin/archive`) — monthly Excel, closed-account files, "Archive now" |
@@ -127,3 +131,23 @@ Stripped accounts keep their phone number and their `debtor_traces`, so they are
 - Name-taking services (`mobile+name`) reuse only when the first name also matches.
 - "Force refresh" still buys a fresh lookup.
 - Not covered yet: chained services (UAN/GSTIN inputs) and the admin *manual* lookup page.
+
+## SamvadX's own copies (2026-10-29)
+
+Asked for so a company that forgot to download an archive can still be given it.
+
+- **Storage:** private Supabase Storage bucket `saved-archives` (created by the job on first use),
+  ledger `saved_archive_files` (server-only: RLS on, no policies, `service_role` grant only).
+  Paths: `<client_id>/portfolios/<portfolio_id>/<ended-on>_<name>.xlsx` and
+  `<client_id>/months/<YYYY-MM>.xlsx`.
+- **Portfolio copy:** each daily run saves every portfolio that ended in the last 7 IST days
+  (`AUTO_SAVE_WINDOW_DAYS`) and has no copy for that ending yet. Ended = `closed_at` set (its IST
+  day), else `end_date` passed. Sheets: Portfolio, Accounts (full row, every `extra` column),
+  Calls & feedback, Insights, Payments, Settlements, Disputes. Runs before the dead-account job.
+- **Month copy:** on the 1st, after `archive_month` finalises the month, the same sheets the admin
+  downloads from Archive History are frozen into a file. A month with nothing archived is skipped.
+- **Older ones are not back-filled automatically.** Superadmin → Saved Archives lists them under
+  "Not saved yet" with "Save copy". A portfolio already stripped by the dead-account job has no
+  bank-file columns left; its full rows are in `monthly_archive_rows` (`kind = 'debtor'`).
+- **Downloads** are 5-minute signed links, counted on the row and logged in Superadmin Activity.
+- **Setup:** apply `20261029_saved_archive_files.sql`. Nothing else — the existing schedule calls it.

@@ -7,8 +7,11 @@
 //   1. archive_month(<yesterday's IST month>) — finalises last month on the 1st, and otherwise
 //      keeps the current month's snapshot fresh; idempotent, so running daily is safe. On the 1st
 //      it also saves every account's month-end version, in batches (archive-snapshot.server.ts);
-//   2. archiveDeadAccounts() — Excel file + strip for accounts closed 60+ days with nothing open.
-// Step 2 needs Node (it writes Excel), which is why the schedule calls the app rather than
+//   2. SamvadX's own copies (saved-archives.server.ts): on the 1st, the month that just ended as
+//      the company downloads it from Archive History; every day, a full copy of each portfolio
+//      that ended recently. Before step 3, so a portfolio's copy still has the whole bank file;
+//   3. archiveDeadAccounts() — Excel file + strip for accounts closed 60+ days with nothing open.
+// Steps 2 and 3 need Node (it writes Excel), which is why the schedule calls the app rather than
 // running purely inside Postgres.
 //
 // Auth: a shared secret (ARCHIVE_CRON_SECRET) in the `x-cron-secret` header. With no secret set
@@ -18,6 +21,7 @@
 import { getSupabaseAdmin } from "./supabase-admin.server";
 import { archiveDeadAccounts } from "./dead-account-archive.server";
 import { archiveMonth, istMonthOf, snapshotDebtorVersions } from "./archive-snapshot.server";
+import { saveMonthArchive, saveRecentlyEndedPortfolios } from "./saved-archives.server";
 
 export const ARCHIVE_CRON_PATH = "/api/cron/archive";
 
@@ -51,12 +55,24 @@ async function runScheduledArchive(): Promise<void> {
       if (monthRolledOver) {
         const saved = await snapshotDebtorVersions(id, month);
         console.log(`[archive-cron] ${month} client ${id}: ${saved} account versions saved`);
+        const copy = await saveMonthArchive(id, month, { by: "schedule" });
+        if (copy.filePath) console.log(`[archive-cron] ${month} client ${id}: copy saved`);
       }
     } catch (e) {
       console.error(`[archive-cron] client ${id}:`, e instanceof Error ? e.message : e);
     }
   }
   console.log(`[archive-cron] ${month} monthly archive done for ${clients?.length ?? 0} companies`);
+
+  // Each step is caught on its own: a failed copy must never stop the dead-account job.
+  try {
+    for (const r of await saveRecentlyEndedPortfolios()) {
+      if (r.error) console.error(`[archive-cron] copy of ${r.label}:`, r.error);
+      else console.log(`[archive-cron] copy of ${r.label} -> ${r.filePath}`);
+    }
+  } catch (e) {
+    console.error("[archive-cron] portfolio copies:", e instanceof Error ? e.message : e);
+  }
 
   const results = await archiveDeadAccounts();
   for (const c of results) {

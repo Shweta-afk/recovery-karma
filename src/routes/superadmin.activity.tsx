@@ -48,6 +48,8 @@ const ACTION_LABEL: Record<string, string> = {
   contract_uploaded: "Contract uploaded",
   contract_change_published: "Contract change published",
   contract_change_withdrawn: "Contract change withdrawn",
+  saved_archive_created: "Archive copy saved",
+  saved_archive_downloaded: "Archive copy downloaded",
 };
 
 function ActionBadge({ row }: { row: SuperadminActivityRow }) {

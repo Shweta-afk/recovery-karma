@@ -170,20 +170,31 @@ All are database errors on the action named; the database message is in the log.
 
 ### Archive (6xxx)
 
-| Code    | User sees                                                          | What it really means                                                                        |
-| ------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| SX-6101 | Could not read accounts for the archive.                           | Dead-account archive: reading `debtors` failed. `dead-account-archive.server.ts`            |
-| SX-6102 | Could not save the archive file.                                   | Upload to the `dead-accounts` Storage bucket failed.                                        |
-| SX-6103 | Could not record the archive file.                                 | Insert into `dead_account_files` failed.                                                    |
-| SX-6104 | The archive file was saved, but the accounts could not be cleared. | Stripping `extra`/`email` failed after the Excel was saved — the file path is in the log.   |
-| SX-6105 | Could not load portfolios for the archive.                         | Reading closed portfolios failed.                                                           |
-| SX-6106 | Could not load companies for the archive.                          | Cron run: reading `clients` failed.                                                         |
-| SX-6107 | Could not load that file.                                          | Reading `dead_account_files` for a download failed.                                         |
-| SX-6108 | Could not create a download link.                                  | Signed Storage URL failed.                                                                  |
-| SX-6201 | Could not save this month's archive.                               | `archive_month` RPC failed. `archive-snapshot.server.ts`                                    |
-| SX-6202 | Could not read accounts for the archive.                           | Paging debtor ids failed.                                                                   |
-| SX-6203 | Could not save account history for the archive.                    | `archive_debtor_versions` RPC failed.                                                       |
-| SX-6301 | Could not archive <month>.                                         | Admin "Archive now": `archive_month` RPC failed for that month. `archive-actions.server.ts` |
+| Code    | User sees                                                          | What it really means                                                                                       |
+| ------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| SX-6101 | Could not read accounts for the archive.                           | Dead-account archive: reading `debtors` failed. `dead-account-archive.server.ts`                           |
+| SX-6102 | Could not save the archive file.                                   | Upload to the `dead-accounts` Storage bucket failed.                                                       |
+| SX-6103 | Could not record the archive file.                                 | Insert into `dead_account_files` failed.                                                                   |
+| SX-6104 | The archive file was saved, but the accounts could not be cleared. | Stripping `extra`/`email` failed after the Excel was saved — the file path is in the log.                  |
+| SX-6105 | Could not load portfolios for the archive.                         | Reading closed portfolios failed.                                                                          |
+| SX-6106 | Could not load companies for the archive.                          | Cron run: reading `clients` failed.                                                                        |
+| SX-6107 | Could not load that file.                                          | Reading `dead_account_files` for a download failed.                                                        |
+| SX-6108 | Could not create a download link.                                  | Signed Storage URL failed.                                                                                 |
+| SX-6201 | Could not save this month's archive.                               | `archive_month` RPC failed. `archive-snapshot.server.ts`                                                   |
+| SX-6202 | Could not read accounts for the archive.                           | Paging debtor ids failed.                                                                                  |
+| SX-6203 | Could not save account history for the archive.                    | `archive_debtor_versions` RPC failed.                                                                      |
+| SX-6301 | Could not archive <month>.                                         | Admin "Archive now": `archive_month` RPC failed for that month. `archive-actions.server.ts`                |
+| SX-6401 | Could not prepare storage for saved archives.                      | Creating the `saved-archives` Storage bucket failed. `saved-archives.server.ts`                            |
+| SX-6402 | Could not read the portfolio for its archive.                      | Reading call logs / lookups / payments / settlements / disputes for a portfolio copy failed.               |
+| SX-6403 | Could not save the archive copy.                                   | Upload to the `saved-archives` bucket failed.                                                              |
+| SX-6404 | Could not record the archive copy.                                 | Insert into `saved_archive_files` failed (e.g. an overlapping run saved it first); the upload was removed. |
+| SX-6405 | Could not read the portfolio for its archive.                      | Reading the `portfolios` row for a copy failed or it belongs to another company.                           |
+| SX-6406 | Could not read accounts for the archive copy.                      | Reading the portfolio's `debtors` failed.                                                                  |
+| SX-6407 | Could not load portfolios for saved archives.                      | Reading ended portfolios failed.                                                                           |
+| SX-6408 | Could not load saved archives.                                     | Reading `saved_archive_files` failed — usually the migration is not applied.                               |
+| SX-6409 | Could not read the month's archive.                                | Reading `monthly_archive_rows` for a month copy failed.                                                    |
+| SX-6410 | Could not load that archive.                                       | Reading `saved_archive_files` for a download failed.                                                       |
+| SX-6411 | Could not create a download link.                                  | Signed URL from the `saved-archives` bucket failed.                                                        |
 
 ### General (9xxx)
 

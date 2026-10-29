@@ -25,6 +25,7 @@ import {
   IndianRupee,
   HelpCircle,
   FileSignature,
+  Archive,
 } from "lucide-react";
 import {
   Sidebar,
@@ -95,6 +96,7 @@ const superadminItems = [
   { title: "Invoices", url: "/superadmin/invoices", icon: FileText },
   { title: "Revenue", url: "/superadmin/revenue", icon: IndianRupee },
   { title: "Contracts", url: "/superadmin/contracts", icon: FileSignature },
+  { title: "Saved Archives", url: "/superadmin/archives", icon: Archive },
   { title: "Superadmin Activity", url: "/superadmin/activity", icon: History },
   { title: "Help", url: "/superadmin/help", icon: HelpCircle },
 ];
