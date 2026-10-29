@@ -596,8 +596,8 @@ vestigial; don't build against them without confirming this has changed.
 **WhatsApp/SMS now go through Exotel — this section was stale until 2026-08-27.**
 `messages-store.ts`'s `sendMessage()` calls `sendWhatsAppMessage` / SMS in
 `telephony/server.ts`, which hit Exotel's real API before the row is written; `status` records
-**SamvadX keeps its own copy of every company archive (2026-10-29, NOT live until
-`migrations/20261029_saved_archive_files.sql` is applied).** So a company that forgot to download
+**SamvadX keeps its own copy of every company archive (2026-10-29;
+`migrations/20261029_saved_archive_files.sql` applied live 2026-10-29).** So a company that forgot to download
 an archive can be handed one. Private Storage bucket `saved-archives` (created on first use) +
 server-only ledger `saved_archive_files`; job `src/lib/saved-archives.server.ts`, rules
 `saved-archives.ts` (tested in `scripts/saved-archives.test.ts`), screen **Superadmin → Saved
@@ -1028,7 +1028,7 @@ server on first upload; the browser uploads straight to a signed upload URL).
 | `superadmin/` (Overview), `superadmin/companies`, company detail tabs, `superadmin/revenue` | ✅ Real (2026-10-09) — usage via `superadmin_usage_totals`, revenue via `invoices`. See "Superadmin portal" above                                                                                                                                                 |
 | `superadmin/wallet`, `superadmin/insights`, `superadmin/invoices`, `superadmin/activity`    | ✅ Real; shared date filter + Excel added 2026-10-09. Invoices: payments, credit notes and "Still owed" since 2026-10-10                                                                                                                                          |
 | `superadmin/contracts`, `superadmin/help`                                                   | ✅ Real. Contracts = uploads, templates, drafts, published changes + acceptances; superadmin-only for now (`CONTRACTS_VISIBLE_TO_COMPANIES`). Help = glossary + page guides                                                                                       |
-| `superadmin/archives` (Saved Archives)                                                      | ✅ Built 2026-10-29, needs its migration applied: SamvadX's own copies of portfolio-end and month archives; download + "Save copy"                                                                                                                                 |
+| `superadmin/archives` (Saved Archives)                                                      | ✅ Live 2026-10-29: SamvadX's own copies of portfolio-end and month archives; download + "Save copy"                                                                                                                                 |
 | `admin/billing` (Billing & Agreements)                                                      | ✅ Real (2026-10-12): the company's invoices (opening = Viewed) and terms/agreements with Sign. `admin/contracts` redirects here                                                                                                                                  |
 
 ---

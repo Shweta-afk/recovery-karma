@@ -150,4 +150,4 @@ Asked for so a company that forgot to download an archive can still be given it.
   "Not saved yet" with "Save copy". A portfolio already stripped by the dead-account job has no
   bank-file columns left; its full rows are in `monthly_archive_rows` (`kind = 'debtor'`).
 - **Downloads** are 5-minute signed links, counted on the row and logged in Superadmin Activity.
-- **Setup:** apply `20261029_saved_archive_files.sql`. Nothing else — the existing schedule calls it.
+- **Setup:** `20261029_saved_archive_files.sql` (applied live 2026-10-29). Nothing else — the existing schedule calls it.
