@@ -32,33 +32,34 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 
 ### Insights (1xxx) — `src/lib/profilex-actions.server.ts` unless noted
 
-| Code    | User sees                                      | What it really means                                                                                                                   |
-| ------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| SX-1001 | Could not load the debtor.                     | Database error reading the debtor row before a lookup.                                                                                 |
-| SX-1002 | Could not check your Insights wallet.          | Database error reading the manager's wallet balance.                                                                                   |
-| SX-1003 | Could not load your Insights wallet.           | Database error reading the caller's wallet.                                                                                            |
-| SX-1004 | Could not load managers.                       | Database error listing managers for the wallets card.                                                                                  |
-| SX-1005 | Could not load wallets.                        | Database error listing manager wallets.                                                                                                |
-| SX-1006 | Could not load your company's Insights budget. | Database error reading `profilex_settings` budget.                                                                                     |
-| SX-1007 | Could not verify that manager.                 | Database error checking the manager being topped up.                                                                                   |
-| SX-1008 | Could not update the wallet.                   | Wallet top-up RPC failed.                                                                                                              |
-| SX-1009 | Could not load Insights usage.                 | Usage RPC failed.                                                                                                                      |
-| SX-1010 | Could not load Insights detail log.            | Detail-log query failed.                                                                                                               |
-| SX-1011 | Could not load portfolios.                     | Portfolio list for the Loan ID report failed.                                                                                          |
-| SX-1012 | Could not load lookup data.                    | Reading traces for the Loan ID report failed.                                                                                          |
-| SX-1013 | Could not check the portfolio.                 | Portfolio check for an Excel request failed.                                                                                           |
-| SX-1014 | Could not send the request.                    | Inserting an Excel export request failed.                                                                                              |
-| SX-1015 | Could not load lookups.                        | Reading manual lookups (Admin → Insights) failed.                                                                                      |
-| SX-1016 | This lookup could not be started.              | `profilex_wallet_hold` RPC errored (not "not enough money" — that has its own plain message).                                          |
-| SX-1017 | Could not load the Insights outcome report.    | `insights_outcome_report` RPC failed. If the log names the function, `migrations/20260927_insights_outcome_report.sql` is not applied. |
-| SX-1018 | Could not send the request.                    | `insight-request-store.ts`: inserting an Insights request failed (browser-side; detail in browser console).                            |
-| SX-1019 | Could not update the request.                  | `insight-request-store.ts`: updating an Insights request failed (browser-side).                                                        |
-| SX-1901 | This page is not available right now.          | `SUPABASE_URL` / `SUPABASE_ANON_KEY` missing on the server (caller-scoped read).                                                       |
-| SX-1902 | Insights is not set up yet.                    | `PROFILEX_CLIENT_HASH_ID` / `PROFILEX_SECRET_KEY` / `PROFILEX_ACCESS_KEY` missing on Railway.                                          |
-| SX-1903 | "<service>" is not available right now.        | ProfileX said "You Dont Have UAT Access" — service not enabled on our Neokred account, or wrong client hash id. Not charged.           |
-| SX-1904 | This lookup could not be completed.            | ProfileX returned non-200 (status + message in the log). Not charged.                                                                  |
-| SX-1905 | "<service>" is not available right now.        | Same as SX-1903, for an admin manual lookup.                                                                                           |
-| SX-1906 | This lookup could not be completed.            | Same as SX-1904, for an admin manual lookup.                                                                                           |
+| Code    | User sees                                      | What it really means                                                                                                                                  |
+| ------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SX-1001 | Could not load the debtor.                     | Database error reading the debtor row before a lookup.                                                                                                |
+| SX-1002 | Could not check your Insights wallet.          | Database error reading the manager's wallet balance.                                                                                                  |
+| SX-1003 | Could not load your Insights wallet.           | Database error reading the caller's wallet.                                                                                                           |
+| SX-1004 | Could not load managers.                       | Database error listing managers for the wallets card.                                                                                                 |
+| SX-1005 | Could not load wallets.                        | Database error listing manager wallets.                                                                                                               |
+| SX-1006 | Could not load your company's Insights budget. | Database error reading `profilex_settings` budget.                                                                                                    |
+| SX-1007 | Could not verify that manager.                 | Database error checking the manager being topped up.                                                                                                  |
+| SX-1008 | Could not update the wallet.                   | Wallet top-up RPC failed.                                                                                                                             |
+| SX-1009 | Could not load Insights usage.                 | Usage RPC failed.                                                                                                                                     |
+| SX-1010 | Could not load Insights detail log.            | Detail-log query failed.                                                                                                                              |
+| SX-1011 | Could not load portfolios.                     | Portfolio list for the Loan ID report failed.                                                                                                         |
+| SX-1012 | Could not load lookup data.                    | Reading traces for the Loan ID report failed.                                                                                                         |
+| SX-1013 | Could not check the portfolio.                 | Portfolio check for an Excel request failed.                                                                                                          |
+| SX-1014 | Could not send the request.                    | Inserting an Excel export request failed.                                                                                                             |
+| SX-1015 | Could not load lookups.                        | Reading manual lookups (Admin → Insights) failed.                                                                                                     |
+| SX-1016 | This lookup could not be started.              | `profilex_wallet_hold` RPC errored (not "not enough money" — that has its own plain message).                                                         |
+| SX-1017 | Could not load the Insights outcome report.    | `insights_outcome_report` RPC failed. If the log names the function, `migrations/20260927_insights_outcome_report.sql` is not applied.                |
+| SX-1018 | Could not send the request.                    | `insight-request-store.ts`: inserting an Insights request failed (browser-side; detail in browser console).                                           |
+| SX-1019 | Could not update the request.                  | `insight-request-store.ts`: updating an Insights request failed (browser-side).                                                                       |
+| SX-1020 | Could not load the charges report.             | `getInsightsChargesReport` (`insights-charges.server.ts`): a read of debtor_traces, insights_manual_lookups, corrections or the wallet ledger failed. |
+| SX-1901 | This page is not available right now.          | `SUPABASE_URL` / `SUPABASE_ANON_KEY` missing on the server (caller-scoped read).                                                                      |
+| SX-1902 | Insights is not set up yet.                    | `PROFILEX_CLIENT_HASH_ID` / `PROFILEX_SECRET_KEY` / `PROFILEX_ACCESS_KEY` missing on Railway.                                                         |
+| SX-1903 | "<service>" is not available right now.        | ProfileX said "You Dont Have UAT Access" — service not enabled on our Neokred account, or wrong client hash id. Not charged.                          |
+| SX-1904 | This lookup could not be completed.            | ProfileX returned non-200 (status + message in the log). Not charged.                                                                                 |
+| SX-1905 | "<service>" is not available right now.        | Same as SX-1903, for an admin manual lookup.                                                                                                          |
+| SX-1906 | This lookup could not be completed.            | Same as SX-1904, for an admin manual lookup.                                                                                                          |
 
 ### CIBIL (2xxx) — `src/lib/cibil-actions.server.ts`
 

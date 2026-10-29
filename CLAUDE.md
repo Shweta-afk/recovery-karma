@@ -433,8 +433,19 @@ SamvadX price, never cost. When wiring a new ProfileX service, take both from th
 **Not-found detection is money-critical:** many endpoints answer a miss with status `"OK"` +
 "No record(s) found", `201` "Record Not Found", or an empty body — `readProviderStatus` maps all of
 these to `"2"`. Before 2026-10-29 they were read as unknown and charged (and shown) at the found
-price: ₹331.72 over 107 lookups, 11 companies, 20 Sep–28 Oct; not refunded as of that date.
-Toasts now say found / not found next to the amount charged.
+price (≈₹334 over 108 lookups, 20 Sep–29 Oct). Toasts now say found / not found next to the amount charged.
+**Correcting them:** `scripts/debug/20261029-correct-misread-not-found.sql` (needs
+`migrations/20261029_insights_charge_corrections.sql`) re-reads each stored reply, sets the
+not-found price, refunds the wallet that paid (ledger `manager_refund` / `company_refund`,
+SamvadX's tracker `actual_refund`) and records each lookup in server-only
+`insights_charge_corrections`. Idempotent — run it again after deploying the fix. Lookups whose
+old charge never left a wallet (pre-wallet, or admin lookups not yet back-charged: Axiotta, Demo,
+Kuber) are recorded `not_deducted` and lower what is still to bill by hand.
+**Charges report** (Reports → Insights → "Charges report", `components/profilex/charges-report.tsx`,
+server `insights-charges.server.ts`, pure `lib/profilex/charges-report.ts`): admins see every
+lookup their company paid for, managers only their own — found vs not found per service, each
+lookup's price and any correction/refund, and wallet top-ups/refunds; Excel download. Typed-in
+numbers are not shown.
 
 **A blank price on a company's price list = that company's "found" price (user, 2026-10-21).**
 `priceFor(service, status, rateCard)`: a status the company's `rate_card` sets → that price; a
