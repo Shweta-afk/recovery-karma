@@ -21,6 +21,8 @@ import { getInsightsChargesReport } from "@/lib/insights-charges.server";
 import { periodLabel, periodSince, type InsightsPeriod } from "@/lib/profilex/period";
 import {
   REFUNDED_TO_LABEL,
+  lookupCellText,
+  walletCellText,
   type ChargeLookupRow,
   type ChargesReport,
   type ServiceChargeRow,
@@ -311,32 +313,34 @@ function exportReport(report: ChargesReport, period: InsightsPeriod) {
         "Service",
         "Borrower",
         "Loan ID",
+        "Portfolio",
         "Run by",
         "Result",
         "Charged ₹",
         "Correction",
       ],
-      rows: report.lookups.map((r) => [
-        when(r.at),
-        r.service,
-        r.borrower,
-        r.loanId,
-        r.runBy,
-        outcomeText(r),
-        r.cost,
-        correctionText(r),
-      ]),
+      rows: report.lookups.map((r) => {
+        const c = lookupCellText(r, correctionText(r));
+        return [
+          when(r.at),
+          r.service,
+          r.borrower,
+          c.loanId,
+          c.portfolio,
+          r.runBy,
+          outcomeText(r),
+          r.cost,
+          c.correction,
+        ];
+      }),
     },
     {
       name: "Wallet",
       headers: ["When (IST)", "What", "Manager", "Amount ₹", "Note"],
-      rows: report.wallet.map((r) => [
-        when(r.at),
-        r.label,
-        r.manager,
-        r.direction * r.amount,
-        r.note ?? "",
-      ]),
+      rows: report.wallet.map((r) => {
+        const c = walletCellText(r);
+        return [when(r.at), r.label, c.manager, r.direction * r.amount, c.note];
+      }),
     },
   ]);
 }

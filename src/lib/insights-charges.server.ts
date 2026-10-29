@@ -48,7 +48,7 @@ export const getInsightsChargesReport = createServerFn({ method: "POST" })
       let q = admin
         .from("debtor_traces")
         .select(
-          "id, created_at, service_id, provider_status, cost, requested_by, debtors(name, loan_reference)",
+          "id, created_at, service_id, provider_status, cost, requested_by, debtors(name, loan_reference, portfolios(name))",
         )
         .eq("client_id", caller.clientId)
         .eq("billable", true)
@@ -96,6 +96,7 @@ export const getInsightsChargesReport = createServerFn({ method: "POST" })
           runBy: who(t.requested_by),
           borrower: String(d.name ?? ""),
           loanId: String(d.loan_reference ?? ""),
+          portfolio: String(((d.portfolios ?? {}) as Row).name ?? ""),
         };
       }),
       ...typed.data.map((m) => ({
@@ -109,6 +110,7 @@ export const getInsightsChargesReport = createServerFn({ method: "POST" })
         // The typed-in number is deliberately not repeated here.
         borrower: "Typed in (Admin → Insights)",
         loanId: "",
+        portfolio: "",
       })),
     ];
 

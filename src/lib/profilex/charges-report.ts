@@ -18,6 +18,7 @@ export interface ChargeLookupInput {
   runBy: string;
   borrower: string;
   loanId: string;
+  portfolio: string;
 }
 
 export interface ChargeCorrectionInput {
@@ -189,3 +190,25 @@ export const REFUNDED_TO_LABEL: Record<ChargeCorrectionInput["refundedTo"], stri
   company_wallet: "company wallet",
   not_deducted: "not refunded — the old amount was never taken from a wallet",
 };
+
+// Excel cells never left blank: a blank looked like lost data (user, 2026-10-29), when every one
+// is a value that does not exist — so the file says why instead.
+const TYPED_IN = "Not applicable (typed-in lookup)";
+
+/** Loan ID / Portfolio / Correction cells for the Excel "Lookups" sheet. */
+export function lookupCellText(r: ChargeLookupRow, correction: string) {
+  const typed = r.source === "typed";
+  return {
+    loanId: r.loanId.trim() || (typed ? TYPED_IN : "Not in bank file"),
+    portfolio: r.portfolio.trim() || (typed ? TYPED_IN : "No portfolio"),
+    correction: correction || "None",
+  };
+}
+
+/** Manager / Note cells for the Excel "Wallet" sheet. */
+export function walletCellText(r: WalletMoveRow) {
+  return {
+    manager: r.manager.trim() || "Company wallet (no manager)",
+    note: r.note?.trim() || "No note recorded",
+  };
+}

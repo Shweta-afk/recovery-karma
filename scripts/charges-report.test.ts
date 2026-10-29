@@ -1,7 +1,12 @@
 // The company-facing Insights charges report: totals must add up to exactly what was charged,
 // split by found / not found, with corrections shown against the lookup they corrected.
 import { describe, expect, test } from "bun:test";
-import { buildChargesReport, type ChargeLookupInput } from "../src/lib/profilex/charges-report";
+import {
+  buildChargesReport,
+  lookupCellText,
+  walletCellText,
+  type ChargeLookupInput,
+} from "../src/lib/profilex/charges-report";
 
 const look = (
   id: string,
@@ -19,6 +24,7 @@ const look = (
   runBy: "Asha",
   borrower: "R K",
   loanId: "L1",
+  portfolio: "WeRize",
 });
 
 describe("buildChargesReport", () => {
@@ -116,5 +122,59 @@ describe("buildChargesReport", () => {
       ["manager_refund", 1],
       ["company_to_manager", 1],
     ]);
+  });
+});
+
+describe("Excel cells are never blank", () => {
+  const row = (over: Partial<ChargeLookupInput>) =>
+    buildChargesReport(
+      [{ ...look("x", "phone-to-prefill", "1", 8, "2026-10-04T10:00:00Z"), ...over }],
+      [],
+      [],
+      "company",
+    ).lookups[0];
+
+  test("real values pass through", () => {
+    expect(lookupCellText(row({}), "Was ₹8")).toEqual({
+      loanId: "L1",
+      portfolio: "WeRize",
+      correction: "Was ₹8",
+    });
+  });
+
+  test("a borrower whose bank file had no loan ID says so", () => {
+    const c = lookupCellText(row({ loanId: "  ", portfolio: "" }), "");
+    expect(c).toEqual({
+      loanId: "Not in bank file",
+      portfolio: "No portfolio",
+      correction: "None",
+    });
+  });
+
+  test("a typed-in lookup has no loan or portfolio by design", () => {
+    const c = lookupCellText(row({ source: "typed", loanId: "", portfolio: "" }), "");
+    expect(c.loanId).toBe("Not applicable (typed-in lookup)");
+    expect(c.portfolio).toBe("Not applicable (typed-in lookup)");
+  });
+
+  test("wallet rows without a manager or note say so", () => {
+    const [w] = buildChargesReport(
+      [],
+      [],
+      [
+        {
+          at: "2026-10-01T00:00:00Z",
+          scope: "master_to_company",
+          amount: 500,
+          note: null,
+          manager: "",
+        },
+      ],
+      "company",
+    ).wallet;
+    expect(walletCellText(w)).toEqual({
+      manager: "Company wallet (no manager)",
+      note: "No note recorded",
+    });
   });
 });
