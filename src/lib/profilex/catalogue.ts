@@ -357,12 +357,9 @@ export const PROFILEX_SERVICES: ProfilexService[] = [
     // only run from Admin > Insights, where an admin types the DIN in by hand. See
     // ProfilexInput's and manualOnly's doc comments.
     manualOnly: true,
-    // The console card wasn't checked for this one (no ProfileX console access when this was
-    // added). Priced alongside GST to Contact as a placeholder — same shape of lookup (an
-    // identifier resolved to a contact) — since ProfileX's API docs never carry pricing.
-    // Confirm against the console/contract and correct it in Admin > Settings before enabling
-    // this for any company; every spend figure in Reports is calculated from the rate card.
-    defaultPrices: { "1": 1.42 },
+    // "VRE DIN To Contact" on ProfileX's price sheet ("Samvdx Axiotta.xlsx", 2026-10-29):
+    // ₹2.98 found, ₹2.83 not found. Was a ₹1.42 placeholder until then.
+    defaultPrices: { "1": 2.98, "2": 2.83 },
     blurb:
       "A company director's mobile number and email, resolved from their DIN (Director " +
       "Identification Number) — typed in by an admin, not run against a debtor. Useful when a " +
@@ -423,13 +420,59 @@ export const LEGACY_SERVICE_IDS: readonly string[] = [
 export const ALL_SERVICE_IDS: string[] = PROFILEX_SERVICES.map((s) => s.id);
 
 /**
- * What a call will cost, in ₹, given the provider status it comes back with. `rateCard` is the
- * client's override map from profilex_settings; anything missing falls back to list price.
+ * SamvadX's own standard price per service and status — what a company pays when its price list
+ * has no price for that service. From the "Samvadx found" / "Samvadx not found" columns of the
+ * price sheet "Samvdx Axiotta.xlsx" (user, 2026-10-29), which also has ProfileX's cost
+ * (`defaultPrices`). When a new ProfileX service is wired, take both from that sheet. A
+ * not-found the sheet leaves blank is left out here (it then costs the found price, as below).
+ * Services not listed (CIBIL) fall back to `defaultPrices`.
+ *
+ * Before this, a company with no price for a service was charged ProfileX's cost — SamvadX's
+ * margin silently dropped (e.g. Employment Premium by mobile at ₹2.25 instead of ₹4.25).
+ */
+export const SAMVADX_PRICES: Record<string, Record<string, number>> = {
+  "skip-tracing": { "1": 48 },
+  "mobile-to-uan": { "1": 5, "2": 0 },
+  "employment-latest": { "1": 7, "2": 1 },
+  "employment-history": { "1": 7, "2": 1, "3": 1 },
+  "employment-premium-mobile": { "1": 4.25, "2": 2.25 },
+  "employment-history-mobile": { "1": 11, "2": 9 },
+  "phone-to-prefill": { "1": 8, "2": 5 },
+  "get-alternate-phone": { "1": 8, "2": 0 },
+  "get-alternate-address": { "1": 6 },
+  "mobile-to-multiple-upi": { "1": 3.58, "2": 1.58 },
+  "mobile-to-lpg-advance": { "1": 17, "2": 15 },
+  "mobile-to-esic": { "1": 11, "2": 9 },
+  "financial-behaviour": { "1": 14, "2": 11.25 },
+  "financial-behaviour-crif": { "1": 14 },
+  "mobile-to-gst": { "1": 3.42, "2": 1.42 },
+  "gst-to-contact": { "1": 3.42 },
+  "din-to-contact": { "1": 4.98, "2": 2.83 },
+};
+
+/** Price from one table for one status: the status's own price; a known status the table leaves
+ *  blank → its "found" price; an unrecognised or missing status → its highest price. */
+function priceFrom(
+  service: ProfilexService,
+  prices: Record<string, number>,
+  status: string | null,
+): number {
+  if (status !== null && status in prices) return prices[status];
+  if (status !== null && status in service.defaultPrices && "1" in prices) return prices["1"];
+  return Math.max(...Object.values(prices));
+}
+
+/**
+ * What a COMPANY is charged, in ₹, for a lookup that came back with this provider status:
+ * its own price list (`rateCard`, from profilex_settings) first, else SamvadX's standard price
+ * (SAMVADX_PRICES), never ProfileX's cost — that is `providerCost`.
+ *
+ * A status the company's price list leaves blank costs the company's own "found" price (user,
+ * 2026-10-21: Financial Behaviour priced ₹15 for found only was charging ₹11.25 for a miss).
  *
  * Fails EXPENSIVE on an unrecognised status: an unpriced status is far more likely to be a
- * billable one we haven't catalogued than a free one, and under-recording spend is the failure
- * mode that matters here. `Employment — Latest` has been seen returning a null status alongside
- * `message: "UAN found"`, so this is not hypothetical.
+ * billable one we haven't catalogued than a free one. That is also why readProviderStatus must
+ * turn every not-found shape into "2" — an unread miss is charged as a hit.
  */
 export function priceFor(
   service: ProfilexService,
@@ -437,18 +480,14 @@ export function priceFor(
   rateCard?: Record<string, Record<string, number>> | null,
 ): number {
   const own = rateCard?.[service.id];
-  if (own && Object.keys(own).length) {
-    if (status !== null && status in own) return own[status];
-    // A status the company's price list leaves blank costs the company's own "found" price —
-    // never the provider's list price, which is SamvadX's cost, not the company's (user,
-    // 2026-10-21: Financial Behaviour priced ₹15 for found only was charging ₹11.25 for a miss).
-    if (status !== null && status in service.defaultPrices && "1" in own) return own["1"];
-    // Unrecognised or missing status: fail expensive, as below — but within the company's prices.
-    return Math.max(...Object.values(own));
-  }
-  const prices = service.defaultPrices;
-  if (status !== null && status in prices) return prices[status];
-  return Math.max(...Object.values(prices));
+  if (own && Object.keys(own).length) return priceFrom(service, own, status);
+  return priceFrom(service, SAMVADX_PRICES[service.id] ?? service.defaultPrices, status);
+}
+
+/** What ProfileX (or PayPrime) charges SamvadX for this lookup — the actual-balance wallet and
+ *  the margin reports. Never what a company is charged; that is priceFor. */
+export function providerCost(service: ProfilexService, status: string | null): number {
+  return priceFrom(service, service.defaultPrices, status);
 }
 
 const rupees = (n: number) => (Number.isInteger(n) ? `₹${n}` : `₹${n.toFixed(2)}`);
@@ -496,9 +535,11 @@ export function priceLine(
   rateCard?: Record<string, Record<string, number>>,
 ): string {
   const hit = priceFor(s, "1", rateCard);
-  const missStatuses = Object.keys({ ...s.defaultPrices, ...(rateCard?.[s.id] ?? {}) }).filter(
-    (k) => k !== "1",
-  );
+  const missStatuses = Object.keys({
+    ...s.defaultPrices,
+    ...(SAMVADX_PRICES[s.id] ?? {}),
+    ...(rateCard?.[s.id] ?? {}),
+  }).filter((k) => k !== "1");
   // With no not-found status priced, an actual miss takes priceFor's unrecognised-status path,
   // so quote that rather than inventing a free one.
   const miss = missStatuses.length

@@ -41,6 +41,7 @@ import {
   LEGACY_SERVICE_IDS,
   getService,
   priceFor,
+  providerCost,
   type DerivedFrom,
   type ProfilexService,
 } from "./profilex/catalogue";
@@ -766,7 +767,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     // the real ProfileX call already happened and was already paid for by this point, so a
     // failure here must not fail the request.
     if (billable) {
-      const realCost = priceFor(service, providerStatus, null);
+      const realCost = providerCost(service, providerStatus);
       if (realCost > 0) {
         const { error: actualErr } = await admin.rpc("profilex_actual_wallet_charge", {
           p_amount: realCost,
@@ -1588,7 +1589,7 @@ export const runManualInsight = createServerFn({ method: "POST" })
     await settle(cost);
 
     if (billable) {
-      const realCost = priceFor(service, providerStatus, null);
+      const realCost = providerCost(service, providerStatus);
       if (realCost > 0) {
         const { error: actualErr } = await admin.rpc("profilex_actual_wallet_charge", {
           p_amount: realCost,

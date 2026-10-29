@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Loader2, Search, IndianRupee, ChevronRight, Wallet, Send, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { normalisePhone } from "@/lib/profilex/billing";
+import { isHit, normalisePhone } from "@/lib/profilex/billing";
 import { flatten } from "@/lib/profilex/flatten";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
@@ -535,7 +535,7 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
         result.cached
           ? `${service.label}: served from an earlier lookup`
           : showCost
-            ? `${service.label} complete · ₹${result.cost.toFixed(2)}`
+            ? `${service.label}: ${isHit(result.trace?.provider_status ?? null) ? "found" : "not found"} · charged ₹${result.cost.toFixed(2)}`
             : `${service.label} complete`,
       );
     } catch (e) {

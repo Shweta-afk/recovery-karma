@@ -32,6 +32,7 @@ import {
   runManualInsight,
   type ManualLookupRow,
 } from "@/lib/profilex-actions.server";
+import { isHit } from "@/lib/profilex/billing";
 import { PROFILEX_SERVICES, priceLine, type ProfilexService } from "@/lib/profilex/catalogue";
 import { ReportView } from "@/components/profilex/report-view";
 import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
@@ -185,7 +186,10 @@ function AdminInsightsPage() {
           pan: service.input === "mobile+pan" ? pan.trim().toUpperCase() : undefined,
         },
       });
-      toast.success(`${service.label} done — charged ${inr(res.cost)}`);
+      // The amount is the one the wallet was charged (the server's own figure), with the outcome
+      // it was priced at, so "not found" never reads as a found-price charge.
+      const outcome = isHit(res.lookup?.provider_status ?? null) ? "found" : "not found";
+      toast.success(`${service.label}: ${outcome} — charged ${inr(res.cost)}`);
       setShownId(res.lookup?.id ?? null);
     } catch (err) {
       toast.error(errorText(err, "Lookup failed"));

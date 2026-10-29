@@ -22,7 +22,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
-import { ALL_SERVICE_IDS, CIBIL_SERVICE, getService, priceFor } from "./profilex/catalogue";
+import { ALL_SERVICE_IDS, CIBIL_SERVICE, getService, providerCost } from "./profilex/catalogue";
 import { insightsPriceChanges } from "./profilex/price-changes";
 import { fetchAllRows } from "./fetch-all-rows";
 import { APP_PING_BODY, APP_PING_PATH, addressFor, subdomainProblem } from "./company-address";
@@ -1236,7 +1236,7 @@ export const getInsightsActivity = createServerFn({ method: "POST" })
       // No entry (a retired service_id, e.g. mobile-to-prefill-ext) means no known real price —
       // fall back to the stored cost rather than silently showing ₹0 real cost.
       const realCost =
-        r.billable && service ? priceFor(service, r.provider_status, null) : Number(r.cost);
+        r.billable && service ? providerCost(service, r.provider_status) : Number(r.cost);
       return {
         id: r.id,
         clientId: r.client_id,
@@ -1360,7 +1360,7 @@ export const getInsightsReport = createServerFn({ method: "POST" })
     for (const { r, manual: isManual } of rows) {
       const service = getService(r.service_id);
       const realCost =
-        r.billable && service ? priceFor(service, r.provider_status, null) : Number(r.cost);
+        r.billable && service ? providerCost(service, r.provider_status) : Number(r.cost);
       for (const b of [
         totals,
         companies.get(r.client_id) ?? companies.set(r.client_id, emptyBucket()).get(r.client_id)!,

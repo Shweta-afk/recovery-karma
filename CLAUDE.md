@@ -425,6 +425,17 @@ GST→Contact. Note a couple of
 endpoints name the debtor's number `phone` rather than `mobile` in the body — that is what
 `input: "phone"` means; sending the wrong key returns "Missing required input fields: phone".
 
+**Prices come from "Samvdx Axiotta.xlsx" (user, 2026-10-29).** Its ProfileX columns are
+`defaultPrices` (SamvadX's COST, read only by `providerCost` — actual wallet, margins); its
+"Samvadx found / not found" columns are `SAMVADX_PRICES` in `catalogue.ts`, what a company with no
+price of its own for a service pays (it used to pay ProfileX's cost). `priceFor` = company price →
+SamvadX price, never cost. When wiring a new ProfileX service, take both from that sheet.
+**Not-found detection is money-critical:** many endpoints answer a miss with status `"OK"` +
+"No record(s) found", `201` "Record Not Found", or an empty body — `readProviderStatus` maps all of
+these to `"2"`. Before 2026-10-29 they were read as unknown and charged (and shown) at the found
+price: ₹331.72 over 107 lookups, 11 companies, 20 Sep–28 Oct; not refunded as of that date.
+Toasts now say found / not found next to the amount charged.
+
 **A blank price on a company's price list = that company's "found" price (user, 2026-10-21).**
 `priceFor(service, status, rateCard)`: a status the company's `rate_card` sets → that price; a
 known status it leaves blank → its `"1"` price; unknown/null status → the highest of ITS prices.

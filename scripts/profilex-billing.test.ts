@@ -23,6 +23,8 @@ import {
   statusLabel,
   getService,
   priceFor,
+  providerCost,
+  SAMVADX_PRICES,
 } from "../src/lib/profilex/catalogue";
 
 describe("priceFor", () => {
@@ -30,26 +32,26 @@ describe("priceFor", () => {
   const uan = getService("mobile-to-uan")!;
 
   test("charges the found price on status 1", () => {
-    expect(priceFor(employment, "1")).toBe(5);
+    expect(providerCost(employment, "1")).toBe(5);
   });
 
   test("still charges on a not-found — ProfileX bills for status 2", () => {
-    expect(priceFor(employment, "2")).toBe(1);
+    expect(providerCost(employment, "2")).toBe(1);
   });
 
   test("mobile-to-uan is genuinely free when it finds nothing", () => {
-    expect(priceFor(uan, "2")).toBe(0);
+    expect(providerCost(uan, "2")).toBe(0);
   });
 
   test("employment-history's status 3 is priced like any other miss", () => {
-    expect(priceFor(getService("employment-history")!, "3")).toBe(1);
+    expect(providerCost(getService("employment-history")!, "3")).toBe(1);
   });
 
   test("an unknown or null status fails EXPENSIVE, not free", () => {
     // Employment Latest has been seen returning a null status with a success message. Recording
     // ₹0 there would silently under-report spend, which is the failure that matters.
-    expect(priceFor(employment, null)).toBe(5);
-    expect(priceFor(employment, "99")).toBe(5);
+    expect(providerCost(employment, null)).toBe(5);
+    expect(providerCost(employment, "99")).toBe(5);
   });
 
   test("a client rate card overrides list price per status", () => {
@@ -77,7 +79,7 @@ describe("priceFor", () => {
     expect(priceFor(uan, "2", card)).toBe(0);
   });
 
-  test("with no price for the service at all, the list price still applies", () => {
+  test("with no price for the service at all, SamvadX's standard price applies", () => {
     expect(priceFor(employment, "2", { "mobile-to-uan": { "1": 5 } })).toBe(1);
   });
 
@@ -97,11 +99,100 @@ describe("readProviderStatus", () => {
     expect(readProviderStatus({ status: "1" })).toBe("1");
   });
 
-  test("treats null, missing and empty-string as unknown", () => {
-    expect(readProviderStatus({ data: { status: null } })).toBeNull();
-    expect(readProviderStatus({ data: {} })).toBeNull();
-    expect(readProviderStatus({ data: { status: "" } })).toBeNull();
+  test("an empty reply is a not-found; no reply at all is unknown", () => {
+    expect(readProviderStatus({ data: { status: null } })).toBe("2");
+    expect(readProviderStatus({ data: {} })).toBe("2");
+    expect(readProviderStatus({ data: { status: "" } })).toBe("2");
     expect(readProviderStatus(null)).toBeNull();
+    expect(readProviderStatus({ status: "WEIRD" })).toBe("WEIRD");
+  });
+
+  // Shapes copied from live debtor_traces (2026-10-29). Each of these misses used to be read as
+  // an unknown status and charged — and shown — at the FOUND price.
+  test("reads every not-found shape ProfileX really returns as a miss", () => {
+    const ok = (data: Record<string, unknown>, message: string) => ({
+      data,
+      status: "OK",
+      message,
+      success: true,
+      statusCode: 200,
+      transactionId: "t",
+    });
+    // Employment Latest / History
+    expect(
+      readProviderStatus(
+        ok({ uan: [], status: null, summary: null, uan_details: null }, "No record(s) found"),
+      ),
+    ).toBe("2");
+    // Mobile to GST / GST to Contact
+    expect(
+      readProviderStatus(
+        ok(
+          {
+            result: [],
+            status: null,
+            request_id: "r",
+            result_code: "103",
+            http_response_code: 200,
+          },
+          "No record found for the given input",
+        ),
+      ),
+    ).toBe("2");
+    // Phone to Prefill
+    expect(
+      readProviderStatus(
+        ok({ name: null, email: [], status: "201", address: [] }, "Record Not Found"),
+      ),
+    ).toBe("2");
+    // Financial Behaviour: "success" message, nothing in it
+    expect(
+      readProviderStatus(
+        ok(
+          { Score: null, status: null, LoanAccounts: [], Applicant: null },
+          "Data Fetched Successfully",
+        ),
+      ),
+    ).toBe("2");
+    // CRIF report: status_code 422
+    expect(
+      readProviderStatus(ok({ status: "OK", status_code: "422" }, "Data Fetched Successfully")),
+    ).toBe("2");
+  });
+
+  test("an OK reply that carries data is a hit", () => {
+    // UPI IDs
+    expect(
+      readProviderStatus({
+        data: { status: "OK", upi_id: ["x@sbi"], status_code: "1", mobile_number: "9" },
+        status: "OK",
+        message: "Data Fetched Successfully",
+      }),
+    ).toBe("1");
+    expect(
+      readProviderStatus({
+        data: { status: "OK", name: "A B" },
+        status: "OK",
+        message: "Record found",
+      }),
+    ).toBe("1");
+    // A documented code always wins over the message.
+    expect(readProviderStatus({ data: { status: 2 }, message: "Success" })).toBe("2");
+    expect(readProviderStatus({ data: { status: "1", x: null }, message: "Record found" })).toBe(
+      "1",
+    );
+  });
+
+  test("a not-found is charged the not-found price, end to end", () => {
+    const employment = getService("employment-latest")!;
+    const card = { "employment-latest": { "1": 7, "2": 2 } };
+    const miss = readProviderStatus({
+      data: { uan: [], status: null },
+      status: "OK",
+      message: "No record(s) found",
+    });
+    expect(priceFor(employment, miss, card)).toBe(2);
+    expect(providerCost(employment, miss)).toBe(1);
   });
 
   test("only status 1 counts as a hit", () => {
@@ -217,9 +308,9 @@ describe("skip tracing (VRE Skip Tracing, the ₹46 card)", () => {
   });
 
   test("an unpriced not-found is recorded at the known ₹46, never ₹0", () => {
-    expect(priceFor(skip, "1")).toBe(46);
-    expect(priceFor(skip, "2")).toBe(46);
-    expect(priceFor(skip, null)).toBe(46);
+    expect(providerCost(skip, "1")).toBe(46);
+    expect(providerCost(skip, "2")).toBe(46);
+    expect(providerCost(skip, null)).toBe(46);
   });
 
   // Mirrors the real v1 response: each source's payload nested under its own key. Note there is
@@ -329,14 +420,14 @@ describe("the trunk-0 domestic format", () => {
 describe("the alternate-contact lookups", () => {
   test("Alternate Phone Numbers is genuinely free on a miss", () => {
     const svc = getService("get-alternate-phone")!;
-    expect(priceFor(svc, "1")).toBe(6);
-    expect(priceFor(svc, "2")).toBe(0);
+    expect(providerCost(svc, "1")).toBe(6);
+    expect(providerCost(svc, "2")).toBe(0);
   });
 
   test("Alternate Addresses charges its only known price for an unpriced status", () => {
     const svc = getService("get-alternate-address")!;
-    expect(priceFor(svc, "1")).toBe(4);
-    expect(priceFor(svc, null)).toBe(4);
+    expect(providerCost(svc, "1")).toBe(4);
+    expect(providerCost(svc, null)).toBe(4);
   });
 
   test("both send the debtor's number as `phone`, not `mobile`", () => {
@@ -355,10 +446,10 @@ describe("the alternate-contact lookups", () => {
 
 describe("UPI IDs and LPG Connection", () => {
   test("are priced the same found or not, as their console cards show", () => {
-    expect(priceFor(getService("mobile-to-multiple-upi")!, "1")).toBe(1.58);
-    expect(priceFor(getService("mobile-to-multiple-upi")!, "2")).toBe(1.58);
-    expect(priceFor(getService("mobile-to-lpg-advance")!, "1")).toBe(15);
-    expect(priceFor(getService("mobile-to-lpg-advance")!, "2")).toBe(15);
+    expect(providerCost(getService("mobile-to-multiple-upi")!, "1")).toBe(1.58);
+    expect(providerCost(getService("mobile-to-multiple-upi")!, "2")).toBe(1.58);
+    expect(providerCost(getService("mobile-to-lpg-advance")!, "1")).toBe(15);
+    expect(providerCost(getService("mobile-to-lpg-advance")!, "2")).toBe(15);
   });
 
   test("LPG Advance is called without a service-id, UPI IDs with one", () => {
@@ -417,22 +508,22 @@ describe("priceLine — what an admin is quoted must be what they are charged", 
     expect(priceLine(getService("phone-to-prefill")!, marked)).toBe("₹8 if found, ₹8 if not");
   });
 
-  test("falls back to list price for a company with no override", () => {
-    expect(priceLine(getService("mobile-to-uan")!)).toBe("₹3 if found, free if not");
+  test("falls back to SamvadX's standard price for a company with no override", () => {
+    expect(priceLine(getService("mobile-to-uan")!)).toBe("₹5 if found, free if not");
   });
 
   test("never claims a miss is free when priceFor would charge for it", () => {
     // Skip Tracing is priced for status 1 only; an unlisted status takes priceFor's
     // fail-expensive path, so quoting "free if not" would have been a lie worth ₹46.
-    expect(priceLine(getService("skip-tracing")!)).toBe("₹46 if found, ₹46 if not");
+    expect(priceLine(getService("skip-tracing")!)).toBe("₹48 if found, ₹48 if not");
   });
 
   test("only says free where the charge really is ₹0", () => {
-    expect(priceLine(getService("get-alternate-phone")!)).toBe("₹6 if found, free if not");
+    expect(priceLine(getService("get-alternate-phone")!)).toBe("₹8 if found, free if not");
   });
 
   test("keeps paise for fractional prices", () => {
-    expect(priceLine(getService("mobile-to-gst")!)).toBe("₹1.42 if found, ₹1.42 if not");
+    expect(priceLine(getService("mobile-to-gst")!)).toBe("₹3.42 if found, ₹1.42 if not");
   });
 
   test("every service, every rate card: the quote equals priceFor", () => {
@@ -453,6 +544,28 @@ describe("priceLine — what an admin is quoted must be what they are charged", 
         expect(possible.length ? possible : [priceFor(svc, null, card)]).toContain(missQuoted);
       }
     }
+  });
+});
+
+describe("SAMVADX_PRICES — the sheet's SamvadX columns", () => {
+  test("covers every ProfileX service in the catalogue", () => {
+    for (const svc of PROFILEX_SERVICES.filter((x) => x.provider !== "payprime")) {
+      expect(SAMVADX_PRICES[svc.id]).toBeDefined();
+    }
+  });
+
+  test("never charges a company less than ProfileX charges SamvadX", () => {
+    for (const svc of PROFILEX_SERVICES) {
+      for (const status of Object.keys({ ...svc.defaultPrices, ...SAMVADX_PRICES[svc.id] })) {
+        expect(priceFor(svc, status)).toBeGreaterThanOrEqual(providerCost(svc, status));
+      }
+    }
+  });
+
+  test("a company's own price list still wins", () => {
+    const svc = getService("employment-premium-mobile")!;
+    expect(priceFor(svc, "1")).toBe(4.25);
+    expect(priceFor(svc, "1", { "employment-premium-mobile": { "1": 5 } })).toBe(5);
   });
 });
 
@@ -479,7 +592,7 @@ describe("priceStatuses — every service must be priceable for a miss", () => {
 
   test("setting a miss price actually changes what is charged", () => {
     const skip = getService("skip-tracing")!;
-    expect(priceFor(skip, "2")).toBe(46); // falls back to the found price today
+    expect(priceFor(skip, "2")).toBe(48); // falls back to the found price today
     expect(priceFor(skip, "2", { "skip-tracing": { "2": 5 } })).toBe(5);
   });
 
@@ -574,8 +687,9 @@ describe("DIN to Contact — the one manual-only, admin-typed lookup", () => {
   });
 
   test("prices a found result; an unrecognised status fails expensive to the same price", () => {
-    expect(priceFor(service, "1")).toBe(1.42);
-    expect(priceFor(service, "2")).toBe(1.42);
-    expect(priceFor(service, null)).toBe(1.42);
+    // ProfileX's price sheet (2026-10-29): ₹2.98 found, ₹2.83 not found.
+    expect(providerCost(service, "1")).toBe(2.98);
+    expect(providerCost(service, "2")).toBe(2.83);
+    expect(providerCost(service, null)).toBe(2.98);
   });
 });

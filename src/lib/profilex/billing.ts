@@ -33,13 +33,70 @@ export function istMonthStart(now: Date = new Date()): Date {
   return new Date(startIst - IST_OFFSET_MS);
 }
 
-/** ProfileX signals "found" with data.status "1"; "2"/"3" mean no record. At least one endpoint
- *  (Employment Latest) returns a null status alongside a success message, so this normalises to
- *  a string or null and lets pricing decide what an unknown status costs. */
+/** Keys that describe the reply rather than carry data — ignored when judging if anything came back. */
+const ENVELOPE_KEYS = new Set([
+  "status",
+  "status_code",
+  "statusCode",
+  "message",
+  "success",
+  "request_id",
+  "client_ref_num",
+  "http_response_code",
+  "result_code",
+  "txn_id",
+  "transactionId",
+  "timestamp",
+  "date_time",
+  "verify_id",
+  "mobile_number",
+]);
+
+const NOT_FOUND_MESSAGE = /no\s+record|not\s+found|no\s+data|no\s+bureau/i;
+
+function hasData(node: unknown, top = true): boolean {
+  if (node === null || node === undefined || node === "") return false;
+  if (Array.isArray(node)) return node.some((v) => hasData(v, false));
+  if (typeof node === "object") {
+    return Object.entries(node as Row).some(
+      ([k, v]) => !(top && ENVELOPE_KEYS.has(k)) && hasData(v, false),
+    );
+  }
+  return true;
+}
+
+/**
+ * The provider status a lookup is billed at: "1" found, "2"/"3" not found, null unknown.
+ *
+ * ProfileX documents data.status 1/2/3, but many endpoints don't follow it: a miss comes back as
+ * data.status "201" "Record Not Found" (Phone to Prefill), or data.status null with the top-level
+ * status "OK" and "No record(s) found" (Employment, Mobile to GST, GST to Contact), or "OK" with
+ * every field empty (Financial Behaviour). Read literally, those are unknown statuses, which
+ * priceFor charges at the FOUND price — so a miss priced ₹2 was charged and shown as ₹7
+ * (found 2026-10-29: 200+ lookups). A found UPI lookup also says "OK", with status_code "1".
+ * So: a documented code wins; otherwise a not-found message or an empty body is a miss, and
+ * an "OK" that carries data is a hit.
+ */
 export function readProviderStatus(json: Row | null): string | null {
-  const raw = (json?.data as Row | undefined)?.status ?? json?.status;
-  if (raw === null || raw === undefined || raw === "") return null;
-  return String(raw);
+  if (!json) return null;
+  const data = json.data as Row | undefined;
+  const raw = data?.status ?? json.status;
+  const code = raw === null || raw === undefined ? "" : String(raw);
+  if (code === "1" || code === "2" || code === "3") return code;
+
+  const sub = data?.status_code;
+  if (sub !== null && sub !== undefined && sub !== "") {
+    const s = String(sub);
+    if (s === "1" || s === "200") return "1";
+    if (/^\d+$/.test(s)) return "2";
+  }
+  if (code === "201") return "2";
+
+  const message = `${String(json.message ?? "")} ${String(data?.message ?? "")}`;
+  if (NOT_FOUND_MESSAGE.test(message)) return "2";
+  if (data !== undefined && !hasData(data)) return "2";
+  if (code.toUpperCase() === "OK" && data !== undefined) return "1";
+  return code || null;
 }
 
 export function isHit(status: string | null): boolean {
