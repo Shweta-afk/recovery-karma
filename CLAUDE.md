@@ -441,6 +441,8 @@ SamvadX's tracker `actual_refund`) and records each lookup in server-only
 `insights_charge_corrections`. Idempotent — run it again after deploying the fix. Lookups whose
 old charge never left a wallet (pre-wallet, or admin lookups not yet back-charged: Axiotta, Demo,
 Kuber) are recorded `not_deducted` and lower what is still to bill by hand.
+**⚠️ NOT RUN — user, 2026-10-29: "dont refund anything".** The migration is live (empty table,
+new ledger scopes); no wallet, lookup or ledger row was changed. Don't run the script without asking.
 **Charges report** (Reports → Insights → "Charges report", `components/profilex/charges-report.tsx`,
 server `insights-charges.server.ts`, pure `lib/profilex/charges-report.ts`): admins see every
 lookup their company paid for, managers only their own — found vs not found per service, each

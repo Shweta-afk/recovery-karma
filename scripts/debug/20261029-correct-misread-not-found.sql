@@ -1,3 +1,5 @@
+-- ⚠️ NOT RUN: the user decided on 2026-10-29 not to refund anything. Ask before running.
+--
 -- One-off correction (2026-10-29): Insights lookups whose "not found" reply was misread and
 -- charged at the FOUND price. Needs migrations/20261029_insights_charge_corrections.sql first.
 --
