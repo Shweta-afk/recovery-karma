@@ -25,13 +25,12 @@ import {
   pickDeadDebtors,
   type CallLogLite,
   type DebtorLite,
-  type SheetData,
   type TraceLite,
 } from "./dead-accounts-shared";
 import { appError } from "./app-error";
 
 export const DEAD_ACCOUNTS_BUCKET = "dead-accounts";
-const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+export const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 /** ids per `.in(...)` request — keeps each request's URL small (see fetchDebtorsByIds). */
 const ID_CHUNK = 300;
 
@@ -101,8 +100,11 @@ async function ensureBucket(): Promise<void> {
   }
 }
 
-async function toXlsx(sheets: SheetData[]): Promise<Uint8Array> {
-  // Loaded on demand: large, and only this job needs it server-side.
+/** Sheets -> .xlsx bytes. Also used by saved-archives.server.ts. */
+export async function sheetsToXlsx(
+  sheets: { name: string; columns: string[]; rows: (string | number | boolean | null)[][] }[],
+): Promise<Uint8Array> {
+  // Loaded on demand: large, and only the archive jobs need it server-side.
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = "SamvadX";
@@ -211,7 +213,7 @@ async function archivePortfolio(
     tracesByDebtor,
     agentNameById,
   );
-  const bytes = await toXlsx(sheets);
+  const bytes = await sheetsToXlsx(sheets);
   const filePath = deadAccountFilePath(
     clientId,
     portfolio.id,

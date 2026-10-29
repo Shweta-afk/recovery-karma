@@ -200,6 +200,19 @@ export const GLOSSARY = {
     text: "How many of the companies the change applies to have accepted it. Open a change to see who accepted for each company, or to email the admins who still haven't.",
   },
 
+  savedArchive: {
+    term: "Saved archive",
+    text: "SamvadX's own copy of a company's archive, kept in case they ask for one they forgot to download. Each portfolio is saved automatically the day after it ends (closed, or its end date passed) with every account, the whole bank file, calls, Insights, payments, settlements and disputes. Each month's Archive History file is saved on the 1st.",
+  },
+  notSavedYet: {
+    term: "Not saved yet",
+    text: "Portfolios that ended, and finished months, with no saved copy — usually ones that ended before copies were switched on. Press 'Save copy' to make one now. A portfolio already slimmed by the closed-accounts archive (60+ days after closing) no longer has its bank-file columns.",
+  },
+  downloads: {
+    term: "Downloads",
+    text: "How many times a superadmin has downloaded this copy, e.g. to hand it to the company.",
+  },
+
   excel: {
     term: "Download Excel",
     text: "Saves what the table shows, for the dates you picked, as an Excel file.",
@@ -282,6 +295,15 @@ export const PAGE_GUIDES = {
       "Change notices: tell companies about a new feature or price. Each one shows who has seen it and who has accepted it.",
     ],
   },
+  archives: {
+    title: "Saved Archives",
+    points: [
+      "Your own copy of every company's archives, so you can hand one over if they ask for a file they forgot to download.",
+      "Portfolio copies are made automatically the day after a portfolio ends; month copies on the 1st for the month that just finished.",
+      "'Not saved yet' lists older endings and months with no copy — press 'Save copy' to make one.",
+      "Downloads are recorded in Superadmin Activity.",
+    ],
+  },
   activity: {
     title: "Superadmin Activity",
     points: [
@@ -353,5 +375,6 @@ export const HELP_SECTIONS: { title: string; keys: GlossaryKey[] }[] = [
       "acceptanceStatus",
     ],
   },
+  { title: "Saved archives", keys: ["savedArchive", "notSavedYet", "downloads"] },
   { title: "Downloads", keys: ["excel"] },
 ];
