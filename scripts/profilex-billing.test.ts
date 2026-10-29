@@ -513,9 +513,8 @@ describe("priceLine — what an admin is quoted must be what they are charged", 
   });
 
   test("never claims a miss is free when priceFor would charge for it", () => {
-    // Skip Tracing is priced for status 1 only; an unlisted status takes priceFor's
-    // fail-expensive path, so quoting "free if not" would have been a lie worth ₹46.
-    expect(priceLine(getService("skip-tracing")!)).toBe("₹48 if found, ₹48 if not");
+    // ProfileX charges ₹46 for a Skip Tracing miss, so SamvadX's not-found is ₹46, never free.
+    expect(priceLine(getService("skip-tracing")!)).toBe("₹48 if found, ₹46 if not");
   });
 
   test("only says free where the charge really is ₹0", () => {
@@ -538,7 +537,11 @@ describe("priceLine — what an admin is quoted must be what they are charged", 
         const missQuoted = line.includes("free if not")
           ? 0
           : Number(line.split(", ")[1].replace(/[^\d.]/g, ""));
-        const possible = Object.keys({ ...svc.defaultPrices, ...(card?.[svc.id] ?? {}) })
+        const possible = Object.keys({
+          ...svc.defaultPrices,
+          ...(SAMVADX_PRICES[svc.id] ?? {}),
+          ...(card?.[svc.id] ?? {}),
+        })
           .filter((k) => k !== "1")
           .map((k) => priceFor(svc, k, card));
         expect(possible.length ? possible : [priceFor(svc, null, card)]).toContain(missQuoted);
@@ -559,6 +562,19 @@ describe("SAMVADX_PRICES — the sheet's SamvadX columns", () => {
       for (const status of Object.keys({ ...svc.defaultPrices, ...SAMVADX_PRICES[svc.id] })) {
         expect(priceFor(svc, status)).toBeGreaterThanOrEqual(providerCost(svc, status));
       }
+    }
+  });
+
+  test("not found = ProfileX's not-found cost; blank on ProfileX's sheet = its found price", () => {
+    const miss = (id: string) => priceFor(getService(id)!, "2");
+    expect(miss("skip-tracing")).toBe(46);
+    expect(miss("get-alternate-address")).toBe(4);
+    expect(miss("financial-behaviour-crif")).toBe(11.25);
+    expect(miss("gst-to-contact")).toBe(1.42);
+    expect(miss("mobile-to-uan")).toBe(0);
+    expect(miss("get-alternate-phone")).toBe(0);
+    for (const svc of PROFILEX_SERVICES.filter((x) => x.provider !== "payprime")) {
+      expect(priceFor(svc, "2")).toBe(providerCost(svc, "2"));
     }
   });
 
@@ -592,7 +608,7 @@ describe("priceStatuses — every service must be priceable for a miss", () => {
 
   test("setting a miss price actually changes what is charged", () => {
     const skip = getService("skip-tracing")!;
-    expect(priceFor(skip, "2")).toBe(48); // falls back to the found price today
+    expect(priceFor(skip, "2")).toBe(46); // SamvadX's not-found price
     expect(priceFor(skip, "2", { "skip-tracing": { "2": 5 } })).toBe(5);
   });
 

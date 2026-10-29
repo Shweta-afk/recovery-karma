@@ -430,6 +430,10 @@ endpoints name the debtor's number `phone` rather than `mobile` in the body — 
 "Samvadx found / not found" columns are `SAMVADX_PRICES` in `catalogue.ts`, what a company with no
 price of its own for a service pays (it used to pay ProfileX's cost). `priceFor` = company price →
 SamvadX price, never cost. When wiring a new ProfileX service, take both from that sheet.
+SamvadX's not-found price = ProfileX's not-found cost, no margin; a not-found ProfileX's sheet
+leaves blank costs ProfileX's found price (Skip Tracing miss ₹46), a listed ₹0 stays free (UAN,
+Alternate Phone) — user, 2026-10-29, "Samvdx Axiotta (2).xlsx" MAIN tab. A test pins
+`priceFor(svc, "2") === providerCost(svc, "2")` for every ProfileX service.
 **Not-found detection is money-critical:** many endpoints answer a miss with status `"OK"` +
 "No record(s) found", `201` "Record Not Found", or an empty body — `readProviderStatus` maps all of
 these to `"2"`. Before 2026-10-29 they were read as unknown and charged (and shown) at the found

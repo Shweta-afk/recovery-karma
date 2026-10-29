@@ -423,15 +423,18 @@ export const ALL_SERVICE_IDS: string[] = PROFILEX_SERVICES.map((s) => s.id);
  * SamvadX's own standard price per service and status — what a company pays when its price list
  * has no price for that service. From the "Samvadx found" / "Samvadx not found" columns of the
  * price sheet "Samvdx Axiotta.xlsx" (user, 2026-10-29), which also has ProfileX's cost
- * (`defaultPrices`). When a new ProfileX service is wired, take both from that sheet. A
- * not-found the sheet leaves blank is left out here (it then costs the found price, as below).
- * Services not listed (CIBIL) fall back to `defaultPrices`.
+ * (`defaultPrices`). When a new ProfileX service is wired, take both from that sheet.
+ * SamvadX's not-found price is ProfileX's not-found cost, no margin ("Samvdx Axiotta (2).xlsx",
+ * MAIN tab). Where ProfileX's sheet leaves not-found blank, ProfileX charges its found price for
+ * a miss, so that is the not-found price here (Skip Tracing ₹46, not ₹0 or ₹48). Where ProfileX
+ * lists ₹0 (UAN, Alternate Phone), a miss is free (user, 2026-10-29: the MAIN tab's ₹3/₹6 there
+ * was a slip). Services not listed (CIBIL) fall back to `defaultPrices`.
  *
  * Before this, a company with no price for a service was charged ProfileX's cost — SamvadX's
  * margin silently dropped (e.g. Employment Premium by mobile at ₹2.25 instead of ₹4.25).
  */
 export const SAMVADX_PRICES: Record<string, Record<string, number>> = {
-  "skip-tracing": { "1": 48 },
+  "skip-tracing": { "1": 48, "2": 46 },
   "mobile-to-uan": { "1": 5, "2": 0 },
   "employment-latest": { "1": 7, "2": 1 },
   "employment-history": { "1": 7, "2": 1, "3": 1 },
@@ -439,14 +442,14 @@ export const SAMVADX_PRICES: Record<string, Record<string, number>> = {
   "employment-history-mobile": { "1": 11, "2": 9 },
   "phone-to-prefill": { "1": 8, "2": 5 },
   "get-alternate-phone": { "1": 8, "2": 0 },
-  "get-alternate-address": { "1": 6 },
+  "get-alternate-address": { "1": 6, "2": 4 },
   "mobile-to-multiple-upi": { "1": 3.58, "2": 1.58 },
   "mobile-to-lpg-advance": { "1": 17, "2": 15 },
   "mobile-to-esic": { "1": 11, "2": 9 },
   "financial-behaviour": { "1": 14, "2": 11.25 },
-  "financial-behaviour-crif": { "1": 14 },
+  "financial-behaviour-crif": { "1": 14, "2": 11.25 },
   "mobile-to-gst": { "1": 3.42, "2": 1.42 },
-  "gst-to-contact": { "1": 3.42 },
+  "gst-to-contact": { "1": 3.42, "2": 1.42 },
   "din-to-contact": { "1": 4.98, "2": 2.83 },
 };
 
