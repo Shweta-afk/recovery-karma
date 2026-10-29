@@ -575,6 +575,9 @@ carries the dates, counts and amounts. Deliberately NOT in a migration, so a rep
 twice. **Wallets were not allowed below ₹0** (user's call): ₹18,102.92 deducted, ₹6,256.89 left
 to bill manually — Axiotta ₹3,593.37 (₹100 deducted), Demo ₹1,672.52, Kuber ₹578, Kothule ₹413
 (those three had nothing to deduct, so no ledger row; Demo/Kothule got ₹0 wallet rows).
+`scripts/insights-wallet-guard.test.ts` fails the build if any server action that writes a
+`debtor_traces` / `insights_manual_lookups` row does not call `holdInsightsSpend`. Reconciled live
+2026-10-29: every admin lookup since the fix has a matching `admin_charge` row.
 
 Guardrails, all server-enforced in `profilex-actions.server.ts` (budget/TTL live in the
 `profilex_settings` table, **not** `org-settings-store.ts`, which is localStorage-only and so
@@ -649,6 +652,16 @@ calling (click-to-call, the production telephony provider) is unaffected and kee
 exactly as documented above — this note is scoped to WhatsApp only.
 
 ---
+
+## One account, one device — and tabs of one browser are not devices
+
+Signing in runs `enforceSingleSession` (`session-actions.server.ts`): revoke every other session,
+then rotate `agents.session_nonce`; open tabs watch the nonce over Realtime. A changed nonce alone
+does NOT mean another device: tabs of one browser share one session, so a sign-in in another tab
+rotates it too. Until 2026-10-29 every other tab then signed out with `scope: "local"`, which
+cleared the SHARED session, so the tab just signed in on said "Your session has expired" on its
+next action. `confirmEvictionThenSignOut` (`auth.tsx`) now asks Supabase first
+(`auth.getUser()`): revoked → sign out; still valid → adopt the new nonce.
 
 ## Dates: every day boundary is midnight IST
 

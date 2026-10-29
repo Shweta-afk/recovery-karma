@@ -269,6 +269,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.replace("/login");
   }
 
+  /**
+   * A new session_nonce does not by itself mean another device signed in. Tabs of one browser
+   * share one session in localStorage, so a sign-in in ANOTHER TAB of this browser also rotates
+   * the nonce — and this tab used to sign itself out, which with `scope: "local"` cleared the
+   * shared session and left the tab the user had just signed in on showing "Your session has
+   * expired" on its next action (seen live 2026-10-29: an admin signed in, entered the emailed
+   * code, and was signed out again a second later, every time). An UPDATE that never touched
+   * the nonce (this tab's ref still null from a cached profile) looked the same.
+   *
+   * So ask Supabase. A sign-in on another device runs enforceSingleSession, which revokes every
+   * other session BEFORE rotating the nonce (session-actions.server.ts), and this project
+   * checks the session on every request — so the session this browser holds is already dead
+   * by the time this event arrives. Still valid = the change came from this browser (or was not
+   * a sign-in at all): adopt the new nonce and stay signed in.
+   */
+  async function confirmEvictionThenSignOut(newNonce: string | null) {
+    // Give a sign-in in another tab a moment to finish writing its session to shared storage.
+    await new Promise((r) => setTimeout(r, 1000));
+    if (newNonce === sessionNonceRef.current) return;
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      if (!error && data.user) {
+        sessionNonceRef.current = newNonce;
+        return;
+      }
+    } catch (err) {
+      console.error("[auth] session check after a sign-in elsewhere failed:", err);
+    }
+    await forceSignOutLocally(
+      "You were signed out because this account was signed in on another device.",
+    );
+  }
+
   /** Signs this browser out HERE only (the session belongs to this address; the user's other
    *  devices are untouched) and opens the company's own sign-in page. */
   async function moveToCompanyAddress(subdomain: string) {
@@ -386,11 +419,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
         (payload) => {
           const newNonce = (payload.new as { session_nonce: string | null }).session_nonce ?? null;
-          if (newNonce !== sessionNonceRef.current) {
-            void forceSignOutLocally(
-              "You were signed out because this account was signed in on another device.",
-            );
-          }
+          if (newNonce === sessionNonceRef.current) return;
+          void confirmEvictionThenSignOut(newNonce);
         },
       )
       .subscribe();
