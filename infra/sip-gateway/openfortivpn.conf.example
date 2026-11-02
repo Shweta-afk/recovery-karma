@@ -1,0 +1,11 @@
+# SkyCRM's SSL VPN, for TESTING the gateway before the IPsec tunnel exists. setup.sh writes this
+# to /etc/openfortivpn/skycrm.conf (mode 600) and fills in the password.
+host = 118.185.178.161
+port = 10443
+username = API_Test1
+password = __PASSWORD__
+# SHA-256 of the FortiGate's certificate (checked 2026-11-01: factory default, CN=FGT80FTK22079265).
+trusted-cert = 552182078a5f4e652a6f696af9a6f7ff6cf17b877123f28d27e880ee988a9f01
+# Only SkyCRM's routes go through the VPN; the server's own DNS and internet stay as they are.
+set-dns = 0
+pppd-use-peerdns = 0
