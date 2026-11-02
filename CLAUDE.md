@@ -484,6 +484,34 @@ GST→Contact. Note a couple of
 endpoints name the debtor's number `phone` rather than `mobile` in the body — that is what
 `input: "phone"` means; sending the wrong key returns "Missing required input fields: phone".
 
+**Prices come from "Samvdx Axiotta.xlsx" (user, 2026-10-29).** Its ProfileX columns are
+`defaultPrices` (SamvadX's COST, read only by `providerCost` — actual wallet, margins); its
+"Samvadx found / not found" columns are `SAMVADX_PRICES` in `catalogue.ts`, what a company with no
+price of its own for a service pays (it used to pay ProfileX's cost). `priceFor` = company price →
+SamvadX price, never cost. When wiring a new ProfileX service, take both from that sheet.
+SamvadX's not-found price = ProfileX's not-found cost, no margin; a not-found ProfileX's sheet
+leaves blank costs ProfileX's found price (Skip Tracing miss ₹46), a listed ₹0 stays free (UAN,
+Alternate Phone) — user, 2026-10-29, "Samvdx Axiotta (2).xlsx" MAIN tab. A test pins
+`priceFor(svc, "2") === providerCost(svc, "2")` for every ProfileX service.
+**Not-found detection is money-critical:** many endpoints answer a miss with status `"OK"` +
+"No record(s) found", `201` "Record Not Found", or an empty body — `readProviderStatus` maps all of
+these to `"2"`. Before 2026-10-29 they were read as unknown and charged (and shown) at the found
+price (≈₹334 over 108 lookups, 20 Sep–29 Oct). Toasts now say found / not found next to the amount charged.
+**Correcting them:** `scripts/debug/20261029-correct-misread-not-found.sql` (needs
+`migrations/20261029_insights_charge_corrections.sql`) re-reads each stored reply, sets the
+not-found price, refunds the wallet that paid (ledger `manager_refund` / `company_refund`,
+SamvadX's tracker `actual_refund`) and records each lookup in server-only
+`insights_charge_corrections`. Idempotent — run it again after deploying the fix. Lookups whose
+old charge never left a wallet (pre-wallet, or admin lookups not yet back-charged: Axiotta, Demo,
+Kuber) are recorded `not_deducted` and lower what is still to bill by hand.
+**⚠️ NOT RUN — user, 2026-10-29: "dont refund anything".** The migration is live (empty table,
+new ledger scopes); no wallet, lookup or ledger row was changed. Don't run the script without asking.
+**Charges report** (Reports → Insights → "Charges report", `components/profilex/charges-report.tsx`,
+server `insights-charges.server.ts`, pure `lib/profilex/charges-report.ts`): admins see every
+lookup their company paid for, managers only their own — found vs not found per service, each
+lookup's price and any correction/refund, and wallet top-ups/refunds; Excel download. Typed-in
+numbers are not shown.
+
 **A blank price on a company's price list = that company's "found" price (user, 2026-10-21).**
 `priceFor(service, status, rateCard)`: a status the company's `rate_card` sets → that price; a
 known status it leaves blank → its `"1"` price; unknown/null status → the highest of ITS prices.
@@ -588,6 +616,39 @@ lookup, call log/feedback, payment etc. per IST month; admins download a month a
 phone + service (other debtor rows, then the archive) at ₹0 instead of re-buying it after a
 re-upload. The schedule is deliberately NOT a migration — see `docs/MONTHLY_ARCHIVE.md`.
 
+**Admin lookups come off the company wallet (2026-10-28).** Until then only managers were
+charged (their `profilex_wallets`); an admin's lookup — borrower Insights tab, Admin → Insights
+typed-in, CIBIL — was priced in its ledger but moved no wallet. Now every path goes through
+`holdInsightsSpend` (`src/lib/insights-wallet.server.ts`): manager → own wallet, admin →
+`profilex_company_wallets` via `profilex_company_hold`/`profilex_company_settle`
+(`migrations/20261028_company_wallet_admin_charges.sql`, live), ledger scope `admin_charge`. An
+admin can't run a lookup the company wallet doesn't cover. Past admin spend — 2,390 lookups,
+₹24,359.81, 20 Sep–28 Oct 2026 18:13 IST, ALL typed-in (Admin → Insights), none from a borrower
+tab — was charged once by hand on 2026-10-28: one `admin_charge` row per company whose note
+carries the dates, counts and amounts. Deliberately NOT in a migration, so a replay never charges
+twice. **Wallets were not allowed below ₹0** (user's call): ₹18,102.92 deducted, ₹6,256.89 left
+to bill manually — Axiotta ₹3,593.37 (₹100 deducted), Demo ₹1,672.52, Kuber ₹578, Kothule ₹413
+(those three had nothing to deduct, so no ledger row; Demo/Kothule got ₹0 wallet rows).
+`scripts/insights-wallet-guard.test.ts` fails the build if any server action that writes a
+`debtor_traces` / `insights_manual_lookups` row does not call `holdInsightsSpend`. Reconciled live
+2026-10-29: every admin lookup since the fix has a matching `admin_charge` row.
+
+**SamvadX keeps its own copy of every company archive (2026-10-29;
+`migrations/20261029_saved_archive_files.sql` applied live 2026-10-29).** So a company that forgot to download
+an archive can be handed one. Private Storage bucket `saved-archives` (created on first use) +
+server-only ledger `saved_archive_files`; job `src/lib/saved-archives.server.ts`, rules
+`saved-archives.ts` (tested in `scripts/saved-archives.test.ts`), screen **Superadmin → Saved
+Archives** (`superadmin.archives.tsx`, actions `saved-archive-actions.server.ts`). Two kinds:
+`portfolio_end` — the daily archive run saves, for each portfolio that ENDED (closed, or end date
+passed) within the last `AUTO_SAVE_WINDOW_DAYS` (7), a full Excel: every account with the whole
+bank file, calls, Insights, payments, settlements, disputes. One copy per ending (reopen + close
+on another day = a second copy). Runs BEFORE the dead-account strip, so the bank file is intact.
+`month` — on the 1st, the company's Archive History file for the month that just ended, frozen
+(Admin "Archive now" can otherwise rebuild past months). Older endings/months are never
+back-filled automatically: they show under "Not saved yet" with a "Save copy" button. Chosen over
+a local MacBook folder (off/asleep laptop, no backup, one person's disk); a local mirror could be
+added later as a script that downloads new files. Copying data never changes company data.
+
 **Insights outcome report + lookup feedback (2026-09-27).** `insights_outcome_report` RPC
 (`migrations/20260927_insights_outcome_report.sql`, applied live) gives one row per lookup with the
 calls/contacts/PTPs/payments on that account AFTER it — attribution by time, not causation; logic
@@ -670,6 +731,16 @@ calling (click-to-call, the production telephony provider) is unaffected and kee
 exactly as documented above — this note is scoped to WhatsApp only.
 
 ---
+
+## One account, one device — and tabs of one browser are not devices
+
+Signing in runs `enforceSingleSession` (`session-actions.server.ts`): revoke every other session,
+then rotate `agents.session_nonce`; open tabs watch the nonce over Realtime. A changed nonce alone
+does NOT mean another device: tabs of one browser share one session, so a sign-in in another tab
+rotates it too. Until 2026-10-29 every other tab then signed out with `scope: "local"`, which
+cleared the SHARED session, so the tab just signed in on said "Your session has expired" on its
+next action. `confirmEvictionThenSignOut` (`auth.tsx`) now asks Supabase first
+(`auth.getUser()`): revoked → sign out; still valid → adopt the new nonce.
 
 ## Dates: every day boundary is midnight IST
 
@@ -771,7 +842,7 @@ promise_date" as promises would start counting callbacks.
 
 The view for SamvadX/Axiotta itself, across every company. Pages (sidebar order): **Overview**
 (`/superadmin`, the home page), **Companies** (`/superadmin/companies`), **Insights Wallet**,
-**Insights Activity**, **Invoices**, **Revenue**, **Contracts**, **Superadmin Activity**, **Help**.
+**Insights Activity**, **Invoices**, **Revenue**, **Contracts**, **Saved Archives**, **Superadmin Activity**, **Help**.
 
 ⚠️ **Feature usage only — never a company's collections.** No payments, promise amounts,
 recovery figures or anything a company collected from borrowers appears in this portal (product
@@ -1020,6 +1091,7 @@ server on first upload; the browser uploads straight to a signed upload URL).
 | `superadmin/` (Overview), `superadmin/companies`, company detail tabs, `superadmin/revenue` | ✅ Real (2026-10-09) — usage via `superadmin_usage_totals`, revenue via `invoices`. See "Superadmin portal" above                                                                                                                                                 |
 | `superadmin/wallet`, `superadmin/insights`, `superadmin/invoices`, `superadmin/activity`    | ✅ Real; shared date filter + Excel added 2026-10-09. Invoices: payments, credit notes and "Still owed" since 2026-10-10                                                                                                                                          |
 | `superadmin/contracts`, `superadmin/help`                                                   | ✅ Real. Contracts = uploads, templates, drafts, published changes + acceptances; superadmin-only for now (`CONTRACTS_VISIBLE_TO_COMPANIES`). Help = glossary + page guides                                                                                       |
+| `superadmin/archives` (Saved Archives)                                                      | ✅ Live 2026-10-29: SamvadX's own copies of portfolio-end and month archives; download + "Save copy"                                                                                                                                 |
 | `admin/billing` (Billing & Agreements)                                                      | ✅ Real (2026-10-12): the company's invoices (opening = Viewed) and terms/agreements with Sign. `admin/contracts` redirects here                                                                                                                                  |
 
 ---
@@ -1096,6 +1168,16 @@ await saveDisposition({ ...data });
   panel and Contact History tab now read real `call_logs`, and the Payments tab reads real
   `payments`. The two fields themselves survive only as the fallback for an ad-hoc manual call
   (no debtor row behind it) and go away with the `MOCK_DEBTORS` array.
+
+**Closing and reopening portfolios (2026-10-22).** Picking an old portfolio under "Continues
+portfolio" on the upload page closes it the moment the new file is saved (`createPortfolio`) —
+on 2026-10-22 a 1-account RBL test file closed "AU BANK" (594 accounts, 470 lookups), which looked
+deleted and had to be reopened in SQL. Now the picker shows what will close (red when
+`lendersDiffer`, `src/lib/portfolio-continuation.ts`, tested in
+`scripts/portfolio-continuation.test.ts`), and the upload button asks first, counting the
+accounts / lookups / calls (`getPortfolioFootprint`). Admins get **Reopen** on a closed
+portfolio's header (`ReopenPortfolioButton` → `reopenPortfolio`, which only clears `closed_at` —
+closing never changed anything else). Not shown for a portfolio that merely passed its end date.
 
 **Done (2026-10-18):** no store reads the whole `debtors` table just to label its own rows any
 more — settlements, retention requests, reminders, messages and disputes use

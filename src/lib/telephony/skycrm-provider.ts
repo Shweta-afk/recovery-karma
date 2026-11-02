@@ -1,6 +1,6 @@
 // SkyCRM-ACD implementation of TelephonyProvider (voice + inbound queue control).
 // Vendor: Intellect Info Trade, "SKYCRM - ACD (Auto Call Dialer)", API spec v1.2 (PDF, not public).
-// Server-side only — never import from client code (needs SKYCRM_SECRET / SKYCRM_USER / PASS).
+// Server-side only — never import from client code (needs SKYCRM_SECRET).
 //
 // Click-to-call: dialing_phone rings the agent's extension (a SIP softphone — Zoiper/X-Lite — until
 // the SIP.js webphone lands), then bridges the debtor. Proven end-to-end on the vendor test env
@@ -35,13 +35,16 @@ const SKYCRM_BASE_URL = env("SKYCRM_BASE_URL") ?? "https://vs.skycrm.app";
 /** HS256 signing secret from the vendor. If copying it from the PDF, drop the leading space the
  * PDF renders inside the quotes — it is not part of the key. */
 const SKYCRM_SECRET = env("SKYCRM_SECRET");
-/** Service-account username/password the vendor issues. Same credentials work in both CRMs
- * per the spec's Login-api note. */
-const SKYCRM_USER = env("SKYCRM_USER");
-const SKYCRM_PASS = env("SKYCRM_PASS");
-/** Dialing prefix the vendor assigns (spec example: 24). Prepended by their switch, passed
- * through on dialing_phone / hangup_phone. */
-const SKYCRM_PREFIX = env("SKYCRM_PREFIX") ?? "";
+/** Optional. The API only checks the token's signature (the vendor confirmed 2026-11-02, and calls
+ * with a blank username/password succeed), so these only matter for the CRM web login. */
+const SKYCRM_USER = env("SKYCRM_USER") ?? "";
+const SKYCRM_PASS = env("SKYCRM_PASS") ?? "";
+/** Dialing prefix: SkyCRM dials prefix + number. On our account (and their test env) it is the
+ * agent's own extension — 8601 dials "8601" + number — so unset or "extension" means that; any
+ * other value is sent as-is for every agent. */
+const SKYCRM_PREFIX = env("SKYCRM_PREFIX")?.trim() || "extension";
+const dialPrefix = (extension: string) =>
+  SKYCRM_PREFIX === "extension" ? extension : SKYCRM_PREFIX;
 /** Form field dialing_phone takes a per-call caller ID in, if the vendor supports one. UNCONFIRMED
  *  (asked 2026-10-26): leave unset and the DID configured on the extension is used, as before. */
 const SKYCRM_CALLER_ID_FIELD = env("SKYCRM_CALLER_ID_FIELD")?.trim() || undefined;
@@ -49,11 +52,11 @@ const SKYCRM_CALLER_ID_FIELD = env("SKYCRM_CALLER_ID_FIELD")?.trim() || undefine
 const TOKEN_TTL_SECONDS = 3600;
 
 function requireCredentials() {
-  if (!SKYCRM_SECRET || !SKYCRM_USER || !SKYCRM_PASS) {
-    // Surfaced to an agent's toast; the missing settings (SKYCRM_SECRET / SKYCRM_USER /
-    // SKYCRM_PASS) go to the server log only — see docs/ERROR_CODES.md.
+  if (!SKYCRM_SECRET) {
+    // Surfaced to an agent's toast; the missing setting goes to the server log only — see
+    // docs/ERROR_CODES.md.
     throw appError("SX-3001", "Calling is not set up yet. Contact SamvadX support.", {
-      missing: ["SKYCRM_SECRET", "SKYCRM_USER", "SKYCRM_PASS"].filter((k) => !env(k)),
+      missing: ["SKYCRM_SECRET"],
     });
   }
 }
@@ -215,12 +218,24 @@ export const skycrmProvider: TelephonyProvider = {
     // the field (SKYCRM_CALLER_ID_FIELD); until then the DID set on the extension applies.
     const extension = req.agentNumber;
     const perId = req.requestId || req.callLogId;
+    // SkyCRM rings the agent's softphone first. If it isn't registered, dialing_phone still says
+    // "Dialling … successfully" and then nothing happens (seen 2026-11-02 right after a VPN
+    // reconnect), so check first and tell the agent instead.
+    const state = await post("dial_response", { extension }, extension);
+    const rows = Array.isArray(state.response) ? (state.response as { status?: string }[]) : [];
+    if (rows.some((r) => String(r.status ?? "").toLowerCase() === "unavailable")) {
+      throw appError(
+        "SX-3106",
+        `Your phone (extension ${extension}) isn't connected. Open your softphone, check it is registered, then try again.`,
+        { extension },
+      );
+    }
     await post(
       "dialing_phone",
       {
         phone_number: req.debtorNumber,
         extension,
-        prefix: SKYCRM_PREFIX,
+        prefix: dialPrefix(extension),
         per_id: perId,
         ...(SKYCRM_CALLER_ID_FIELD && req.callerId
           ? { [SKYCRM_CALLER_ID_FIELD]: req.callerId }
@@ -246,7 +261,7 @@ export const skycrmProvider: TelephonyProvider = {
       } else {
         await post(
           "hangup_phone",
-          { phone_number: phone, extension, prefix: SKYCRM_PREFIX, per_id: providerCallId },
+          { phone_number: phone, extension, prefix: dialPrefix(extension), per_id: providerCallId },
           extension,
         );
       }
@@ -296,6 +311,11 @@ export const skycrmProvider: TelephonyProvider = {
       if (!agentHandle)
         agentHandle = looksLikeExtension(dst) ? dst : looksLikeExtension(src) ? src : undefined;
       if (!remotePhone) remotePhone = agentHandle === dst ? src : dst;
+      // An outbound CDR's dst is prefix + number ("8601" + "9876543210"); keep just the number.
+      const prefix = agentHandle ? dialPrefix(agentHandle) : "";
+      if (prefix && remotePhone?.startsWith(prefix) && remotePhone.length - prefix.length >= 10) {
+        remotePhone = remotePhone.slice(prefix.length);
+      }
     } else {
       status = LIVE_STATUS[(pick("status") ?? "").toLowerCase()] ?? "failed";
     }

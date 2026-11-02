@@ -32,33 +32,34 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 
 ### Insights (1xxx) — `src/lib/profilex-actions.server.ts` unless noted
 
-| Code    | User sees                                      | What it really means                                                                                                                   |
-| ------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| SX-1001 | Could not load the debtor.                     | Database error reading the debtor row before a lookup.                                                                                 |
-| SX-1002 | Could not check your Insights wallet.          | Database error reading the manager's wallet balance.                                                                                   |
-| SX-1003 | Could not load your Insights wallet.           | Database error reading the caller's wallet.                                                                                            |
-| SX-1004 | Could not load managers.                       | Database error listing managers for the wallets card.                                                                                  |
-| SX-1005 | Could not load wallets.                        | Database error listing manager wallets.                                                                                                |
-| SX-1006 | Could not load your company's Insights budget. | Database error reading `profilex_settings` budget.                                                                                     |
-| SX-1007 | Could not verify that manager.                 | Database error checking the manager being topped up.                                                                                   |
-| SX-1008 | Could not update the wallet.                   | Wallet top-up RPC failed.                                                                                                              |
-| SX-1009 | Could not load Insights usage.                 | Usage RPC failed.                                                                                                                      |
-| SX-1010 | Could not load Insights detail log.            | Detail-log query failed.                                                                                                               |
-| SX-1011 | Could not load portfolios.                     | Portfolio list for the Loan ID report failed.                                                                                          |
-| SX-1012 | Could not load lookup data.                    | Reading traces for the Loan ID report failed.                                                                                          |
-| SX-1013 | Could not check the portfolio.                 | Portfolio check for an Excel request failed.                                                                                           |
-| SX-1014 | Could not send the request.                    | Inserting an Excel export request failed.                                                                                              |
-| SX-1015 | Could not load lookups.                        | Reading manual lookups (Admin → Insights) failed.                                                                                      |
-| SX-1016 | This lookup could not be started.              | `profilex_wallet_hold` RPC errored (not "not enough money" — that has its own plain message).                                          |
-| SX-1017 | Could not load the Insights outcome report.    | `insights_outcome_report` RPC failed. If the log names the function, `migrations/20260927_insights_outcome_report.sql` is not applied. |
-| SX-1018 | Could not send the request.                    | `insight-request-store.ts`: inserting an Insights request failed (browser-side; detail in browser console).                            |
-| SX-1019 | Could not update the request.                  | `insight-request-store.ts`: updating an Insights request failed (browser-side).                                                        |
-| SX-1901 | This page is not available right now.          | `SUPABASE_URL` / `SUPABASE_ANON_KEY` missing on the server (caller-scoped read).                                                       |
-| SX-1902 | Insights is not set up yet.                    | `PROFILEX_CLIENT_HASH_ID` / `PROFILEX_SECRET_KEY` / `PROFILEX_ACCESS_KEY` missing on Railway.                                          |
-| SX-1903 | "<service>" is not available right now.        | ProfileX said "You Dont Have UAT Access" — service not enabled on our Neokred account, or wrong client hash id. Not charged.           |
-| SX-1904 | This lookup could not be completed.            | ProfileX returned non-200 (status + message in the log). Not charged.                                                                  |
-| SX-1905 | "<service>" is not available right now.        | Same as SX-1903, for an admin manual lookup.                                                                                           |
-| SX-1906 | This lookup could not be completed.            | Same as SX-1904, for an admin manual lookup.                                                                                           |
+| Code    | User sees                                      | What it really means                                                                                                                                  |
+| ------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SX-1001 | Could not load the debtor.                     | Database error reading the debtor row before a lookup.                                                                                                |
+| SX-1002 | Could not check your Insights wallet.          | Database error reading the manager's wallet balance.                                                                                                  |
+| SX-1003 | Could not load your Insights wallet.           | Database error reading the caller's wallet.                                                                                                           |
+| SX-1004 | Could not load managers.                       | Database error listing managers for the wallets card.                                                                                                 |
+| SX-1005 | Could not load wallets.                        | Database error listing manager wallets.                                                                                                               |
+| SX-1006 | Could not load your company's Insights budget. | Database error reading `profilex_settings` budget.                                                                                                    |
+| SX-1007 | Could not verify that manager.                 | Database error checking the manager being topped up.                                                                                                  |
+| SX-1008 | Could not update the wallet.                   | Wallet top-up RPC failed.                                                                                                                             |
+| SX-1009 | Could not load Insights usage.                 | Usage RPC failed.                                                                                                                                     |
+| SX-1010 | Could not load Insights detail log.            | Detail-log query failed.                                                                                                                              |
+| SX-1011 | Could not load portfolios.                     | Portfolio list for the Loan ID report failed.                                                                                                         |
+| SX-1012 | Could not load lookup data.                    | Reading traces for the Loan ID report failed.                                                                                                         |
+| SX-1013 | Could not check the portfolio.                 | Portfolio check for an Excel request failed.                                                                                                          |
+| SX-1014 | Could not send the request.                    | Inserting an Excel export request failed.                                                                                                             |
+| SX-1015 | Could not load lookups.                        | Reading manual lookups (Admin → Insights) failed.                                                                                                     |
+| SX-1016 | This lookup could not be started.              | `profilex_wallet_hold` RPC errored (not "not enough money" — that has its own plain message).                                                         |
+| SX-1017 | Could not load the Insights outcome report.    | `insights_outcome_report` RPC failed. If the log names the function, `migrations/20260927_insights_outcome_report.sql` is not applied.                |
+| SX-1018 | Could not send the request.                    | `insight-request-store.ts`: inserting an Insights request failed (browser-side; detail in browser console).                                           |
+| SX-1019 | Could not update the request.                  | `insight-request-store.ts`: updating an Insights request failed (browser-side).                                                                       |
+| SX-1020 | Could not load the charges report.             | `getInsightsChargesReport` (`insights-charges.server.ts`): a read of debtor_traces, insights_manual_lookups, corrections or the wallet ledger failed. |
+| SX-1901 | This page is not available right now.          | `SUPABASE_URL` / `SUPABASE_ANON_KEY` missing on the server (caller-scoped read).                                                                      |
+| SX-1902 | Insights is not set up yet.                    | `PROFILEX_CLIENT_HASH_ID` / `PROFILEX_SECRET_KEY` / `PROFILEX_ACCESS_KEY` missing on Railway.                                                         |
+| SX-1903 | "<service>" is not available right now.        | ProfileX said "You Dont Have UAT Access" — service not enabled on our Neokred account, or wrong client hash id. Not charged.                          |
+| SX-1904 | This lookup could not be completed.            | ProfileX returned non-200 (status + message in the log). Not charged.                                                                                 |
+| SX-1905 | "<service>" is not available right now.        | Same as SX-1903, for an admin manual lookup.                                                                                                          |
+| SX-1906 | This lookup could not be completed.            | Same as SX-1904, for an admin manual lookup.                                                                                                          |
 
 ### CIBIL (2xxx) — `src/lib/cibil-actions.server.ts`
 
@@ -80,13 +81,14 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 
 | Code    | User sees                            | What it really means                                                                                    |
 | ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| SX-3001 | Calling is not set up yet.           | `SKYCRM_SECRET` / `SKYCRM_USER` / `SKYCRM_PASS` missing (the log lists which). `skycrm-provider.ts`     |
+| SX-3001 | Calling is not set up yet.           | `SKYCRM_SECRET` missing on Railway. `skycrm-provider.ts`                                                |
 | SX-3002 | Calling is not set up yet.           | `TELEPHONY_PROVIDER` on Railway is not a known value (e.g. stale `tata`/`exotel`). `telephony/index.ts` |
 | SX-3101 | Calling is not available right now.  | SkyCRM rejected our token (status 401).                                                                 |
 | SX-3102 | Could not reach the calling service. | Network error reaching SkyCRM.                                                                          |
 | SX-3103 | The calling service had a problem.   | SkyCRM returned non-JSON (usually their 500 HTML page).                                                 |
 | SX-3104 | The call could not be placed.        | SkyCRM returned status ≥ 300; their message is in the log.                                              |
 | SX-3105 | SMS is not available yet.            | SkyCRM has no SMS endpoint.                                                                             |
+| SX-3106 | Your phone (extension …) isn't connected. | SkyCRM's `dial_response` says the agent's extension is Unavailable (softphone not registered / VPN down). |
 | SX-3201 | Could not transcribe this recording. | Groq Whisper returned an error. `call-sentiment-actions.server.ts`                                      |
 | SX-3202 | Could not analyse this call.         | Gemini returned an error.                                                                               |
 | SX-3203 | Could not analyse this call.         | Gemini returned an empty answer.                                                                        |
@@ -169,20 +171,31 @@ All are database errors on the action named; the database message is in the log.
 
 ### Archive (6xxx)
 
-| Code    | User sees                                                          | What it really means                                                                        |
-| ------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| SX-6101 | Could not read accounts for the archive.                           | Dead-account archive: reading `debtors` failed. `dead-account-archive.server.ts`            |
-| SX-6102 | Could not save the archive file.                                   | Upload to the `dead-accounts` Storage bucket failed.                                        |
-| SX-6103 | Could not record the archive file.                                 | Insert into `dead_account_files` failed.                                                    |
-| SX-6104 | The archive file was saved, but the accounts could not be cleared. | Stripping `extra`/`email` failed after the Excel was saved — the file path is in the log.   |
-| SX-6105 | Could not load portfolios for the archive.                         | Reading closed portfolios failed.                                                           |
-| SX-6106 | Could not load companies for the archive.                          | Cron run: reading `clients` failed.                                                         |
-| SX-6107 | Could not load that file.                                          | Reading `dead_account_files` for a download failed.                                         |
-| SX-6108 | Could not create a download link.                                  | Signed Storage URL failed.                                                                  |
-| SX-6201 | Could not save this month's archive.                               | `archive_month` RPC failed. `archive-snapshot.server.ts`                                    |
-| SX-6202 | Could not read accounts for the archive.                           | Paging debtor ids failed.                                                                   |
-| SX-6203 | Could not save account history for the archive.                    | `archive_debtor_versions` RPC failed.                                                       |
-| SX-6301 | Could not archive <month>.                                         | Admin "Archive now": `archive_month` RPC failed for that month. `archive-actions.server.ts` |
+| Code    | User sees                                                          | What it really means                                                                                       |
+| ------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| SX-6101 | Could not read accounts for the archive.                           | Dead-account archive: reading `debtors` failed. `dead-account-archive.server.ts`                           |
+| SX-6102 | Could not save the archive file.                                   | Upload to the `dead-accounts` Storage bucket failed.                                                       |
+| SX-6103 | Could not record the archive file.                                 | Insert into `dead_account_files` failed.                                                                   |
+| SX-6104 | The archive file was saved, but the accounts could not be cleared. | Stripping `extra`/`email` failed after the Excel was saved — the file path is in the log.                  |
+| SX-6105 | Could not load portfolios for the archive.                         | Reading closed portfolios failed.                                                                          |
+| SX-6106 | Could not load companies for the archive.                          | Cron run: reading `clients` failed.                                                                        |
+| SX-6107 | Could not load that file.                                          | Reading `dead_account_files` for a download failed.                                                        |
+| SX-6108 | Could not create a download link.                                  | Signed Storage URL failed.                                                                                 |
+| SX-6201 | Could not save this month's archive.                               | `archive_month` RPC failed. `archive-snapshot.server.ts`                                                   |
+| SX-6202 | Could not read accounts for the archive.                           | Paging debtor ids failed.                                                                                  |
+| SX-6203 | Could not save account history for the archive.                    | `archive_debtor_versions` RPC failed.                                                                      |
+| SX-6301 | Could not archive <month>.                                         | Admin "Archive now": `archive_month` RPC failed for that month. `archive-actions.server.ts`                |
+| SX-6401 | Could not prepare storage for saved archives.                      | Creating the `saved-archives` Storage bucket failed. `saved-archives.server.ts`                            |
+| SX-6402 | Could not read the portfolio for its archive.                      | Reading call logs / lookups / payments / settlements / disputes for a portfolio copy failed.               |
+| SX-6403 | Could not save the archive copy.                                   | Upload to the `saved-archives` bucket failed.                                                              |
+| SX-6404 | Could not record the archive copy.                                 | Insert into `saved_archive_files` failed (e.g. an overlapping run saved it first); the upload was removed. |
+| SX-6405 | Could not read the portfolio for its archive.                      | Reading the `portfolios` row for a copy failed or it belongs to another company.                           |
+| SX-6406 | Could not read accounts for the archive copy.                      | Reading the portfolio's `debtors` failed.                                                                  |
+| SX-6407 | Could not load portfolios for saved archives.                      | Reading ended portfolios failed.                                                                           |
+| SX-6408 | Could not load saved archives.                                     | Reading `saved_archive_files` failed — usually the migration is not applied.                               |
+| SX-6409 | Could not read the month's archive.                                | Reading `monthly_archive_rows` for a month copy failed.                                                    |
+| SX-6410 | Could not load that archive.                                       | Reading `saved_archive_files` for a download failed.                                                       |
+| SX-6411 | Could not create a download link.                                  | Signed URL from the `saved-archives` bucket failed.                                                        |
 
 ### General (9xxx)
 

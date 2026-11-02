@@ -309,6 +309,8 @@ console.log("skycrm: webhook parsing + disposition mapping");
   ok("recordfile is a path, not a URL", cdr.recordingPath === "10.128.11.67/Recording/x.wav" && cdr.recordingUrl === undefined);
   const busy = skycrmProvider.parseStatusWebhook({ callid: "9", src: "8006", dst: "9876543210", billsec: "0", disposition: "BUSY", direction: "Outbound" });
   ok("CDR busy → busy, extension from src", busy.status === "busy" && busy.agentHandle === "8006");
+  const outCdr = skycrmProvider.parseStatusWebhook({ callid: "10", src: "8601", dst: "86019876543210", billsec: "33", disposition: "ANSWERED", direction: "Outbound" });
+  ok("outbound CDR drops the extension prefix from the number", outCdr.agentHandle === "8601" && outCdr.remotePhone === "9876543210");
   throws("webhook without callid rejected", () => skycrmProvider.parseStatusWebhook({ status: "Answered" }));
   ok("no answer → Non-Contacted", skycrmDispositionFor("no_answer") === "Non-Contacted");
   ok("wrong number → Non-Contacted", skycrmDispositionFor("wrong_number") === "Non-Contacted");

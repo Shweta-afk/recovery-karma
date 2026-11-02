@@ -3,11 +3,13 @@
 //   Data by Loan ID     — everything the lookups found per account, vs the bank file
 //                         (loan-lookup-report.tsx)
 // `children` renders under Outcomes only — Admin adds its usage/spend panels there.
+// The "Charges report" button (charges-report.tsx) sits beside both views.
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { InsightsPeriod } from "@/lib/profilex/period";
 import { InsightsOutcomeReport, InsightsPeriodPicker } from "./outcome-report";
 import { LoanLookupReport } from "./loan-lookup-report";
+import { ChargesReportButton } from "./charges-report";
 
 type View = "outcomes" | "loan-data";
 const VIEWS: { value: View; label: string }[] = [
@@ -47,7 +49,10 @@ export function InsightsReports({
             </button>
           ))}
         </div>
-        {view === "outcomes" && <InsightsPeriodPicker value={period} onChange={onPeriodChange} />}
+        <div className="flex flex-wrap items-center gap-3">
+          {view === "outcomes" && <InsightsPeriodPicker value={period} onChange={onPeriodChange} />}
+          <ChargesReportButton initialPeriod={period} />
+        </div>
       </div>
       {view === "outcomes" ? (
         <div className="space-y-6">

@@ -265,11 +265,16 @@ export function deadAccountFilePath(
   dayKey: string,
   count: number,
 ): string {
-  const safeName =
-    portfolioName
+  return `${clientId}/${portfolioId}/${dayKey}_${safeFileName(portfolioName)}_${count}-accounts.xlsx`;
+}
+
+/** A name reduced to letters, digits and dashes (≤60 chars) — safe in a Storage path. */
+export function safeFileName(name: string): string {
+  return (
+    name
       .normalize("NFKD")
       .replace(/[^a-zA-Z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "portfolio";
-  return `${clientId}/${portfolioId}/${dayKey}_${safeName}_${count}-accounts.xlsx`;
+      .slice(0, 60) || "portfolio"
+  );
 }

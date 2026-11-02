@@ -6,6 +6,7 @@ import { fetchAllRows } from "./fetch-all-rows";
 import { createJsonCache } from "./json-cache";
 import { fetchDebtorsShared } from "./debtors-fetch";
 import { todayIstKey } from "./date-filter";
+import type { PortfolioFootprint } from "./portfolio-continuation";
 import {
   STD_FIELDS,
   slotsFromDebtor,
@@ -1131,6 +1132,49 @@ export async function closePortfolio(id: string): Promise<void> {
     .eq("id", id);
   if (error) throw error;
   await refreshPortfolios();
+}
+
+/** Undoes closePortfolio() / a "continues portfolio" upload: clears closed_at, so the portfolio's
+ * accounts are back in the call queue and every working list. Nothing else was changed by the
+ * close, so nothing else needs restoring. Added 2026-10-22, when the only way back was a
+ * database edit. The button is admin-only (ReopenPortfolioButton); RLS (portfolios_update)
+ * also lets a manager reopen their own portfolio, as it already lets them close one. */
+export async function reopenPortfolio(id: string): Promise<void> {
+  const { error } = await supabase.from("portfolios").update({ closed_at: null }).eq("id", id);
+  if (error) throw error;
+  await refreshPortfolios();
+}
+
+/** How much a portfolio holds — for the "this will close …" warnings. Counts only, read under
+ * the caller's own RLS; a count that can't be read comes back 0 rather than failing the screen. */
+export async function getPortfolioFootprint(id: string): Promise<PortfolioFootprint> {
+  const count = async (q: PromiseLike<{ count: number | null; error: unknown }>) => {
+    const { count: n, error } = await q;
+    return error ? 0 : (n ?? 0);
+  };
+  const [accounts, lookups, calls] = await Promise.all([
+    count(
+      supabase
+        .from("debtors")
+        .select("id", { count: "exact", head: true })
+        .eq("portfolio_id", id)
+        .neq("status", "removed"),
+    ),
+    count(
+      supabase
+        .from("debtor_traces")
+        .select("id, debtors!inner(portfolio_id)", { count: "exact", head: true })
+        .eq("debtors.portfolio_id", id)
+        .eq("state", "done"),
+    ),
+    count(
+      supabase
+        .from("call_logs")
+        .select("id, debtors!inner(portfolio_id)", { count: "exact", head: true })
+        .eq("debtors.portfolio_id", id),
+    ),
+  ]);
+  return { accounts, lookups, calls };
 }
 
 /** Deletes a portfolio from Portfolio Overview. The `delete_portfolio` RPC

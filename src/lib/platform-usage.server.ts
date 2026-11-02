@@ -15,7 +15,7 @@
 import { z, tokenSchema, idSchema } from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
-import { getService, priceFor } from "./profilex/catalogue";
+import { getService, providerCost } from "./profilex/catalogue";
 import { fetchAllRows } from "./fetch-all-rows";
 import { todayIstKey } from "./date-filter";
 import {
@@ -94,7 +94,7 @@ function actualCostOf(
   charged: number,
 ): number {
   const service = getService(serviceId);
-  return billable && service ? n * priceFor(service, providerStatus, null) : charged;
+  return billable && service ? n * providerCost(service, providerStatus) : charged;
 }
 
 interface SqlTotals {

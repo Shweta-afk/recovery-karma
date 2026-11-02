@@ -77,6 +77,7 @@ import {
 import { getPortfolioRecovered, getPayments } from "@/lib/payments-store";
 import { errorText } from "@/lib/app-error";
 import { PurgeRequestButton } from "@/components/data-purge/purge-request-button";
+import { ReopenPortfolioButton } from "@/components/portfolio/reopen-portfolio-button";
 
 export interface Portfolio {
   id: string;
@@ -1178,6 +1179,12 @@ export function PortfolioDetail({
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            <ReopenPortfolioButton
+              portfolioId={p.id}
+              portfolioName={p.name}
+              closedAt={raw?.closedAt}
+              replacedByName={replacedByName}
+            />
             <PurgeRequestButton portfolioId={p.id} portfolioName={p.name} />
             {onUploadPaid && (
               <Button

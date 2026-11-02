@@ -48,6 +48,7 @@ import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
 import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
 import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
 import { Route as SuperadminActivityRouteImport } from './routes/superadmin.activity'
+import { Route as SuperadminArchivesRouteImport } from './routes/superadmin.archives'
 import { Route as SuperadminContractsRouteImport } from './routes/superadmin.contracts'
 import { Route as SuperadminHelpRouteImport } from './routes/superadmin.help'
 import { Route as SuperadminInsightsRouteImport } from './routes/superadmin.insights'
@@ -253,6 +254,11 @@ const SuperadminActivityRoute = SuperadminActivityRouteImport.update({
   path: '/activity',
   getParentRoute: () => SuperadminRoute,
 } as any)
+const SuperadminArchivesRoute = SuperadminArchivesRouteImport.update({
+  id: '/archives',
+  path: '/archives',
+  getParentRoute: () => SuperadminRoute,
+} as any)
 const SuperadminContractsRoute = SuperadminContractsRouteImport.update({
   id: '/contracts',
   path: '/contracts',
@@ -337,6 +343,7 @@ export interface FileRoutesByFullPath {
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
+  '/superadmin/archives': typeof SuperadminArchivesRoute
   '/superadmin/contracts': typeof SuperadminContractsRoute
   '/superadmin/help': typeof SuperadminHelpRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
@@ -383,6 +390,7 @@ export interface FileRoutesByTo {
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
+  '/superadmin/archives': typeof SuperadminArchivesRoute
   '/superadmin/contracts': typeof SuperadminContractsRoute
   '/superadmin/help': typeof SuperadminHelpRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
@@ -434,6 +442,7 @@ export interface FileRoutesById {
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
+  '/superadmin/archives': typeof SuperadminArchivesRoute
   '/superadmin/contracts': typeof SuperadminContractsRoute
   '/superadmin/help': typeof SuperadminHelpRoute
   '/superadmin/insights': typeof SuperadminInsightsRoute
@@ -486,6 +495,7 @@ export interface FileRouteTypes {
     | '/manager/reports'
     | '/manager/upload'
     | '/superadmin/activity'
+    | '/superadmin/archives'
     | '/superadmin/contracts'
     | '/superadmin/help'
     | '/superadmin/insights'
@@ -532,6 +542,7 @@ export interface FileRouteTypes {
     | '/manager/reports'
     | '/manager/upload'
     | '/superadmin/activity'
+    | '/superadmin/archives'
     | '/superadmin/contracts'
     | '/superadmin/help'
     | '/superadmin/insights'
@@ -582,6 +593,7 @@ export interface FileRouteTypes {
     | '/manager/reports'
     | '/manager/upload'
     | '/superadmin/activity'
+    | '/superadmin/archives'
     | '/superadmin/contracts'
     | '/superadmin/help'
     | '/superadmin/insights'
@@ -885,6 +897,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SuperadminActivityRouteImport
       parentRoute: typeof SuperadminRoute
     }
+    '/superadmin/archives': {
+      id: '/superadmin/archives'
+      path: '/archives'
+      fullPath: '/superadmin/archives'
+      preLoaderRoute: typeof SuperadminArchivesRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
     '/superadmin/contracts': {
       id: '/superadmin/contracts'
       path: '/contracts'
@@ -1034,6 +1053,7 @@ const ManagerRouteWithChildren =
 
 interface SuperadminRouteChildren {
   SuperadminActivityRoute: typeof SuperadminActivityRoute
+  SuperadminArchivesRoute: typeof SuperadminArchivesRoute
   SuperadminContractsRoute: typeof SuperadminContractsRoute
   SuperadminHelpRoute: typeof SuperadminHelpRoute
   SuperadminInsightsRoute: typeof SuperadminInsightsRoute
@@ -1048,6 +1068,7 @@ interface SuperadminRouteChildren {
 
 const SuperadminRouteChildren: SuperadminRouteChildren = {
   SuperadminActivityRoute: SuperadminActivityRoute,
+  SuperadminArchivesRoute: SuperadminArchivesRoute,
   SuperadminContractsRoute: SuperadminContractsRoute,
   SuperadminHelpRoute: SuperadminHelpRoute,
   SuperadminInsightsRoute: SuperadminInsightsRoute,

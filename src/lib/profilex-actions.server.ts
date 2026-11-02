@@ -41,13 +41,16 @@ import {
   LEGACY_SERVICE_IDS,
   getService,
   priceFor,
+  providerCost,
   type DerivedFrom,
   type ProfilexService,
 } from "./profilex/catalogue";
 import { toOutcomeRow, type OutcomeRpcRow } from "./profilex/outcome";
 import { buildLoanLookupData, type LoanTraceInput } from "./profilex/loan-lookup-data";
+import { buildPrefill } from "./cibil/payprime";
 import { fetchAllRows } from "./fetch-all-rows";
 import { appError } from "./app-error";
+import { holdInsightsSpend } from "./insights-wallet.server";
 
 // This project has no generated Supabase `Database` types, so every `.from(...)` resolves to
 // `never` and each column read is a type error (the older stores simply live with ~300 of
@@ -299,6 +302,46 @@ async function writebackPhones(
     .eq("id", debtor.id as string);
 }
 
+/** The borrower's PAN from what is already on file: the bank file's PAN column, else an earlier
+ *  lookup that returned one (Skip Tracing's PAN block). Same sources and the same picking rule
+ *  as the CIBIL panel's prefill (buildPrefill), so both screens agree on a borrower's PAN.
+ *  Returns "" when nothing valid is on file. */
+async function panOnFile(
+  admin: ReturnType<typeof db>,
+  debtor: Record<string, unknown>,
+): Promise<string> {
+  const { data: traces } = await admin
+    .from("debtor_traces")
+    .select("id, service_id, state, provider_status, billable, cost, created_at, response")
+    .eq("debtor_id", String(debtor.id))
+    .eq("state", "done");
+  const lookup =
+    buildLoanLookupData(
+      ((traces ?? []) as Record<string, unknown>[]).map((t) => ({
+        traceId: String(t.id),
+        debtorId: String(debtor.id),
+        serviceId: String(t.service_id),
+        state: String(t.state),
+        providerStatus: (t.provider_status as string | null) ?? null,
+        billable: !!t.billable,
+        cost: Number(t.cost ?? 0),
+        createdAt: String(t.created_at),
+        response: t.response,
+        loanReference: "",
+        name: String(debtor.name ?? ""),
+        phonePrimary: String(debtor.phone_primary ?? ""),
+        email: (debtor.email as string | null) ?? null,
+        bankExtra: {},
+      })),
+    ).rows[0] ?? null;
+  return buildPrefill({
+    name: String(debtor.name ?? ""),
+    email: (debtor.email as string | null) ?? null,
+    extra: (debtor.extra as Record<string, unknown> | null) ?? {},
+    lookup,
+  }).pan;
+}
+
 /** The phone half of a request body: `mobile` (or `phone`, for the endpoints that name it so),
  *  with the 91 prefix for a service that documents it. `mobile` is the 10-digit number. */
 function phoneBody(service: ProfilexService, mobile: string): Record<string, string> {
@@ -433,7 +476,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     // request body, so there is no way to bill a lookup on a number we don't already hold.
     const { data: debtor, error: debtorErr } = await admin
       .from("debtors")
-      .select("id, client_id, name, phone_primary, alt_phones")
+      .select("id, client_id, name, email, phone_primary, alt_phones, extra")
       .eq("id", data.debtorId)
       .maybeSingle();
     if (debtorErr) throw appError("SX-1001", "Could not load the debtor.", debtorErr);
@@ -454,7 +497,14 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 
     // Resolve the input, still without trusting the browser for any of it.
     let requestBody: Record<string, string>;
-    const PHONE_INPUTS = ["mobile", "phone", "mobile+name", "mobile+firstName", "mobile+fullName"];
+    const PHONE_INPUTS = [
+      "mobile",
+      "phone",
+      "mobile+name",
+      "mobile+firstName",
+      "mobile+fullName",
+      "mobile+pan",
+    ];
     if (PHONE_INPUTS.includes(service.input)) {
       const mobile = normalisePhone(debtor.phone_primary as string);
       if (!/^[6-9]\d{9}$/.test(mobile)) {
@@ -485,6 +535,16 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
           // Send exactly the fields each endpoint documents — skip tracing takes firstName only.
           if (service.input === "mobile+name") requestBody.lastName = parts.slice(1).join(" ");
         }
+      }
+      if (service.input === "mobile+pan") {
+        const pan = await panOnFile(admin, debtor as Record<string, unknown>);
+        if (!pan) {
+          throw new Error(
+            `No PAN on file for ${debtor.name}. Run "Skip Tracing" first (it returns the PAN), ` +
+              `or upload a bank file with a PAN column.`,
+          );
+        }
+        requestBody.pan = pan;
       }
     } else {
       const from = service.derivedFrom;
@@ -567,9 +627,8 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     }
 
     // Wallet. Managers spend from their own prepaid balance (migrations/20260907_profilex_
-    // manager_wallets.sql) — replaces the old org-wide monthly_budget check. Admins are not
-    // wallet-gated: they're the ones who fund every manager's wallet, so there is nothing to
-    // check against. Pre-checked against the WORST-CASE price for this service — the real
+    // manager_wallets.sql) — replaces the old org-wide monthly_budget check. Admins pay from the
+    // company wallet (since 2026-10-28; held below — no friendly pre-check needed). Pre-checked against the WORST-CASE price for this service — the real
     // provider status, and so the real cost, isn't known until after the call below, and
     // letting a lookup start only to fail on charging afterward would mean it already spent
     // real money with the provider with nothing to show for it in the manager's own balance.
@@ -629,43 +688,21 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
 
     // Hold the worst-case price in ONE conditional UPDATE (it cannot go below zero, and two
     // concurrent lookups cannot both spend the same funds — the read-then-charge check above is
-    // only a friendly early message). Settled below with what the provider really billed.
-    let held = 0;
-    if (caller.role === "manager" && caller.agentId) {
-      const worstCase = priceFor(service, null, settings.rate_card);
-      const { data: ok, error: holdErr } = await admin.rpc("profilex_wallet_hold", {
-        p_manager_id: caller.agentId,
-        p_amount: worstCase,
-      });
-      if (holdErr || !ok) {
-        await admin
-          .from("debtor_traces")
-          .update({
-            state: "failed",
-            error: holdErr
-              ? `Wallet hold failed: ${holdErr.message}`
-              : "Insufficient wallet balance",
-            completed_at: new Date().toISOString(),
-          })
-          .eq("id", pending.id);
-        throw holdErr
-          ? appError("SX-1016", "This lookup could not be started. Please try again.", holdErr)
-          : new Error(
-              "Your Insights wallet does not have enough left for this lookup. Ask an admin to top it up in Settings.",
-            );
-      }
-      held = worstCase;
-    }
-    /** Give back whatever part of the hold was not actually spent. Never throws. */
-    const settle = async (cost: number) => {
-      if (!held || !caller.agentId) return;
-      const { error: settleErr } = await admin.rpc("profilex_wallet_settle", {
-        p_manager_id: caller.agentId,
-        p_hold: held,
-        p_cost: Math.min(cost, held),
-      });
-      if (settleErr) console.error("[profilex] wallet settle failed:", settleErr.message);
-    };
+    // only a friendly early message). A manager's own wallet, an admin's company wallet.
+    // Settled below with what the provider really billed.
+    const { settle } = await holdInsightsSpend(
+      caller,
+      priceFor(service, null, settings.rate_card),
+      {
+        note: `${service.label} · ${debtor.name}`,
+        onRefused: async (reason) => {
+          await admin
+            .from("debtor_traces")
+            .update({ state: "failed", error: reason, completed_at: new Date().toISOString() })
+            .eq("id", pending.id);
+        },
+      },
+    );
 
     let httpStatus = 0;
     let json: Row | null = null;
@@ -730,7 +767,7 @@ export const runProfilexTrace = createServerFn({ method: "POST" })
     // the real ProfileX call already happened and was already paid for by this point, so a
     // failure here must not fail the request.
     if (billable) {
-      const realCost = priceFor(service, providerStatus, null);
+      const realCost = providerCost(service, providerStatus);
       if (realCost > 0) {
         const { error: actualErr } = await admin.rpc("profilex_actual_wallet_charge", {
           p_amount: realCost,
@@ -1376,6 +1413,8 @@ export const runManualInsight = createServerFn({ method: "POST" })
         value: shortText(40),
         firstName: z.string().trim().max(80).optional(),
         lastName: z.string().trim().max(80).optional(),
+        /** Only for a "mobile+pan" service. */
+        pan: z.string().trim().max(10).optional(),
       })
       .parse(d),
   )
@@ -1408,9 +1447,14 @@ export const runManualInsight = createServerFn({ method: "POST" })
     let requestBody: Record<string, string>;
     let queryKey: string;
     if (
-      ["mobile", "phone", "mobile+name", "mobile+firstName", "mobile+fullName"].includes(
-        service.input,
-      )
+      [
+        "mobile",
+        "phone",
+        "mobile+name",
+        "mobile+firstName",
+        "mobile+fullName",
+        "mobile+pan",
+      ].includes(service.input)
     ) {
       const mobile = normalisePhone(data.value);
       if (!/^[6-9]\d{9}$/.test(mobile)) {
@@ -1431,6 +1475,13 @@ export const runManualInsight = createServerFn({ method: "POST" })
           requestBody.firstName = first;
           if (service.input === "mobile+name") requestBody.lastName = data.lastName?.trim() ?? "";
         }
+      }
+      if (service.input === "mobile+pan") {
+        const pan = (data.pan ?? "").replace(/\s+/g, "").toUpperCase();
+        if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(pan)) {
+          throw new Error("Enter the person's PAN — 10 characters, e.g. ABCDE1234F.");
+        }
+        requestBody.pan = pan;
       }
     } else if (service.input === "uan") {
       const uan = data.value.replace(/\s+/g, "");
@@ -1482,12 +1533,28 @@ export const runManualInsight = createServerFn({ method: "POST" })
       throw new Error(`A ${service.label} lookup for that value is already running.`);
     }
 
+    // Comes off the company's Insights wallet — see holdInsightsSpend.
+    const { settle } = await holdInsightsSpend(
+      caller,
+      priceFor(service, null, settings.rate_card),
+      {
+        note: `${service.label} · typed-in lookup`,
+        onRefused: async (reason) => {
+          await admin
+            .from("insights_manual_lookups")
+            .update({ state: "failed", error: reason, completed_at: new Date().toISOString() })
+            .eq("id", pending.id);
+        },
+      },
+    );
+
     let httpStatus = 0;
     let json: Row | null = null;
     let raw = "";
     try {
       ({ httpStatus, json, text: raw } = await callProfilex(service, requestBody));
     } catch (err) {
+      await settle(0);
       await admin
         .from("insights_manual_lookups")
         .update({
@@ -1519,9 +1586,10 @@ export const runManualInsight = createServerFn({ method: "POST" })
       .eq("id", pending.id)
       .select()
       .single();
+    await settle(cost);
 
     if (billable) {
-      const realCost = priceFor(service, providerStatus, null);
+      const realCost = providerCost(service, providerStatus);
       if (realCost > 0) {
         const { error: actualErr } = await admin.rpc("profilex_actual_wallet_charge", {
           p_amount: realCost,
