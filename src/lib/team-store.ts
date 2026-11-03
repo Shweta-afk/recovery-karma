@@ -243,8 +243,28 @@ export function getTeamsByManager(managerId: string): Team[] {
   return getTeams().filter((t) => t.managerId === managerId);
 }
 
-export function getTeamByAgent(agentId: string): Team | undefined {
-  return getTeams().find((t) => t.agentIds.includes(agentId));
+/** agent email → "Team A, Team B" for every team in `teams` they are on. Agent pickers use it
+ * to say who is already on another team, now that an agent may be on more than one. */
+export function otherTeamNames(teams: Team[]): Map<string, string> {
+  const names = new Map<string, string[]>();
+  for (const t of teams) {
+    for (const id of t.agentIds) names.set(id, [...(names.get(id) ?? []), t.name]);
+  }
+  return new Map(Array.from(names, ([id, list]) => [id, list.join(", ")]));
+}
+
+/** Every team this agent is on. An agent may be on several teams — e.g. two managers each
+ * give them a portfolio — and their Call Queue then shows a portfolio switcher across both. */
+export function getTeamsByAgent(agentId: string): Team[] {
+  return getTeams().filter((t) => t.agentIds.includes(agentId));
+}
+
+/** The team (of this agent's) that owns this portfolio, else their first team. Use this, not
+ * a bare "the agent's team", wherever an action belongs to one manager — an agent on two teams
+ * answers to whichever manager's portfolio the account is in. */
+export function getTeamByAgent(agentId: string, portfolioTeamId?: string | null): Team | undefined {
+  const teams = getTeamsByAgent(agentId);
+  return (portfolioTeamId && teams.find((t) => t.id === portfolioTeamId)) || teams[0];
 }
 
 /** Every admin's email in the caller's own company — RLS scopes the query to their client_id

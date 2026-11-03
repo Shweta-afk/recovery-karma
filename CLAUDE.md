@@ -742,6 +742,19 @@ cleared the SHARED session, so the tab just signed in on said "Your session has 
 next action. `confirmEvictionThenSignOut` (`auth.tsx`) now asks Supabase first
 (`auth.getUser()`): revoked → sign out; still valid → adopt the new nonce.
 
+## An agent may be on more than one team (2026-11-03)
+
+User's call: two managers can each give the same agent a portfolio. The database always
+allowed it (`team_agents` key is team + agent); only the pickers (Admin → Teams, the manager's
+team dialog on Team Activity) hid agents already on a team — they now show "Also in: <team>".
+The agent's Call Queue already shows a portfolio switcher whenever their accounts span 2+
+portfolios. A manager viewing a shared agent sees only their OWN portfolios' accounts, because
+`debtor_list` joins `portfolios` under RLS. Anything that belongs to one manager must use the
+account's portfolio team, not "the agent's team": `getTeamByAgent(agentId, portfolioTeamId)`
+(missed-PTP escalation), and `DispositionRecord.teamId` (portfolio's team if the agent is on
+it, else their first team). Known gap: `call_logs_select` lets a manager read every call by an
+agent on their team, so Manager A can read the shared agent's call notes on Manager B's accounts.
+
 ## Dates: every day boundary is midnight IST
 
 `src/lib/date-filter.ts` (`inDateRange`, `inDayRange`, `todayIstKey`) over `istDayKey` from

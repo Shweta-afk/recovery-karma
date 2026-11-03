@@ -133,7 +133,7 @@ export async function refreshDispositions(): Promise<void> {
         .order("created_at", { ascending: false })
         .range(from, to),
     ),
-    supabase.from("portfolios").select("id, name"),
+    supabase.from("portfolios").select("id, name, team_id"),
     supabase.from("agents").select("id, email, name"),
     supabase.from("team_agents").select("team_id, agent_id"),
   ]);
@@ -174,7 +174,20 @@ export async function refreshDispositions(): Promise<void> {
   const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
   const portfolioById = new Map(portfolioRows.map((p) => [p.id, p]));
   const agentById = new Map(agentRows.map((a) => [a.id, a]));
-  const teamByAgentId = new Map(teamAgentRows.map((ta) => [ta.agent_id, ta.team_id]));
+  // An agent can be on more than one team (one per manager whose portfolio they work), so a
+  // call is credited to the team that owns the account's portfolio when the agent is on it,
+  // else to the agent's first team (ad-hoc calls, or a portfolio with no team).
+  const teamsByAgentId = new Map<string, string[]>();
+  for (const ta of teamAgentRows) {
+    const list = teamsByAgentId.get(ta.agent_id) ?? [];
+    list.push(ta.team_id);
+    teamsByAgentId.set(ta.agent_id, list);
+  }
+  const teamFor = (agentId: string, portfolioTeamId: string | null | undefined) => {
+    const teams = teamsByAgentId.get(agentId);
+    if (!teams?.length) return undefined;
+    return portfolioTeamId && teams.includes(portfolioTeamId) ? portfolioTeamId : teams[0];
+  };
 
   // The generated Supabase types don't cover these columns, so the rows widen to `never`
   // (as they already do throughout this file). Narrow to the shape we actually select.
@@ -236,7 +249,7 @@ export async function refreshDispositions(): Promise<void> {
       phone: debtor?.phone_primary ?? l.contact_phone ?? "",
       agentId: agent?.email ?? "",
       agentName: agent?.name ?? "",
-      teamId: teamByAgentId.get(l.agent_id),
+      teamId: teamFor(l.agent_id, portfolio?.team_id),
       portfolioId: debtor?.portfolio_id ?? undefined,
       portfolioName: portfolio?.name,
       outcome: l.outcome as CallOutcome,

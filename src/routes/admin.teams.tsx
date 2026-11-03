@@ -32,6 +32,7 @@ import {
   getTeams,
   saveTeam,
   deleteTeam,
+  otherTeamNames,
   getAgentById,
   useRoster,
   type Team,
@@ -250,11 +251,11 @@ function CreateTeamDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [agentSearch, setAgentSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const rostered = new Set(getTeams().flatMap((t) => t.agentIds));
+  // An agent may be on more than one team (two managers can each give them a portfolio), so
+  // nobody is hidden — agents already on a team just say which, so it's a deliberate choice.
+  const otherTeams = otherTeamNames(getTeams());
   const availableAgents = AGENTS.filter(
-    (a) =>
-      !rostered.has(a.id) &&
-      (agentSearch === "" || a.name.toLowerCase().includes(agentSearch.toLowerCase())),
+    (a) => agentSearch === "" || a.name.toLowerCase().includes(agentSearch.toLowerCase()),
   );
 
   const toggleAgent = (id: string) => {
@@ -413,6 +414,11 @@ function CreateTeamDialog({ open, onClose }: { open: boolean; onClose: () => voi
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium text-foreground">{a.name}</div>
                       <div className="text-[10px] text-muted-foreground">{a.email}</div>
+                      {otherTeams.has(a.id) && (
+                        <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                          Also in: {otherTeams.get(a.id)}
+                        </div>
+                      )}
                     </div>
                   </button>
                 );
@@ -476,17 +482,11 @@ function EditTeamDialog({ team, onClose }: { team: Team; onClose: () => void }) 
   const [agentSearch, setAgentSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Agents already on a DIFFERENT team are excluded from the picker (same exclusivity rule
-  // as Create Team); agents already on THIS team stay pickable so they can be removed.
-  const rosteredElsewhere = new Set(
-    getTeams()
-      .filter((t) => t.id !== team.id)
-      .flatMap((t) => t.agentIds),
-  );
+  // Agents on other teams stay pickable (an agent may be on several teams); the picker says
+  // which other teams they are already on.
+  const otherTeams = otherTeamNames(getTeams().filter((t) => t.id !== team.id));
   const availableAgents = AGENTS.filter(
-    (a) =>
-      !rosteredElsewhere.has(a.id) &&
-      (agentSearch === "" || a.name.toLowerCase().includes(agentSearch.toLowerCase())),
+    (a) => agentSearch === "" || a.name.toLowerCase().includes(agentSearch.toLowerCase()),
   );
 
   const toggleAgent = (id: string) => {
@@ -624,6 +624,11 @@ function EditTeamDialog({ team, onClose }: { team: Team; onClose: () => void }) 
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium text-foreground">{a.name}</div>
                       <div className="text-[10px] text-muted-foreground">{a.email}</div>
+                      {otherTeams.has(a.id) && (
+                        <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                          Also in: {otherTeams.get(a.id)}
+                        </div>
+                      )}
                     </div>
                   </button>
                 );

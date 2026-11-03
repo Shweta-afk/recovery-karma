@@ -47,6 +47,7 @@ import {
   getTeams,
   saveTeam,
   deleteTeam,
+  otherTeamNames,
   MAX_TEAMS_PER_MANAGER,
   type Team,
   type AgentRef,
@@ -521,18 +522,12 @@ function ManageTeamDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, team, managerName]);
 
-  // Agents already on someone else's team are hidden from the picker — same exclusivity the
-  // admin's Create Team dialog enforces, so a manager can't accidentally double-roster
-  // someone else's agent. Agents already on THIS team stay pickable (to remove them).
-  const rosteredElsewhere = new Set(
-    getTeams()
-      .filter((t) => t.id !== team?.id)
-      .flatMap((t) => t.agentIds),
-  );
+  // An agent may be on more than one team (e.g. working a portfolio for each of two
+  // managers), so agents on other teams stay pickable — the picker says which other team
+  // they are already on, so sharing someone is a deliberate choice.
+  const otherTeams = otherTeamNames(getTeams().filter((t) => t.id !== team?.id));
   const availableAgents = AGENTS.filter(
-    (a) =>
-      !rosteredElsewhere.has(a.id) &&
-      (agentSearch === "" || a.name.toLowerCase().includes(agentSearch.toLowerCase())),
+    (a) => agentSearch === "" || a.name.toLowerCase().includes(agentSearch.toLowerCase()),
   );
 
   const toggleAgent = (id: string) => {
@@ -622,7 +617,7 @@ function ManageTeamDialog({
             <div className="max-h-48 overflow-y-auto rounded-md border border-border divide-y divide-border">
               {availableAgents.length === 0 && (
                 <p className="py-4 text-center text-xs text-muted-foreground">
-                  No available agents — everyone else is already on another team.
+                  No agents found.
                 </p>
               )}
               {availableAgents.map((a: AgentRef) => {
@@ -648,6 +643,11 @@ function ManageTeamDialog({
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium text-foreground">{a.name}</div>
                       <div className="text-[10px] text-muted-foreground">{a.email}</div>
+                      {otherTeams.has(a.id) && (
+                        <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                          Also in: {otherTeams.get(a.id)}
+                        </div>
+                      )}
                     </div>
                   </button>
                 );

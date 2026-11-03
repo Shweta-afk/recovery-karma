@@ -19,7 +19,7 @@
 // as "commitment" and "due date". Renaming would touch every policy for cosmetic gain.
 import { supabase } from "./supabase";
 import { saveNotification } from "./notification-store";
-import { getTeamByAgent, getAdminEmails } from "./team-store";
+import { getTeamByAgent, getTeamsByAgent, getAdminEmails } from "./team-store";
 import { isUuid, type CaseFollowup } from "./disposition-store";
 import { formatINR } from "./mock-debtors";
 import { todayIstKey } from "./date-filter";
@@ -56,6 +56,31 @@ async function getExistingEscalationKeys(debtorIds: string[]): Promise<Set<strin
       ),
     ),
   );
+}
+
+/** debtor id → the team_id of its portfolio. RLS lets an agent read the debtors assigned to
+ * them and those debtors' portfolios. Missing entries just fall back to the agent's first team. */
+async function getPortfolioTeamIds(debtorIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!debtorIds.length) return out;
+  const { data: debtorRows } = await supabase
+    .from("debtors")
+    .select("id, portfolio_id")
+    .in("id", debtorIds);
+  const portfolioIds = Array.from(
+    new Set((debtorRows ?? []).map((d) => d.portfolio_id).filter((x): x is string => !!x)),
+  );
+  if (!portfolioIds.length) return out;
+  const { data: portfolioRows } = await supabase
+    .from("portfolios")
+    .select("id, team_id")
+    .in("id", portfolioIds);
+  const teamByPortfolio = new Map((portfolioRows ?? []).map((p) => [p.id, p.team_id]));
+  for (const d of debtorRows ?? []) {
+    const teamId = d.portfolio_id ? teamByPortfolio.get(d.portfolio_id) : null;
+    if (teamId) out.set(d.id, teamId);
+  }
+  return out;
 }
 
 /** What the recipient actually reads. Phrased per case type — telling a manager a callback
@@ -95,8 +120,7 @@ export async function escalateMissedCasesToManager(
   const overdue = followups.filter((f) => f.daysLeft < 0 && isUuid(f.debtorId));
   if (!overdue.length) return;
 
-  const team = getTeamByAgent(agentId);
-  if (!team) return; // no manager on file to notify
+  if (!getTeamsByAgent(agentId).length) return; // no manager on file to notify
 
   const existing = await getExistingEscalationKeys(overdue.map((f) => f.debtorId));
   const toEscalate = overdue.filter(
@@ -116,14 +140,18 @@ export async function escalateMissedCasesToManager(
   // session) already recorded this exact escalation a moment ago — nothing left to notify.
   if (error) return;
 
+  // An agent on two teams answers to whichever manager's portfolio the account is in.
+  const portfolioTeamByDebtor = await getPortfolioTeamIds(toEscalate.map((f) => f.debtorId));
   await Promise.all(
-    toEscalate.map((f) =>
-      saveNotification({
+    toEscalate.map((f) => {
+      const team = getTeamByAgent(agentId, portfolioTeamByDebtor.get(f.debtorId));
+      if (!team) return Promise.resolve();
+      return saveNotification({
         toAgentId: team.managerId,
         fromName: alertName(f.kind),
         message: describe(f),
-      }).catch(() => {}),
-    ),
+      }).catch(() => {});
+    }),
   );
 }
 
