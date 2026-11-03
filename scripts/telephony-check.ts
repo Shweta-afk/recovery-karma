@@ -25,7 +25,7 @@ import {
   withinCallWindow,
   type TelephonySettingsRow,
 } from "@/lib/telephony/guard-rules";
-import { skycrmDispositionFor, skycrmProvider } from "@/lib/telephony/skycrm-provider";
+import { skycrmDispositionFor, skycrmNumber, skycrmProvider } from "@/lib/telephony/skycrm-provider";
 
 let passed = 0;
 let failed = 0;
@@ -311,6 +311,7 @@ console.log("skycrm: webhook parsing + disposition mapping");
   ok("CDR busy → busy, extension from src", busy.status === "busy" && busy.agentHandle === "8006");
   const outCdr = skycrmProvider.parseStatusWebhook({ callid: "10", src: "8601", dst: "86019876543210", billsec: "33", disposition: "ANSWERED", direction: "Outbound" });
   ok("outbound CDR drops the extension prefix from the number", outCdr.agentHandle === "8601" && outCdr.remotePhone === "9876543210");
+  ok("SkyCRM gets 10 digits from +91/91/0 forms", ["+91 98765 43210", "919876543210", "09876543210", "9876543210"].every((n) => skycrmNumber(n) === "9876543210"));
   throws("webhook without callid rejected", () => skycrmProvider.parseStatusWebhook({ status: "Answered" }));
   ok("no answer → Non-Contacted", skycrmDispositionFor("no_answer") === "Non-Contacted");
   ok("wrong number → Non-Contacted", skycrmDispositionFor("wrong_number") === "Non-Contacted");

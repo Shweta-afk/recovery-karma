@@ -45,6 +45,15 @@ const SKYCRM_PASS = env("SKYCRM_PASS") ?? "";
 const SKYCRM_PREFIX = env("SKYCRM_PREFIX")?.trim() || "extension";
 const dialPrefix = (extension: string) =>
   SKYCRM_PREFIX === "extension" ? extension : SKYCRM_PREFIX;
+
+/** SkyCRM dials prefix + number straight onto the Tata trunk, which only connects the plain
+ *  10-digit Indian number. "+91…"/"91…"/"0…" forms reached it as NO ANSWER (2026-11-03). */
+export function skycrmNumber(raw: string): string {
+  const d = raw.replace(/\D/g, "");
+  if (d.length === 12 && d.startsWith("91")) return d.slice(2);
+  if (d.length === 11 && d.startsWith("0")) return d.slice(1);
+  return d;
+}
 /** Form field dialing_phone takes a per-call caller ID in, if the vendor supports one. UNCONFIRMED
  *  (asked 2026-10-26): leave unset and the DID configured on the extension is used, as before. */
 const SKYCRM_CALLER_ID_FIELD = env("SKYCRM_CALLER_ID_FIELD")?.trim() || undefined;
@@ -233,7 +242,7 @@ export const skycrmProvider: TelephonyProvider = {
     await post(
       "dialing_phone",
       {
-        phone_number: req.debtorNumber,
+        phone_number: skycrmNumber(req.debtorNumber),
         extension,
         prefix: dialPrefix(extension),
         per_id: perId,
@@ -257,11 +266,16 @@ export const skycrmProvider: TelephonyProvider = {
     }
     try {
       if (ctx?.direction === "inbound") {
-        await post("incoming_hangup1", { phone_number: phone, extension }, extension);
+        await post("incoming_hangup1", { phone_number: skycrmNumber(phone), extension }, extension);
       } else {
         await post(
           "hangup_phone",
-          { phone_number: phone, extension, prefix: dialPrefix(extension), per_id: providerCallId },
+          {
+            phone_number: skycrmNumber(phone),
+            extension,
+            prefix: dialPrefix(extension),
+            per_id: providerCallId,
+          },
           extension,
         );
       }

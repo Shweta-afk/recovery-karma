@@ -99,12 +99,21 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
     return () => clearInterval(t);
   }, [call?.state]);
 
-  const reconnect = async () => {
+  const reconnect = useCallback(async () => {
     await wp.disconnect();
     await start();
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wp.disconnect, start]);
 
   const ready = wp.regState === "registered" && wp.transportUp;
+
+  // Heal by itself after a gateway restart or a network drop: SIP.js does not reconnect a closed
+  // WebSocket on its own. Never in the middle of a call.
+  useEffect(() => {
+    if (ready || wp.regState === "registering" || call) return;
+    const t = setTimeout(() => void reconnect(), 10_000);
+    return () => clearTimeout(t);
+  }, [ready, wp.regState, call, reconnect]);
   const ringing = call?.direction === "inbound" && call.state === "ringing";
   const live = call?.state === "connected";
   const elapsed =
