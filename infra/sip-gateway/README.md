@@ -53,10 +53,11 @@ whether to pass browsers through to their WebRTC instead is open.
 
 ## Browser side
 
-The webphone (`src/lib/telephony/webrtc/`) needs `VITE_SKYCRM_WSS_URL=wss://voice.samvadx.com/ws`
-and `VITE_SKYCRM_SIP_DOMAIN=10.173.16.10`.
-⚠️ The extension's SIP password is still a `VITE_*` value in the browser bundle — test only.
-Before client companies use it, the app server must hand each agent their own password at sign-in.
+The app's browser phone (`src/components/telephony/browser-phone.tsx`, in the agent and manager
+layouts) gets each user's own extension from the server (`getMyWebphoneLogin`), with
+`SKYCRM_WSS_URL=wss://voice.samvadx.com/ws`, `SKYCRM_SIP_DOMAIN=10.173.16.10` and
+`SKYCRM_SIP_PASSWORD` set on Railway. Never put these in `VITE_*` variables: Vite bakes those
+into the browser bundle.
 
 ## Known limits
 

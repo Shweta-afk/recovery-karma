@@ -3,12 +3,11 @@
 // Owns one SipWebphone instance for the component tree, mirrors its registration/call state
 // into React state, and exposes connect/dial/answer/hangup/mute controls. Client-only.
 //
-// This is the Phase-2 (WebRTC / no-softphone) path for SkyCRM. It is inert until the vendor's
-// WSS endpoint is configured (VITE_SKYCRM_WSS_URL) — `configured` is false and the controls
-// no-op, so it's safe to mount now and it lights up the moment the env is filled in.
+// The login comes from the server (getMyWebphoneLogin); with null, `configured` is false and the
+// controls no-op.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getWebphoneConfig } from "@/lib/telephony/webrtc/config";
+import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
 import {
   SipWebphone,
   type WebphoneCall,
@@ -32,8 +31,8 @@ export interface UseWebphone {
   setMuted: (muted: boolean) => void;
 }
 
-export function useWebphone(): UseWebphone {
-  const config = getWebphoneConfig();
+/** `config` comes from the server: the signed-in user's own extension (getMyWebphoneLogin). */
+export function useWebphone(config: WebphoneConfig | null): UseWebphone {
   const configured = config !== null;
 
   const [regState, setRegState] = useState<WebphoneRegState>("unregistered");
@@ -52,7 +51,7 @@ export function useWebphone(): UseWebphone {
   const connect = useCallback(async () => {
     if (!config) {
       setError(
-        "Webphone is not configured — the vendor's WSS endpoint (VITE_SKYCRM_WSS_URL) is unset.",
+        "Webphone is not configured.",
       );
       return;
     }

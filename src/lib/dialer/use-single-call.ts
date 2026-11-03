@@ -148,6 +148,9 @@ export function useSingleCall(
         // `c` is non-null here. The old fallback built a differently-shaped object that was
         // not an ActiveCall at all — leave the state alone rather than corrupt it.
         setActiveCall((c) => (c ? { ...c, phase: "ringing" } : c));
+        // SkyCRM rings the agent's own extension first; the browser phone (browser-phone.tsx)
+        // answers that ring by itself when it follows this event.
+        window.dispatchEvent(new CustomEvent("samvadx:dial-started"));
 
         startTransition(async () => {
           try {

@@ -4,6 +4,7 @@ import { CallSessionProvider } from "@/lib/call-session";
 import { GlobalCallBar } from "@/components/global-call-bar";
 import { ManualDialDock } from "@/components/manual-dial-dock";
 import { IncomingCallPopup } from "@/components/incoming-call-popup";
+import { BrowserPhone } from "@/components/telephony/browser-phone";
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardLayout,
@@ -19,6 +20,7 @@ function DashboardLayout() {
       <IncomingCallPopup />
       {/* Always-available manual dialer, bottom-left — see manual-dial-dock.tsx. */}
       <ManualDialDock />
+      <BrowserPhone />
     </CallSessionProvider>
   );
 }

@@ -157,6 +157,14 @@ function cleanNumber(raw: unknown, label: string): string {
   return s;
 }
 
+/** An agent is dialled by phone number, or by SkyCRM extension (3–6 digits) when they have no
+ *  phone on file. Either way it must match the database (authorizeAgentNumbers). */
+function cleanAgentNumber(raw: unknown): string {
+  const s = typeof raw === "string" ? raw.replace(/[\s()-]/g, "") : "";
+  if (/^\d{3,6}$/.test(s)) return s;
+  return cleanNumber(s, "Agent number");
+}
+
 const sameNumber = (a: string, b: string) => a.replace(/\D/g, "") === b.replace(/\D/g, "");
 
 /** Phones of active agents in the caller's own company, straight from the database. An agent
@@ -183,10 +191,11 @@ async function companyAgentPhones(caller: VerifiedCaller): Promise<DialAgent[]> 
   }
   if (error || !data) throw new Error("Could not verify the agent's phone number");
   return data
-    .filter((a) => a.is_active !== false && a.agent_phone?.trim())
+    .filter((a) => a.is_active !== false && (a.agent_phone?.trim() || a.agent_extension?.trim()))
     .map((a) => ({
       id: a.id,
-      phone: a.agent_phone!.trim(),
+      // No phone on file: the extension stands in, matching what auth.tsx gives the browser.
+      phone: a.agent_phone?.trim() || a.agent_extension!.trim(),
       extension: a.agent_extension?.trim() || null,
     }));
 }
@@ -713,7 +722,7 @@ export const startCall = createServerFn({ method: "POST" })
     // A real call costs money and rings real phones; 30/min per user is well above any human.
     enforceRateLimit(`start-call:${caller.authUserId}`, 30, 60_000);
 
-    const agentNumber = cleanNumber(data.agentNumber, "Agent number");
+    const agentNumber = cleanAgentNumber(data.agentNumber);
     const debtorNumber = cleanNumber(data.debtorNumber, "Debtor number");
     if (typeof data.callLogId !== "string" || !data.callLogId) throw new Error("Missing callLogId");
     await authorizeAgentNumbers(caller, [agentNumber]);

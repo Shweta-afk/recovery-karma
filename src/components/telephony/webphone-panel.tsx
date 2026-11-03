@@ -6,13 +6,16 @@
 // Until the env is configured it renders a clear "not configured" card listing exactly what's
 // missing, so it is safe to ship and to open before the vendor replies.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Phone, PhoneOff, PhoneIncoming, Mic, MicOff, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useWebphone } from "@/lib/dialer/use-webphone";
 import { errorText } from "@/lib/app-error";
+import { getAccessToken } from "@/lib/access-token";
+import { getMyWebphoneLogin, type WebphoneLogin } from "@/lib/telephony-actions.server";
+import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
 
 const REG_LABEL: Record<string, { text: string; className: string }> = {
   unregistered: { text: "Unregistered", className: "bg-muted text-muted-foreground" },
@@ -21,39 +24,42 @@ const REG_LABEL: Record<string, { text: string; className: string }> = {
   failed: { text: "Failed", className: "bg-red-100 text-red-800" },
 };
 
-export function WebphonePanel() {
-  const wp = useWebphone();
-  const [target, setTarget] = useState("");
-  const [muted, setMuted] = useState(false);
+const NO_LOGIN: Record<string, string> = {
+  provider: "Calling on the server is not SkyCRM (TELEPHONY_PROVIDER).",
+  not_enabled: "Calling is not enabled for your company (Superadmin → Calling tab).",
+  no_extension: "You have no extension (Superadmin → company → Calling tab → Extensions).",
+  not_configured: "SKYCRM_WSS_URL / SKYCRM_SIP_DOMAIN / SKYCRM_SIP_PASSWORD are not set on the server.",
+};
 
-  if (!wp.configured) {
+/** Test harness: signs in with the CURRENT user's own extension, from the server, exactly like
+ *  the browser phone in the app (browser-phone.tsx). No password lives in the browser bundle. */
+export function WebphonePanel() {
+  const [login, setLogin] = useState<WebphoneLogin | null>(null);
+  useEffect(() => {
+    void (async () => {
+      try {
+        setLogin(await getMyWebphoneLogin({ data: { accessToken: await getAccessToken() } }));
+      } catch {
+        setLogin({ login: null, reason: "not_configured" });
+      }
+    })();
+  }, []);
+  if (!login) return null;
+  if (!login.login) {
     return (
       <div className="mx-auto max-w-lg rounded-lg border bg-card p-6 text-card-foreground">
-        <h2 className="text-lg font-semibold">WebRTC webphone — not configured yet</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The browser softphone lights up as soon as the vendor enables WebRTC and sends the
-          WebSocket endpoint. Set these in <code>.env.local</code> and reload:
-        </p>
-        <ul className="mt-3 space-y-1 text-sm">
-          <li>
-            <code>VITE_SKYCRM_WSS_URL</code> — the <b>wss://…</b> endpoint (from the vendor)
-          </li>
-          <li>
-            <code>VITE_SKYCRM_SIP_DOMAIN</code> — SIP domain/registrar host (e.g. 10.173.16.10)
-          </li>
-          <li>
-            <code>VITE_SKYCRM_SIP_EXTENSION</code> — the extension (e.g. 8597)
-          </li>
-          <li>
-            <code>VITE_SKYCRM_SIP_PASSWORD</code> — the extension's SIP password
-          </li>
-          <li>
-            <code>VITE_SKYCRM_ICE_SERVERS</code> — optional STUN/TURN (JSON array), if required
-          </li>
-        </ul>
+        <h2 className="text-lg font-semibold">Webphone not available</h2>
+        <p className="mt-2 text-sm text-muted-foreground">{NO_LOGIN[login.reason]}</p>
       </div>
     );
   }
+  return <Phone2 config={{ ...login.login, iceServers: [] }} />;
+}
+
+function Phone2({ config }: { config: WebphoneConfig }) {
+  const wp = useWebphone(config);
+  const [target, setTarget] = useState("");
+  const [muted, setMuted] = useState(false);
 
   const reg = REG_LABEL[wp.regState] ?? REG_LABEL.unregistered;
   const call = wp.call;

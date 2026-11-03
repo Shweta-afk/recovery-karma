@@ -204,7 +204,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Embeds the agent's own client row via the client_id FK — one query gets both the
             // profile and the company's verification status (20260909_company_verification_and_
             // subdomain.sql), which the "pending" gate screen below needs on every login.
-            .select("name, email, role, agent_phone, session_nonce, clients(status, subdomain)")
+            .select(
+              "name, email, role, agent_phone, agent_extension, session_nonce, clients(status, subdomain)",
+            )
             .eq("auth_user_id", authUserId)
             .maybeSingle(),
         ),
@@ -237,7 +239,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: data.name,
       email: data.email,
       role: data.role as Role,
-      agentPhone: data.agent_phone as string | null,
+      // With SkyCRM the extension is what rings; someone with an extension but no phone on file
+      // can still dial (server.ts's companyAgentPhones accepts the extension the same way).
+      agentPhone: ((data.agent_phone as string | null)?.trim() ||
+        (data.agent_extension as string | null)?.trim() ||
+        null) as string | null,
       companyStatus: clientStatus?.status as AuthUser["companyStatus"],
       companySubdomain: clientStatus ? (clientStatus.subdomain ?? null) : undefined,
     };

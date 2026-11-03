@@ -506,6 +506,48 @@ export const setQueuePresence = createServerFn({ method: "POST" })
     }
   });
 
+/** What the browser phone needs to register the caller's own extension through our gateway
+ *  (infra/sip-gateway). Null `login` says why there is none, so the UI can show it.
+ *  The SIP password reaches the browser only here, only for the caller's own extension; the
+ *  extensions share one password today, so SKYCRM_SIP_PASSWORD is a single server setting. */
+export type WebphoneLogin =
+  | {
+      login: {
+        wssUrl: string;
+        domain: string;
+        extension: string;
+        password: string;
+        displayName: string;
+      };
+    }
+  | { login: null; reason: "provider" | "not_enabled" | "no_extension" | "not_configured" };
+
+export const getMyWebphoneLogin = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }): Promise<WebphoneLogin> => {
+    const caller = await requireCaller(data.accessToken);
+    if (!isSkycrm()) return { login: null, reason: "provider" };
+    const [extension, settings] = await Promise.all([
+      callerExtension(caller.agentId),
+      loadTelephonySettings(caller.clientId),
+    ]);
+    if (!settings?.enabled) return { login: null, reason: "not_enabled" };
+    if (!extension) return { login: null, reason: "no_extension" };
+    const wssUrl = process.env.SKYCRM_WSS_URL?.trim();
+    const domain = process.env.SKYCRM_SIP_DOMAIN?.trim();
+    const password = process.env.SKYCRM_SIP_PASSWORD;
+    if (!wssUrl || !domain || !password) {
+      console.warn(
+        "[getMyWebphoneLogin] missing:",
+        ["SKYCRM_WSS_URL", "SKYCRM_SIP_DOMAIN", "SKYCRM_SIP_PASSWORD"].filter(
+          (k) => !process.env[k],
+        ),
+      );
+      return { login: null, reason: "not_configured" };
+    }
+    return { login: { wssUrl, domain, extension, password, displayName: extension } };
+  });
+
 export interface IncomingCall {
   providerCallId: string;
   phone: string | null;

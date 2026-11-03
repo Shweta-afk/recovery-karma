@@ -4,6 +4,7 @@ import { CallSessionProvider } from "@/lib/call-session";
 import { GlobalCallBar } from "@/components/global-call-bar";
 import { ManualDialDock } from "@/components/manual-dial-dock";
 import { IncomingCallPopup } from "@/components/incoming-call-popup";
+import { BrowserPhone } from "@/components/telephony/browser-phone";
 import { TeamPickerScreen } from "@/components/team-picker-screen";
 import { useAuth } from "@/lib/auth";
 import { useActiveTeam } from "@/lib/active-team-store";
@@ -61,6 +62,7 @@ function ManagerLayout() {
         <GlobalCallBar />
         <IncomingCallPopup />
         <ManualDialDock />
+        <BrowserPhone />
       </CallSessionProvider>
     );
   }
@@ -82,6 +84,7 @@ function ManagerLayout() {
       <IncomingCallPopup />
       {/* Always-available manual dialer, bottom-left — see manual-dial-dock.tsx. */}
       <ManualDialDock />
+      <BrowserPhone />
     </CallSessionProvider>
   );
 }
