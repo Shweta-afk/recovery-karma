@@ -43,5 +43,8 @@ log-facility = local1
 EOF
 
 kamailio -c -f /etc/kamailio/kamailio.cfg >/dev/null
-systemctl restart "${RTPENGINE_SERVICE:-rtpengine-daemon}" kamailio
+# rtpengine first: Kamailio pings it at startup and disables it if it isn't answering yet.
+systemctl restart "${RTPENGINE_SERVICE:-rtpengine-daemon}"
+sleep 2
+systemctl restart kamailio
 echo "Gateway rendered: tunnel ${TUNNEL_IP}, SkyCRM ${PBX_IP}:${PBX_PORT}, public ${PUBLIC_IP}."
