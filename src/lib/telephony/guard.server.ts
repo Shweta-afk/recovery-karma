@@ -423,6 +423,18 @@ export async function prepareCall(args: {
   const agentHandle =
     args.provider === "skycrm" ? (args.agent.extension as string).trim() : args.agent.phone;
 
+  // An agent is on one call at a time, so any call still "open" on their phone is over. Without
+  // the provider's hangup event (no webhook yet, or a call ended from the browser phone) those
+  // rows held a line each for STALE_CALL_MINUTES; 20 of them filled Axiotta's 20 lines on
+  // 2026-11-03 and every dial said the company's lines were busy.
+  await db()
+    .from("telephony_calls")
+    .update({ ended_at: new Date().toISOString(), status: "superseded" })
+    .eq("client_id", args.clientId)
+    .eq("agent_handle", agentHandle)
+    .eq("direction", "outbound")
+    .is("ended_at", null);
+
   const trunk = await loadTrunk();
   const did = await chooseDid({
     clientId: args.clientId,
