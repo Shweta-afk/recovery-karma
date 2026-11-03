@@ -1,49 +1,41 @@
 # PRODUCTION tunnel: IPsec site-to-site between this gateway and SkyCRM's FortiGate.
-# Copy to /etc/swanctl/conf.d/skycrm.conf and fill in from the settings SkyCRM sends.
-# Every __PLACEHOLDER__ must match what they configure on their side, or phase 1/2 won't come up.
-# Then set TUNNEL=ipsec and TUNNEL_IP=__OUR_TUNNEL_IP__ in /etc/samvadx-gateway.env.
-
+# setup.sh (TUNNEL=ipsec) fills the __PLACEHOLDERS__ from /etc/samvadx-gateway.env and writes
+# /etc/swanctl/conf.d/skycrm.conf. The pre-shared key is NOT here: set-ipsec-psk.sh asks for it
+# and writes skycrm-secret.conf (root-only).
+#
+# Live since 2026-11-03 with exactly these settings: we proposed them and SkyCRM accepted them
+# unchanged. Their peer is the same FortiGate as the SSL VPN (118.185.178.161).
 connections {
   skycrm {
-    version = 2                               # IKEv2 unless they say IKEv1
-    local_addrs  = __PRIVATE_IP__             # this server (behind the cloud NAT)
-    remote_addrs = __SKYCRM_PEER_IP__         # their FortiGate's public IP
-    proposals = aes256-sha256-modp2048        # phase 1: encryption-hash-DH group they give
-    rekey_time = 86400s                       # phase 1 lifetime
+    version = 2
+    # DigitalOcean puts the public IP straight on eth0 (no cloud NAT), so local = public.
+    local_addrs  = __PUBLIC_IP__
+    remote_addrs = __SKYCRM_PEER_IP__
+    proposals = aes256-sha256-modp2048        # phase 1: AES-256 / SHA-256 / DH group 14
+    rekey_time = 28800s                       # phase 1 lifetime
     dpd_delay = 30s
-    encap = yes                               # NAT-T: we sit behind the cloud's 1:1 NAT
 
     local {
       auth = psk
-      id = __PUBLIC_IP__                      # what they set as our peer ID
+      id = __PUBLIC_IP__
     }
     remote {
       auth = psk
-      id = __SKYCRM_PEER_IP__
+      id = %any                               # accept whatever ID the FortiGate presents
     }
 
     children {
       skycrm-sip {
-        # Our side: one address for SIP + audio. It must not clash with SkyCRM's networks.
-        local_ts  = __OUR_TUNNEL_IP__/32
-        # Their side: the SIP server and the media servers (ask for the exact list).
+        # Our end: one address on loopback (samvadx-tunnel-ip.service), used by Kamailio and
+        # rtpengine. Their end: the SIP/WebRTC servers 10.173.16.10 and .4.
+        local_ts  = __TUNNEL_IP__/32
         remote_ts = 10.173.16.0/24
-        esp_proposals = aes256-sha256-modp2048  # phase 2
+        esp_proposals = aes256-sha256-modp2048  # phase 2: AES-256 / SHA-256 / PFS group 14
         rekey_time = 3600s                      # phase 2 lifetime
-        start_action = start
+        start_action = start                    # bring it up at boot
         dpd_action = restart
+        close_action = start                    # and again if SkyCRM closes it
       }
     }
   }
 }
-
-secrets {
-  ike-skycrm {
-    id = __SKYCRM_PEER_IP__
-    secret = "__PRESHARED_KEY__"
-  }
-}
-
-# __OUR_TUNNEL_IP__ is not on any interface yet. Add it so Kamailio and rtpengine can use it:
-#   ip addr add __OUR_TUNNEL_IP__/32 dev lo
-# (make it permanent with a netplan or systemd-networkd entry).

@@ -1,0 +1,13 @@
+# Puts our end of the IPsec tunnel (TUNNEL_IP) on loopback at boot, before strongSwan, Kamailio
+# and rtpengine start. setup.sh replaces __TUNNEL_IP__ and installs it (TUNNEL=ipsec only).
+[Unit]
+Description=SamvadX IPsec tunnel address __TUNNEL_IP__
+Before=strongswan.service kamailio.service rtpengine-daemon.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c "ip addr show dev lo | grep -q ' __TUNNEL_IP__/32' || ip addr add __TUNNEL_IP__/32 dev lo"
+
+[Install]
+WantedBy=multi-user.target

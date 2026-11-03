@@ -77,12 +77,21 @@ if [[ "$TUNNEL" == fortivpn ]]; then
   for _ in $(seq 1 30); do ip -4 addr show ppp0 >/dev/null 2>&1 && break; sleep 2; done
   ip -4 addr show ppp0 >/dev/null 2>&1 || { echo "VPN did not come up: journalctl -u openfortivpn@skycrm" >&2; exit 1; }
 else
-  [[ -f /etc/swanctl/conf.d/skycrm.conf ]] || {
-    echo "Write /etc/swanctl/conf.d/skycrm.conf from swanctl.conf.example (needs SkyCRM's IPsec details), then re-run." >&2
-    exit 1
-  }
+  : "${SKYCRM_PEER_IP:?set SKYCRM_PEER_IP in $ENV_FILE}" "${TUNNEL_IP:?set TUNNEL_IP in $ENV_FILE}"
+  # The SSL VPN allows one connection per login; never leave it running beside the tunnel.
+  systemctl disable --now openfortivpn@skycrm 2>/dev/null || true
+  sed "s|__TUNNEL_IP__|$TUNNEL_IP|g" "$HERE/samvadx-tunnel-ip.service" \
+    > /etc/systemd/system/samvadx-tunnel-ip.service
+  systemctl daemon-reload
+  systemctl enable --now samvadx-tunnel-ip
+  sed -e "s|__PUBLIC_IP__|$PUBLIC_IP|g" -e "s|__SKYCRM_PEER_IP__|$SKYCRM_PEER_IP|g" \
+    -e "s|__TUNNEL_IP__|$TUNNEL_IP|g" "$HERE/swanctl.conf.example" > /etc/swanctl/conf.d/skycrm.conf
+  [[ -f /etc/swanctl/conf.d/skycrm-secret.conf ]] || "$HERE/set-ipsec-psk.sh"
   systemctl enable --now strongswan
   swanctl --load-all
+  swanctl --initiate --child skycrm-sip --timeout 30 >/dev/null 2>&1 || true
+  swanctl --list-sas | grep -q "skycrm-sip.*INSTALLED" ||
+    { echo "Tunnel did not come up: journalctl -u strongswan" >&2; exit 1; }
 fi
 
 /opt/samvadx-gateway/render.sh
