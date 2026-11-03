@@ -55,7 +55,40 @@ export interface VerifiedCaller {
  * caller's own row visibility would normally allow. Returns null if the token is invalid/
  * expired or no matching agents row exists (fail closed rather than guessing).
  */
+// Verified callers, by access token, for up to a minute. Telephony polls (incoming calls, call
+// status) hit verifyCaller every few seconds per agent; re-checking the token and the agents row
+// each time saturated the database on 2026-11-03 (logins timing out, calls failing). One server
+// instance (railway.json), so an in-process map is enough. A revoked session can keep working for
+// at most CALLER_CACHE_MS; never past the token's own expiry.
+const CALLER_CACHE_MS = 60_000;
+const callerCache = new Map<string, { caller: VerifiedCaller; until: number }>();
+
+function tokenExpiryMs(accessToken: string): number {
+  try {
+    const payload = JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64url").toString());
+    return typeof payload.exp === "number" ? payload.exp * 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function verifyCaller(accessToken: string): Promise<VerifiedCaller | null> {
+  const now = Date.now();
+  const hit = callerCache.get(accessToken);
+  if (hit && hit.until > now) return hit.caller;
+  const caller = await verifyCallerUncached(accessToken);
+  if (caller) {
+    if (callerCache.size > 2000) {
+      for (const [k, v] of callerCache) if (v.until <= now) callerCache.delete(k);
+      if (callerCache.size > 2000) callerCache.clear();
+    }
+    const until = Math.min(now + CALLER_CACHE_MS, tokenExpiryMs(accessToken));
+    if (until > now) callerCache.set(accessToken, { caller, until });
+  }
+  return caller;
+}
+
+async function verifyCallerUncached(accessToken: string): Promise<VerifiedCaller | null> {
   const admin = getSupabaseAdmin();
   const {
     data: { user },

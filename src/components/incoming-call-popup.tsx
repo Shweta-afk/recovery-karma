@@ -7,7 +7,9 @@ import { getIncomingCall, type IncomingCall } from "@/lib/telephony-actions.serv
 import { getAccessToken } from "@/lib/access-token";
 import { CopyButton } from "@/components/ui/copy-button";
 
-const POLL_MS = 5000;
+// 15 s, not 5: every poll is a server call, and 5 s across every agent's tab overloaded the
+// database on 2026-11-03. The browser phone shows its own ring at once; this only adds who it is.
+const POLL_MS = 15_000;
 
 export function IncomingCallPopup() {
   const [call, setCall] = useState<IncomingCall | null>(null);

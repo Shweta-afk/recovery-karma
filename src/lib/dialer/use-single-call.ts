@@ -28,7 +28,10 @@ import type { ActiveCall, QueueDebtor } from "@/routes/dashboard.call-queue";
 
 const TICK_MS = 500;
 /** How often the browser asks the server what the provider last said about this call. */
-const STATUS_POLL_MS = 2000;
+const STATUS_POLL_MS = 4000;
+/** Stop asking after this long with no status at all: status only arrives through the provider's
+ *  webhook, and polling a call nobody reports on just loads the database (2026-11-03). */
+const STATUS_POLL_GIVE_UP_MS = 3 * 60_000;
 /** The provider's own fetchWithTimeout bounds server→provider; this bounds browser→our
  * server, so a stall anywhere in the chain (not just at the provider) still surfaces as an
  * error instead of leaving the call stuck on "ringing" with no explanation. */
@@ -190,7 +193,14 @@ export function useSingleCall(
             // poll of the call-records API). A single agent call belongs to no DialerRun, so
             // nothing pushes those events at this component — poll the server for the latest
             // status instead, matching on either id the provider might report back.
+            const pollStartedAt = Date.now();
+            let sawStatus = false;
             timerRef.current = setInterval(async () => {
+              if (!sawStatus && Date.now() - pollStartedAt > STATUS_POLL_GIVE_UP_MS) {
+                if (timerRef.current) clearInterval(timerRef.current);
+                timerRef.current = null;
+                return;
+              }
               // Fresh token every poll: the interval can outlive the one the call started with.
               const status = await serverGetCallStatus({
                 data: {
@@ -202,6 +212,7 @@ export function useSingleCall(
               // stoppedRef catches that even though clearInterval already fired, since
               // clearInterval only prevents the NEXT tick, not this one finishing late.
               if (stoppedRef.current || !status) return;
+              sawStatus = true;
               const phase = toCallPhase(callStateFor(status.status));
               setActiveCall((c) =>
                 c
