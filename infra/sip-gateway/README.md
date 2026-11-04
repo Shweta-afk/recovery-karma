@@ -44,7 +44,7 @@ On 2026-11-04 SkyCRM switched the extensions to WebRTC, which broke route A's au
 sends plain RTP), and the user chose B. Neither needs FortiClient on agents' computers.
 
 Route B: `sudo ./enable-skycrm-webrtc.sh` (after setup.sh). It checks SkyCRM's WebRTC answers
-through the tunnel, installs coturn (`turnserver.conf.example`: listens on the public IP, relays
+through the tunnel, installs coturn (listens on the public IP, relays
 from TUNNEL_IP, relays ONLY to 10.173.16.0/24), opens UDP/TCP 3478, and adds `/skycrm-ws` to
 nginx (same Origin allow-list, leaves from TUNNEL_IP, SkyCRM's self-signed certificate accepted
 by nginx so browsers never see it). It prints three Railway variables:

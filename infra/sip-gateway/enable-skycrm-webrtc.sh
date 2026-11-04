@@ -6,21 +6,21 @@
 #   browser ──wss://DOMAIN/skycrm-ws──▶ nginx ──(from TUNNEL_IP, IPsec)──▶ SkyCRM 10.173.16.10:8089
 #   browser ──TURN udp/tcp 3478──▶ coturn ──relay from TUNNEL_IP, IPsec──▶ SkyCRM audio
 #
-# Safe to re-run. Leaves the softphone route (wss://DOMAIN/ws → Kamailio) in place, so going
+# Self-contained: needs only /etc/samvadx-gateway.env (from setup.sh), not this repo on the
+# server. Safe to re-run. Leaves the softphone route (wss://DOMAIN/ws → Kamailio) in place, so going
 # back is only SKYCRM_WSS_URL on Railway + SkyCRM switching the extensions back to softphone.
 #   sudo ./enable-skycrm-webrtc.sh
 set -euo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE=/etc/samvadx-gateway.env
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 : "${DOMAIN:?}" "${PBX_IP:?}" "${TUNNEL_IP:?TUNNEL_IP must be set (IPsec tunnel)}"
 PBX_WSS_PORT="${PBX_WSS_PORT:-8089}"
-WS_PORT="${WS_PORT:-8090}"
 SKYCRM_NET_FROM="${SKYCRM_NET_FROM:-10.173.16.0}"
 SKYCRM_NET_TO="${SKYCRM_NET_TO:-10.173.16.255}"
+ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-^https://([a-z0-9-]+[.])?samvadx[.]com$}"
 LISTEN_IP="${PRIVATE_IP:-$(ip -4 route get 1.1.1.1 | awk '{for (i=1;i<NF;i++) if ($i=="src") print $(i+1)}')}"
 
 echo "== Can we reach SkyCRM's WebRTC through the tunnel?"
@@ -36,11 +36,32 @@ echo "== coturn (audio relay)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y -q coturn
 SECRET="$(sed -n 's/^static-auth-secret=//p' /etc/turnserver.conf 2>/dev/null || true)"
-[[ -n "$SECRET" && "$SECRET" != "__TURN_SECRET__" ]] || SECRET="$(openssl rand -hex 32)"
-sed -e "s|__LISTEN_IP__|$LISTEN_IP|g" -e "s|__TUNNEL_IP__|$TUNNEL_IP|g" \
-  -e "s|__DOMAIN__|$DOMAIN|g" -e "s|__TURN_SECRET__|$SECRET|g" \
-  -e "s|__PEER_FROM__|$SKYCRM_NET_FROM|g" -e "s|__PEER_TO__|$SKYCRM_NET_TO|g" \
-  "$HERE/turnserver.conf.example" > /etc/turnserver.conf
+[[ ${#SECRET} -ge 32 ]] || SECRET="$(openssl rand -hex 32)"
+# Browsers reach the relay on the public IP; it talks to SkyCRM from the tunnel address, so the
+# audio goes through the IPsec tunnel. It relays ONLY to SkyCRM's network - never an open relay.
+cat > /etc/turnserver.conf <<TURN
+listening-port=3478
+listening-ip=$LISTEN_IP
+relay-ip=$TUNNEL_IP
+min-port=49160
+max-port=49999
+realm=$DOMAIN
+use-auth-secret
+static-auth-secret=$SECRET
+denied-peer-ip=0.0.0.0-255.255.255.255
+allowed-peer-ip=$SKYCRM_NET_FROM-$SKYCRM_NET_TO
+no-multicast-peers
+no-tcp-relay
+no-tls
+no-dtls
+no-cli
+fingerprint
+user-quota=4
+total-quota=300
+stale-nonce=600
+syslog
+simple-log
+TURN
 chmod 640 /etc/turnserver.conf
 chgrp turnserver /etc/turnserver.conf 2>/dev/null || true
 [[ -f /etc/default/coturn ]] && sed -i 's/^#\?TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
@@ -79,8 +100,10 @@ location = /skycrm-ws {
     proxy_send_timeout 3600s;
 }
 NGX
-sed "s/__DOMAIN__/$DOMAIN/g; s/__WS_PORT__/$WS_PORT/g" "$HERE/nginx-site.conf" \
-  > /etc/nginx/sites-available/samvadx-gateway
+SITE=/etc/nginx/sites-available/samvadx-gateway
+if ! grep -q 'samvadx-gateway.d' "$SITE"; then
+  sed -i '0,/location = \/health/s//include \/etc\/nginx\/samvadx-gateway.d\/*.conf;\n\n    location = \/health/' "$SITE"
+fi
 nginx -t
 systemctl reload nginx
 
