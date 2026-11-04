@@ -3,8 +3,11 @@
 // and only while calling is on for their company. Never read it from VITE_* env: Vite bakes
 // those into the browser bundle for everyone (it happened once in a local build, 2026-11-03).
 //
-// The browser connects to our gateway (wss://voice.samvadx.com/ws, infra/sip-gateway), which
-// carries SIP and audio to SkyCRM over the IPsec tunnel.
+// The browser connects to our gateway (infra/sip-gateway), which carries it to SkyCRM over the
+// IPsec tunnel. Two routes, chosen by SKYCRM_WSS_URL on Railway:
+//   wss://voice.samvadx.com/ws         → Kamailio + rtpengine; extensions are plain softphones.
+//   wss://voice.samvadx.com/skycrm-ws  → passed through to SkyCRM's own WebRTC (10.173.16.10:8089);
+//                                        extensions are WebRTC; audio via our TURN relay.
 
 export interface WebphoneConfig {
   /** Our gateway's WebSocket, e.g. "wss://voice.samvadx.com/ws". */
@@ -18,6 +21,9 @@ export interface WebphoneConfig {
   password: string;
   /** Optional display name shown to the far end. */
   displayName?: string;
-  /** ICE servers (STUN/TURN). Empty: rtpengine on the gateway offers its public address. */
+  /** ICE servers (STUN/TURN). Empty: rtpengine on the gateway offers its public address. With
+   *  SkyCRM's own WebRTC (wss://…/skycrm-ws), the TURN relay into the tunnel (turn-credentials). */
   iceServers: RTCIceServer[];
+  /** "relay" with the TURN relay: SkyCRM's private candidates are unreachable from a browser. */
+  iceTransportPolicy?: RTCIceTransportPolicy;
 }

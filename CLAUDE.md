@@ -380,6 +380,27 @@ code — always go through this.
   company page's Telephony card; a trigger blocks self-edits). Presence `available` joins and
   unpauses the company's inbound queue; any other status pauses it.
 
+### Browser phone route: SkyCRM's own WebRTC through our gateway (option B, user, 2026-11-04)
+
+Agents call from the SamvadX page; no FortiClient/Zoiper on their computers either way. The
+gateway (`infra/sip-gateway`, `voice.samvadx.com`, IPsec to SkyCRM) has two routes, picked by
+`SKYCRM_WSS_URL` on Railway: `/ws` = Kamailio + rtpengine, extensions as plain softphones (built
+first, worked 2026-11-03); `/skycrm-ws` = nginx passes the WebSocket to SkyCRM's WebRTC
+`wss://10.173.16.10:8089/ws`, extensions as WebRTC, audio via our coturn relay (relays only to
+10.173.16.0/24, from the tunnel address). SkyCRM switched the extensions to WebRTC on 2026-11-04
+(route A then had no audio) and the user chose B. Enable with `enable-skycrm-webrtc.sh`; it
+prints `SKYCRM_WSS_URL`, `TURN_URLS`, `TURN_SECRET`. `getMyWebphoneLogin` mints short-lived
+coturn REST credentials (`telephony/webrtc/turn-credentials.server.ts`, tested in
+`scripts/turn-credentials.test.ts`) and forces `iceTransportPolicy: "relay"` when TURN is set.
+Until 2026-11-04 SkyCRM sent no call events at all (206 calls, 0 matched): the webhook URL was
+not configured on their side, so calls sat at "dialling" and agents re-dialled.
+Events started arriving 2026-11-04 ~13:19 IST. Live statuses then used words the spec doesn't list,
+and any unknown word was mapped to "failed": every call was ended ~8 s in on screen ("line never
+rang" toast) while it carried on, and `answered_at` was never set. `liveStatusFor`
+(`skycrm-provider.ts`, tested in `telephony-check.ts`) now recognises the usual progress words and
+treats an unknown one as ringing (logged as `unknown live call status`) — only a recognised end
+word or the CDR ends a call.
+
 ### Phone numbers (DIDs) and shared lines (2026-10-26, branch `skycrm-calling`, NOT live)
 
 The vendor supplies ~200 DIDs and a trunk of ~60 channels for every company.

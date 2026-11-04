@@ -204,6 +204,26 @@ const LIVE_STATUS: Record<string, CallStatus> = {
   answer: "connected",
 };
 
+/** A live event's status → our status. The spec's words are matched first; live SkyCRM also sends
+ *  words the spec doesn't list (seen 2026-11-04: every call was marked "failed" ~8 s in while it
+ *  carried on, and none ever "answered"), so recognise the usual call-progress words, and never
+ *  end a call on a word we don't know — the CDR is the terminal signal. Exported for tests. */
+export function liveStatusFor(raw: string | undefined): CallStatus {
+  const s = (raw ?? "").toLowerCase().replace(/[_-]+/g, " ").trim();
+  if (LIVE_STATUS[s]) return LIVE_STATUS[s];
+  if (/\b(no ?answer|not answered|missed|unanswered)\b/.test(s)) return "no_answer";
+  if (/\bbusy\b/.test(s)) return "busy";
+  if (/\b(fail|failed|congestion|unavailable|rejected|invalid)\b/.test(s)) return "failed";
+  if (/\b(hang ?up|hungup|disconnect(ed)?|ended|end|completed?|terminated|bye)\b/.test(s))
+    return "completed";
+  if (/\b(answer(ed)?|connect(ed)?|bridged?|talking|in ?call|up|live|oncall)\b/.test(s))
+    return "connected";
+  if (/\b(ring|ringing|dial|dialing|dialling|calling|progress|originat\w*|queued?)\b/.test(s))
+    return "ringing";
+  if (s) console.warn(`[skycrm-provider] unknown live call status "${raw}" — treated as ringing`);
+  return "ringing";
+}
+
 const CDR_DISPOSITION: Record<string, CallStatus> = {
   answered: "completed",
   "no answer": "no_answer",
@@ -331,7 +351,7 @@ export const skycrmProvider: TelephonyProvider = {
         remotePhone = remotePhone.slice(prefix.length);
       }
     } else {
-      status = LIVE_STATUS[(pick("status") ?? "").toLowerCase()] ?? "failed";
+      status = liveStatusFor(pick("status"));
     }
 
     const billsec = pick("billsec");

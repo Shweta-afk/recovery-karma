@@ -60,7 +60,9 @@ export function DoNotCallCard({ canRemove }: { canRemove: boolean }) {
   const load = async (q = search) => {
     try {
       setRows(
-        await listDoNotCall({ data: { accessToken: await getAccessToken(), search: q || undefined } }),
+        await listDoNotCall({
+          data: { accessToken: await getAccessToken(), search: q || undefined },
+        }),
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not load the do-not-call list");
@@ -141,7 +143,11 @@ export function DoNotCallCard({ canRemove }: { canRemove: boolean }) {
             disabled={busy === "add" || phone.replace(/\D/g, "").length < 10}
             onClick={handleAdd}
           >
-            {busy === "add" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+            {busy === "add" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Plus className="h-3 w-3" />
+            )}
             Add
           </Button>
         </div>
@@ -168,8 +174,14 @@ export function DoNotCallCard({ canRemove }: { canRemove: boolean }) {
                 <div className="min-w-0 flex-1">
                   <p className="font-mono text-sm">{r.phone}</p>
                   <p className="truncate text-[11px] text-muted-foreground">
-                    {[r.debtorName, r.reason, r.addedBy && `added by ${r.addedBy}`,
-                      new Date(r.createdAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })]
+                    {[
+                      r.debtorName,
+                      r.reason,
+                      r.addedBy && `added by ${r.addedBy}`,
+                      new Date(r.createdAt).toLocaleDateString("en-IN", {
+                        timeZone: "Asia/Kolkata",
+                      }),
+                    ]
                       .filter(Boolean)
                       .join(" · ")}
                   </p>

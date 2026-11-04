@@ -33,6 +33,28 @@ Found through the tunnel: SkyCRM's own WebRTC endpoint is `wss://10.173.16.10:80
 `ws://…:8088/ws`, and the same on 10.173.16.4). This gateway still registers over SIP/UDP 5099;
 whether to pass browsers through to their WebRTC instead is open.
 
+## Two routes — option B chosen 2026-11-04
+
+| Route | Browser connects to | SkyCRM extension type | Audio |
+|---|---|---|---|
+| A. Softphone (built first) | `wss://voice.samvadx.com/ws` → Kamailio | softphone (SIP/UDP 5099) | rtpengine converts WebRTC ↔ plain RTP |
+| **B. SkyCRM WebRTC (in use)** | `wss://voice.samvadx.com/skycrm-ws` → nginx → `wss://10.173.16.10:8089/ws` | **WebRTC** | browser ↔ SkyCRM directly (DTLS-SRTP), through our TURN relay |
+
+On 2026-11-04 SkyCRM switched the extensions to WebRTC, which broke route A's audio (route A
+sends plain RTP), and the user chose B. Neither needs FortiClient on agents' computers.
+
+Route B: `sudo ./enable-skycrm-webrtc.sh` (after setup.sh). It checks SkyCRM's WebRTC answers
+through the tunnel, installs coturn (listens on the public IP, relays
+from TUNNEL_IP, relays ONLY to 10.173.16.0/24), opens UDP/TCP 3478, and adds `/skycrm-ws` to
+nginx (same Origin allow-list, leaves from TUNNEL_IP, SkyCRM's self-signed certificate accepted
+by nginx so browsers never see it). It prints three Railway variables:
+`SKYCRM_WSS_URL=wss://voice.samvadx.com/skycrm-ws`, `TURN_URLS`, `TURN_SECRET`. The app then
+hands each browser short-lived TURN credentials (`turn-credentials.server.ts`) and forces relay
+(SkyCRM's candidates are private). SkyCRM's SDP must offer its 10.173.16.x address as an ICE
+candidate; a public-only candidate (external media address) can't be reached through the relay.
+
+Back to A: `SKYCRM_WSS_URL=wss://voice.samvadx.com/ws` and SkyCRM sets the extensions to softphone.
+
 ## Setting up a server
 
 1. Ubuntu 24.04, 2 GB RAM, fixed public IP. Open TCP 22/80/443 and UDP 500/4500/30000–30999 in
@@ -64,7 +86,9 @@ into the browser bundle.
 - One server: if it is down, browser calling is down. Add monitoring, then a second gateway.
 - Registrations are kept in memory: a restart makes every browser re-register (SIP.js does this
   by itself within a minute).
-- Audio needs the browser to reach UDP 30000–30999. Very strict office networks that block UDP
+- Route B audio needs the browser to reach UDP or TCP 3478 (no TLS relay yet: a network that
+  allows only 443 can't reach it). Route A audio needs the browser to reach UDP 30000–30999.
+- Audio needs the browser to reach UDP 30000–30999 (route A). Very strict office networks that block UDP
   would need a TURN server; not set up.
 - The IPsec pre-shared key was sent to us over chat. Ask SkyCRM to rotate it, then run
   `set-ipsec-psk.sh`.

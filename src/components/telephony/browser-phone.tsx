@@ -35,7 +35,7 @@ export function BrowserPhone() {
     void (async () => {
       try {
         const res = await getMyWebphoneLogin({ data: { accessToken: await getAccessToken() } });
-        if (!cancelled && res.login) setConfig({ ...res.login, iceServers: [] });
+        if (!cancelled && res.login) setConfig(res.login);
       } catch (err) {
         console.warn("[browser-phone] no login:", err instanceof Error ? err.message : err);
       }
@@ -202,12 +202,7 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
             >
               <Phone className="mr-1 h-4 w-4" /> Answer
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="flex-1"
-              onClick={() => void wp.hangup()}
-            >
+            <Button size="sm" variant="outline" className="flex-1" onClick={() => void wp.hangup()}>
               Decline
             </Button>
           </div>
@@ -251,11 +246,7 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
           />
           <span>
             Phone {config.extension}:{" "}
-            {ready
-              ? "ready"
-              : wp.regState === "registering"
-                ? "connecting…"
-                : "not connected"}
+            {ready ? "ready" : wp.regState === "registering" ? "connecting…" : "not connected"}
           </span>
           {!ready && wp.regState !== "registering" && (
             <button
