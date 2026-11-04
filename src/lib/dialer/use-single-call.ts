@@ -74,8 +74,10 @@ export interface DialOptions {
 export interface UseSingleCall {
   /** Begin a fresh outbound dial: rings, then connects, driven by provider events. */
   dial: (debtor: QueueDebtor, opts?: DialOptions) => void;
-  /** Agent ends the call → phase "ended" (also tells the provider to drop the leg). */
-  hangup: () => void;
+  /** Agent ends the call → phase "ended" (also tells the provider to drop the leg).
+   * `providerCallId` lets a hook instance that did not place the call (e.g. the floating call
+   * bar, or Call Queue ending a call dialled from the Manual Dial dock) still drop it. */
+  hangup: (providerCallId?: string) => void;
   /** Tear down any in-flight sim/timer without touching the ActiveCall UI state. */
   reset: () => void;
 }
@@ -89,6 +91,16 @@ export interface UseSingleCallArgs {
  * real number the provider can ring — dial() refuses to place a server-mode call with this,
  * rather than silently sending a placeholder every unconfigured agent would otherwise share. */
 const NO_AGENT_PHONE = "agent-self";
+
+/**
+ * The provider id of the most recent server-mode call placed from ANY instance of this hook.
+ *
+ * Several components each own a useSingleCall (Call Queue, the Manual Dial dock, the floating
+ * call bar). A call started on Call Queue keeps being polled after the agent minimises it and
+ * leaves the page (see the unmount note below), so the poll must know when a newer call has
+ * replaced it — otherwise it would write the old call's status onto the new one.
+ */
+let latestServerCallId: string | null = null;
 
 export function useSingleCall(
   setActiveCall: Dispatch<SetStateAction<ActiveCall | null>>,
@@ -173,6 +185,14 @@ export function useSingleCall(
               "Starting the call",
             );
             pidRef.current = result.providerCallId;
+            latestServerCallId = result.providerCallId;
+            // Recorded on the call straight away (not only once a status arrives) so any
+            // other screen can hang this call up by id.
+            setActiveCall((c) =>
+              c && c.debtor.id === debtor.id && !c.providerCallId
+                ? { ...c, providerCallId: result.providerCallId }
+                : c,
+            );
             if (cancelPendingRef.current) {
               // The agent hit Cancel/End Call while this was still in flight — drop the leg
               // now that it actually exists instead of leaving it ringing unattended, and
@@ -195,7 +215,14 @@ export function useSingleCall(
             // status instead, matching on either id the provider might report back.
             const pollStartedAt = Date.now();
             let sawStatus = false;
+            let sawConnected = false;
             timerRef.current = setInterval(async () => {
+              // A newer call has been placed (possibly from another screen): this one is no
+              // longer what the agent is looking at.
+              if (latestServerCallId !== result.providerCallId) {
+                reset();
+                return;
+              }
               if (!sawStatus && Date.now() - pollStartedAt > STATUS_POLL_GIVE_UP_MS) {
                 if (timerRef.current) clearInterval(timerRef.current);
                 timerRef.current = null;
@@ -212,13 +239,17 @@ export function useSingleCall(
               // stoppedRef catches that even though clearInterval already fired, since
               // clearInterval only prevents the NEXT tick, not this one finishing late.
               if (stoppedRef.current || !status) return;
+              if (latestServerCallId !== result.providerCallId) return;
               sawStatus = true;
+              if (status.status === "connected") sawConnected = true;
               const phase = toCallPhase(callStateFor(status.status));
               setActiveCall((c) =>
-                c
+                c && (!c.providerCallId || c.providerCallId === result.providerCallId)
                   ? {
                       ...c,
-                      phase,
+                      // An ended call never comes back to life: a late "ringing"/"connected"
+                      // answer (or the agent having already pressed End) must not reopen it.
+                      phase: c.phase === "ended" ? "ended" : phase,
                       providerCallId: result.providerCallId,
                       // Keep any URL we already have: the provider publishes recordings
                       // asynchronously, so a later poll can report none.
@@ -226,7 +257,7 @@ export function useSingleCall(
                     }
                   : c,
               );
-              if (status.status === "failed") {
+              if (status.status === "failed" && !sawConnected) {
                 // Provider accepted the dial (no throw above, a call id was issued) but the
                 // call never actually connected — the "200 OK, agent leg never rings" pattern:
                 // silent without this, since the poll loop otherwise just reset()s with no
@@ -286,40 +317,68 @@ export function useSingleCall(
     [reset, setActiveCall, mode, agentPhone],
   );
 
-  const hangup = useCallback(() => {
-    if (!pidRef.current) {
-      // dial() hasn't gotten a provider id back yet (server round-trip or the sim's own
-      // startCall promise still in flight) — there's no leg to drop. Used to silently return
-      // here and do nothing at all, which is what made Cancel/End Call look broken: the click
-      // registered, the button state didn't change, and the call kept ringing. Reflect the
-      // cancel immediately and let it finish through dial()'s cancelPendingRef check above.
-      cancelPendingRef.current = true;
+  const hangup = useCallback(
+    (providerCallId?: string) => {
+      if (!pidRef.current && providerCallId && mode === "server") {
+        // This instance did not place the call — drop it by the id the call carries.
+        void (async () => {
+          try {
+            await serverHangupCall({
+              data: { accessToken: await getAccessToken(), providerCallId },
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("Failed to hangup call:", msg);
+          }
+        })();
+        setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
+        return;
+      }
+      if (!pidRef.current) {
+        // dial() hasn't gotten a provider id back yet (server round-trip or the sim's own
+        // startCall promise still in flight) — there's no leg to drop. Used to silently return
+        // here and do nothing at all, which is what made Cancel/End Call look broken: the click
+        // registered, the button state didn't change, and the call kept ringing. Reflect the
+        // cancel immediately and let it finish through dial()'s cancelPendingRef check above.
+        cancelPendingRef.current = true;
+        setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
+        return;
+      }
+
+      if (mode === "server") {
+        // Server mode: call hangup via server function
+        startTransition(async () => {
+          try {
+            await serverHangupCall({
+              data: { accessToken: await getAccessToken(), providerCallId: pidRef.current! },
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("Failed to hangup call:", msg);
+          }
+        });
+      } else {
+        // Local mode: call sim hangup
+        simRef.current?.hangup(pidRef.current);
+      }
+
       setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
-      return;
-    }
+      reset();
+    },
+    [reset, setActiveCall, mode],
+  );
 
-    if (mode === "server") {
-      // Server mode: call hangup via server function
-      startTransition(async () => {
-        try {
-          await serverHangupCall({
-            data: { accessToken: await getAccessToken(), providerCallId: pidRef.current! },
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error("Failed to hangup call:", msg);
-        }
-      });
-    } else {
-      // Local mode: call sim hangup
-      simRef.current?.hangup(pidRef.current);
-    }
-
-    setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
-    reset();
-  }, [reset, setActiveCall, mode]);
-
-  useEffect(() => () => reset(), [reset]);
+  // On unmount, stop a SIMULATED call, but leave a real call's status poll running. The agent
+  // minimising a call and moving off Call Queue unmounts this hook; stopping the poll there
+  // meant the app never learned the call had ended (the floating bar kept counting and the
+  // disposition never opened). The poll writes to the layout-level call session, which is
+  // still mounted, and stops itself on a final status, a newer call, or its give-up timer.
+  useEffect(
+    () => () => {
+      if (mode !== "server") reset();
+    },
+    [reset, mode],
+  );
 
   return { dial, hangup, reset };
 }

@@ -57,6 +57,7 @@ import {
 } from "@/components/call-queue/dialer-boards";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
+import { useCallSession } from "@/lib/call-session";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import type { DialTarget } from "@/lib/dialer/engine";
 import {
@@ -413,7 +414,11 @@ function ManagerQueuePage() {
   const managerName = user?.name ?? "Manager";
   const { activeTeam } = useActiveTeam(managerId);
   const agents = useTeamAgents(activeTeam?.id);
-  const [tab, setTab] = useState("live");
+  // Arriving here from the floating call bar (a Manual Dial call that ended, or Expand): open
+  // My Queue, whose Call Queue renders that call's disposition screen. Agent Live View renders
+  // nothing when the manager has no team yet.
+  const { activeCall: sessionCall } = useCallSession();
+  const [tab, setTab] = useState(() => (sessionCall ? "my" : "live"));
   // Admins are org-wide by design; a manager is scoped to their own agents so the badge
   // matches what My Queue actually lists.
   const teamAgentIds = useMemo(
@@ -456,7 +461,7 @@ function ManagerQueuePage() {
     singleCall.dial(debtor, { callerId });
   };
 
-  const endCall = () => singleCall.hangup();
+  const endCall = () => singleCall.hangup(activeCall?.providerCallId);
 
   const handleAddPhone = async (phone: string) => {
     if (!activeCall) return;
@@ -611,7 +616,6 @@ function ManagerQueuePage() {
           onEnd={endCall}
           onSubmit={submitDisposition}
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
-          onMinimize={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
           onAddPhone={handleAddPhone}
           onCallNumber={handleCallNumber}
         />
@@ -626,7 +630,6 @@ function ManagerQueuePage() {
           onEnd={endCall}
           onSubmit={submitDisposition}
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "panel" } : null))}
-          onMinimize={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
           onAddPhone={handleAddPhone}
           onCallNumber={handleCallNumber}
         />

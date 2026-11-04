@@ -616,7 +616,10 @@ export function CallQueueContent({
       singleCall.dial(debtor, { agentPhone: opts?.agentPhone, callerId: opts?.callerId });
   };
 
-  const endCall = () => singleCall.hangup();
+  // Passes the call's own provider id: a call dialled from the Manual Dial dock (or one still
+  // being polled from an earlier visit to this page) was placed by another hook instance, so
+  // this one has no leg of its own to drop.
+  const endCall = () => singleCall.hangup(activeCallRef.current?.providerCallId);
 
   // Records a number the agent just learned (e.g. from the debtor or a family member) against
   // the debtor being called, and reflects it on the in-progress call's snapshot immediately —

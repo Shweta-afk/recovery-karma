@@ -136,6 +136,9 @@ export function ManualDialDock() {
     setActiveCall({
       debtor,
       dialMode: "manual",
+      // Start of the ring — measures ring time, and tells this call apart from an earlier one
+      // to the same account (the floating bar opens each call's disposition once).
+      dialStartedAt: new Date().toISOString(),
       phase: "ringing",
       // Minimized so the floating call bar appears wherever the agent happens to be; they
       // maximize into Call Queue to disposition. A "panel" view would render nothing at all

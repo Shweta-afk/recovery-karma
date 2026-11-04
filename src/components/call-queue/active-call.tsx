@@ -207,6 +207,9 @@ function ActiveCallContent({
   onCallNumber,
 }: CallControlProps) {
   const { debtor, phase, muted, held, elapsed } = call;
+  // The call ended without ever being answered (no answer, busy, switched off, failed). The
+  // disposition opens with the outcomes that fit that case first.
+  const notConnected = phase === "ended" && !call.answeredAt;
 
   // Prior notes for this debtor are read from the disposition cache; refresh once on mount so
   // calls made by OTHER agents (now readable — see the migration referenced below) are present,
@@ -676,8 +679,16 @@ function ActiveCallContent({
                 {fmtElapsed(elapsed)}
               </span>
             ) : (
-              <span className="text-muted-foreground font-medium">
-                Ended · {fmtElapsed(elapsed)}
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                  notConnected
+                    ? "border-amber-400/40 bg-amber-500/10 text-amber-600"
+                    : "border-border bg-muted/40 text-muted-foreground",
+                )}
+              >
+                <PhoneOff className="h-3 w-3" />
+                {notConnected ? "Not connected" : `Call ended · ${fmtElapsed(elapsed)}`}
               </span>
             )}
             {conferenced && (
@@ -1023,15 +1034,19 @@ function ActiveCallContent({
               </>
             )}
 
-            <Button
-              size="sm"
-              className="gap-1.5 h-8 bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={onEnd}
-            >
-              <PhoneOff className="h-3.5 w-3.5" />
-              End Call
-            </Button>
+            {/* Only while the call is live — after it ends the button did nothing but sit there
+                looking like the call was still up. */}
             {phase === "connected" && (
+              <Button
+                size="sm"
+                className="gap-1.5 h-8 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={onEnd}
+              >
+                <PhoneOff className="h-3.5 w-3.5" />
+                End Call
+              </Button>
+            )}
+            {phase === "connected" && onMinimize && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -1178,82 +1193,106 @@ function ActiveCallContent({
             )}
 
             {phase === "ended" && (
-              <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                <p className="text-sm font-semibold text-foreground">Disposition</p>
-                {dispositionPools([
-                  { ...POSITIVE_POOL, outcomes: PRODUCTIVE_OUTCOMES },
-                  { ...DIFFICULT_POOL, outcomes: NON_PRODUCTIVE_OUTCOMES },
-                ])}
-                {outcomeFields()}
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Notes</label>
-                  <Textarea
-                    placeholder="Call notes…"
-                    value={disposition.notes}
-                    onChange={(e) => up({ notes: e.target.value })}
-                    className="min-h-[80px] resize-none"
-                  />
-                </div>
-                {/* Retro-attach: an unmapped manual call (dialled straight from the dock with
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  <p className="text-sm font-semibold text-foreground">Disposition</p>
+                  {notConnected && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                      <span>
+                        The call didn't connect. Pick what happened — e.g. No Answer, with the
+                        reason (busy, switched off…) — and save to move on.
+                      </span>
+                    </div>
+                  )}
+                  {dispositionPools(
+                    notConnected
+                      ? [
+                          { ...DIFFICULT_POOL, outcomes: NON_PRODUCTIVE_OUTCOMES },
+                          { ...POSITIVE_POOL, outcomes: PRODUCTIVE_OUTCOMES },
+                        ]
+                      : [
+                          { ...POSITIVE_POOL, outcomes: PRODUCTIVE_OUTCOMES },
+                          { ...DIFFICULT_POOL, outcomes: NON_PRODUCTIVE_OUTCOMES },
+                        ],
+                  )}
+                  {outcomeFields()}
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Notes</label>
+                    <Textarea
+                      placeholder="Call notes…"
+                      value={disposition.notes}
+                      onChange={(e) => up({ notes: e.target.value })}
+                      className="min-h-[80px] resize-none"
+                    />
+                  </div>
+                  {/* Retro-attach: an unmapped manual call (dialled straight from the dock with
                     no Loan ID) can still be pulled onto the right account here, rather than
                     being stranded as an orphaned record forever. Only shown when there is
                     genuinely nothing behind the call — a queue call already knows its debtor. */}
-                {!isUuid(debtor.id) && (
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      Attach to Loan / Account ID <span className="opacity-70">(optional)</span>
+                  {!isUuid(debtor.id) && (
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">
+                        Attach to Loan / Account ID <span className="opacity-70">(optional)</span>
+                      </label>
+                      <Input
+                        placeholder="e.g. LN-40021"
+                        value={disposition.attachLoanId}
+                        onChange={(e) => up({ attachLoanId: e.target.value })}
+                        className="h-8 text-sm"
+                      />
+                      {disposition.attachLoanId.trim() &&
+                        (attachMatch ? (
+                          <p className="text-[11px] font-medium text-success">
+                            Will be logged against {attachMatch.debtor.name} ·{" "}
+                            {attachMatch.portfolio.name}
+                          </p>
+                        ) : attachLooking ? (
+                          <p className="text-[11px] text-muted-foreground">Looking up account…</p>
+                        ) : (
+                          <p className="text-[11px] text-amber-500">
+                            No account matches — this call stays unmapped
+                          </p>
+                        ))}
+                    </div>
+                  )}
+                </div>
+                {/* Pinned under the form so Save is always in view, however long the form gets.
+                  The two checkboxes and the button used to share one squeezed row. */}
+                <div className="flex-shrink-0 border-t border-border bg-card px-5 py-3 space-y-3">
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={disposition.escalate}
+                        onChange={(e) => up({ escalate: e.target.checked })}
+                        className="rounded"
+                      />
+                      <span className="text-sm text-destructive font-medium">
+                        Escalate to manager
+                      </span>
                     </label>
-                    <Input
-                      placeholder="e.g. LN-40021"
-                      value={disposition.attachLoanId}
-                      onChange={(e) => up({ attachLoanId: e.target.value })}
-                      className="h-8 text-sm"
-                    />
-                    {disposition.attachLoanId.trim() &&
-                      (attachMatch ? (
-                        <p className="text-[11px] font-medium text-success">
-                          Will be logged against {attachMatch.debtor.name} ·{" "}
-                          {attachMatch.portfolio.name}
-                        </p>
-                      ) : attachLooking ? (
-                        <p className="text-[11px] text-muted-foreground">Looking up account…</p>
-                      ) : (
-                        <p className="text-[11px] text-amber-500">
-                          No account matches — this call stays unmapped
-                        </p>
-                      ))}
+                    <label
+                      className="flex items-center gap-2 cursor-pointer select-none"
+                      title="The borrower asked not to be called. Blocks every future call to this number for your company."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={disposition.doNotCall}
+                        onChange={(e) => up({ doNotCall: e.target.checked })}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Do not call again</span>
+                    </label>
                   </div>
-                )}
-                <div className="flex items-center justify-between gap-3 pt-1 border-t border-border">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={disposition.escalate}
-                      onChange={(e) => up({ escalate: e.target.checked })}
-                      className="rounded"
-                    />
-                    <span className="text-sm text-destructive font-medium">
-                      Escalate to manager
-                    </span>
-                  </label>
-                  <label
-                    className="flex items-center gap-2 cursor-pointer select-none"
-                    title="The borrower asked not to be called. Blocks every future call to this number for your company."
-                  >
-                    <input
-                      type="checkbox"
-                      checked={disposition.doNotCall}
-                      onChange={(e) => up({ doNotCall: e.target.checked })}
-                      className="rounded"
-                    />
-                    <span className="text-sm">Do not call again</span>
-                  </label>
                   <Button
-                    className="gap-1.5 px-6"
+                    className="w-full gap-1.5"
                     onClick={handleSaveClose}
                     disabled={!disposition.outcome}
+                    title={disposition.outcome ? undefined : "Pick an outcome first"}
                   >
-                    Save &amp; Close
+                    <CheckCheck className="h-4 w-4" />
+                    {disposition.outcome ? "Save & Close" : "Pick an outcome to save"}
                   </Button>
                 </div>
               </div>
@@ -1263,7 +1302,7 @@ function ActiveCallContent({
           {/* ── RIGHT: full debtor info ── */}
           <div className="flex-1 flex flex-col overflow-hidden bg-muted/10">
             {/* Tab bar */}
-            <div className="flex border-b border-border bg-card px-6 gap-1 flex-shrink-0">
+            <div className="flex border-b border-border bg-card px-6 gap-1 flex-shrink-0 overflow-x-auto">
               {(
                 [
                   { key: "loan", label: "Loan Details" },
@@ -1278,7 +1317,7 @@ function ActiveCallContent({
                   type="button"
                   onClick={() => setInfoTab(t.key)}
                   className={cn(
-                    "py-3 px-4 text-sm font-medium border-b-2 transition-colors -mb-px",
+                    "py-3 px-4 text-sm font-medium border-b-2 transition-colors -mb-px whitespace-nowrap",
                     infoTab === t.key
                       ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:text-foreground",
@@ -1835,6 +1874,10 @@ export function ActiveCallPanel(props: CallControlProps) {
 }
 
 export function ActiveCallModal(props: CallControlProps) {
+  // The two-column call screen (fixed 440px left column) does not fit a max-w-2xl dialog with
+  // no height: it overflowed and the disposition's Save button could end up off screen. The
+  // dialog is only for the compact ringing row; once the call is live or over, use the panel.
+  if (props.call.phase !== "ringing") return <ActiveCallPanel {...props} />;
   return (
     <Dialog open onOpenChange={() => {}}>
       <DialogContent className="max-w-2xl" onInteractOutside={(e) => e.preventDefault()}>

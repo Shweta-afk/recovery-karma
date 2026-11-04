@@ -309,7 +309,9 @@ export interface CallControlProps {
   onEnd: () => void;
   onSubmit: () => void;
   onSwitchView: () => void;
-  onMinimize: () => void;
+  /** Omitted where there is no floating call bar to minimise to (Manager → My Queue's own
+   * calls) — the button is then hidden rather than doing nothing. */
+  onMinimize?: () => void;
   /** Adds a number the agent just learned to the debtor's file. Throws on failure (e.g.
    * duplicate) so the input can keep what was typed instead of clearing it. */
   onAddPhone: (phone: string) => Promise<void>;

@@ -1,10 +1,11 @@
 // Floating, draggable "call in progress" bar — shown at the dashboard layout level (so it
 // survives navigating between agent pages) whenever the active call has been minimized from
 // the full Call Queue panel. See src/lib/call-session.tsx for the shared call state.
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Mic, MicOff, PhoneOff, Maximize2 } from "lucide-react";
 import { useCallSession } from "@/lib/call-session";
+import { useSingleCall } from "@/lib/dialer/use-single-call";
 import { cn } from "@/lib/utils";
 
 function fmtElapsed(s: number) {
@@ -18,6 +19,36 @@ function fmtElapsed(s: number) {
 export function GlobalCallBar() {
   const { activeCall, setActiveCall } = useCallSession();
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (st) => st.location.pathname });
+  // Only used to hang up — this bar never places a call, so it drops the leg by its id.
+  const singleCall = useSingleCall(setActiveCall, { mode: "server" });
+
+  // The disposition screen lives on the Call Queue of THIS route tree. Managers and admins have
+  // their own call session under /manager; sending them to /dashboard/call-queue switched to a
+  // different session and the call (and its disposition) vanished.
+  const queuePath = pathname.startsWith("/manager") ? "/manager/queue" : "/dashboard/call-queue";
+
+  const onQueue = pathname.startsWith(queuePath);
+
+  // The full call screen is drawn only by Call Queue. Anywhere else — the call was minimised, or
+  // the agent simply opened another page mid-call — this bar is the call's only sign of life;
+  // before, leaving Call Queue without minimising made the call vanish from the screen.
+  const showBar = !!activeCall && (activeCall.view === "minimized" || !onQueue);
+
+  // A call that ends while only this bar is showing — the borrower didn't pick up, was busy, or
+  // hung up — opens the full disposition screen by itself, so the agent never has to find the
+  // bar and expand it.
+  const endedOutOfView = showBar && activeCall?.phase === "ended";
+  // Once per call: an agent who then walks away from the open disposition is not dragged back.
+  const callKey = activeCall ? `${activeCall.debtor.id}|${activeCall.dialStartedAt ?? ""}` : "";
+  const autoOpenedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!endedOutOfView || autoOpenedFor.current === callKey) return;
+    autoOpenedFor.current = callKey;
+    setActiveCall((c) => (c && c.phase === "ended" ? { ...c, view: "panel" } : c));
+    if (!onQueue) navigate({ to: queuePath });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endedOutOfView, callKey]);
 
   const [pos, setPos] = useState({ x: 24, y: 24 });
   const dragRef = useRef<{ dragging: boolean; offX: number; offY: number }>({
@@ -27,7 +58,7 @@ export function GlobalCallBar() {
   });
   const barRef = useRef<HTMLDivElement>(null);
 
-  if (!activeCall || activeCall.view !== "minimized") return null;
+  if (!activeCall || !showBar) return null;
 
   const { debtor, phase, muted, elapsed } = activeCall;
   const initials = debtor.name
@@ -36,17 +67,18 @@ export function GlobalCallBar() {
     .slice(0, 2)
     .join("");
 
-  const goToQueue = () => navigate({ to: "/dashboard/call-queue" });
+  const goToQueue = () => {
+    if (!onQueue) navigate({ to: queuePath });
+  };
 
   const expand = () => {
     setActiveCall((c) => (c ? { ...c, view: "panel" } : null));
     goToQueue();
   };
 
-  const endCall = () => {
-    setActiveCall((c) => (c ? { ...c, phase: "ended", view: "panel" } : null));
-    goToQueue();
-  };
+  // Used to only flip the screen to "ended" — the real call carried on, because nothing told
+  // the provider. Now it hangs up the leg; the effect above then opens the disposition.
+  const endCall = () => singleCall.hangup(activeCall.providerCallId);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     const el = barRef.current;
