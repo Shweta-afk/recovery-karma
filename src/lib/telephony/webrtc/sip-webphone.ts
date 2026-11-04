@@ -134,6 +134,25 @@ export class SipWebphone {
       }
     });
     this.events.onRegState?.("registering");
+    // Clear every other registration of this extension at SkyCRM first (REGISTER Contact: *).
+    // A Zoiper left registered, or a tab on an old route, otherwise stays registered for up to an
+    // hour, and SkyCRM rang it first: 8620's calls on 2026-11-04 rang a dead registration for 30 s,
+    // reached the browser only after SkyCRM had given up, and ended NO ANSWER. One extension is
+    // one agent, so the phone that connects last is the one that rings.
+    // unregister() resolves when the request is SENT; registering before the reply arrives is
+    // refused as "REGISTER already in progress", so wait for the answer (or 5 s at most).
+    const registerer = this.registerer;
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      const timer = setTimeout(done, 5000);
+      const finish = () => {
+        clearTimeout(timer);
+        done();
+      };
+      registerer
+        .unregister({ all: true, requestDelegate: { onAccept: finish, onReject: finish } })
+        .catch(finish); // nothing registered elsewhere / refused: register normally anyway
+    });
     try {
       await this.registerer.register();
     } catch (err) {
