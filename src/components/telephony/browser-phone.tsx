@@ -25,31 +25,101 @@ export const DIAL_STARTED_EVENT = "samvadx:dial-started";
 /** How long after clicking Call a ring from SkyCRM counts as that call's agent leg. */
 const AUTO_ANSWER_WINDOW_MS = 60_000;
 
+/** How often the phone re-reads its login from the server while idle. */
+const LOGIN_RECHECK_MS = 2 * 60_000;
+/** Renew the login (and its TURN relay credentials, valid 12 h) after this long anyway. */
+const LOGIN_RENEW_MS = 6 * 3600_000;
+
+/** What decides where and how the phone registers. A change means reconnecting; TURN usernames
+ *  and passwords change on every fetch, so only the relay URLs count. */
+function loginKey(c: WebphoneConfig): string {
+  return JSON.stringify([
+    c.wssUrl,
+    c.domain,
+    c.extension,
+    c.password,
+    c.iceTransportPolicy ?? "",
+    c.iceServers.map((s) => s.urls),
+  ]);
+}
+
+/** "gateway" (our Kamailio, wss://…/ws) or "SkyCRM WebRTC" (wss://…/skycrm-ws), for the badge. */
+function routeLabel(c: WebphoneConfig): string {
+  return /\/skycrm-ws\b/.test(c.wssUrl) ? "SkyCRM WebRTC" : "gateway";
+}
+
 export function BrowserPhone() {
   const { user } = useAuth();
   const [config, setConfig] = useState<WebphoneConfig | null>(null);
+  const current = useRef<{ key: string; at: number } | null>(null);
+  const busy = useRef(false);
 
+  // The phone follows the server's settings by itself. Until 2026-11-04 it read its login only
+  // when the page loaded, so switching routes on Railway left every open page on the old route
+  // until someone reloaded it — and those pages kept taking SkyCRM's rings and never answered.
+  // Now it re-reads every couple of minutes (and when the tab comes back) and reconnects when
+  // anything that matters changed. Never in the middle of a call.
   useEffect(() => {
     if (!user || user.role === "superadmin") return;
     let cancelled = false;
-    void (async () => {
+    const load = async () => {
+      if (busy.current) return;
       try {
         const res = await getMyWebphoneLogin({ data: { accessToken: await getAccessToken() } });
-        if (!cancelled && res.login) setConfig(res.login);
+        if (cancelled || busy.current) return;
+        if (!res.login) {
+          if (current.current) {
+            current.current = null;
+            setConfig(null);
+          }
+          return;
+        }
+        const key = loginKey(res.login);
+        const stale = current.current && Date.now() - current.current.at > LOGIN_RENEW_MS;
+        if (!current.current || current.current.key !== key || stale) {
+          current.current = { key, at: Date.now() };
+          setConfig(res.login);
+        }
       } catch (err) {
         console.warn("[browser-phone] no login:", err instanceof Error ? err.message : err);
       }
-    })();
+    };
+    void load();
+    const t = setInterval(() => void load(), LOGIN_RECHECK_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onVisible);
     return () => {
       cancelled = true;
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onVisible);
     };
   }, [user]);
 
   if (!config) return null;
-  return <RegisteredPhone config={config} />;
+  // A new key mounts a fresh phone; the old one unregisters as it unmounts, so SkyCRM forgets
+  // the old route at once instead of ringing it for up to ten minutes.
+  return (
+    <RegisteredPhone
+      key={current.current ? `${current.current.key}@${current.current.at}` : ""}
+      config={config}
+      onBusy={(b) => {
+        busy.current = b;
+      }}
+    />
+  );
 }
 
-function RegisteredPhone({ config }: { config: WebphoneConfig }) {
+function RegisteredPhone({
+  config,
+  onBusy,
+}: {
+  config: WebphoneConfig;
+  onBusy: (busy: boolean) => void;
+}) {
   const wp = useWebphone(config);
   const lastDialAt = useRef(0);
   const [now, setNow] = useState(Date.now());
@@ -147,6 +217,12 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call?.state, call?.id]);
+
+  // Tell the parent not to swap the phone out while a call exists.
+  useEffect(() => {
+    onBusy(call !== null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call !== null]);
 
   // Call timer.
   useEffect(() => {
@@ -247,6 +323,7 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
           <span>
             Phone {config.extension}:{" "}
             {ready ? "ready" : wp.regState === "registering" ? "connecting…" : "not connected"}
+            <span className="text-muted-foreground"> · {routeLabel(config)}</span>
           </span>
           {!ready && wp.regState !== "registering" && (
             <button
