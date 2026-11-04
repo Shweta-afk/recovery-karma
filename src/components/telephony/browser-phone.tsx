@@ -12,7 +12,7 @@
 // _SIP_PASSWORD settings on Railway. Without one it renders nothing.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Phone, PhoneIncoming, PhoneOff, Mic, MicOff, RefreshCw } from "lucide-react";
+import { Phone, PhoneIncoming, PhoneOff, Mic, MicOff, RefreshCw, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { getAccessToken } from "@/lib/access-token";
@@ -53,6 +53,47 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
   const wp = useWebphone(config);
   const lastDialAt = useRef(0);
   const [now, setNow] = useState(Date.now());
+  const audioEl = useRef<HTMLAudioElement | null>(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const setAudioEl = useCallback(
+    (el: HTMLAudioElement | null) => {
+      audioEl.current = el;
+      wp.audioRef(el);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [wp.audioRef],
+  );
+
+  // Browsers only let a page play sound after a click on it. The call is answered by itself a few
+  // seconds after the agent clicks Call (no click at that moment), so without this most agents'
+  // browsers silently blocked the far end: no ringback, no voice, while the call was connected and
+  // the audio was arriving (2026-11-04). Playing an empty stream inside a click unlocks the
+  // <audio> element; the call's stream later plays through it.
+  const unlockAudio = useCallback(() => {
+    const el = audioEl.current;
+    if (!el || !el.paused) return;
+    if (!el.srcObject) el.srcObject = new MediaStream();
+    void el.play().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const onGesture = () => unlockAudio();
+    document.addEventListener("pointerdown", onGesture, true);
+    document.addEventListener("keydown", onGesture, true);
+    return () => {
+      document.removeEventListener("pointerdown", onGesture, true);
+      document.removeEventListener("keydown", onGesture, true);
+    };
+  }, [unlockAudio]);
+
+  const playCallAudio = () => {
+    const el = audioEl.current;
+    if (!el) return;
+    void el
+      .play()
+      .then(() => setAudioBlocked(false))
+      .catch(() => setAudioBlocked(true));
+  };
 
   const start = useCallback(async () => {
     // Ask for the microphone up front, so the first call doesn't stall on a permission prompt.
@@ -73,10 +114,11 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
   useEffect(() => {
     const onDial = () => {
       lastDialAt.current = Date.now();
+      unlockAudio(); // still inside the agent's click on Call
     };
     window.addEventListener(DIAL_STARTED_EVENT, onDial);
     return () => window.removeEventListener(DIAL_STARTED_EVENT, onDial);
-  }, []);
+  }, [unlockAudio]);
 
   // SkyCRM's ring for a call this agent just placed: pick up without asking.
   const call = wp.call;
@@ -91,6 +133,20 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call?.id, call?.state]);
+
+  // If the browser still refused to play the call's audio, say so and offer a button: one click
+  // is all it needs.
+  useEffect(() => {
+    if (call?.state !== "connected") {
+      setAudioBlocked(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      if (audioEl.current?.paused) playCallAudio();
+    }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call?.state, call?.id]);
 
   // Call timer.
   useEffect(() => {
@@ -121,7 +177,13 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
 
   return (
     <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
-      <audio ref={wp.audioRef} autoPlay className="hidden" />
+      <audio ref={setAudioEl} autoPlay className="hidden" />
+
+      {live && audioBlocked && (
+        <Button size="lg" className="shadow-lg animate-pulse" onClick={playCallAudio}>
+          <Volume2 className="mr-2 h-5 w-5" /> Tap to hear the call
+        </Button>
+      )}
 
       {ringing && (
         <div className="w-72 rounded-lg border bg-card p-3 shadow-lg animate-in slide-in-from-bottom-4">
@@ -130,7 +192,14 @@ function RegisteredPhone({ config }: { config: WebphoneConfig }) {
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">{call?.remote}</p>
           <div className="mt-3 flex gap-2">
-            <Button size="sm" className="flex-1" onClick={() => void wp.answer()}>
+            <Button
+              size="sm"
+              className="flex-1"
+              onClick={() => {
+                unlockAudio();
+                void wp.answer();
+              }}
+            >
               <Phone className="mr-1 h-4 w-4" /> Answer
             </Button>
             <Button
