@@ -394,6 +394,12 @@ coturn REST credentials (`telephony/webrtc/turn-credentials.server.ts`, tested i
 `scripts/turn-credentials.test.ts`) and forces `iceTransportPolicy: "relay"` when TURN is set.
 Until 2026-11-04 SkyCRM sent no call events at all (206 calls, 0 matched): the webhook URL was
 not configured on their side, so calls sat at "dialling" and agents re-dialled.
+Events started arriving 2026-11-04 ~13:19 IST. Live statuses then used words the spec doesn't list,
+and any unknown word was mapped to "failed": every call was ended ~8 s in on screen ("line never
+rang" toast) while it carried on, and `answered_at` was never set. `liveStatusFor`
+(`skycrm-provider.ts`, tested in `telephony-check.ts`) now recognises the usual progress words and
+treats an unknown one as ringing (logged as `unknown live call status`) — only a recognised end
+word or the CDR ends a call.
 
 ### Phone numbers (DIDs) and shared lines (2026-10-26, branch `skycrm-calling`, NOT live)
 
