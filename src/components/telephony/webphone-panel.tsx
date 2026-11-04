@@ -28,7 +28,8 @@ const NO_LOGIN: Record<string, string> = {
   provider: "Calling on the server is not SkyCRM (TELEPHONY_PROVIDER).",
   not_enabled: "Calling is not enabled for your company (Superadmin → Calling tab).",
   no_extension: "You have no extension (Superadmin → company → Calling tab → Extensions).",
-  not_configured: "SKYCRM_WSS_URL / SKYCRM_SIP_DOMAIN / SKYCRM_SIP_PASSWORD are not set on the server.",
+  not_configured:
+    "SKYCRM_WSS_URL / SKYCRM_SIP_DOMAIN / SKYCRM_SIP_PASSWORD are not set on the server.",
 };
 
 /** Test harness: signs in with the CURRENT user's own extension, from the server, exactly like
@@ -53,7 +54,7 @@ export function WebphonePanel() {
       </div>
     );
   }
-  return <Phone2 config={{ ...login.login, iceServers: [] }} />;
+  return <Phone2 config={login.login} />;
 }
 
 function Phone2({ config }: { config: WebphoneConfig }) {

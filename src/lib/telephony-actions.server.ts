@@ -16,6 +16,7 @@ import {
 import { normalisePhone, type TelephonySettingsRow } from "./telephony/guard-rules";
 import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
+import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.server";
 import {
   pauseQueue,
   registerQueue,
@@ -518,6 +519,9 @@ export type WebphoneLogin =
         extension: string;
         password: string;
         displayName: string;
+        /** TURN relay into the tunnel, when TURN_SECRET + TURN_URLS are set (turn-credentials). */
+        iceServers: TurnLogin["iceServers"];
+        iceTransportPolicy?: TurnLogin["iceTransportPolicy"];
       };
     }
   | { login: null; reason: "provider" | "not_enabled" | "no_extension" | "not_configured" };
@@ -545,7 +549,21 @@ export const getMyWebphoneLogin = createServerFn({ method: "POST" })
       );
       return { login: null, reason: "not_configured" };
     }
-    return { login: { wssUrl, domain, extension, password, displayName: extension } };
+    const turn = turnLogin(extension, {
+      secret: process.env.TURN_SECRET,
+      urls: process.env.TURN_URLS,
+    });
+    return {
+      login: {
+        wssUrl,
+        domain,
+        extension,
+        password,
+        displayName: extension,
+        iceServers: turn?.iceServers ?? [],
+        ...(turn ? { iceTransportPolicy: turn.iceTransportPolicy } : {}),
+      },
+    };
   });
 
 export interface IncomingCall {

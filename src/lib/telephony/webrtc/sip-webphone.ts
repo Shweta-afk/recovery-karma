@@ -92,7 +92,12 @@ export class SipWebphone {
       transportOptions: { server: this.config.wssUrl },
       // Media: browser mic → far end, far-end audio → our <audio>. No video.
       sessionDescriptionHandlerFactoryOptions: {
-        peerConnectionConfiguration: { iceServers: this.config.iceServers },
+        peerConnectionConfiguration: {
+          iceServers: this.config.iceServers,
+          ...(this.config.iceTransportPolicy
+            ? { iceTransportPolicy: this.config.iceTransportPolicy }
+            : {}),
+        },
         constraints: { audio: true, video: false },
       },
     };
@@ -304,8 +309,7 @@ export class SipWebphone {
   private peerConnectionOf(session: Session): RTCPeerConnection | null {
     // SIP.js stashes the RTCPeerConnection on the SessionDescriptionHandler.
     const sdh = session.sessionDescriptionHandler as
-      | { peerConnection?: RTCPeerConnection }
-      | undefined;
+      { peerConnection?: RTCPeerConnection } | undefined;
     return sdh?.peerConnection ?? null;
   }
 
