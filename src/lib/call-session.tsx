@@ -189,11 +189,17 @@ export function CallSessionProvider({ children }: { children: ReactNode }) {
 
   // Heartbeat. A row that stops being touched is shown as stale rather than live — see
   // STALE_AFTER_MS. This is what stops a crashed tab leaving a call on the board forever.
+  // Keyed on whether a call is live, NOT on the activeCall object: that object is replaced every
+  // second (elapsed ticker) and every status poll, and each replacement restarted this 15 s
+  // interval before it ever fired. No heartbeat was ever sent mid-call, so every call over a
+  // minute showed as "No update from this agent's app" and hid its Listen/Whisper/Barge buttons
+  // (found 2026-11-05).
+  const callLive = !!activeCall && activeCall.phase !== "ended";
   useEffect(() => {
-    if (!activeCall || activeCall.phase === "ended") return;
+    if (!callLive) return;
     const id = setInterval(() => void touchLiveCall(), HEARTBEAT_MS);
     return () => clearInterval(id);
-  }, [activeCall?.phase, activeCall]);
+  }, [callLive]);
 
   // Best-effort close on tab/window teardown. Not reliable (the browser may kill the tab before
   // the request leaves), which is exactly why the heartbeat above exists as the real defence.

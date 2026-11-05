@@ -125,6 +125,13 @@ function CallControls({ call }: { call: LiveCall }) {
   const [active, setActive] = useState<MonitorMode | null>(null);
 
   const join = async (mode: MonitorMode) => {
+    // Switching mode: leave the current one first. The browser phone holds one call at a time and
+    // answers a second ring with "busy" — Listen/Barge after Whisper never connected (2026-11-05).
+    if (active) {
+      window.dispatchEvent(new CustomEvent(HANG_UP_EVENT));
+      setActive(null);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
     // Before the request: marks the ring SkyCRM is about to send as ours (auto-answer) and lets
     // audio play — this click is the user gesture browsers require.
     window.dispatchEvent(new CustomEvent(DIAL_STARTED_EVENT));
@@ -137,6 +144,7 @@ function CallControls({ call }: { call: LiveCall }) {
       setActive(mode);
       toast.success(
         `${mode === "listen" ? "Listening to" : mode === "whisper" ? "Whispering to" : "Joined"} ${r.agentName}'s call — your phone connects in a moment`,
+        { description: `Your ext ${r.myExtension} → ext ${r.agentExtension} · SkyCRM: ${r.vendorMessage || "no message"}` },
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not join the call");

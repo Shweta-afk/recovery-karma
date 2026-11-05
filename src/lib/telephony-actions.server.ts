@@ -1059,9 +1059,16 @@ export const monitorLiveCall = createServerFn({ method: "POST" })
     }
     if (agentExtension === myExtension) throw new Error("That is your own call");
 
-    await startCallMonitor(data.mode, myExtension, agentExtension);
+    const res = await startCallMonitor(data.mode, myExtension, agentExtension);
+    const vendorMessage = String(res.message ?? res.Message ?? "").slice(0, 120);
     console.log(
-      `[monitor] ${caller.role} ext ${myExtension} → ${data.mode} on ext ${agentExtension}`,
+      `[monitor] ${caller.role} ext ${myExtension} → ${data.mode} on ext ${agentExtension}: ${vendorMessage}`,
     );
-    return { ok: true, agentName: (agent.name as string | null) ?? agentExtension };
+    return {
+      ok: true,
+      agentName: (agent.name as string | null) ?? agentExtension,
+      myExtension,
+      agentExtension,
+      vendorMessage,
+    };
   });
