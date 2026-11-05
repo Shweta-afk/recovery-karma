@@ -79,3 +79,68 @@ export function useLoanReferenceMatch(ref: string): { match: Match; looking: boo
   }, [ref, !!cached]);
   return { match: cached, looking: !cached && !!ref.trim() && settledFor !== ref };
 }
+
+// ─── Matching a dialled number to its borrower ──────────────────────────────────
+// Manual Dial used to treat any number without a Loan ID as a stranger: the call screen showed
+// no borrower, and the disposition was saved against no account, so it appeared on no history
+// (2026-11-05: ~60% of manual calls were to numbers already in a portfolio). Now the typed
+// number is looked up against every borrower the agent can see — primary and alternate
+// numbers — and a match dials that account, exactly as if its Loan ID had been typed.
+
+export type PhoneMatch = NonNullable<Match>;
+
+/** The last 10 digits of an Indian number, or null if it has fewer. */
+export function phoneKey(raw: string): string | null {
+  const digits = raw.replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : null;
+}
+
+function rowHasPhone(row: { phone?: string; altPhones?: string[] }, key: string): boolean {
+  return [row.phone ?? "", ...(row.altPhones ?? [])].some((p) => phoneKey(p) === key);
+}
+
+/** Every open account (RLS decides which) whose primary or alternate number is `raw`. */
+export async function resolvePhone(raw: string): Promise<PhoneMatch[]> {
+  const key = phoneKey(raw);
+  if (!key) return [];
+  const scope: DebtorScope = { kind: "phone", phone: key };
+  await refreshScopedPortfolios(scope);
+  const out: PhoneMatch[] = [];
+  for (const portfolio of getScopedPortfolios(scope)) {
+    if (portfolio.closedAt) continue;
+    for (const row of portfolio.rows) {
+      if (!rowHasPhone(row, key)) continue;
+      rememberLoanReferenceMatch(row, portfolio);
+      const m = row.loanReference ? findDebtorByLoanReference(row.loanReference) : null;
+      if (m && m.row.id === row.id) out.push(m);
+    }
+  }
+  return out;
+}
+
+/** resolvePhone(phone), debounced while the agent types. `looking` while it is pending. */
+export function usePhoneMatches(phone: string): { matches: PhoneMatch[]; looking: boolean } {
+  const key = phoneKey(phone);
+  const [result, setResult] = useState<{ key: string; matches: PhoneMatch[] } | null>(null);
+  useEffect(() => {
+    if (!key) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      resolvePhone(key)
+        .then((matches) => {
+          if (!cancelled) setResult({ key, matches });
+        })
+        .catch((e) => {
+          console.warn("[loan-ref-lookup] phone lookup failed:", e);
+          if (!cancelled) setResult({ key, matches: [] });
+        });
+    }, DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [key]);
+  if (!key) return { matches: [], looking: false };
+  if (result?.key !== key) return { matches: [], looking: true };
+  return { matches: result.matches, looking: false };
+}

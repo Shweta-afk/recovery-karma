@@ -232,7 +232,7 @@ export class SipWebphone {
   async hangup(): Promise<void> {
     const s = this.session;
     if (!s) return;
-    try {
+    const end = async () => {
       switch (s.state) {
         case SessionState.Initial:
         case SessionState.Establishing:
@@ -245,11 +245,24 @@ export class SipWebphone {
           break;
         // Terminating/Terminated: nothing to do.
       }
+    };
+    try {
+      await end();
     } catch (err) {
-      this.events.onError?.(err instanceof Error ? err.message : String(err));
-    } finally {
-      this.teardownCall("ended");
+      // Most often a race: the auto-answer completed between reading the state and rejecting
+      // (reject() is refused once the call is Established). Try once more against the new
+      // state — a BYE — before giving up.
+      try {
+        await end();
+      } catch (err2) {
+        this.events.onError?.(err2 instanceof Error ? err2.message : String(err ?? err2));
+        // Keep the session if it is still up, so End can be pressed again. Clearing it here used
+        // to hide the call from the page (and silence it) while the borrower stayed connected,
+        // with no button left that could end it.
+        if (s.state === SessionState.Established || s.state === SessionState.Establishing) return;
+      }
     }
+    if (this.session === s) this.teardownCall("ended");
   }
 
   /** Mute/unmute the local mic by toggling the outbound audio track(s). */
@@ -301,7 +314,7 @@ export class SipWebphone {
           this.updateCallState("connected", { connectedAt: Date.now() });
           break;
         case SessionState.Terminated:
-          this.teardownCall("ended");
+          if (this.session === session) this.teardownCall("ended");
           break;
       }
     });

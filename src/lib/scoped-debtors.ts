@@ -58,6 +58,10 @@ export type DebtorScope = (
   /** One Loan/Account ID, matched case-insensitively — Manual Dial's lookup (loan-ref-lookup.ts).
    * `loanRef` must already be trimmed and free of LIKE wildcards; see that module. */
   | { kind: "loanRef"; loanRef: string }
+  /** One phone number, as its last 10 digits — Manual Dial matching a typed number to the
+   * borrower(s) it belongs to (primary or an alternate number). Digits only, so it is safe to
+   * put in a filter. */
+  | { kind: "phone"; phone: string }
 ) & {
   /** Also fetch the first 25 bank-file columns per row (`extra_head`) — Call Queue renders
    * them as table columns. Everyone else gets only the named sub-fields; see debtor-extra.ts.
@@ -73,6 +77,7 @@ function scopeKey(scope: DebtorScope): string {
   if (scope.kind === "portfolios")
     return `portfolios:${[...new Set(scope.portfolioIds)].sort().join(",")}${head}`;
   if (scope.kind === "loanRef") return `loanRef:${scope.loanRef.toLowerCase()}${head}`;
+  if (scope.kind === "phone") return `phone:${scope.phone}${head}`;
   return `visible${head}`;
 }
 
@@ -183,8 +188,9 @@ export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void>
   // A Loan ID names one account (a handful at most across portfolios), so it is one request —
   // fetchAllRows always fires several pages at once, which is wasted on a lookup.
   const pageRange = (from: number, to: number) =>
-    scope.kind === "loanRef" ? ([0, 49] as const) : ([from, to] as const);
-  const fetchPages = scope.kind === "loanRef" ? fetchOnePage : fetchAllRows;
+    scope.kind === "loanRef" || scope.kind === "phone" ? ([0, 49] as const) : ([from, to] as const);
+  const fetchPages =
+    scope.kind === "loanRef" || scope.kind === "phone" ? fetchOnePage : fetchAllRows;
   const { data, error } = await selectWithSlimExtra(!!scope.extraColumns, (extraColumns) =>
     fetchPages<DebtorRow>((from, to) => {
       let q = supabase
@@ -194,6 +200,11 @@ export async function refreshScopedPortfolios(scope: DebtorScope): Promise<void>
       if (scope.kind === "agents") q = q.in("assigned_agent_id", uuids as string[]);
       else if (scope.kind === "portfolios") q = q.in("portfolio_id", scope.portfolioIds);
       else if (scope.kind === "loanRef") q = q.ilike("loan_reference", scope.loanRef);
+      else if (scope.kind === "phone") {
+        // Bank files store "9876543210" or "919876543210"; alternates are kept as 10 digits.
+        const d = /^\d{10}$/.test(scope.phone) ? scope.phone : "0000000000";
+        q = q.or(`phone_primary.ilike.%${d},alt_phones.cs.{${d}}`);
+      }
       // scope.kind === "visible": no extra filter — RLS alone decides what comes back.
       return q.range(...pageRange(from, to)) as unknown as PromiseLike<{
         data: DebtorRow[] | null;

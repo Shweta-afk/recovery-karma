@@ -20,7 +20,7 @@
  * not starting another manual dial.
  */
 import { useMemo, useState } from "react";
-import { useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Phone, PhoneOutgoing, X, History, Link2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,13 @@ import { useCallSession } from "@/lib/call-session";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
 import { useStorageSync } from "@/lib/storage-sync";
 import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
-import { useLoanReferenceMatch } from "@/lib/loan-ref-lookup";
+import {
+  phoneKey,
+  resolvePhone,
+  useLoanReferenceMatch,
+  usePhoneMatches,
+  type PhoneMatch,
+} from "@/lib/loan-ref-lookup";
 import { getDispositions, type DispositionRecord } from "@/lib/disposition-store";
 import { OUTCOME_META } from "@/lib/call-queue/types";
 import type { QueueDebtor } from "@/lib/call-queue/types";
@@ -71,6 +77,9 @@ export function ManualDialDock() {
   const [callerId, setCallerId] = useState<string>(TELEPHONY_CALLER_IDS[0] ?? "");
 
   const pathname = useRouterState({ select: (st) => st.location.pathname });
+  const navigate = useNavigate();
+  /** The agent tree, whose Call Queue draws the full call screen from the shared call session. */
+  const onAgentSide = pathname.startsWith("/dashboard");
   const myId = user?.email ?? user?.id ?? "";
   const isAdmin = user?.role === "admin";
 
@@ -81,6 +90,15 @@ export function ManualDialDock() {
   /** The account the typed loan ID resolves to, or null. Instant from the portfolio cache when
    * it has the account; otherwise one debounced database lookup (loan-ref-lookup.ts). */
   const { match, looking: lookingUp } = useLoanReferenceMatch(loanId);
+
+  /** No Loan ID typed (or it matched nothing): find the account by the number itself — its
+   * primary or an alternate number. Several accounts can share a number (one borrower, several
+   * loans); the first is used unless the agent picks another. */
+  const { matches: phoneMatches, looking: phoneLooking } = usePhoneMatches(match ? "" : number);
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const phoneMatch: PhoneMatch | null =
+    phoneMatches.find((m) => m.row.id === pickedId) ?? phoneMatches[0] ?? null;
+  const target = match ?? phoneMatch;
 
   const recentManual = useMemo(() => {
     void tick;
@@ -101,23 +119,29 @@ export function ManualDialDock() {
   // state holders driving it. Hidden there entirely; that page has its own dialer.
   if (pathname.startsWith("/manager/queue")) return null;
 
-  const dial = () => {
+  const dial = async () => {
     const dialled = number.trim();
     if (!dialled) return;
+    // Clicked before the number lookup came back: wait for it, so the call still lands on the
+    // borrower's account instead of being logged as a stranger.
+    let account = target;
+    if (!account && phoneKey(dialled)) {
+      account = (await resolvePhone(dialled).catch(() => []))[0] ?? null;
+    }
 
     // A matched loan ID dials the REAL debtor row, so the disposition carries a genuine
     // debtor_id and lands on that account's history. Unmatched falls back to the synthetic
     // ad-hoc debtor, which saveDisposition writes with debtor_id: null (see its isAdHoc path).
-    const debtor: QueueDebtor = match
+    const debtor: QueueDebtor = account
       ? {
-          ...(match.debtor as QueueDebtor),
+          ...(account.debtor as QueueDebtor),
           // Dial the number the agent actually typed — the whole point is that it is often an
           // alternate number, not the one on the account.
           phone: dialled,
           queueStatus: "fresh",
           scheduledAt: new Date().toISOString(),
-          portfolioId: match.portfolio.id,
-          loanReference: match.row.loanReference,
+          portfolioId: account.portfolio.id,
+          loanReference: account.row.loanReference,
         }
       : ({
           id: `manual-${Date.now()}`,
@@ -143,15 +167,24 @@ export function ManualDialDock() {
       // Minimized so the floating call bar appears wherever the agent happens to be; they
       // maximize into Call Queue to disposition. A "panel" view would render nothing at all
       // on any page other than Call Queue.
-      view: "minimized",
+      //
+      // A call matched to an account opens the full call screen straight away on the agent
+      // side, so the agent sees the borrower's loan details while it rings — the same screen a
+      // Call Queue call gets.
+      view: account && onAgentSide ? "panel" : "minimized",
       muted: false,
       held: false,
       elapsed: 0,
     });
     singleCall.dial(debtor, { callerId: callerId || undefined });
+    if (account && onAgentSide && !pathname.startsWith("/dashboard/call-queue")) {
+      void navigate({ to: "/dashboard/call-queue" });
+    }
 
     toast.success(
-      match ? `Calling ${match.debtor.name} · ${match.row.loanReference}` : `Calling ${dialled}…`,
+      account
+        ? `Calling ${account.debtor.name} · ${account.row.loanReference}`
+        : `Calling ${dialled}…`,
     );
     setOpen(false);
     setLoanId("");
@@ -241,15 +274,58 @@ export function ManualDialDock() {
             <label className="text-[10px] font-medium text-muted-foreground">Number to call</label>
             <Input
               value={number}
-              onChange={(e) => setNumber(e.target.value)}
+              onChange={(e) => {
+                setNumber(e.target.value);
+                setPickedId(null);
+              }}
               placeholder="+91…"
               inputMode="tel"
               className="h-8 text-sm"
             />
+            {!match &&
+              phoneKey(number) &&
+              (phoneLooking ? (
+                <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <Search className="h-3 w-3 shrink-0" />
+                  Looking for this number in your portfolios…
+                </p>
+              ) : phoneMatches.length === 0 ? (
+                <p className="mt-1 flex items-center gap-1 text-[10px] text-amber-500">
+                  <Search className="h-3 w-3 shrink-0" />
+                  Not in any of your portfolios — the call will be logged unmapped
+                </p>
+              ) : (
+                <div className="mt-1 space-y-0.5">
+                  {phoneMatches.length > 1 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      {phoneMatches.length} accounts have this number — pick one:
+                    </p>
+                  )}
+                  {phoneMatches.slice(0, 6).map((m) => {
+                    const on = m.row.id === phoneMatch?.row.id;
+                    return (
+                      <button
+                        key={m.row.id}
+                        type="button"
+                        onClick={() => setPickedId(m.row.id)}
+                        className={cn(
+                          "flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[10px]",
+                          on ? "font-medium text-success" : "text-muted-foreground hover:bg-muted",
+                        )}
+                      >
+                        <Link2 className="h-3 w-3 shrink-0" />
+                        <span className="truncate">
+                          {m.debtor.name} · {m.row.loanReference} · {m.portfolio.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
           </div>
 
           {/* Only meaningful for an unmapped call — a matched account already has a name. */}
-          {!match && (
+          {!target && (
             <div>
               <label className="text-[10px] font-medium text-muted-foreground">
                 Name <span className="opacity-70">(optional)</span>
@@ -279,7 +355,11 @@ export function ManualDialDock() {
             </Select>
           </div>
 
-          <Button className="h-8 w-full gap-1.5 text-sm" disabled={!number.trim()} onClick={dial}>
+          <Button
+            className="h-8 w-full gap-1.5 text-sm"
+            disabled={!number.trim()}
+            onClick={() => void dial()}
+          >
             <Phone className="h-3.5 w-3.5" />
             Call Now
           </Button>

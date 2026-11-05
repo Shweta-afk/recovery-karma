@@ -22,6 +22,12 @@ import { getMyWebphoneLogin } from "@/lib/telephony-actions.server";
 
 /** Fired by use-single-call.ts when the agent places a call; SkyCRM rings us right after. */
 export const DIAL_STARTED_EVENT = "samvadx:dial-started";
+/** Fired by use-single-call.ts when the agent ends a call anywhere in the app (End Call, Cancel,
+ *  the floating bar). The browser phone drops its own leg too. */
+export const HANG_UP_EVENT = "samvadx:hang-up";
+/** Fired by this phone when a call it had answered ends (either side hung up, or its own End
+ *  button). call-session.tsx then ends the app's call and asks SkyCRM to drop the borrower. */
+export const PHONE_CALL_ENDED_EVENT = "samvadx:phone-call-ended";
 /** How long after clicking Call a ring from SkyCRM counts as that call's agent leg. */
 const AUTO_ANSWER_WINDOW_MS = 60_000;
 
@@ -203,6 +209,30 @@ function RegisteredPhone({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call?.id, call?.state]);
+
+  // End Call in the app used to ask only SkyCRM's API to hang up. This phone — the agent's half
+  // of the call — stayed connected, and when SkyCRM's hang-up didn't land the borrower stayed on
+  // the line while the agent's screen said "ended" (2026-11-05). Now the app's End drops this
+  // leg as well.
+  useEffect(() => {
+    const onHangUp = () => void wp.hangup();
+    window.addEventListener(HANG_UP_EVENT, onHangUp);
+    return () => window.removeEventListener(HANG_UP_EVENT, onHangUp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wp.hangup]);
+
+  // And the other way: once a call this phone answered is over, tell the app.
+  const wasConnected = useRef(false);
+  useEffect(() => {
+    if (call?.state === "connected") {
+      wasConnected.current = true;
+      return;
+    }
+    if (!call && wasConnected.current) {
+      wasConnected.current = false;
+      window.dispatchEvent(new CustomEvent(PHONE_CALL_ENDED_EVENT));
+    }
+  }, [call, call?.state]);
 
   // If the browser still refused to play the call's audio, say so and offer a button: one click
   // is all it needs.

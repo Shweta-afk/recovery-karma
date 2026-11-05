@@ -12,7 +12,9 @@ import {
   ledgerByProviderCallId,
   loadChannelState,
   loadTelephonySettings,
+  type LedgerRow,
 } from "./telephony/guard.server";
+import { skycrmCallbackDatetime, skycrmSubDisposition } from "./telephony/skycrm-disposition";
 import { normalisePhone, type TelephonySettingsRow } from "./telephony/guard-rules";
 import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
@@ -426,9 +428,17 @@ export const reportDisposition = createServerFn({ method: "POST" })
     z
       .object({
         accessToken: tokenSchema,
-        providerCallId: z.string().min(1).max(200),
+        /** The call's id when the screen knew it. Without one, the caller's latest call to
+         *  `phone` (last 12 h) is used — about a third of calls reached the disposition with no
+         *  id, and none of those were sent to SkyCRM before 2026-11-05. */
+        providerCallId: z.string().min(1).max(200).optional(),
+        phone: z.string().max(20).optional(),
         outcome: z.string().min(1).max(40),
+        reason: z.string().max(200).optional(),
         remark: z.string().max(1000).optional(),
+        followUpDate: z.string().max(10).optional(),
+        followUpTime: z.string().max(8).optional(),
+        /** Older clients sent a ready-made "YYYY-MM-DD HH:MM:SS". */
         callbackAt: z.string().max(40).optional(),
       })
       .parse(d),
@@ -436,7 +446,9 @@ export const reportDisposition = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
     if (!isSkycrm()) return { ok: true, skipped: true };
-    const ledger = await ledgerByProviderCallId(data.providerCallId);
+    let ledger = data.providerCallId ? await ledgerByProviderCallId(data.providerCallId) : null;
+    if (!ledger && data.phone && caller.agentId)
+      ledger = await latestCallTo(caller.agentId, data.phone);
     if (
       !ledger ||
       ledger.client_id !== caller.clientId ||
@@ -445,15 +457,18 @@ export const reportDisposition = createServerFn({ method: "POST" })
     ) {
       return { ok: false, skipped: true };
     }
+    const callback =
+      skycrmCallbackDatetime(data.followUpDate, data.followUpTime) ??
+      skycrmCallbackDatetime(data.callbackAt?.slice(0, 10), data.callbackAt?.slice(11));
     try {
       await sendDisposition({
         extension: ledger.agent_handle,
         phone_number: ledger.remote_phone,
         caller_name: ledger.id,
         disposition: skycrmDispositionFor(data.outcome),
-        sub_disposition: data.outcome,
+        sub_disposition: skycrmSubDisposition(data.outcome, data.reason),
         remark: (data.remark ?? "").slice(0, 500),
-        callback_datetime: data.callbackAt,
+        callback_datetime: callback,
         direction: ledger.direction === "inbound" ? "Inbound" : "Outbound",
       });
       return { ok: true };
@@ -465,6 +480,25 @@ export const reportDisposition = createServerFn({ method: "POST" })
       return { ok: false };
     }
   });
+
+/** The caller's most recent call (last 12 h) to this number, from the call ledger. */
+async function latestCallTo(agentId: string, phone: string): Promise<LedgerRow | null> {
+  const digits = phone.replace(/\D/g, "").slice(-10);
+  if (digits.length !== 10) return null;
+  const since = new Date(Date.now() - 12 * 3600_000).toISOString();
+  const { data } = await db()
+    .from("telephony_calls")
+    .select(
+      "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, answered_at, ended_at",
+    )
+    .eq("agent_id", agentId)
+    .ilike("remote_phone", `%${digits}`)
+    .gte("started_at", since)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as LedgerRow | null) ?? null;
+}
 
 async function callerExtension(agentId: string | null): Promise<string | null> {
   if (!agentId) return null;

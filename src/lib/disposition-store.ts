@@ -312,15 +312,16 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
 
   const logId = isUuid(d.id) ? d.id : crypto.randomUUID();
 
-  // Core columns only — every one of these has existed since the original schema.sql, so this
-  // insert can never fail because of a migration nobody's run yet. outcome_reason/promise_time
-  // are newer (20260811_call_logs_outcome_reason.sql / _promise_time.sql) — writing them in the
-  // SAME insert meant a call_logs row with either column still missing rejected the ENTIRE
-  // disposition with a "column does not exist" error, so nothing saved at all, on every call,
-  // until someone ran those migrations. Now they're a separate best-effort update after the
-  // core save succeeds — worst case the reason/call-back-time is silently dropped, not the
-  // whole disposition.
-  const { error } = await supabase.from("call_logs").insert({
+  // ONE insert with every field. Until 2026-11-05 only the core columns went in the insert, and
+  // reason / call-back date+time / PTP time / dial type / ring+wrap time / dialled number were
+  // written by a follow-up UPDATE. Agents have no UPDATE policy on call_logs (only managers and
+  // admins, for audits), so that UPDATE silently changed 0 rows on EVERY agent call: callbacks
+  // were saved with no date, reasons vanished, and dial type read blank. All of those columns
+  // are live (checked 2026-11-05), so they now go in with the row.
+  //
+  // `created_at` is the moment the disposition was made (d.time), so the call is filed on the
+  // day it was dispositioned — reports, history and the day filters all read this column.
+  const core = {
     id: logId,
     debtor_id: isAdHoc ? null : d.debtorId,
     contact_name: isAdHoc ? d.debtorName || null : null,
@@ -333,43 +334,26 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     raw_notes: d.notes,
     recording_url: d.recordingUrl ?? null,
     provider_call_id: d.providerCallId ?? null,
-  });
+    created_at: d.time || new Date().toISOString(),
+  };
+  const full = {
+    ...core,
+    outcome_reason: d.reason || null,
+    promise_time: d.outcome === "promised" ? d.ptpTime || null : null,
+    dial_mode: d.dialMode ?? null,
+    callback_date: d.outcome === "callback" ? d.callbackDate || null : null,
+    callback_time: d.outcome === "callback" ? d.callbackTime || null : null,
+    ring_seconds: d.ringSeconds ?? null,
+    wrap_seconds: d.wrapSeconds ?? null,
+    dialed_phone: d.phone || null,
+  };
+  let { error } = await supabase.from("call_logs").insert(full as never);
+  if (error && /column|schema cache/i.test(error.message)) {
+    // A database missing one of the newer columns must still keep the disposition itself.
+    console.warn("[dispositions] full insert refused, saving core fields only:", error.message);
+    ({ error } = await supabase.from("call_logs").insert(core as never));
+  }
   if (error) throw error;
-
-  if (d.reason || d.ptpTime || d.dialMode || d.callbackDate || d.ringSeconds != null) {
-    const { error: extraErr } = await supabase
-      .from("call_logs")
-      .update({
-        outcome_reason: d.reason || null,
-        promise_time: d.outcome === "promised" ? (d.ptpTime ?? null) : null,
-        dial_mode: d.dialMode ?? null,
-        callback_date: d.outcome === "callback" ? (d.callbackDate ?? null) : null,
-        callback_time: d.outcome === "callback" ? (d.callbackTime ?? null) : null,
-        ring_seconds: d.ringSeconds ?? null,
-        wrap_seconds: d.wrapSeconds ?? null,
-      })
-      .eq("id", logId);
-    if (extraErr) {
-      console.warn(
-        `[dispositions] saved ${logId} but couldn't set reason/call-back time — ` +
-          `run migrations/20260811_call_logs_outcome_reason.sql, _promise_time.sql ` +
-          `and 20260827_call_logs_dial_mode.sql:`,
-        extraErr.message,
-      );
-    }
-  }
-
-  // The number actually rung — the primary, or an alt number the agent picked (often one
-  // Insights found). Lets the Insights outcome report say whether a found number connected.
-  // Its own best-effort update, like the extras above: a missing column
-  // (migrations/20260927_insights_outcome_report.sql) must never lose the disposition.
-  if (!isAdHoc && d.phone) {
-    const { error: phoneErr } = await supabase
-      .from("call_logs")
-      .update({ dialed_phone: d.phone })
-      .eq("id", logId);
-    if (phoneErr) console.warn(`[dispositions] couldn't set dialed_phone:`, phoneErr.message);
-  }
 
   // Financial audit trail — separate from the call log so payments reporting has its own
   // real table, matching the schema's original intent.
@@ -389,7 +373,9 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     if (payErr) throw payErr;
   }
 
-  if (d.providerCallId) void mirrorToProvider(d);
+  // Every call, with or without an id: without one the server finds the agent's latest call to
+  // this number.
+  void mirrorToProvider(d);
   if (d.doNotCall) await markDoNotCall(d, isAdHoc);
   await refreshDispositions();
 }
@@ -408,16 +394,22 @@ async function markDoNotCall(d: DispositionRecord, isAdHoc: boolean): Promise<vo
  *  for other providers; never blocks or fails the save. */
 async function mirrorToProvider(d: DispositionRecord): Promise<void> {
   try {
+    const followUp =
+      d.outcome === "callback"
+        ? { date: d.callbackDate, time: d.callbackTime }
+        : d.outcome === "promised"
+          ? { date: d.ptpDate, time: d.ptpTime }
+          : null;
     await reportDisposition({
       data: {
         accessToken: await getAccessToken(),
-        providerCallId: d.providerCallId as string,
+        providerCallId: d.providerCallId || undefined,
+        phone: d.phone || undefined,
         outcome: d.outcome,
+        reason: d.reason || undefined,
         remark: d.notes,
-        callbackAt:
-          d.outcome === "callback" && d.callbackDate
-            ? `${d.callbackDate} ${d.callbackTime ?? "00:00"}:00`
-            : undefined,
+        followUpDate: followUp?.date || undefined,
+        followUpTime: followUp?.time || undefined,
       },
     });
   } catch (err) {

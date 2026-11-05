@@ -14,6 +14,8 @@ import {
   updateLiveCall,
 } from "./live-calls-store";
 import { isUuid } from "./disposition-store";
+import { getAccessToken } from "./access-token";
+import { hangupCall as serverHangupCall } from "./telephony/server";
 // Type-only import — erased at compile time, so this does not create a runtime circular
 // dependency with the route file (which imports `useCallSession` from this module).
 import type { ActiveCall, DispositionForm } from "@/routes/dashboard.call-queue";
@@ -53,6 +55,48 @@ const Ctx = createContext<CallSessionCtx | null>(null);
 export function CallSessionProvider({ children }: { children: ReactNode }) {
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [disposition, setDisposition] = useState<DispositionForm>(EMPTY_DISPOSITION);
+
+  /**
+   * Every call opens with a blank disposition. Call Queue's own startCall cleared it, but the
+   * Manual Dial dock did not, so the outcome, PTP and notes from the agent's previous call were
+   * still filled in on the next one (2026-11-05). Cleared here, keyed on the call itself, so
+   * every way of starting a call gets it. Earlier dispositions are shown read-only under
+   * "Previous notes & call history" on the call screen instead.
+   */
+  const callKey = activeCall ? `${activeCall.debtor.id}|${activeCall.dialStartedAt ?? ""}` : "";
+  useEffect(() => {
+    setDisposition(EMPTY_DISPOSITION);
+  }, [callKey]);
+
+  /**
+   * The browser phone's call ended — the borrower hung up, or the agent pressed End on the phone
+   * pill. The agent's half of the call is gone, so the call is over: end it on screen (the
+   * disposition opens) and ask SkyCRM to drop the borrower's leg too, so they are not left on an
+   * open line. Best-effort; a call already down is fine.
+   */
+  const activeCallRef = useRef(activeCall);
+  activeCallRef.current = activeCall;
+  useEffect(() => {
+    const onPhoneEnded = () => {
+      const c = activeCallRef.current;
+      if (!c || c.phase === "ended") return;
+      if (c.providerCallId) {
+        const id = c.providerCallId;
+        void (async () => {
+          try {
+            await serverHangupCall({
+              data: { accessToken: await getAccessToken(), providerCallId: id },
+            });
+          } catch (err) {
+            console.warn("[call-session] hangup after phone ended:", err);
+          }
+        })();
+      }
+      setActiveCall((cur) => (cur && cur.phase !== "ended" ? { ...cur, phase: "ended" } : cur));
+    };
+    window.addEventListener("samvadx:phone-call-ended", onPhoneEnded);
+    return () => window.removeEventListener("samvadx:phone-call-ended", onPhoneEnded);
+  }, []);
 
   // Single source of truth for the live-call timer so it keeps ticking whether the full call
   // panel, the minimized bar, or neither is currently on screen.

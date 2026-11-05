@@ -102,6 +102,21 @@ const NO_AGENT_PHONE = "agent-self";
  */
 let latestServerCallId: string | null = null;
 
+/**
+ * Cancel-before-the-call-id-exists, across hook instances. A call placed from the Manual Dial
+ * dock and ended from Call Queue or the floating bar while it was still starting (no provider id
+ * yet) used to flag only the ENDING instance, which never dials — so the screen said "ended"
+ * while the call went on ringing, connected, and could no longer be hung up from the app.
+ * `dialSeq` numbers each server dial; `cancelledSeq` is the one the agent asked to stop.
+ */
+let dialSeq = 0;
+let cancelledSeq = 0;
+
+/** Tells the browser phone (browser-phone.tsx HANG_UP_EVENT) to drop the agent's own leg. */
+function hangUpBrowserPhone() {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("samvadx:hang-up"));
+}
+
 export function useSingleCall(
   setActiveCall: Dispatch<SetStateAction<ActiveCall | null>>,
   args?: UseSingleCallArgs,
@@ -159,6 +174,7 @@ export function useSingleCall(
       if (mode === "server") {
         // Server mode: call real provider via server function
         stateRef.current = "dialing";
+        const seq = ++dialSeq;
         // The caller (startCall in the route) always seeds ActiveCall before dialling, so
         // `c` is non-null here. The old fallback built a differently-shaped object that was
         // not an ActiveCall at all — leave the state alone rather than corrupt it.
@@ -193,7 +209,7 @@ export function useSingleCall(
                 ? { ...c, providerCallId: result.providerCallId }
                 : c,
             );
-            if (cancelPendingRef.current) {
+            if (cancelPendingRef.current || cancelledSeq === seq) {
               // The agent hit Cancel/End Call while this was still in flight — drop the leg
               // now that it actually exists instead of leaving it ringing unattended, and
               // never start polling a call we've already told the UI is over.
@@ -319,6 +335,7 @@ export function useSingleCall(
 
   const hangup = useCallback(
     (providerCallId?: string) => {
+      if (mode === "server") hangUpBrowserPhone();
       if (!pidRef.current && providerCallId && mode === "server") {
         // This instance did not place the call — drop it by the id the call carries.
         void (async () => {
@@ -329,6 +346,7 @@ export function useSingleCall(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error("Failed to hangup call:", msg);
+            toast.error(`Couldn't end the call on the line: ${msg}`);
           }
         })();
         setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
@@ -341,6 +359,8 @@ export function useSingleCall(
         // registered, the button state didn't change, and the call kept ringing. Reflect the
         // cancel immediately and let it finish through dial()'s cancelPendingRef check above.
         cancelPendingRef.current = true;
+        // Seen by whichever instance is actually placing the call (possibly another screen's).
+        cancelledSeq = dialSeq;
         setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
         return;
       }
@@ -355,6 +375,7 @@ export function useSingleCall(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error("Failed to hangup call:", msg);
+            toast.error(`Couldn't end the call on the line: ${msg}`);
           }
         });
       } else {
