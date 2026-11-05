@@ -145,7 +145,12 @@ export const OUTCOME_META: Record<CallOutcome, { label: string; cls: string }> =
 // standalone `voicemail` outcome predating this matrix — left as-is, not folded in, since
 // removing it would reclassify already-logged calls.
 export const OUTCOME_REASONS: Record<CallOutcome, string[]> = {
-  paid: ["Payment Collected Fully", "Payment Details Shared", "On-Call Online Payment", "Claim Paid"],
+  paid: [
+    "Payment Collected Fully",
+    "Payment Details Shared",
+    "On-Call Online Payment",
+    "Claim Paid",
+  ],
   callback: [
     "Left Message",
     "Supervisor Follow Up",
@@ -323,7 +328,7 @@ export interface CallControlProps {
  * How a call was originated — stored on call_logs.dial_mode (20260827_call_logs_dial_mode.sql).
  * Distinct from `callType`, which records who HANDLED the call (human/ai/ivr/bot).
  */
-export type DialMode = "manual" | "single" | "multi_line" | "sequential";
+export type DialMode = "manual" | "single" | "multi_line" | "sequential" | "no_call";
 
 /**
  * ⚠️ The single place the stored dial mode is translated to what the agent sees. Keep it that
@@ -357,6 +362,14 @@ export const DIAL_MODE_META: Record<DialMode, { label: string; short: string; cl
     label: "Progressive Dial",
     short: "Progressive",
     cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15",
+  },
+  // Not a call: the disposition was changed from the debtor profile without ringing anyone
+  // (20261105_call_logs_dial_mode_no_call.sql). Logged as its own row so the earlier
+  // disposition stays in the history unchanged.
+  no_call: {
+    label: "Updated without a call",
+    short: "No call",
+    cls: "bg-amber-500/8 text-amber-600/80 border-amber-400/20",
   },
 };
 

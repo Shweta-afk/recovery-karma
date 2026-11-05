@@ -15,6 +15,7 @@ import {
   Check,
   Anchor,
   Loader2,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -36,10 +37,11 @@ import { formatINR, displayId, type Debtor } from "@/lib/mock-debtors";
 import { AssignedAgentLine } from "@/components/assigned-agent";
 import { CopyButton } from "@/components/ui/copy-button";
 import { TracePanel } from "@/components/profilex/trace-panel";
-import { getDispositions, refreshDispositions } from "@/lib/disposition-store";
+import { getDispositions, isUuid, refreshDispositions } from "@/lib/disposition-store";
 import { useFullExtra } from "@/lib/debtor-extra";
 import { requestRetention, getRetentionRequestsFor } from "@/lib/retention-store";
 import { errorText } from "@/lib/app-error";
+import { UpdateDispositionDialog } from "@/components/update-disposition-dialog";
 
 const CALL_OUTCOME_LABEL: Record<string, string> = {
   paid: "Paid",
@@ -239,6 +241,10 @@ export function DebtorProfile({
     () => disps.filter((r) => r.debtorId === d.id).sort((a, b) => b.time.localeCompare(a.time)),
     [disps, d.id],
   );
+  const [updateOpen, setUpdateOpen] = useState(false);
+  // An ad-hoc Manual Dial contact has no account row to file a disposition against.
+  const canUpdateDisposition = isUuid(d.id);
+
   const debtorPayments = useMemo(
     () => debtorCalls.filter((r) => r.outcome === "paid" && r.paidAmount),
     [debtorCalls],
@@ -300,8 +306,25 @@ export function DebtorProfile({
             </p>
             <AssignedAgentLine debtorId={d.id} />
           </div>
+          {canUpdateDisposition && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs mr-6"
+              onClick={() => setUpdateOpen(true)}
+            >
+              <Pencil className="h-3.5 w-3.5 mr-1" />
+              Update disposition
+            </Button>
+          )}
         </div>
       </SheetHeader>
+      <UpdateDispositionDialog
+        d={d}
+        open={updateOpen}
+        onOpenChange={setUpdateOpen}
+        current={debtorCalls[0]}
+      />
 
       {/* Key stats band */}
       <div className="flex-shrink-0 px-6 py-3 border-b border-border grid grid-cols-4 gap-4 text-sm bg-muted/20">
@@ -554,6 +577,23 @@ export function DebtorProfile({
 
           {/* Call history */}
           <TabsContent value="calls" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
+            {canUpdateDisposition && (
+              <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+                <p className="text-xs text-muted-foreground">
+                  Borrower told you something without a call (e.g. a dropped call saved as Callback
+                  is now a PTP)?
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs flex-shrink-0"
+                  onClick={() => setUpdateOpen(true)}
+                >
+                  <Pencil className="h-3 w-3 mr-1" />
+                  Update disposition
+                </Button>
+              </div>
+            )}
             {debtorCalls.length === 0 ? (
               <p className="text-sm text-muted-foreground">No call history recorded.</p>
             ) : (
@@ -569,14 +609,30 @@ export function DebtorProfile({
                         <span className="font-medium text-foreground">
                           {CALL_OUTCOME_LABEL[c.outcome] ?? c.outcome}
                         </span>
-                        <span className="text-muted-foreground">·</span>
-                        <Clock className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-muted-foreground text-xs">
-                          {formatDuration(c.durationSeconds)}
-                        </span>
-                        <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                          {c.callType === "human" ? "Agent" : (c.callType ?? "Agent").toUpperCase()}
-                        </Badge>
+                        {c.reason && (
+                          <span className="text-muted-foreground text-xs">· {c.reason}</span>
+                        )}
+                        {c.dialMode === "no_call" ? (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] text-amber-600 border-amber-400/40"
+                          >
+                            Updated · no call
+                          </Badge>
+                        ) : (
+                          <>
+                            <span className="text-muted-foreground">·</span>
+                            <Clock className="h-3 w-3 text-muted-foreground" />
+                            <span className="text-muted-foreground text-xs">
+                              {formatDuration(c.durationSeconds)}
+                            </span>
+                            <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                              {c.callType === "human"
+                                ? "Agent"
+                                : (c.callType ?? "Agent").toUpperCase()}
+                            </Badge>
+                          </>
+                        )}
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {formatCallDate(c.time)}
