@@ -503,10 +503,12 @@ export interface LedgerRow {
   status: string;
   answered_at: string | null;
   ended_at: string | null;
+  /** Every live event's vendor words, in order (20261105_ledger_vendor_events.sql). */
+  vendor_events?: string | null;
 }
 
 const LEDGER_COLS =
-  "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, answered_at, ended_at";
+  "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, answered_at, ended_at, vendor_events";
 
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {
   if (!id) return;

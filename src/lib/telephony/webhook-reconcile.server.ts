@@ -50,6 +50,10 @@ export async function reconcileWithLedger(
     if (status.durationSeconds !== undefined) patch.duration_seconds = status.durationSeconds;
   }
   if (status.recordingPath) patch.recording_path = status.recordingPath;
+  if (status.vendorStatus) {
+    const prior = ledger.vendor_events ? `${ledger.vendor_events} > ` : "";
+    patch.vendor_events = `${prior}${status.vendorStatus}`.slice(-500);
+  }
   if (ledger.direction === "inbound" && !ledger.agent_id && status.agentHandle) {
     // Recorded from the dialled number while still in the queue; now an extension has it.
     const { data: agent } = (await (getSupabaseAdmin() as any)

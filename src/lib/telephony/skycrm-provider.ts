@@ -386,6 +386,9 @@ export const skycrmProvider: TelephonyProvider = {
     } else {
       status = liveStatusFor(pick("status"));
     }
+    const vendorStatus = isCdr
+      ? undefined
+      : [pick("event"), pick("status")].filter(Boolean).join("/") || undefined;
 
     const billsec = pick("billsec");
     // The dialled number on an inbound call. The spec doesn't name the field; these are the names
@@ -409,6 +412,7 @@ export const skycrmProvider: TelephonyProvider = {
       remotePhone,
       durationSeconds: billsec === undefined ? undefined : Number(billsec) || 0,
       recordingPath: pick("recordfile"),
+      vendorStatus,
     };
   },
 };

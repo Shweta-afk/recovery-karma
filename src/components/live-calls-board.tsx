@@ -258,9 +258,10 @@ function LiveCallCard({ call }: { call: LiveCall }) {
         </span>
       </div>
 
-      {/* Only once connected: there is nothing to hear on a call still ringing, or on one whose
-          heartbeat has gone stale. Managers and admins only. */}
-      {connected && !call.stale && canMonitor && <CallControls call={call} />}
+      {/* Shown while ringing too: SkyCRM never tells us when the borrower answers yet (the board
+          shows almost every call as Ringing), and joining a ringing call is harmless — you hear
+          the ringing, then the conversation. Not on a stale card. Managers and admins only. */}
+      {!call.stale && canMonitor && <CallControls call={call} />}
 
       {call.stale && (
         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5">

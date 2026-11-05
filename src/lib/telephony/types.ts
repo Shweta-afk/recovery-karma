@@ -75,6 +75,9 @@ export interface CallStatusEvent {
   direction?: CallDirection;
   /** A vendor storage path that is NOT a fetchable URL (SkyCRM recordfile) */
   recordingPath?: string;
+  /** The vendor's own words for a live event ("event/status"), kept on the ledger to learn what
+   *  SkyCRM sends when a borrower answers (none of its words had ever mapped to "connected"). */
+  vendorStatus?: string;
   /** Inbound: the number the borrower dialled (our DID) — decides which company the call is for. */
   didNumber?: string;
 }
