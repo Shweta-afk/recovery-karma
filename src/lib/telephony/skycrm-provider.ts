@@ -591,3 +591,32 @@ export async function createSkycrmUser(user: {
     detail: `HTTP ${response.status}: ${String(parsed.error ?? title ?? text).slice(0, 200)}`,
   };
 }
+
+// ─── Call monitoring: listen / whisper / barge (2026-11-05) ────────────────────
+// call_monitor_api rings `user_extention` (the supervisor) and joins it to the live call on
+// `monitor_extention` (the agent): listen = hears both sides, silent; whisper = only the agent
+// hears the supervisor; barge = everyone hears everyone. Extension to extension only. Field
+// names are SkyCRM's own spelling ("extention"); "Mode" is capitalised in their spec, so both
+// spellings are sent. Form data is accepted (checked 2026-11-05). NOTE SkyCRM answers success
+// even for an extension that isn't on a call, so "success" doesn't prove anyone was joined.
+// Stopping = the supervisor hangs up their own phone; call_monitor_hangup_api is not used — its
+// spec doesn't make clear whether it drops the supervisor or the agent's call.
+
+export type MonitorMode = "listen" | "whisper" | "barge";
+
+export function startCallMonitor(
+  mode: MonitorMode,
+  supervisorExtension: string,
+  agentExtension: string,
+): Promise<SkyCrmResponse> {
+  return post(
+    "call_monitor_api",
+    {
+      Mode: mode,
+      mode,
+      user_extention: supervisorExtension,
+      monitor_extention: agentExtension,
+    },
+    supervisorExtension,
+  );
+}

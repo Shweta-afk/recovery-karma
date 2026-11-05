@@ -20,9 +20,11 @@ import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
 import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.server";
 import { skycrmPassword, skycrmUserLevel, skycrmUsername } from "./telephony/skycrm-users";
+import { enforceRateLimit } from "./rate-limit.server";
 import {
   createSkycrmUser,
   loginSkycrmUser,
+  startCallMonitor,
   pauseQueue,
   registerQueue,
   sendDisposition,
@@ -842,7 +844,7 @@ async function findIncomingCall(clientId: string, agentId: string): Promise<Inco
 function asCaller(accessToken: string) {
   const url = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!url || !anonKey) throw new Error("Missed calls are not available right now.");
+  if (!url || !anonKey) throw new Error("This is not available right now.");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return createClient(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -1004,4 +1006,62 @@ export const dismissMissedCall = createServerFn({ method: "POST" })
       .like("remote_phone", `%${last10}`);
     if (error) throw new Error(`Could not update (${error.message})`);
     return { ok: true };
+  });
+
+// ─── Live call monitoring: listen / whisper / barge (2026-11-05) ─────────────────
+/**
+ * A manager or admin joins an agent's live call from the Live Calls board. Who may: whoever
+ * can SEE that live call under their own RLS (live_calls_select — admins: their company;
+ * managers: agents on their teams) — read as the caller, so the team rule is the database's,
+ * not re-implemented here. SkyCRM then rings the caller's own extension; their browser phone
+ * answers it (the board fires the dial-started event first). Stopping = hanging up that phone.
+ */
+export const monitorLiveCall = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        liveCallId: idSchema,
+        mode: z.enum(["listen", "whisper", "barge"]),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (caller.role !== "manager" && caller.role !== "admin") {
+      throw new Error("Only managers and admins can listen in to calls");
+    }
+    if (!isSkycrm()) throw new Error("Listening in is not available on this calling setup");
+    enforceRateLimit(`monitor:${caller.authUserId}`, 10, 60_000);
+
+    const myExtension = await callerExtension(caller.agentId);
+    if (!myExtension) {
+      throw new Error("You need your own extension to listen in — ask SamvadX support for one");
+    }
+
+    // RLS decides whether this call is one the caller may see (their team / their company).
+    const { data: live } = await asCaller(data.accessToken)
+      .from("live_calls")
+      .select("id, agent_id, ended_at")
+      .eq("id", data.liveCallId)
+      .maybeSingle();
+    if (!live) throw new Error("Call not found");
+    if (live.ended_at) throw new Error("This call has already ended");
+
+    const { data: agent } = await db()
+      .from("agents")
+      .select("agent_extension, client_id, name")
+      .eq("id", live.agent_id)
+      .maybeSingle();
+    const agentExtension = (agent?.agent_extension as string | null)?.trim();
+    if (!agent || agent.client_id !== caller.clientId || !agentExtension) {
+      throw new Error("This agent has no extension, so their call can't be joined");
+    }
+    if (agentExtension === myExtension) throw new Error("That is your own call");
+
+    await startCallMonitor(data.mode, myExtension, agentExtension);
+    console.log(
+      `[monitor] ${caller.role} ext ${myExtension} → ${data.mode} on ext ${agentExtension}`,
+    );
+    return { ok: true, agentName: (agent.name as string | null) ?? agentExtension };
   });

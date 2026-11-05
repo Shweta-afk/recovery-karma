@@ -9,7 +9,11 @@
  * team's, an admin the whole client. Nothing here filters by role.
  */
 import { useCallback, useEffect, useState } from "react";
-import { PhoneCall, RadioTower, AlertTriangle, Headphones, Ear, Users } from "lucide-react";
+import { PhoneCall, RadioTower, AlertTriangle, Headphones, Ear, Users, PhoneOff, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { useAuth } from "@/lib/auth";
+import { getAccessToken } from "@/lib/access-token";
+import { DIAL_STARTED_EVENT, HANG_UP_EVENT } from "@/components/telephony/browser-phone";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { DIAL_MODE_META, type DialMode } from "@/lib/call-queue/types";
@@ -102,22 +106,88 @@ export function LiveCallsBoard({
 }
 
 /**
- * Listen-in / Whisper / Merge — deliberately inert placeholders, not hidden and not wired to
- * anything. Decision 2026-09-07: the org left Exotel (click-to-call, since removed) and evaluating a
- * new telephony vendor specifically so this becomes possible — with the CURRENT integration,
- * each call's two legs are bridged inside the provider, not in this app, so there is no API
- * here to call. See docs/LIVE_CALLS_SCOPE.md's "Explicitly OUT of scope" section for the fuller
- * history (these controls existed once before, did nothing, and were removed for exactly that
- * reason) and its 2026-09-07 update. Keep these buttons in place, disabled, rather than
- * removing them again — the next vendor is expected to make them real.
+ * Listen / Whisper / Barge — live since 2026-11-05 through SkyCRM's call_monitor_api
+ * (monitorLiveCall in telephony-actions.server.ts). SkyCRM rings the manager's own extension and
+ * their browser phone answers it; Stop hangs that phone up. Who may join which call is decided by
+ * the database (live_calls_select: managers see their teams' agents, admins their company).
+ * Shown to managers and admins only.
  */
 const CALL_CONTROL_ACTIONS = [
-  { icon: Headphones, label: "Listen" },
-  { icon: Ear, label: "Whisper" },
-  { icon: Users, label: "Merge" },
+  { icon: Headphones, label: "Listen", mode: "listen", hint: "Hear the call. Nobody hears you." },
+  { icon: Ear, label: "Whisper", mode: "whisper", hint: "Only the agent hears you." },
+  { icon: Users, label: "Barge", mode: "barge", hint: "Join the call. Both sides hear you." },
 ] as const;
 
+type MonitorMode = (typeof CALL_CONTROL_ACTIONS)[number]["mode"];
+
+function CallControls({ call }: { call: LiveCall }) {
+  const [busy, setBusy] = useState<MonitorMode | null>(null);
+  const [active, setActive] = useState<MonitorMode | null>(null);
+
+  const join = async (mode: MonitorMode) => {
+    // Before the request: marks the ring SkyCRM is about to send as ours (auto-answer) and lets
+    // audio play — this click is the user gesture browsers require.
+    window.dispatchEvent(new CustomEvent(DIAL_STARTED_EVENT));
+    setBusy(mode);
+    try {
+      const { monitorLiveCall } = await import("@/lib/telephony-actions.server");
+      const r = await monitorLiveCall({
+        data: { accessToken: await getAccessToken(), liveCallId: call.id, mode },
+      });
+      setActive(mode);
+      toast.success(
+        `${mode === "listen" ? "Listening to" : mode === "whisper" ? "Whispering to" : "Joined"} ${r.agentName}'s call — your phone connects in a moment`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not join the call");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const stop = () => {
+    window.dispatchEvent(new CustomEvent(HANG_UP_EVENT));
+    setActive(null);
+  };
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
+      {CALL_CONTROL_ACTIONS.map(({ icon: Icon, label, mode, hint }) => (
+        <button
+          key={mode}
+          type="button"
+          disabled={busy !== null}
+          title={hint}
+          onClick={() => void join(mode)}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] transition-colors",
+            active === mode
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-foreground hover:bg-muted",
+          )}
+        >
+          {busy === mode ? <Loader2 className="h-3 w-3 animate-spin" /> : <Icon className="h-3 w-3" />}
+          {label}
+        </button>
+      ))}
+      {active && (
+        <button
+          type="button"
+          onClick={stop}
+          title="Hang up your phone and leave the call"
+          className="inline-flex items-center gap-1 rounded-md border border-destructive/40 px-2 py-1 text-[10px] text-destructive hover:bg-destructive/10"
+        >
+          <PhoneOff className="h-3 w-3" />
+          Stop
+        </button>
+      )}
+    </div>
+  );
+}
+
 function LiveCallCard({ call }: { call: LiveCall }) {
+  const { user } = useAuth();
+  const canMonitor = user?.role === "manager" || user?.role === "admin";
   const mode = call.dialMode ? DIAL_MODE_META[call.dialMode as DialMode] : null;
   // While it's still ringing, nobody has actually spoken to the debtor yet — showing their name
   // and number for a call that might go unanswered is more identity exposure than the moment
@@ -188,25 +258,9 @@ function LiveCallCard({ call }: { call: LiveCall }) {
         </span>
       </div>
 
-      {/* Listen / Whisper / Merge — disabled on purpose, see CALL_CONTROL_ACTIONS above. Only
-          offered once connected: whispering into a call that hasn't picked up yet, or one whose
-          heartbeat has gone stale, makes no sense either way. */}
-      {connected && !call.stale && (
-        <div className="mt-2 flex items-center gap-1.5 border-t border-border pt-2">
-          {CALL_CONTROL_ACTIONS.map(({ icon: Icon, label }) => (
-            <button
-              key={label}
-              type="button"
-              disabled
-              title={`${label} — coming with the next telephony vendor's call-control API, not available on the current integration`}
-              className="inline-flex cursor-not-allowed items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground/50"
-            >
-              <Icon className="h-3 w-3" />
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Only once connected: there is nothing to hear on a call still ringing, or on one whose
+          heartbeat has gone stale. Managers and admins only. */}
+      {connected && !call.stale && canMonitor && <CallControls call={call} />}
 
       {call.stale && (
         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5">

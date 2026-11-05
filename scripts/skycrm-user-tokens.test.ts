@@ -12,7 +12,7 @@ mock.module("../src/lib/telephony/skycrm-credentials.server", () => ({
 }));
 mock.module("@/lib/supabase-admin.server", () => ({ getSupabaseAdmin: () => ({}) }));
 
-const { registerQueue, loginSkycrmUser, sendDisposition } = await import(
+const { registerQueue, loginSkycrmUser, sendDisposition, startCallMonitor } = await import(
   // Fresh copy: another test file may have loaded the provider before SKYCRM_SECRET was set here.
   "../src/lib/telephony/skycrm-provider.ts?per-user-tokens"
 );
@@ -110,5 +110,24 @@ describe("disposition_api", () => {
   test("an HTTP error with no status field is a failure, not a silent success", async () => {
     fakeFetch([{ status: 400, body: '{"error": "Invalid JSON"}' }]);
     await expect(registerQueue("8601", "1081")).rejects.toThrow();
+  });
+});
+
+describe("call_monitor_api", () => {
+  test("rings the supervisor's extension onto the agent's call, as form data", async () => {
+    let body = "";
+    let token: Record<string, unknown> = {};
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      body = String(init?.body);
+      token = payloadOf(init, String(url));
+      return new Response('{"status": 200, "message": "Sucessfully are monitoring applied"}');
+    }) as typeof fetch;
+    creds = { username: "8611", password: "pw@1" };
+    await startCallMonitor("whisper", "8611", "8602");
+    const form = new URLSearchParams(body);
+    expect(form.get("Mode")).toBe("whisper");
+    expect(form.get("user_extention")).toBe("8611");
+    expect(form.get("monitor_extention")).toBe("8602");
+    expect(token).toMatchObject({ extension: "8611", username: "8611" });
   });
 });
