@@ -12,7 +12,7 @@ mock.module("../src/lib/telephony/skycrm-credentials.server", () => ({
 }));
 mock.module("@/lib/supabase-admin.server", () => ({ getSupabaseAdmin: () => ({}) }));
 
-const { registerQueue, loginSkycrmUser } = await import(
+const { registerQueue, loginSkycrmUser, sendDisposition } = await import(
   // Fresh copy: another test file may have loaded the provider before SKYCRM_SECRET was set here.
   "../src/lib/telephony/skycrm-provider.ts?per-user-tokens"
 );
@@ -82,5 +82,33 @@ describe("loginSkycrmUser", () => {
     if (!r.ok) expect(r.detail).toContain("User does not exist");
     creds = null;
     expect((await loginSkycrmUser("8601")).ok).toBe(false);
+  });
+});
+
+describe("disposition_api", () => {
+  test("is sent as JSON (form data gets HTTP 400 Invalid JSON)", async () => {
+    let seen: { type?: string; body?: string } = {};
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      const h = init?.headers as Record<string, string>;
+      seen = { type: h["Content-Type"], body: String(init?.body) };
+      return new Response('{"status": 200, "message": "disposition phone 9999999999 successfully"}');
+    }) as typeof fetch;
+    await sendDisposition({
+      extension: "8602",
+      phone_number: "9999999999",
+      caller_name: "x",
+      disposition: "Contacted",
+      sub_disposition: "Promise to Pay",
+      remark: "r",
+      callback_datetime: "",
+      direction: "Outbound",
+    });
+    expect(seen.type).toBe("application/json");
+    expect(JSON.parse(seen.body ?? "{}")).toMatchObject({ phone_number: "9999999999", callback_datetime: "" });
+  });
+
+  test("an HTTP error with no status field is a failure, not a silent success", async () => {
+    fakeFetch([{ status: 400, body: '{"error": "Invalid JSON"}' }]);
+    await expect(registerQueue("8601", "1081")).rejects.toThrow();
   });
 });

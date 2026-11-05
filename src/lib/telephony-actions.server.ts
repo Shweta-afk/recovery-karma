@@ -596,7 +596,8 @@ export const reportDisposition = createServerFn({ method: "POST" })
         disposition: skycrmDispositionFor(data.outcome),
         sub_disposition: skycrmSubDisposition(data.outcome, data.reason),
         remark: (data.remark ?? "").slice(0, 500),
-        callback_datetime: callback,
+        // Always present: their view may read the key directly.
+        callback_datetime: callback ?? "",
         direction: ledger.direction === "inbound" ? "Inbound" : "Outbound",
       });
       return { ok: true };

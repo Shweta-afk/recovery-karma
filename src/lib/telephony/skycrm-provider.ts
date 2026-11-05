@@ -136,15 +136,16 @@ async function post(
   path: string,
   body: Record<string, unknown>,
   extension: string,
+  opts: { json?: boolean } = {},
 ): Promise<SkyCrmResponse> {
   const user = await skycrmCredentials(extension).catch(() => null);
   if (user) {
-    const first = await postOnce(path, body, extension, user, true);
+    const first = await postOnce(path, body, extension, user, true, opts.json);
     if (first) return first;
     console.warn(`[skycrm] ${path}: SkyCRM refused user ${user.username}; sent without it`);
     forgetSkycrmCredentials(extension);
   }
-  return (await postOnce(path, body, extension, null, false)) as SkyCrmResponse;
+  return (await postOnce(path, body, extension, null, false, opts.json)) as SkyCrmResponse;
 }
 
 /** One request. With `softAuth`, a refused user (301/401) returns null instead of throwing. */
@@ -154,6 +155,7 @@ async function postOnce(
   extension: string,
   user: SkycrmCredentials | null,
   softAuth: boolean,
+  json = false,
 ): Promise<SkyCrmResponse | null> {
   const token = mintToken(extension, user);
   let response: Response;
@@ -161,14 +163,18 @@ async function postOnce(
     // Form-encode the body — see the ⚠️ note above; JSON makes every field read as None
     // server-side. URLSearchParams sets Content-Type: application/x-www-form-urlencoded, which
     // the vendor's Django `request.POST` reads (as does multipart form-data in Postman).
-    const form = new URLSearchParams();
+    // Exception: disposition_api reads a JSON body and answers form data with HTTP 400
+    // {"error": "Invalid JSON"} (found 2026-11-05 — no disposition had ever reached SkyCRM).
+    const fields: Record<string, string> = {};
     for (const [k, v] of Object.entries(body)) {
-      if (v !== undefined && v !== null) form.set(k, String(v));
+      if (v !== undefined && v !== null) fields[k] = String(v);
     }
     response = await fetch(`${SKYCRM_BASE_URL}/${path}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: form,
+      headers: json
+        ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+        : { Authorization: `Bearer ${token}` },
+      body: json ? JSON.stringify(fields) : new URLSearchParams(fields),
     });
   } catch (err) {
     throw appError("SX-3102", "Could not reach the calling service. Please try again.", {
@@ -190,7 +196,10 @@ async function postOnce(
     });
   }
 
-  const logicalStatus = Number(data.status);
+  // An HTTP error whose body has no `status` (e.g. 400 {"error":"Invalid JSON"}) used to pass as
+  // success, because only the body's status was checked.
+  const logicalStatus =
+    data.status === undefined && response.status >= 400 ? response.status : Number(data.status);
   if (softAuth && (logicalStatus === 401 || logicalStatus === 301)) return null;
   if (logicalStatus === 401) {
     throw appError("SX-3101", "Calling is not available right now. Contact SamvadX support.", {
@@ -487,7 +496,7 @@ export function sendDisposition(args: {
   direction: "Inbound" | "Outbound";
 }): Promise<SkyCrmResponse> {
   const { extension, ...rest } = args;
-  return post("disposition_api", { extension, ...rest }, extension);
+  return post("disposition_api", { extension, ...rest }, extension, { json: true });
 }
 
 // Not wired yet (spec §13–20): call monitor (listen/whisper/barge), mute/hold, transfer/swap/
