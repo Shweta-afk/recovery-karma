@@ -762,15 +762,31 @@ export const startCall = createServerFn({ method: "POST" })
   });
 
 /**
- * Look up recordings for calls we already logged, backfilling any that weren't on the
- * hangup webhook yet. There is no vendor CDR endpoint wired in, so this returns {} until the
- * next telephony provider's recording lookup lands here.
+ * Recordings SamvadX has already imported for calls the caller's company logged, as
+ * providerCallId → marker ("samvadx-recording:<ledger id>", played via getRecordingPlayUrl).
+ * The importer (recordings.server.ts) links call logs that exist when the file arrives; this
+ * catches call logs saved AFTER that. Only this company's ledger rows are ever returned.
  */
 export const fetchRecordings = createServerFn({ method: "POST" })
   .inputValidator((d: { accessToken: string; providerCallIds: string[] }) => d)
   .handler(async ({ data }) => {
-    await requireCaller(data?.accessToken);
-    return {} as Record<string, string>;
+    const caller = await requireCaller(data?.accessToken);
+    const ids = Array.isArray(data.providerCallIds)
+      ? data.providerCallIds.filter((x) => typeof x === "string" && x.length <= 100).slice(0, 500)
+      : [];
+    const out: Record<string, string> = {};
+    if (!ids.length) return out;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ledger columns not in generated types
+    const { data: rows } = await (getSupabaseAdmin() as any)
+      .from("telephony_calls")
+      .select("id, provider_call_id")
+      .eq("client_id", caller.clientId)
+      .eq("recording_status", "stored")
+      .in("provider_call_id", ids);
+    for (const r of (rows ?? []) as { id: string; provider_call_id: string }[]) {
+      out[r.provider_call_id] = `samvadx-recording:${r.id}`;
+    }
+    return out;
   });
 
 export const hangupCall = createServerFn({ method: "POST" })

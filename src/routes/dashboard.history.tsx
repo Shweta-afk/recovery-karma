@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { RecordingAudio } from "@/components/telephony/recording-audio";
 import { useEffect, useMemo, useState } from "react";
 import {
   Phone,
@@ -10,7 +11,6 @@ import {
   FileDown,
   ArrowUpRight,
   ArrowDownLeft,
-  PlayCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -626,15 +626,7 @@ function ActivityHistoryPage() {
                             </span>
                           ) : null}
                           {e.recordingUrl ? (
-                            <a
-                              href={e.recordingUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-                            >
-                              <PlayCircle className="h-3.5 w-3.5" />
-                              Play recording
-                            </a>
+                            <RecordingAudio url={e.recordingUrl} compact />
                           ) : e.providerCallId ? (
                             // The call reached the provider (so it may have connected), but
                             // no recording yet: providers publish these asynchronously, which

@@ -445,3 +445,47 @@ export function sendDisposition(args: {
 
 // Not wired yet (spec §13–20): call monitor (listen/whisper/barge), mute/hold, transfer/swap/
 // conference, missed-call list and recording download (download-audio returns a zip by CDR id).
+
+// ─── Call records + recording download (2026-11-05) ────────────────────────────
+// Used by recordings.server.ts. cdr_report lists every call of the account for a date range (the
+// token's extension doesn't filter it); download_audio/ (underscore + trailing slash — the doc's
+// "download-audio" is a 404) returns a ZIP of the recordings for the given CDR ids.
+
+export interface SkyCrmCdrRow {
+  id: number | string;
+  callid?: string;
+  disposition?: string;
+  billsec?: string | number;
+  direction?: string;
+  recordfile?: string;
+  [k: string]: unknown;
+}
+
+/** cdr_report for one process ("Outbound" | "Inbound"), dates as dd-mm-yyyy (IST). */
+export async function fetchCdrReport(args: {
+  extension: string;
+  startDate: string;
+  endDate: string;
+  process: "Outbound" | "Inbound";
+}): Promise<SkyCrmCdrRow[]> {
+  const data = await post(
+    "cdr_report",
+    { start_date: args.startDate, end_date: args.endDate, process: args.process },
+    args.extension,
+  );
+  const rows = (data as { data?: unknown }).data;
+  return Array.isArray(rows) ? (rows as SkyCrmCdrRow[]) : [];
+}
+
+/** Raw bytes of download_audio/ for one CDR id — a ZIP when it works, a JSON error when not.
+ *  Never throws on a vendor error body; the caller (extractRecording) tells the cases apart. */
+export async function downloadRecordingRaw(cdrId: string, extension: string): Promise<Buffer> {
+  const token = mintToken(extension);
+  const response = await fetch(`${SKYCRM_BASE_URL}/download_audio/`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: new URLSearchParams({ ids: cdrId }),
+    signal: AbortSignal.timeout(120_000),
+  });
+  return Buffer.from(await response.arrayBuffer());
+}

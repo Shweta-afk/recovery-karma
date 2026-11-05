@@ -7,6 +7,7 @@ import { z, tokenSchema, idSchema } from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import { fetchPublicBlob } from "./safe-fetch.server";
+import { CALL_RECORDINGS_BUCKET, parseRecordingMarker } from "./telephony/recording-marker";
 import { appError } from "./app-error";
 
 const SENTIMENT_LABELS = ["happy", "neutral", "frustrated", "rude"] as const;
@@ -134,8 +135,29 @@ export const analyzeCallSentiment = createServerFn({ method: "POST" })
     if (log.debtors?.client_id !== caller.clientId) throw new Error("Not authorized for this call");
     if (!log.recording_url) throw new Error("No recording available for this call yet");
 
-    // recording_url is user-writable, so it is fetched through the SSRF guard, never raw.
-    const audioBlob = await fetchPublicBlob(log.recording_url);
+    // A recording SamvadX stored itself (marker, see telephony/recording-marker.ts) is read from
+    // Storage — only if it belongs to the caller's company. Anything else is a URL, and since
+    // recording_url is user-writable it is fetched through the SSRF guard, never raw.
+    const storedId = parseRecordingMarker(log.recording_url);
+    let audioBlob: Blob;
+    if (storedId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ledger columns not in generated types
+      const { data: rec } = await (admin as any)
+        .from("telephony_calls")
+        .select("client_id, recording_object")
+        .eq("id", storedId)
+        .maybeSingle();
+      if (!rec?.recording_object || rec.client_id !== caller.clientId) {
+        throw new Error("No recording available for this call yet");
+      }
+      const { data: file, error: dlErr } = await admin.storage
+        .from(CALL_RECORDINGS_BUCKET)
+        .download(rec.recording_object as string);
+      if (dlErr || !file) throw new Error("Could not read the recording");
+      audioBlob = file;
+    } else {
+      audioBlob = await fetchPublicBlob(log.recording_url);
+    }
 
     const transcript = await transcribeWithGroq(audioBlob);
     const sentiment = await analyzeWithGemini(transcript);

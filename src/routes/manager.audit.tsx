@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { RecordingAudio } from "@/components/telephony/recording-audio";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Download,
   Search,
   X,
   Filter,
@@ -127,16 +127,8 @@ function RecordingPlayer({ url }: { url?: string }) {
   }
   return (
     <div className="space-y-2 rounded-lg border border-border bg-muted/30 px-4 py-3">
-      <audio controls src={url} className="w-full h-9" />
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
-      >
-        <Download className="h-3 w-3" />
-        Open recording
-      </a>
+      {/* key: a new call in the sheet starts with a fresh player, not the last call's link */}
+      <RecordingAudio key={url} url={url} showOpenLink />
     </div>
   );
 }

@@ -6,6 +6,10 @@ import { CSP_REPORT_PATH, buildCspReportOnly, handleCspReport } from "./lib/csp"
 import { TELEPHONY_WEBHOOK_PATH, handleTelephonyWebhook } from "./lib/telephony/webhook-handler";
 import { ARCHIVE_CRON_PATH, handleArchiveCron } from "./lib/archive-cron.server";
 import { APP_PING_BODY, APP_PING_PATH } from "./lib/company-address";
+import { startRecordingImports } from "./lib/telephony/recordings.server";
+
+// SkyCRM call recordings → SamvadX Storage, every 5 minutes (no-op unless TELEPHONY_PROVIDER=skycrm).
+startRecordingImports();
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
