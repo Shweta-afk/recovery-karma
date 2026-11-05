@@ -29,3 +29,8 @@ CREATE INDEX IF NOT EXISTS skycrm_users_client_idx ON skycrm_users (client_id);
 ALTER TABLE skycrm_users ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE skycrm_users FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE skycrm_users TO service_role;
+
+-- When SamvadX last logged the user in to SkyCRM (Login API) and what SkyCRM said if it refused.
+ALTER TABLE skycrm_users
+  ADD COLUMN IF NOT EXISTS last_login_at    TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS last_login_error TEXT;

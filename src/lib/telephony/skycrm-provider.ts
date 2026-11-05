@@ -25,6 +25,7 @@ import type {
   HangupContext,
 } from "./types";
 import { appError } from "../app-error";
+import { forgetSkycrmCredentials, skycrmCredentials, type SkycrmCredentials } from "./skycrm-credentials.server";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -83,13 +84,13 @@ function b64url(input: Buffer | string): string {
 /** Mint an HS256 JWT for `extension`, signed with SKYCRM_SECRET. Payload matches the vendor's
  * Login-api schema: {username, password, extension, exp}. Called per request because the target
  * extension varies by agent. */
-function mintToken(extension: string): string {
+function mintToken(extension: string, user?: SkycrmCredentials | null): string {
   requireCredentials();
   const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = b64url(
     JSON.stringify({
-      username: SKYCRM_USER,
-      password: SKYCRM_PASS,
+      username: user?.username ?? SKYCRM_USER,
+      password: user?.password ?? SKYCRM_PASS,
       extension,
       exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
     }),
@@ -127,12 +128,34 @@ interface SkyCrmResponse {
   [k: string]: unknown;
 }
 
+// Since 2026-11-05 each request carries the agent's own SkyCRM user (skycrm-credentials.server.ts)
+// so SkyCRM can see who is working. If SkyCRM refuses those credentials (301 "User does not
+// exist" / 401), the request is sent once more the old way (blank user), so calling never stops
+// because of a user problem; the refusal is logged.
 async function post(
   path: string,
   body: Record<string, unknown>,
   extension: string,
 ): Promise<SkyCrmResponse> {
-  const token = mintToken(extension);
+  const user = await skycrmCredentials(extension).catch(() => null);
+  if (user) {
+    const first = await postOnce(path, body, extension, user, true);
+    if (first) return first;
+    console.warn(`[skycrm] ${path}: SkyCRM refused user ${user.username}; sent without it`);
+    forgetSkycrmCredentials(extension);
+  }
+  return (await postOnce(path, body, extension, null, false)) as SkyCrmResponse;
+}
+
+/** One request. With `softAuth`, a refused user (301/401) returns null instead of throwing. */
+async function postOnce(
+  path: string,
+  body: Record<string, unknown>,
+  extension: string,
+  user: SkycrmCredentials | null,
+  softAuth: boolean,
+): Promise<SkyCrmResponse | null> {
+  const token = mintToken(extension, user);
   let response: Response;
   try {
     // Form-encode the body — see the ⚠️ note above; JSON makes every field read as None
@@ -168,6 +191,7 @@ async function post(
   }
 
   const logicalStatus = Number(data.status);
+  if (softAuth && (logicalStatus === 401 || logicalStatus === 301)) return null;
   if (logicalStatus === 401) {
     throw appError("SX-3101", "Calling is not available right now. Contact SamvadX support.", {
       path,
@@ -398,12 +422,35 @@ export function skycrmDispositionFor(outcome: string): "Contacted" | "Non-Contac
 export async function skycrmLogin(
   extension: string,
 ): Promise<{ httpStatus: number; body: string }> {
-  const token = mintToken(extension);
+  const token = mintToken(extension, await skycrmCredentials(extension).catch(() => null));
   const response = await fetch(
     `${SKYCRM_BASE_URL}/login_user_ajax2?token=${encodeURIComponent(token)}`,
-    { redirect: "manual" },
+    { redirect: "manual", signal: AbortSignal.timeout(20_000) },
   );
   return { httpStatus: response.status, body: (await response.text()).slice(0, 500) };
+}
+
+/** Log the agent's own SkyCRM user in (Login API, section 22). Success = a redirect to the CRM
+ *  home; a refusal comes back as JSON ({"status":301,"message":"User does not exist"}, 401 …). */
+export async function loginSkycrmUser(
+  extension: string,
+): Promise<{ ok: true; username: string } | { ok: false; detail: string }> {
+  const user = await skycrmCredentials(extension).catch(() => null);
+  if (!user) return { ok: false, detail: "no SkyCRM user for this extension" };
+  try {
+    const { httpStatus, body } = await skycrmLogin(extension);
+    if (httpStatus >= 300 && httpStatus < 400) return { ok: true, username: user.username };
+    let message = body.replace(/\s+/g, " ").slice(0, 160);
+    try {
+      const j = JSON.parse(body) as { status?: unknown; message?: unknown; Message?: unknown };
+      message = `${j.status ?? httpStatus}: ${String(j.message ?? j.Message ?? "")}`;
+    } catch {
+      /* not JSON */
+    }
+    return { ok: false, detail: `HTTP ${httpStatus} ${message}`.trim() };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /** Inbound: register an extension into one or more ACD queues (login_in_queue1). */
@@ -480,7 +527,7 @@ export async function fetchCdrReport(args: {
 /** Raw bytes of download_audio/ for one CDR id — a ZIP when it works, a JSON error when not.
  *  Never throws on a vendor error body; the caller (extractRecording) tells the cases apart. */
 export async function downloadRecordingRaw(cdrId: string, extension: string): Promise<Buffer> {
-  const token = mintToken(extension);
+  const token = mintToken(extension, await skycrmCredentials(extension).catch(() => null));
   const response = await fetch(`${SKYCRM_BASE_URL}/download_audio/`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },

@@ -331,6 +331,18 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
                           : `failed — ${a.skycrmUser.error ?? "unknown error"}`}
                       </p>
                     )}
+                    {a.skycrmUser?.status === "created" &&
+                      (a.skycrmUser.lastLoginError ? (
+                        <p className="truncate text-[11px] text-destructive" title={a.skycrmUser.lastLoginError}>
+                          SkyCRM login refused — {a.skycrmUser.lastLoginError}
+                        </p>
+                      ) : (
+                        <p className="truncate text-[11px] text-muted-foreground">
+                          {a.skycrmUser.lastLoginAt
+                            ? `Logged in to SkyCRM ${new Date(a.skycrmUser.lastLoginAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
+                            : "Not logged in to SkyCRM yet — happens when their phone connects"}
+                        </p>
+                      ))}
                   </div>
                   <Input
                     value={extDrafts[a.id] ?? ""}

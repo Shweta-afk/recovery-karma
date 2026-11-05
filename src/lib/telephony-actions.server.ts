@@ -22,6 +22,7 @@ import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.s
 import { skycrmPassword, skycrmUserLevel, skycrmUsername } from "./telephony/skycrm-users";
 import {
   createSkycrmUser,
+  loginSkycrmUser,
   pauseQueue,
   registerQueue,
   sendDisposition,
@@ -77,7 +78,13 @@ export interface CompanyTelephony {
     role: string;
     extension: string | null;
     /** Their SkyCRM user, if SamvadX has tried to create one (never the password). */
-    skycrmUser: { username: string; status: "created" | "failed"; error: string | null } | null;
+    skycrmUser: {
+      username: string;
+      status: "created" | "failed";
+      error: string | null;
+      lastLoginAt: string | null;
+      lastLoginError: string | null;
+    } | null;
   }>;
 }
 
@@ -103,17 +110,29 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
       // Empty until 20261105_skycrm_users.sql is applied.
       db()
         .from("skycrm_users")
-        .select("agent_id, username, status, last_error")
+        .select("agent_id, username, status, last_error, last_login_at, last_login_error")
         .eq("client_id", data.clientId),
     ]);
     if (agents.error) throw new Error(`Could not load users (${agents.error.message})`);
-    const skyByAgent = new Map<string, { username: string; status: "created" | "failed"; error: string | null }>(
-      ((skyUsers.error ? [] : skyUsers.data) ?? []).map(
-        (u: { agent_id: string; username: string; status: "created" | "failed"; last_error: string | null }) => [
-          u.agent_id,
-          { username: u.username, status: u.status, error: u.last_error },
-        ],
-      ),
+    type SkyRow = {
+      agent_id: string;
+      username: string;
+      status: "created" | "failed";
+      last_error: string | null;
+      last_login_at: string | null;
+      last_login_error: string | null;
+    };
+    const skyByAgent = new Map<string, NonNullable<CompanyTelephony["agents"][number]["skycrmUser"]>>(
+      ((skyUsers.error ? [] : skyUsers.data) ?? []).map((u: SkyRow) => [
+        u.agent_id,
+        {
+          username: u.username,
+          status: u.status,
+          error: u.last_error,
+          lastLoginAt: u.last_login_at,
+          lastLoginError: u.last_login_error,
+        },
+      ]),
     );
     const me = state.companies.find((c) => c.clientId === data.clientId);
     return {
@@ -669,6 +688,33 @@ export type WebphoneLogin =
     }
   | { login: null; reason: "provider" | "not_enabled" | "no_extension" | "not_configured" };
 
+// SkyCRM wants each agent's own SkyCRM user logged in while they work (Login API, 2026-11-05), so
+// it can see who is active. Done when the agent's browser phone connects (it re-reads its login
+// every 2 minutes), at most once per LOGIN_EVERY_MS per extension, in the background — a refusal
+// never stops the phone. The outcome is kept on skycrm_users and shown on the superadmin card.
+const LOGIN_EVERY_MS = 30 * 60_000;
+const lastSkycrmLogin = new Map<string, number>();
+
+async function keepSkycrmUserLoggedIn(agentId: string, extension: string): Promise<void> {
+  const last = lastSkycrmLogin.get(extension) ?? 0;
+  if (Date.now() - last < LOGIN_EVERY_MS) return;
+  lastSkycrmLogin.set(extension, Date.now());
+  const res = await loginSkycrmUser(extension);
+  if (!res.ok && res.detail === "no SkyCRM user for this extension") return;
+  if (!res.ok) {
+    console.warn(`[skycrm-login] ${extension}: ${res.detail}`);
+    lastSkycrmLogin.set(extension, Date.now() - LOGIN_EVERY_MS + 5 * 60_000); // retry in 5 min
+  }
+  await db()
+    .from("skycrm_users")
+    .update(
+      res.ok
+        ? { last_login_at: new Date().toISOString(), last_login_error: null }
+        : { last_login_error: res.detail.slice(0, 300) },
+    )
+    .eq("agent_id", agentId);
+}
+
 export const getMyWebphoneLogin = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
   .handler(async ({ data }): Promise<WebphoneLogin> => {
@@ -691,6 +737,11 @@ export const getMyWebphoneLogin = createServerFn({ method: "POST" })
         ),
       );
       return { login: null, reason: "not_configured" };
+    }
+    if (caller.agentId) {
+      void keepSkycrmUserLoggedIn(caller.agentId, extension).catch((err) =>
+        console.warn("[skycrm-login] failed:", err instanceof Error ? err.message : String(err)),
+      );
     }
     const turn = turnLogin(extension, {
       secret: process.env.TURN_SECRET,
