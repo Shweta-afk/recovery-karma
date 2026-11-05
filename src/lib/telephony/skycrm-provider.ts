@@ -489,3 +489,49 @@ export async function downloadRecordingRaw(cdrId: string, extension: string): Pr
   });
   return Buffer.from(await response.arrayBuffer());
 }
+
+// ─── User creation (2026-11-05, API_SKY (3).docx) ──────────────────────────────
+// users_webhook_api is the one SkyCRM endpoint that takes JSON, and it has NO authentication (their
+// own doc says so; raised with the vendor). No trailing slash (with one it is a 404).
+// The body carries a password: never log it.
+
+export async function createSkycrmUser(user: {
+  name: string;
+  password: string;
+  userLevel: "admin" | "manager" | "user";
+}): Promise<{ ok: true } | { ok: false; detail: string }> {
+  const body = {
+    name: user.name,
+    password: user.password,
+    user_level: user.userLevel,
+    // Optional until SkyCRM says what they want: the admin username new users sit under, and
+    // the campaign/region names shown on their Real Time Monitor.
+    process: env("SKYCRM_USER_PROCESS") ?? "",
+    assigned_to: env("SKYCRM_USER_ASSIGNED_TO") ?? "",
+    user_region: env("SKYCRM_USER_REGION") ?? "",
+  };
+  let response: Response;
+  try {
+    response = await fetch(`${SKYCRM_BASE_URL}/users_webhook_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    return { ok: false, detail: `could not reach SkyCRM (${err instanceof Error ? err.message : String(err)})` };
+  }
+  const text = await response.text();
+  let parsed: { status?: unknown; error?: unknown } = {};
+  try {
+    parsed = JSON.parse(text) as typeof parsed;
+  } catch {
+    /* Django HTML error page — reported below */
+  }
+  if (response.ok && String(parsed.status).toLowerCase() === "success") return { ok: true };
+  const title = text.match(/<title>([^<]*)/i)?.[1]?.trim();
+  return {
+    ok: false,
+    detail: `HTTP ${response.status}: ${String(parsed.error ?? title ?? text).slice(0, 200)}`,
+  };
+}

@@ -3,7 +3,7 @@
 // Its phone numbers are handed out on Superadmin → Numbers & Lines and listed here read-only.
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Phone, Save, Loader2 } from "lucide-react";
+import { Phone, Save, Loader2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { getAccessToken } from "@/lib/access-token";
 import {
+  createSkycrmUsers,
   getCompanyTelephony,
   saveCompanyTelephony,
   setAgentExtension,
@@ -48,6 +49,7 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
   const [extDrafts, setExtDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [savingAgent, setSavingAgent] = useState<string | null>(null);
+  const [creatingUsers, setCreatingUsers] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
@@ -130,7 +132,28 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
     }
   };
 
+  const handleCreateSkycrmUsers = async () => {
+    setCreatingUsers(true);
+    try {
+      const r = await createSkycrmUsers({
+        data: { accessToken: await getAccessToken(), clientId },
+      });
+      if (r.results.length === 0) toast.success("Everyone already has a SkyCRM user");
+      else if (r.failed === 0) toast.success(`Created ${r.created} SkyCRM users`);
+      else
+        toast.error(
+          `Created ${r.created}, ${r.failed} failed — ${r.results.find((x) => !x.ok)?.detail ?? ""}`,
+        );
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create SkyCRM users");
+    } finally {
+      setCreatingUsers(false);
+    }
+  };
+
   const assigned = data?.agents.filter((a) => a.extension).length ?? 0;
+  const skyCreated = data?.agents.filter((a) => a.skycrmUser?.status === "created").length ?? 0;
   const outboundLines = data ? data.trunk.totalChannels - data.trunk.inboundReserve : 0;
   const canGuarantee = data ? Math.max(0, outboundLines - data.otherCompaniesReserved) : 0;
 
@@ -264,7 +287,29 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
             </Button>
 
             <div className="space-y-2 border-t border-border pt-4">
-              <p className="text-xs font-medium">Extensions</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-medium">Extensions</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    SkyCRM users: {skyCreated} of {data.agents.length} created
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 gap-1 text-xs"
+                  disabled={creatingUsers || skyCreated === data.agents.length}
+                  onClick={handleCreateSkycrmUsers}
+                  title="Creates a user in SkyCRM for everyone below who doesn't have one yet"
+                >
+                  {creatingUsers ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <UserPlus className="h-3 w-3" />
+                  )}
+                  Create SkyCRM users
+                </Button>
+              </div>
               {data.agents.length === 0 && (
                 <p className="text-xs text-muted-foreground">No active users in this company.</p>
               )}
@@ -275,6 +320,17 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
                     <p className="truncate text-[11px] text-muted-foreground">
                       {a.email} · {a.role}
                     </p>
+                    {a.skycrmUser && (
+                      <p
+                        className={`truncate text-[11px] ${a.skycrmUser.status === "created" ? "text-emerald-600" : "text-destructive"}`}
+                        title={a.skycrmUser.error ?? undefined}
+                      >
+                        SkyCRM user {a.skycrmUser.username}:{" "}
+                        {a.skycrmUser.status === "created"
+                          ? "created"
+                          : `failed — ${a.skycrmUser.error ?? "unknown error"}`}
+                      </p>
+                    )}
                   </div>
                   <Input
                     value={extDrafts[a.id] ?? ""}

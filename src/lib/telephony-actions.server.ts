@@ -19,7 +19,9 @@ import { normalisePhone, type TelephonySettingsRow } from "./telephony/guard-rul
 import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
 import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.server";
+import { skycrmPassword, skycrmUserLevel, skycrmUsername } from "./telephony/skycrm-users";
 import {
+  createSkycrmUser,
   pauseQueue,
   registerQueue,
   sendDisposition,
@@ -74,6 +76,8 @@ export interface CompanyTelephony {
     email: string;
     role: string;
     extension: string | null;
+    /** Their SkyCRM user, if SamvadX has tried to create one (never the password). */
+    skycrmUser: { username: string; status: "created" | "failed"; error: string | null } | null;
   }>;
 }
 
@@ -83,7 +87,7 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }): Promise<CompanyTelephony> => {
     await requireSuperadmin(data.accessToken);
-    const [settings, state, nums, agents] = await Promise.all([
+    const [settings, state, nums, agents, skyUsers] = await Promise.all([
       loadTelephonySettings(data.clientId),
       loadChannelState(),
       db()
@@ -96,8 +100,21 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
         .select("id, name, email, role, agent_extension, is_active")
         .eq("client_id", data.clientId)
         .order("name"),
+      // Empty until 20261105_skycrm_users.sql is applied.
+      db()
+        .from("skycrm_users")
+        .select("agent_id, username, status, last_error")
+        .eq("client_id", data.clientId),
     ]);
     if (agents.error) throw new Error(`Could not load users (${agents.error.message})`);
+    const skyByAgent = new Map<string, { username: string; status: "created" | "failed"; error: string | null }>(
+      ((skyUsers.error ? [] : skyUsers.data) ?? []).map(
+        (u: { agent_id: string; username: string; status: "created" | "failed"; last_error: string | null }) => [
+          u.agent_id,
+          { username: u.username, status: u.status, error: u.last_error },
+        ],
+      ),
+    );
     const me = state.companies.find((c) => c.clientId === data.clientId);
     return {
       provider: getTelephonyProvider().name,
@@ -139,8 +156,100 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
           email: a.email,
           role: a.role,
           extension: a.agent_extension,
+          skycrmUser: skyByAgent.get(a.id) ?? null,
         })),
     };
+  });
+
+/**
+ * Create a SkyCRM user for every active person in a company who doesn't have one yet (or whose
+ * last attempt failed). SkyCRM asked for this so they can count users (2026-11-05). One at a time,
+ * since their API crashes on duplicates rather than answering cleanly. Username rules:
+ * telephony/skycrm-users.ts. A failed attempt keeps the same username and password for the retry.
+ */
+export const createSkycrmUsers = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, clientId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const [{ data: people, error }, existing] = await Promise.all([
+      db()
+        .from("agents")
+        .select("id, name, role, agent_extension, is_active")
+        .eq("client_id", data.clientId),
+      db()
+        .from("skycrm_users")
+        .select("agent_id, username, password, status")
+        .eq("client_id", data.clientId),
+    ]);
+    if (error) throw new Error(`Could not load users (${error.message})`);
+    if (existing.error) {
+      throw new Error("SkyCRM users table is missing — apply 20261105_skycrm_users.sql first");
+    }
+    const prior = new Map<string, { username: string; password: string; status: string }>(
+      (existing.data ?? []).map(
+        (r: { agent_id: string; username: string; password: string; status: string }) => [r.agent_id, r],
+      ),
+    );
+
+    const results: Array<{ name: string; username: string; ok: boolean; detail?: string }> = [];
+    for (const p of (people ?? []) as Array<{
+      id: string;
+      name: string | null;
+      role: string;
+      agent_extension: string | null;
+      is_active: boolean | null;
+    }>) {
+      if (p.is_active === false) continue;
+      const before = prior.get(p.id);
+      if (before?.status === "created") continue;
+      const username = before?.username ?? skycrmUsername({ id: p.id, name: p.name, extension: p.agent_extension });
+      const password = before?.password ?? skycrmPassword();
+      const userLevel = skycrmUserLevel(p.role);
+      // Saved BEFORE the call, so a crash mid-way can't leave a SkyCRM user whose password we lost.
+      const saved = await db()
+        .from("skycrm_users")
+        .upsert(
+          {
+            agent_id: p.id,
+            client_id: data.clientId,
+            username,
+            password,
+            user_level: userLevel,
+            status: "failed",
+            last_error: "creating…",
+            attempted_at: new Date().toISOString(),
+          },
+          { onConflict: "agent_id" },
+        );
+      if (saved.error) {
+        results.push({ name: p.name ?? username, username, ok: false, detail: saved.error.message });
+        continue;
+      }
+      const res = await createSkycrmUser({ name: username, password, userLevel });
+      await db()
+        .from("skycrm_users")
+        .update(
+          res.ok
+            ? { status: "created", last_error: null, created_at: new Date().toISOString() }
+            : { status: "failed", last_error: res.detail },
+        )
+        .eq("agent_id", p.id);
+      results.push({ name: p.name ?? username, username, ok: res.ok, detail: res.ok ? undefined : res.detail });
+    }
+
+    const created = results.filter((r) => r.ok).length;
+    if (results.length) {
+      await logSuperadminActivity({
+        superadminId: caller.superadminId,
+        action: "skycrm_users_created",
+        clientId: data.clientId,
+        summary: `Created ${created} of ${results.length} SkyCRM users`,
+        detail: { results: results.map((r) => ({ username: r.username, ok: r.ok, detail: r.detail ?? null })) },
+      });
+    }
+    return { created, failed: results.length - created, results };
   });
 
 export const saveCompanyTelephony = createServerFn({ method: "POST" })
