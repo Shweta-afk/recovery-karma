@@ -374,6 +374,13 @@ code — always go through this.
 - Webhook events are idempotent against the ledger: `vendor_callid` is unique (simultaneous
   inbound events can't double-insert), and a ringing/connected event arriving after the call ended
   is dropped rather than reopening it (`webhook-reconcile.server.ts`).
+- **`call_logs.duration_seconds` is talk time, copied from the ledger (2026-11-09).** Only a
+  ledger row with `status='completed'` counts; any other status's figure is ringing time
+  (`talkSeconds`, `telephony/talk-time.ts`). The final event and the disposition arrive in either
+  order, so each copies after writing its own row: `reconcileWithLedger`, and `saveDisposition`
+  via `syncCallLogTalkTime` (agents have no UPDATE on call_logs). `answered_at` is NULL on every
+  ledger row, so don't use it to tell a connected call. Rows from before the fix need
+  `scripts/debug/20261109-backfill-call-log-talk-time.sql`, run by hand.
 - SkyCRM's API reads **form-encoded** bodies only. Its `recordfile` is a path on the vendor's
   private network, not a URL. Playback needs `download-audio` (returns a zip), which isn't built.
 - `agents.agent_extension` is unique platform-wide, and only a superadmin sets it (the

@@ -505,14 +505,31 @@ export interface LedgerRow {
   ended_at: string | null;
   /** Every live event's vendor words, in order (20261105_ledger_vendor_events.sql). */
   vendor_events?: string | null;
+  /** Talk time on a completed call, ringing time otherwise — see talk-time.ts. */
+  duration_seconds?: number | null;
 }
 
 const LEDGER_COLS =
-  "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, answered_at, ended_at, vendor_events";
+  "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, answered_at, ended_at, vendor_events, duration_seconds";
 
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {
   if (!id) return;
   const { error } = await db().from("telephony_calls").update(patch).eq("id", id);
+  if (error) console.warn(`[telephony-guard] ledger update failed: ${error.message}`);
+}
+
+/** Same, but only while the call is still open, checked by the database at write time. For a
+ *  writer that read the row earlier and may have been overtaken by the provider's final event. */
+export async function updateLedgerIfOpen(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  if (!id) return;
+  const { error } = await db()
+    .from("telephony_calls")
+    .update(patch)
+    .eq("id", id)
+    .is("ended_at", null);
   if (error) console.warn(`[telephony-guard] ledger update failed: ${error.message}`);
 }
 
