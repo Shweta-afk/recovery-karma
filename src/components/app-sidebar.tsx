@@ -27,6 +27,7 @@ import {
   FileSignature,
   Archive,
   Headphones,
+  ListChecks,
   Star,
   FileSpreadsheet,
 } from "lucide-react";
@@ -72,7 +73,6 @@ const managerItems = [
   { title: "Payments", url: "/dashboard/payments", icon: CreditCard },
   { title: "Reports", url: "/manager/reports", icon: FileBarChart },
   { title: "Feedback File", url: "/manager/feedback-file", icon: FileSpreadsheet },
-  { title: "Call Reviews", url: "/manager/reviews", icon: Star },
   { title: "Settings", url: "/dashboard/settings", icon: Settings },
 ];
 
@@ -97,6 +97,7 @@ const adminItems = [
 
 const auditorItems = [
   { title: "Overview", url: "/auditor", icon: LayoutDashboard },
+  { title: "Audit Queue", url: "/auditor/queue", icon: ListChecks },
   { title: "All Calls", url: "/auditor/calls", icon: Headphones },
   { title: "Teams & Managers", url: "/auditor/teams", icon: Users },
   { title: "Reports", url: "/auditor/reports", icon: FileSpreadsheet },

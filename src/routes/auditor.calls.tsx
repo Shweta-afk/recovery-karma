@@ -23,6 +23,8 @@ import {
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { CallReviewSheet } from "@/components/audit/call-review-sheet";
+import { BatchAiButton } from "@/components/audit/batch-ai-button";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { DateRange } from "@/lib/date-filter";
 import { errorText } from "@/lib/app-error";
 import { getAccessToken } from "@/lib/access-token";
@@ -112,6 +114,7 @@ function AuditorCalls() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     getAccessToken()
@@ -145,7 +148,10 @@ function AuditorCalls() {
   );
 
   // Any filter change starts again at the first page.
-  useEffect(() => setPage(0), [filters]);
+  useEffect(() => {
+    setPage(0);
+    setPicked(new Set());
+  }, [filters]);
 
   useEffect(() => {
     let live = true;
@@ -182,6 +188,7 @@ function AuditorCalls() {
       if (t.managerId && t.managerName) m.set(t.managerId, t.managerName);
     return [...m.entries()].map(([value, label]) => ({ value, label }));
   }, [org]);
+  const aiReady = rows.filter((c) => c.recording_url && !c.ai_sentiment);
   const pages = total ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1;
 
   return (
@@ -270,6 +277,15 @@ function AuditorCalls() {
               <SelectItem value="score_low">Lowest score first</SelectItem>
             </SelectContent>
           </Select>
+          {org?.canReview && picked.size > 0 && (
+            <BatchAiButton
+              callIds={[...picked]}
+              onDone={() => {
+                setPicked(new Set());
+                setReloadKey((k) => k + 1);
+              }}
+            />
+          )}
           <span className="ml-auto text-xs text-muted-foreground">
             {total === null ? "" : `${total.toLocaleString("en-IN")} calls`}
           </span>
@@ -281,6 +297,18 @@ function AuditorCalls() {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border bg-muted/30 text-left text-muted-foreground">
+                {org?.canReview && (
+                  <th className="w-8 pl-4">
+                    <Checkbox
+                      aria-label="Select every call on this page that can be analysed"
+                      checked={aiReady.length > 0 && aiReady.every((c) => picked.has(c.call_id))}
+                      disabled={aiReady.length === 0}
+                      onCheckedChange={(on) =>
+                        setPicked(on ? new Set(aiReady.map((c) => c.call_id)) : new Set())
+                      }
+                    />
+                  </th>
+                )}
                 {[
                   "Date",
                   "Team / Manager",
@@ -305,6 +333,24 @@ function AuditorCalls() {
                   onClick={() => openCall(c.call_id)}
                   onKeyDown={(e) => e.key === "Enter" && openCall(c.call_id)}
                 >
+                  {org?.canReview && (
+                    <td className="pl-4" onClick={(e) => e.stopPropagation()}>
+                      {c.recording_url && !c.ai_sentiment && (
+                        <Checkbox
+                          aria-label={`Select call with ${c.customer_name || "manual contact"}`}
+                          checked={picked.has(c.call_id)}
+                          onCheckedChange={(on) =>
+                            setPicked((prev) => {
+                              const next = new Set(prev);
+                              if (on) next.add(c.call_id);
+                              else next.delete(c.call_id);
+                              return next;
+                            })
+                          }
+                        />
+                      )}
+                    </td>
+                  )}
                   <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
                     {istDateTime(c.created_at)}
                   </td>
@@ -357,14 +403,20 @@ function AuditorCalls() {
               ))}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-14 text-center text-sm text-muted-foreground">
+                  <td
+                    colSpan={org?.canReview ? 8 : 7}
+                    className="py-14 text-center text-sm text-muted-foreground"
+                  >
                     No calls match these filters.
                   </td>
                 </tr>
               )}
               {loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-14 text-center text-sm text-muted-foreground">
+                  <td
+                    colSpan={org?.canReview ? 8 : 7}
+                    className="py-14 text-center text-sm text-muted-foreground"
+                  >
                     Loading…
                   </td>
                 </tr>

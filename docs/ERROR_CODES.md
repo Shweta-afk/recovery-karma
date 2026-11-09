@@ -214,6 +214,14 @@ All are database errors on the action named; the database message is in the log.
 | SX-7111 | Could not load your reviews.      | Reading `team_audit_reviews` for a manager failed.                      |
 | SX-7112 | Could not save your reply.        | An agent's acknowledgement failed.                                      |
 | SX-7113 | Could not save your reply.        | A manager's acknowledgement failed.                                     |
+| SX-7114 | Could not load your team.         | Reading the manager's teams failed.                                     |
+| SX-7115 | Could not load your team.         | Reading `team_agents` for the manager failed.                           |
+| SX-7116 | Could not load calls.             | Reading `call_audit_rows` for a manager failed.                         |
+| SX-7117 | Could not load this call.         | Reading one call for a manager failed.                                  |
+| SX-7118 | Could not save your tag.          | Updating the manager's tone tag failed.                                 |
+| SX-7119 | Could not load this report.       | Team Performance read failed.                                           |
+| SX-7120 | Could not load this report.       | Manager Audit + Feedback download failed.                               |
+| SX-7121 | Could not load this report.       | Audit Queue read failed.                                                |
 | SX-7201 | Could not load the feedback file. | A page of debtors, calls, payments, settlements or disputes failed.     |
 | SX-7202 | Could not load portfolios.        | The portfolio picker's read failed.                                     |
 | SX-7203 | Could not load this portfolio.    | Checking the caller may see the portfolio failed.                       |

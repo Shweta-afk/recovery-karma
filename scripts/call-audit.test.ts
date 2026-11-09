@@ -4,6 +4,9 @@ import {
   FATAL_ERRORS,
   SCORECARD,
   auditHasContent,
+  buildAuditQueue,
+  buildTeamPerformance,
+  istWeekStart,
   computeScore,
   gradeFor,
   isAnswered,
@@ -317,5 +320,99 @@ describe("reports", () => {
     const none = performanceSheet([c], []);
     expect(none.rows[0][none.headers.indexOf("Login Time")]).toBe("");
     expect(none.rows[0][none.headers.indexOf("Wrap %")]).toBe("");
+  });
+});
+
+describe("a manager's team", () => {
+  const reviewed = (agent: string, score: number, tone: "yes" | "no", over = {}) =>
+    call({
+      agent_id: agent,
+      agent_name: agent,
+      audit_id: "x",
+      final_percent: score,
+      ledger_status: "completed",
+      duration_seconds: 60,
+      scores: { tone: { value: tone }, greeting: { value: "yes" } },
+      ...over,
+    });
+
+  test("totals, best agent first, unreviewed agents last", () => {
+    const p = buildTeamPerformance([
+      reviewed("low", 40, "no"),
+      reviewed("high", 90, "yes"),
+      call({ agent_id: "none", agent_name: "none" }),
+    ]);
+    expect(p.calls).toBe(3);
+    expect(p.connected).toBe(2);
+    expect(p.talk_seconds).toBe(120);
+    expect(p.not_audited).toBe(1);
+    expect(p.avg_score).toBe(65);
+    expect(p.agents.map((a) => a.agent_id)).toEqual(["high", "low", "none"]);
+    expect(p.agents[2].avg_score).toBeNull();
+  });
+
+  test("weakest scorecard question comes first", () => {
+    const p = buildTeamPerformance([reviewed("a", 50, "no")]);
+    expect(p.parameters[0].id).toBe("tone");
+    expect(p.parameters[0].percent).toBe(0);
+    expect(p.agents[0].weakest).toBe(p.parameters[0].label);
+  });
+
+  test("a manager's Excel has no internal note, but the auditor's does", () => {
+    const row = reviewed("a", 80, "yes", { internal_note: "PRIVATE" });
+    const mine = auditFeedbackSheet([row], "https://x", "manager");
+    expect(mine.headers).not.toContain("Internal Note");
+    expect(JSON.stringify(mine.rows)).not.toContain("PRIVATE");
+    expect(mine.rows[0].length).toBe(mine.headers.length);
+    expect(String(mine.rows[0][mine.rows[0].length - 1])).toContain("/manager/audit?call=");
+    expect(auditFeedbackSheet([row], "https://x").headers).toContain("Internal Note");
+  });
+});
+
+describe("audit queue", () => {
+  const q = (id: string, agent: string, over = {}) =>
+    call({ call_id: id, agent_id: agent, agent_name: agent, ...over });
+
+  test("picks only what is left of the target", () => {
+    const [a] = buildAuditQueue(
+      [q("1", "a", { audit_id: "x" }), q("2", "a"), q("3", "a"), q("4", "a")],
+      3,
+    );
+    expect(a.audited).toBe(1);
+    expect(a.remaining).toBe(2);
+    expect(a.picks.length).toBe(2);
+    expect(a.picks.every((c) => !c.audit_id)).toBe(true);
+  });
+
+  test("the sample is stable however the rows arrive", () => {
+    const ids = ["a1", "b2", "c3", "d4", "e5", "f6"];
+    const one = buildAuditQueue(
+      ids.map((i) => q(i, "a")),
+      2,
+    )[0].picks.map((c) => c.call_id);
+    const two = buildAuditQueue(
+      [...ids].reverse().map((i) => q(i, "a")),
+      2,
+    )[0].picks.map((c) => c.call_id);
+    expect(one).toEqual(two);
+  });
+
+  test("calls with a recording are picked first", () => {
+    const [a] = buildAuditQueue(
+      [q("1", "a"), q("2", "a"), q("3", "a", { recording_url: "samvadx-recording:x" })],
+      1,
+    );
+    expect(a.picks[0].call_id).toBe("3");
+  });
+
+  test("target reached means nothing more to pick", () => {
+    const [a] = buildAuditQueue([q("1", "a", { audit_id: "x" }), q("2", "a")], 1);
+    expect(a.picks).toEqual([]);
+  });
+
+  test("the week starts on Monday, in IST", () => {
+    // Sunday 8 Nov 2026 19:00 UTC is already Monday 9 Nov in IST.
+    expect(istWeekStart(new Date("2026-11-08T19:00:00Z"))).toBe("2026-11-09");
+    expect(istWeekStart(new Date("2026-11-08T10:00:00Z"))).toBe("2026-11-02");
   });
 });

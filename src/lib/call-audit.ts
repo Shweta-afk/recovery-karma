@@ -346,3 +346,222 @@ export const DISPOSITION_RANK: Record<string, number> = {
 
 export const dispositionLabel = (outcome: string | null | undefined) =>
   outcome ? (OUTCOME_LABEL[outcome] ?? outcome) : "";
+
+/* ─── a manager's view of their own team ─────────────────────────────────────── */
+
+export type PerformanceRow = Pick<
+  AuditCallRow,
+  | "agent_id"
+  | "agent_name"
+  | "outcome"
+  | "ledger_status"
+  | "duration_seconds"
+  | "audit_id"
+  | "final_percent"
+  | "fatal"
+  | "coaching_required"
+  | "exemplary"
+  | "scores"
+>;
+
+export interface AgentPerformance {
+  agent_id: string;
+  agent_name: string;
+  calls: number;
+  connected: number;
+  talk_seconds: number;
+  audited: number;
+  avg_score: number | null;
+  fatal: number;
+  coaching: number;
+  best_calls: number;
+  /** The scorecard question this agent loses most on, when one has been answered. */
+  weakest: string | null;
+}
+
+export interface ParameterPerformance {
+  id: string;
+  section: string;
+  label: string;
+  answered: number;
+  percent: number;
+}
+
+export interface TeamPerformance {
+  calls: number;
+  connected: number;
+  talk_seconds: number;
+  audited: number;
+  not_audited: number;
+  avg_score: number | null;
+  fatal: number;
+  coaching: number;
+  best_calls: number;
+  agents: AgentPerformance[];
+  /** Weakest first. Only questions the auditor has answered. */
+  parameters: ParameterPerformance[];
+}
+
+function parameterResults(rows: PerformanceRow[]): ParameterPerformance[] {
+  const out: ParameterPerformance[] = [];
+  for (const p of SCORECARD) {
+    let earned = 0;
+    let possible = 0;
+    let answered = 0;
+    for (const r of rows) {
+      const v = r.scores?.[p.id]?.value;
+      if (!v || v === "na") continue;
+      answered++;
+      possible += p.weight;
+      earned += p.weight * SCORE_FRACTION[v];
+    }
+    if (possible) {
+      out.push({
+        id: p.id,
+        section: p.section,
+        label: p.label,
+        answered,
+        percent: round2((earned / possible) * 100),
+      });
+    }
+  }
+  return out.sort((a, b) => a.percent - b.percent);
+}
+
+const averageScore = (rows: PerformanceRow[]) =>
+  rows.length
+    ? Math.round((rows.reduce((a, r) => a + Number(r.final_percent), 0) / rows.length) * 10) / 10
+    : null;
+
+const talkSeconds = (rows: PerformanceRow[]) =>
+  rows.reduce((a, r) => a + (r.duration_seconds ?? 0), 0);
+
+export function buildTeamPerformance(rows: PerformanceRow[]): TeamPerformance {
+  const reviewed = rows.filter((r) => r.audit_id);
+  const byAgent = new Map<string, PerformanceRow[]>();
+  for (const r of rows) {
+    const list = byAgent.get(r.agent_id);
+    if (list) list.push(r);
+    else byAgent.set(r.agent_id, [r]);
+  }
+  const agents: AgentPerformance[] = [...byAgent.values()].map((calls) => {
+    const audited = calls.filter((c) => c.audit_id);
+    return {
+      agent_id: calls[0].agent_id,
+      agent_name: calls[0].agent_name,
+      calls: calls.length,
+      connected: calls.filter(isAnswered).length,
+      talk_seconds: talkSeconds(calls),
+      audited: audited.length,
+      avg_score: averageScore(audited),
+      fatal: audited.filter((c) => c.fatal).length,
+      coaching: audited.filter((c) => c.coaching_required).length,
+      best_calls: audited.filter((c) => c.exemplary).length,
+      weakest: parameterResults(audited)[0]?.label ?? null,
+    };
+  });
+  // Reviewed agents best first; agents nobody has reviewed yet go last.
+  agents.sort((a, b) => (b.avg_score ?? -1) - (a.avg_score ?? -1) || b.calls - a.calls);
+  return {
+    calls: rows.length,
+    connected: rows.filter(isAnswered).length,
+    talk_seconds: talkSeconds(rows),
+    audited: reviewed.length,
+    not_audited: rows.length - reviewed.length,
+    avg_score: averageScore(reviewed),
+    fatal: reviewed.filter((r) => r.fatal).length,
+    coaching: reviewed.filter((r) => r.coaching_required).length,
+    best_calls: reviewed.filter((r) => r.exemplary).length,
+    agents,
+    parameters: parameterResults(reviewed),
+  };
+}
+
+/* ─── the auditor's work queue ───────────────────────────────────────────────── */
+
+/** Shorter calls have nothing to judge. */
+export const MIN_AUDIT_SECONDS = 20;
+export const DEFAULT_AUDIT_TARGET = 5;
+/** One batch of AI analysis: each call costs transcription and classification. */
+export const MAX_AI_BATCH = 50;
+
+export type QueueCall = Pick<
+  AuditCallRow,
+  | "call_id"
+  | "agent_id"
+  | "agent_name"
+  | "team_name"
+  | "created_at"
+  | "customer_name"
+  | "loan_reference"
+  | "outcome"
+  | "duration_seconds"
+  | "recording_url"
+  | "ai_sentiment"
+  | "audit_id"
+>;
+
+export interface QueueAgent {
+  agent_id: string;
+  agent_name: string;
+  team_name: string;
+  eligible: number;
+  audited: number;
+  target: number;
+  remaining: number;
+  picks: QueueCall[];
+}
+
+/** A stable shuffle: the same call lands in the same place every time the page loads, so two
+ *  auditors see one sample and it doesn't reshuffle under them, with nothing to store. */
+function sampleOrder(callId: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < callId.length; i++) {
+    h ^= callId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Per agent: how far along the target is, and which calls to review next. Calls that have a
+ *  recording come first, since those are the ones an auditor can actually listen to. */
+export function buildAuditQueue(calls: QueueCall[], target: number): QueueAgent[] {
+  const byAgent = new Map<string, QueueCall[]>();
+  for (const c of calls) {
+    const list = byAgent.get(c.agent_id);
+    if (list) list.push(c);
+    else byAgent.set(c.agent_id, [c]);
+  }
+  const agents = [...byAgent.values()].map((list): QueueAgent => {
+    const audited = list.filter((c) => c.audit_id).length;
+    const remaining = Math.max(0, target - audited);
+    const picks = list
+      .filter((c) => !c.audit_id)
+      .sort(
+        (a, b) =>
+          Number(!!b.recording_url) - Number(!!a.recording_url) ||
+          sampleOrder(a.call_id) - sampleOrder(b.call_id),
+      )
+      .slice(0, remaining);
+    return {
+      agent_id: list[0].agent_id,
+      agent_name: list[0].agent_name,
+      team_name: list[0].team_name ?? "No team",
+      eligible: list.length,
+      audited,
+      target,
+      remaining,
+      picks,
+    };
+  });
+  return agents.sort(
+    (a, b) => b.picks.length - a.picks.length || a.agent_name.localeCompare(b.agent_name),
+  );
+}
+
+/** "YYYY-MM-DD" of this IST week's Monday. */
+export function istWeekStart(now: Date = new Date()): string {
+  const today = istDayKeyDaysAgo(0, now);
+  const day = new Date(`${today}T00:00:00Z`).getUTCDay();
+  return istDayKeyDaysAgo((day + 6) % 7, now);
+}

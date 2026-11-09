@@ -10,10 +10,15 @@ import { getSupabaseAdmin, verifyCaller, type VerifiedCaller } from "./supabase-
 import { appError } from "./app-error";
 import {
   SCORECARD_VERSION,
+  MIN_AUDIT_SECONDS,
   auditHasContent,
+  buildAuditQueue,
+  buildTeamPerformance,
   computeScore,
   istRangeBounds,
   type AuditCallRow,
+  type PerformanceRow,
+  type QueueCall,
   type AuditSummary,
   type ScoreAnswers,
   type TeamReviewRow,
@@ -383,7 +388,7 @@ export const saveTeamReview = createServerFn({ method: "POST" })
           client_id: caller.clientId,
           to_agent_id: team.manager_id,
           from_name: me?.name ?? "Call Auditor",
-          message: `New review of ${team.name}: ${data.rating}/5. See Call Reviews.`,
+          message: `New review of ${team.name}: ${data.rating}/5. Open Call Audit → Reviews.`,
         })
         .then(({ error: e }: { error: unknown }) => {
           if (e) console.warn("[call-audit] notification failed:", e);
@@ -477,7 +482,9 @@ export interface ReceivedAudit {
 const RECEIVED_LIMIT = 200;
 
 export const listMyReviews = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, teamId: idSchema.optional() }).parse(d),
+  )
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller?.agentId) throw new Error("Your session has expired — please sign in again.");
@@ -496,6 +503,7 @@ export const listMyReviews = createServerFn({ method: "POST" })
     q = isManager
       ? q.or(`manager_id.eq.${caller.agentId},agent_id.eq.${caller.agentId}`)
       : q.eq("agent_id", caller.agentId);
+    if (isManager && data.teamId) q = q.eq("team_id", data.teamId);
     const { data: audits, error } = await q;
     if (error) throw appError("SX-7110", "Could not load your reviews.", error);
 
@@ -546,13 +554,15 @@ export const listMyReviews = createServerFn({ method: "POST" })
 
     let teamReviews: TeamReviewRow[] = [];
     if (isManager) {
-      const { data: rows, error: teamErr } = await admin
+      let teamQuery = admin
         .from("team_audit_reviews")
         .select("*")
         .eq("client_id", caller.clientId)
         .eq("manager_id", caller.agentId)
         .order("created_at", { ascending: false })
         .limit(RECEIVED_LIMIT);
+      if (data.teamId) teamQuery = teamQuery.eq("team_id", data.teamId);
+      const { data: rows, error: teamErr } = await teamQuery;
       if (teamErr) throw appError("SX-7111", "Could not load your reviews.", teamErr);
       teamReviews = withNames(rows, names);
     }
@@ -612,4 +622,329 @@ export const acknowledgeTeamReview = createServerFn({ method: "POST" })
     if (error) throw appError("SX-7113", "Could not save your reply.", error);
     if (!updated?.length) throw new Error("Review not found.");
     return { ok: true as const };
+  });
+
+/* ─── a manager's own team ─────────────────────────────────────────────────────
+ *
+ * Every query below is pinned to manager_id = the verified caller. A team id from the browser
+ * can only narrow that, never widen it. Columns are listed by name so internal_note cannot reach
+ * a manager even by accident.
+ */
+
+const MANAGER_COLUMNS = [
+  "call_id, created_at, agent_id, agent_name, agent_code, team_id, team_name, manager_id, manager_name",
+  "call_type, dial_mode, outcome, outcome_reason, promise_amount, promise_date, callback_date, callback_time",
+  "duration_seconds, raw_notes, recording_url, recording_status, ledger_status",
+  "customer_name, customer_phone, loan_reference, dpd, lender, portfolio_id, portfolio_name, portfolio_lender",
+  "manager_sentiment, manager_audited_by, manager_audited_at",
+  "ai_agent_tone, ai_debtor_tone, ai_sentiment, ai_sentiment_confidence, ai_sentiment_reasoning, ai_sentiment_analyzed_at",
+  "audit_id, auditor_name, scores, score_earned, score_possible, raw_percent, final_percent, grade, fatal, fatal_codes",
+  "audit_sentiment, ai_agreement, ai_comment, exemplary, coaching_required, strengths, improvements",
+  "feedback_agent, feedback_manager, agent_ack_at, agent_response, manager_seen_at, audit_revision, audit_created_at, audit_updated_at",
+].join(", ");
+
+const managerFilterSchema = z.object({
+  from: isoDateSchema,
+  to: isoDateSchema,
+  teamId: idSchema.optional(),
+  agentId: idSchema.optional(),
+  outcome: z.string().max(40).optional(),
+  audit: z.enum(["pending", "audited", "fatal", "exemplary", "coaching"]).optional(),
+  managerTag: z.enum(["none", "happy", "neutral", "frustrated", "rude"]).optional(),
+  caller: z.enum(["agent", "ai"]).optional(),
+  bucket: z.enum(["X", "1", "2", "NPA", "WriteOff"]).optional(),
+  search: z.string().trim().max(100).optional(),
+  sort: z.enum(["newest", "oldest", "longest", "score_high", "score_low"]).optional(),
+});
+type ManagerFilters = z.infer<typeof managerFilterSchema>;
+
+async function requireManager(accessToken: string): Promise<VerifiedCaller & { agentId: string }> {
+  const caller = await verifyCaller(accessToken);
+  if (!caller) throw new Error("Your session has expired — please sign in again.");
+  if (caller.role !== "manager" || !caller.agentId) {
+    throw new Error("Call Audit shows a manager their own team.");
+  }
+  return caller as VerifiedCaller & { agentId: string };
+}
+
+const DPD_BANDS: Record<NonNullable<ManagerFilters["bucket"]>, [number, number | null]> = {
+  X: [0, 0],
+  "1": [1, 30],
+  "2": [31, 90],
+  NPA: [91, 179],
+  WriteOff: [180, null],
+};
+
+function managerQuery(
+  caller: VerifiedCaller & { agentId: string },
+  f: ManagerFilters,
+  columns: string,
+  options?: { count: "exact" },
+) {
+  const b = istRangeBounds(f.from, f.to);
+  let q = (getSupabaseAdmin() as any)
+    .from("call_audit_rows")
+    .select(columns, options)
+    .eq("client_id", caller.clientId)
+    .eq("manager_id", caller.agentId)
+    .gte("created_at", b.from)
+    .lt("created_at", b.to);
+  if (f.teamId) q = q.eq("team_id", f.teamId);
+  if (f.agentId) q = q.eq("agent_id", f.agentId);
+  if (f.outcome) q = q.eq("outcome", f.outcome);
+  if (f.audit === "pending") q = q.is("audit_id", null);
+  if (f.audit === "audited") q = q.not("audit_id", "is", null);
+  if (f.audit === "fatal") q = q.eq("fatal", true);
+  if (f.audit === "exemplary") q = q.eq("exemplary", true);
+  if (f.audit === "coaching") q = q.eq("coaching_required", true);
+  if (f.managerTag === "none") q = q.is("manager_sentiment", null);
+  else if (f.managerTag) q = q.eq("manager_sentiment", f.managerTag);
+  if (f.caller === "ai") q = q.in("call_type", ["ai", "bot"]);
+  if (f.caller === "agent") q = q.eq("call_type", "human");
+  if (f.bucket) {
+    const [low, high] = DPD_BANDS[f.bucket];
+    q = q.gte("dpd", low);
+    if (high !== null) q = q.lte("dpd", high);
+  }
+  // Characters that mean something to the filter syntax are dropped, not escaped.
+  const search = f.search?.replace(/[,()*%"\\:.]/g, " ").trim();
+  if (search) {
+    q = q.or(
+      ["customer_name", "customer_phone", "loan_reference", "agent_name"]
+        .map((c) => `${c}.ilike.*${search}*`)
+        .join(","),
+    );
+  }
+  return q;
+}
+
+function sorted(q: any, sort: ManagerFilters["sort"]) {
+  if (sort === "oldest") return q.order("created_at", { ascending: true });
+  if (sort === "longest") {
+    return q
+      .order("duration_seconds", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
+  }
+  if (sort === "score_high" || sort === "score_low") {
+    return q
+      .order("final_percent", { ascending: sort === "score_low", nullsFirst: false })
+      .order("created_at", { ascending: false });
+  }
+  return q.order("created_at", { ascending: false });
+}
+
+/** The manager's teams and the people on them, for the page's filters. */
+export const getManagerScope = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const caller = await requireManager(data.accessToken);
+    const admin = getSupabaseAdmin() as any;
+    const { data: teams, error } = await admin
+      .from("teams")
+      .select("id, name")
+      .eq("client_id", caller.clientId)
+      .eq("manager_id", caller.agentId);
+    if (error) throw appError("SX-7114", "Could not load your team.", error);
+    const teamIds = (teams as { id: string }[]).map((t) => t.id);
+    const { data: links, error: linkErr } = teamIds.length
+      ? await admin.from("team_agents").select("team_id, agent_id").in("team_id", teamIds)
+      : { data: [], error: null };
+    if (linkErr) throw appError("SX-7115", "Could not load your team.", linkErr);
+    const ids = [...new Set((links as { agent_id: string }[]).map((l) => l.agent_id))];
+    const names = await agentNames(caller.clientId);
+    return {
+      teams: teams as { id: string; name: string }[],
+      agents: ids
+        .map((id) => ({
+          id,
+          name: names.get(id) ?? "",
+          teamIds: (links as { team_id: string; agent_id: string }[])
+            .filter((l) => l.agent_id === id)
+            .map((l) => l.team_id),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  });
+
+export const listManagerCalls = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        filters: managerFilterSchema,
+        limit: limitSchema.max(200),
+        offset: offsetSchema,
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireManager(data.accessToken);
+    const query = managerQuery(
+      caller,
+      data.filters,
+      MANAGER_COLUMNS,
+      data.offset === 0 ? { count: "exact" } : undefined,
+    );
+    const {
+      data: rows,
+      error,
+      count,
+    } = await sorted(query, data.filters.sort).range(data.offset, data.offset + data.limit - 1);
+    if (error) throw appError("SX-7116", "Could not load calls.", error);
+    return { rows: rows as AuditCallRow[], total: (count ?? null) as number | null };
+  });
+
+export const getManagerCall = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema, callId: idSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const caller = await requireManager(data.accessToken);
+    const { data: row, error } = await (getSupabaseAdmin() as any)
+      .from("call_audit_rows")
+      .select(`${MANAGER_COLUMNS}, ai_transcript`)
+      .eq("client_id", caller.clientId)
+      .eq("manager_id", caller.agentId)
+      .eq("call_id", data.callId)
+      .maybeSingle();
+    if (error) throw appError("SX-7117", "Could not load this call.", error);
+    if (!row) throw new Error("This call is not on your team.");
+    return row as AuditCallRow;
+  });
+
+/** The manager's own tone tag. Separate from the auditor's score, which they cannot change. */
+export const setManagerTone = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        callId: idSchema,
+        sentiment: z.enum(["happy", "neutral", "frustrated", "rude"]),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireManager(data.accessToken);
+    const admin = getSupabaseAdmin() as any;
+    const { data: call } = await admin
+      .from("call_audit_rows")
+      .select("call_id")
+      .eq("client_id", caller.clientId)
+      .eq("manager_id", caller.agentId)
+      .eq("call_id", data.callId)
+      .maybeSingle();
+    if (!call) throw new Error("This call is not on your team.");
+    const { error } = await admin
+      .from("call_logs")
+      .update({
+        sentiment: data.sentiment,
+        audited_by: caller.agentId,
+        audited_at: new Date().toISOString(),
+      })
+      .eq("id", data.callId);
+    if (error) throw appError("SX-7118", "Could not save your tag.", error);
+    return { ok: true as const };
+  });
+
+const PAGE_ROWS = 1000;
+
+async function everyPage<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<any>,
+  code: string,
+) {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE_ROWS) {
+    const { data, error } = await fetchPage(from, from + PAGE_ROWS - 1);
+    if (error) throw appError(code, "Could not load this report.", error);
+    out.push(...(data as T[]));
+    if ((data as T[]).length < PAGE_ROWS) return out;
+  }
+}
+
+export const getManagerPerformance = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        from: isoDateSchema,
+        to: isoDateSchema,
+        teamId: idSchema.optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireManager(data.accessToken);
+    const rows = await everyPage<PerformanceRow>(
+      (from, to) =>
+        managerQuery(
+          caller,
+          { from: data.from, to: data.to, teamId: data.teamId },
+          "call_id, created_at, agent_id, agent_name, outcome, ledger_status, duration_seconds, audit_id, final_percent, fatal, coaching_required, exemplary, scores",
+        )
+          .order("created_at")
+          .order("call_id")
+          .range(from, to),
+      "SX-7119",
+    );
+    return buildTeamPerformance(rows);
+  });
+
+/** Reviewed calls only: the rows of the manager's Audit + Feedback download. */
+export const getManagerExportPage = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        from: isoDateSchema,
+        to: isoDateSchema,
+        teamId: idSchema.optional(),
+        limit: limitSchema,
+        offset: offsetSchema,
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireManager(data.accessToken);
+    const { data: rows, error } = await managerQuery(
+      caller,
+      { from: data.from, to: data.to, teamId: data.teamId, audit: "audited" },
+      MANAGER_COLUMNS,
+    )
+      .order("created_at")
+      .order("call_id")
+      .range(data.offset, data.offset + data.limit - 1);
+    if (error) throw appError("SX-7120", "Could not load this report.", error);
+    return rows as AuditCallRow[];
+  });
+
+/* ─── the auditor's queue ───────────────────────────────────────────────────── */
+
+export const getAuditQueue = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        from: isoDateSchema,
+        to: isoDateSchema,
+        target: z.number().int().min(1).max(200),
+        teamId: idSchema.optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireViewer(data.accessToken);
+    const b = istRangeBounds(data.from, data.to);
+    const admin = getSupabaseAdmin() as any;
+    const calls = await everyPage<QueueCall>((from, to) => {
+      let q = admin
+        .from("call_audit_rows")
+        .select(
+          "call_id, agent_id, agent_name, team_name, created_at, customer_name, loan_reference, outcome, duration_seconds, recording_url, ai_sentiment, audit_id",
+        )
+        .eq("client_id", caller.clientId)
+        .gte("created_at", b.from)
+        .lt("created_at", b.to)
+        .gte("duration_seconds", MIN_AUDIT_SECONDS);
+      if (data.teamId) q = q.eq("team_id", data.teamId);
+      return q.order("created_at").order("call_id").range(from, to);
+    }, "SX-7121");
+    return { canReview: caller.role === "auditor", agents: buildAuditQueue(calls, data.target) };
   });

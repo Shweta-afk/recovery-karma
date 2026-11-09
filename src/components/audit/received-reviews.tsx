@@ -176,26 +176,38 @@ function TeamReviewCard({ r, onChanged }: { r: TeamReview; onChanged: () => void
   );
 }
 
-export function ReceivedReviews({ title, subtitle }: { title: string; subtitle: string }) {
+export function ReceivedReviews({
+  title,
+  subtitle,
+  teamId,
+}: {
+  /** Leave out inside a page that already has its own heading. */
+  title?: string;
+  subtitle?: string;
+  teamId?: string;
+}) {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = () =>
     getAccessToken()
-      .then((accessToken) => listMyReviews({ data: { accessToken } }))
+      .then((accessToken) => listMyReviews({ data: { accessToken, teamId } }))
       .then(setData)
       .catch((e) => setError(errorText(e, "Could not load reviews")));
 
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when the team changes
+  }, [teamId]);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-        <p className="text-sm text-muted-foreground">{subtitle}</p>
-      </div>
+      {title && (
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+          <p className="text-sm text-muted-foreground">{subtitle}</p>
+        </div>
+      )}
       {error && <p className="text-sm text-destructive">{error}</p>}
       {!data && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
       {data && data.teamReviews.length > 0 && (

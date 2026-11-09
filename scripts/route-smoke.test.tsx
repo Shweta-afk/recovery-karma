@@ -130,8 +130,10 @@ describe("routes render without composition errors", () => {
     expect(await renderRoute("/manager/feedback-file")).toContain("Feedback File");
   });
 
-  test("/manager/reviews renders", async () => {
-    expect(await renderRoute("/manager/reviews")).toContain("Call Reviews");
+  test("/manager/audit renders the team's three tabs", async () => {
+    const html = await renderRoute("/manager/audit");
+    expect(html).toContain("Team Performance");
+    expect(html).toContain("Reviews");
   });
 
   test("/manager renders", async () => {

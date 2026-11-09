@@ -134,6 +134,15 @@ export const analyzeCallSentiment = createServerFn({ method: "POST" })
       agents: { client_id: string };
     };
     if (log.agents?.client_id !== caller.clientId) throw new Error("Not authorized for this call");
+    if (caller.role === "manager") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- view not in generated types
+      const { data: scope } = await (admin as any)
+        .from("call_audit_rows")
+        .select("manager_id")
+        .eq("call_id", data.callId)
+        .maybeSingle();
+      if (scope?.manager_id !== caller.agentId) throw new Error("Not authorized for this call");
+    }
     if (!log.recording_url) throw new Error("No recording available for this call yet");
 
     // A recording SamvadX stored itself (marker, see telephony/recording-marker.ts) is read from

@@ -714,32 +714,3 @@ export async function backfillRecordings(records: DispositionRecord[]): Promise<
   if (filled) await refreshDispositions();
   return filled;
 }
-
-/** Manager sets/edits a call's QA sentiment tag (happy/neutral/frustrated/rude) — the manual
- * audit judgment Call Audit is actually for. RLS (20260811_call_logs_sentiment.sql) restricts
- * this to managers of the calling agent's team and admins, same as the read scoping. Stamps
- * who set it and when so it reads as a real audit trail. `auditedByEmail` is the signed-in
- * manager/admin's email (same "agentId means email" convention as everywhere else in this
- * file) — resolved to agents.id here, the same way saveDisposition() resolves the caller. */
-export async function setCallSentiment(
-  callId: string,
-  sentiment: CallSentiment,
-  auditedByEmail: string,
-): Promise<void> {
-  const { data: agentRows } = await supabase.from("agents").select("id, email");
-  const agentUuid = (agentRows ?? []).find((a) => a.email === auditedByEmail)?.id;
-  if (!agentUuid) throw new Error(`No agent account found for ${auditedByEmail}`);
-
-  const { error } = await supabase
-    .from("call_logs")
-    // Cast for the same reason as backfillRecordings above: the generated Supabase types
-    // don't cover this table's columns, so writes widen to `never`.
-    .update({
-      sentiment,
-      audited_by: agentUuid,
-      audited_at: new Date().toISOString(),
-    })
-    .eq("id", callId);
-  if (error) throw error;
-  await refreshDispositions();
-}

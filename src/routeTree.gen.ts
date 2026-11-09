@@ -33,6 +33,7 @@ import { Route as AdminTeamsRouteImport } from './routes/admin.teams'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AuditorIndexRouteImport } from './routes/auditor.index'
 import { Route as AuditorCallsRouteImport } from './routes/auditor.calls'
+import { Route as AuditorQueueRouteImport } from './routes/auditor.queue'
 import { Route as AuditorReportsRouteImport } from './routes/auditor.reports'
 import { Route as AuditorTeamsRouteImport } from './routes/auditor.teams'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
@@ -52,7 +53,6 @@ import { Route as ManagerLiveCallsRouteImport } from './routes/manager.live-call
 import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
 import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
-import { Route as ManagerReviewsRouteImport } from './routes/manager.reviews'
 import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
 import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
 import { Route as SuperadminActivityRouteImport } from './routes/superadmin.activity'
@@ -187,6 +187,11 @@ const AuditorCallsRoute = AuditorCallsRouteImport.update({
   path: '/calls',
   getParentRoute: () => AuditorRoute,
 } as any)
+const AuditorQueueRoute = AuditorQueueRouteImport.update({
+  id: '/queue',
+  path: '/queue',
+  getParentRoute: () => AuditorRoute,
+} as any)
 const AuditorReportsRoute = AuditorReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
@@ -282,11 +287,6 @@ const ManagerReportsRoute = ManagerReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => ManagerRoute,
 } as any)
-const ManagerReviewsRoute = ManagerReviewsRouteImport.update({
-  id: '/reviews',
-  path: '/reviews',
-  getParentRoute: () => ManagerRoute,
-} as any)
 const ManagerUploadRoute = ManagerUploadRouteImport.update({
   id: '/upload',
   path: '/upload',
@@ -378,6 +378,7 @@ export interface FileRoutesByFullPath {
   '/admin/teams': typeof AdminTeamsRoute
   '/admin/users': typeof AdminUsersRoute
   '/auditor/calls': typeof AuditorCallsRoute
+  '/auditor/queue': typeof AuditorQueueRoute
   '/auditor/reports': typeof AuditorReportsRoute
   '/auditor/teams': typeof AuditorTeamsRoute
   '/dashboard/call-queue': typeof DashboardCallQueueRoute
@@ -395,7 +396,6 @@ export interface FileRoutesByFullPath {
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
-  '/manager/reviews': typeof ManagerReviewsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/archives': typeof SuperadminArchivesRoute
@@ -432,6 +432,7 @@ export interface FileRoutesByTo {
   '/admin/teams': typeof AdminTeamsRoute
   '/admin/users': typeof AdminUsersRoute
   '/auditor/calls': typeof AuditorCallsRoute
+  '/auditor/queue': typeof AuditorQueueRoute
   '/auditor/reports': typeof AuditorReportsRoute
   '/auditor/teams': typeof AuditorTeamsRoute
   '/dashboard/call-queue': typeof DashboardCallQueueRoute
@@ -449,7 +450,6 @@ export interface FileRoutesByTo {
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
-  '/manager/reviews': typeof ManagerReviewsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/archives': typeof SuperadminArchivesRoute
@@ -492,6 +492,7 @@ export interface FileRoutesById {
   '/admin/teams': typeof AdminTeamsRoute
   '/admin/users': typeof AdminUsersRoute
   '/auditor/calls': typeof AuditorCallsRoute
+  '/auditor/queue': typeof AuditorQueueRoute
   '/auditor/reports': typeof AuditorReportsRoute
   '/auditor/teams': typeof AuditorTeamsRoute
   '/dashboard/call-queue': typeof DashboardCallQueueRoute
@@ -509,7 +510,6 @@ export interface FileRoutesById {
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
-  '/manager/reviews': typeof ManagerReviewsRoute
   '/manager/upload': typeof ManagerUploadRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/archives': typeof SuperadminArchivesRoute
@@ -553,6 +553,7 @@ export interface FileRouteTypes {
     | '/admin/teams'
     | '/admin/users'
     | '/auditor/calls'
+    | '/auditor/queue'
     | '/auditor/reports'
     | '/auditor/teams'
     | '/dashboard/call-queue'
@@ -570,7 +571,6 @@ export interface FileRouteTypes {
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
-    | '/manager/reviews'
     | '/manager/upload'
     | '/superadmin/activity'
     | '/superadmin/archives'
@@ -607,6 +607,7 @@ export interface FileRouteTypes {
     | '/admin/teams'
     | '/admin/users'
     | '/auditor/calls'
+    | '/auditor/queue'
     | '/auditor/reports'
     | '/auditor/teams'
     | '/dashboard/call-queue'
@@ -624,7 +625,6 @@ export interface FileRouteTypes {
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
-    | '/manager/reviews'
     | '/manager/upload'
     | '/superadmin/activity'
     | '/superadmin/archives'
@@ -666,6 +666,7 @@ export interface FileRouteTypes {
     | '/admin/teams'
     | '/admin/users'
     | '/auditor/calls'
+    | '/auditor/queue'
     | '/auditor/reports'
     | '/auditor/teams'
     | '/dashboard/call-queue'
@@ -683,7 +684,6 @@ export interface FileRouteTypes {
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
-    | '/manager/reviews'
     | '/manager/upload'
     | '/superadmin/activity'
     | '/superadmin/archives'
@@ -887,6 +887,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuditorCallsRouteImport
       parentRoute: typeof AuditorRoute
     }
+    '/auditor/queue': {
+      id: '/auditor/queue'
+      path: '/queue'
+      fullPath: '/auditor/queue'
+      preLoaderRoute: typeof AuditorQueueRouteImport
+      parentRoute: typeof AuditorRoute
+    }
     '/auditor/reports': {
       id: '/auditor/reports'
       path: '/reports'
@@ -1020,13 +1027,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ManagerReportsRouteImport
       parentRoute: typeof ManagerRoute
     }
-    '/manager/reviews': {
-      id: '/manager/reviews'
-      path: '/reviews'
-      fullPath: '/manager/reviews'
-      preLoaderRoute: typeof ManagerReviewsRouteImport
-      parentRoute: typeof ManagerRoute
-    }
     '/manager/upload': {
       id: '/manager/upload'
       path: '/upload'
@@ -1153,6 +1153,7 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface AuditorRouteChildren {
   AuditorCallsRoute: typeof AuditorCallsRoute
+  AuditorQueueRoute: typeof AuditorQueueRoute
   AuditorReportsRoute: typeof AuditorReportsRoute
   AuditorTeamsRoute: typeof AuditorTeamsRoute
   AuditorIndexRoute: typeof AuditorIndexRoute
@@ -1160,6 +1161,7 @@ interface AuditorRouteChildren {
 
 const AuditorRouteChildren: AuditorRouteChildren = {
   AuditorCallsRoute: AuditorCallsRoute,
+  AuditorQueueRoute: AuditorQueueRoute,
   AuditorReportsRoute: AuditorReportsRoute,
   AuditorTeamsRoute: AuditorTeamsRoute,
   AuditorIndexRoute: AuditorIndexRoute,
@@ -1204,7 +1206,6 @@ interface ManagerRouteChildren {
   ManagerPortfolioRoute: typeof ManagerPortfolioRoute
   ManagerQueueRoute: typeof ManagerQueueRoute
   ManagerReportsRoute: typeof ManagerReportsRoute
-  ManagerReviewsRoute: typeof ManagerReviewsRoute
   ManagerUploadRoute: typeof ManagerUploadRoute
   ManagerIndexRoute: typeof ManagerIndexRoute
 }
@@ -1217,7 +1218,6 @@ const ManagerRouteChildren: ManagerRouteChildren = {
   ManagerPortfolioRoute: ManagerPortfolioRoute,
   ManagerQueueRoute: ManagerQueueRoute,
   ManagerReportsRoute: ManagerReportsRoute,
-  ManagerReviewsRoute: ManagerReviewsRoute,
   ManagerUploadRoute: ManagerUploadRoute,
   ManagerIndexRoute: ManagerIndexRoute,
 }

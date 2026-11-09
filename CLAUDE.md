@@ -890,6 +890,18 @@ Admin → Users, not counted against agent/manager seats.
   auditor's review is separate from the manager's `call_logs.sentiment` tag and never overwrites it.
 - **Receiving end**: agents → My Call Reviews, managers → Call Reviews, with acknowledge + reply.
   `internal_note` is never sent to them; `feedback_manager` only to the team's manager.
+- **Manager → Call Audit** (`manager.audit.tsx`, tabs Calls / Team Performance / Reviews) replaced
+  the old tone-tag page on 2026-11-09. Every read pins `manager_id = verified caller` on
+  `call_audit_rows` and lists columns by name (`MANAGER_COLUMNS`), so internal notes can't reach a
+  manager and the browser's team id can only narrow. A shared agent's call belongs to the team
+  owning the account's portfolio; manual calls to the agent's first team. The tone tag
+  (`call_logs.sentiment`, labelled "Manager's tag") is now saved by `setManagerTone`; it used to go
+  through RLS, which silently saved nothing on calls with no debtor. The auditor's score is
+  read-only there.
+- **Audit Queue** (`/auditor/queue`): `buildAuditQueue` picks a stable sample per agent of answered
+  calls of at least `MIN_AUDIT_SECONDS`, up to a per-agent target (remembered per browser). Nothing
+  is stored, so two auditors see one sample. Batch AI (`BatchAiButton`) runs one call at a time, at
+  most `MAX_AI_BATCH`, with a confirm and Stop, on auditor click only.
 - **Reports** (`call-audit-reports.ts`) follow the company's own CSVs: Call Log starts with their
   49 export columns then adds everything else plus one `Bank: <field>` column per `debtors.extra`
   key; Audit + Feedback has three columns per scorecard parameter; Performance is their per-agent

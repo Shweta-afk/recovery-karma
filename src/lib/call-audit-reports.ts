@@ -296,7 +296,11 @@ function bankColumns(rows: AuditCallRow[]): string[] {
 }
 
 /** Every review with the call it judged, the agent's feedback, the AI's view and the replies. */
-export function auditFeedbackSheet(rows: AuditCallRow[], origin: string): XlsxSheet {
+export function auditFeedbackSheet(
+  rows: AuditCallRow[],
+  origin: string,
+  audience: "auditor" | "manager" = "auditor",
+): XlsxSheet {
   const audited = rows.filter((r) => r.audit_id);
   const paramHeaders = SCORECARD.flatMap((p) => [
     `${p.section}: ${p.label}`,
@@ -351,7 +355,7 @@ export function auditFeedbackSheet(rows: AuditCallRow[], origin: string): XlsxSh
     "Improvements",
     "Feedback to Agent",
     "Feedback to Manager",
-    "Internal Note",
+    ...(audience === "manager" ? [] : ["Internal Note"]),
     "Agent Acknowledged At",
     "Agent's Reply",
     "Manager Seen At",
@@ -418,11 +422,11 @@ export function auditFeedbackSheet(rows: AuditCallRow[], origin: string): XlsxSh
         c.improvements ?? "",
         c.feedback_agent ?? "",
         c.feedback_manager ?? "",
-        c.internal_note ?? "",
+        ...(audience === "manager" ? [] : [c.internal_note ?? ""]),
         istDateTime(c.agent_ack_at),
         c.agent_response ?? "",
         istDateTime(c.manager_seen_at),
-        callLink(origin, c),
+        audience === "manager" ? `${origin}/manager/audit?call=${c.call_id}` : callLink(origin, c),
       ];
     }),
   };

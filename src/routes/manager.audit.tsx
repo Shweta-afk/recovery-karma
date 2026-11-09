@@ -1,28 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { RecordingAudio } from "@/components/telephony/recording-audio";
-import { useEffect, useMemo, useState } from "react";
-import {
-  Search,
-  X,
-  Filter,
-  ChevronDown,
-  Clock,
-  User,
-  Bot,
-  Mic,
-  Play,
-  Smile,
-  Meh,
-  Frown,
-  Angry,
-  ShieldQuestion,
-  PhoneCall,
-  Sparkles,
-  Loader2,
-  type LucideIcon,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Download, Loader2, Mic, Search, Star } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,899 +12,615 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { cn } from "@/lib/utils";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateRangeFilter } from "@/components/date-range-filter";
-import { EMPTY_RANGE, inDateRange, type DateRange } from "@/lib/date-filter";
-import { bucketOf, BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
-import { OUTCOME_META } from "@/lib/call-queue/types";
-import { useAuth } from "@/lib/auth";
-import { useTeamAgents } from "@/lib/team-store";
-import { useActiveTeam } from "@/lib/active-team-store";
-import { supabase } from "@/lib/supabase";
-import { analyzeCallSentiment } from "@/lib/call-sentiment-actions.server";
-import {
-  getDispositions,
-  refreshDispositions,
-  setCallSentiment,
-  type DispositionRecord,
-  type CallSentiment,
-} from "@/lib/disposition-store";
-import { useStorageSync } from "@/lib/storage-sync";
+import { ManagerCallSheet } from "@/components/audit/manager-call-sheet";
+import { ReceivedReviews } from "@/components/audit/received-reviews";
+import type { DateRange } from "@/lib/date-filter";
+import { cn } from "@/lib/utils";
 import { errorText } from "@/lib/app-error";
+import { getAccessToken } from "@/lib/access-token";
+import { useAuth } from "@/lib/auth";
+import { useActiveTeam } from "@/lib/active-team-store";
+import { BUCKET_META, type DPDBucket } from "@/lib/mock-debtors";
+import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
+import { auditFeedbackSheet } from "@/lib/call-audit-reports";
+import {
+  getManagerExportPage,
+  getManagerPerformance,
+  getManagerScope,
+  listManagerCalls,
+} from "@/lib/call-audit.server";
+import {
+  OUTCOME_LABEL,
+  dispositionLabel,
+  fmtSeconds,
+  istDayKeyDaysAgo,
+  type AuditCallRow,
+  type TeamPerformance,
+} from "@/lib/call-audit";
+import { istDateTime } from "@/lib/portfolio-feedback";
+
+type Tab = "calls" | "performance" | "reviews";
+interface AuditSearch {
+  tab?: Tab;
+  call?: string;
+}
 
 export const Route = createFileRoute("/manager/audit")({
   head: () => ({ meta: [{ title: "Call Audit · SamvadX" }] }),
+  validateSearch: (s: Record<string, unknown>): AuditSearch => ({
+    tab: s.tab === "performance" || s.tab === "reviews" ? s.tab : undefined,
+    call: typeof s.call === "string" ? s.call : undefined,
+  }),
   component: CallAuditPage,
 });
 
-/* ─── helpers ────────────────────────────────────────────────────────────── */
+const ALL = "all";
+const PAGE_SIZE = 50;
+const BUCKETS: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
+type Sort = "newest" | "oldest" | "longest" | "score_high" | "score_low";
+type Scope = Awaited<ReturnType<typeof getManagerScope>>;
+const scoreText = (s: number | null) => (s === null ? "—" : `${s}%`);
 
-type CallerType = "agent" | "ai";
-
-function callerTypeOf(d: DispositionRecord): CallerType {
-  return d.callType === "ai" || d.callType === "bot" ? "ai" : "agent";
-}
-
-function fmtDuration(secs: number) {
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function fmtDateTime(iso: string) {
-  const d = new Date(iso);
-  return {
-    date: d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
-    time: d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }),
-  };
-}
-
-// The actual point of "Call Audit": how the call went for the debtor, not just what the
-// outcome was. Manual QA tag a manager sets after listening — see setCallSentiment().
-const SENTIMENT_META: Record<
-  CallSentiment,
-  { label: string; icon: LucideIcon; cls: string; dot: string }
-> = {
-  happy: {
-    label: "Happy",
-    icon: Smile,
-    cls: "bg-success/10 text-success border-success/20",
-    dot: "bg-success",
-  },
-  neutral: {
-    label: "Neutral",
-    icon: Meh,
-    cls: "bg-muted text-muted-foreground border-border",
-    dot: "bg-muted-foreground",
-  },
-  frustrated: {
-    label: "Frustrated",
-    icon: Frown,
-    cls: "bg-amber-500/10 text-amber-600 border-amber-500/20",
-    dot: "bg-amber-500",
-  },
-  rude: {
-    label: "Rude",
-    icon: Angry,
-    cls: "bg-destructive/10 text-destructive border-destructive/20",
-    dot: "bg-destructive",
-  },
-};
-
-/* ─── sub-components ─────────────────────────────────────────────────────── */
-
-function RecordingPlayer({ url }: { url?: string }) {
-  if (!url) {
-    return (
-      <div className="flex items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-        <Mic className="h-4 w-4 shrink-0" />
-        No recording available for this call — some providers publish recordings asynchronously, so
-        it may still arrive later.
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-2 rounded-lg border border-border bg-muted/30 px-4 py-3">
-      {/* key: a new call in the sheet starts with a fresh player, not the last call's link */}
-      <RecordingAudio key={url} url={url} showOpenLink />
-    </div>
-  );
-}
-
-/** The 4-way sentiment picker — used both inline in the table and, larger, in the detail
- * sheet. `size` controls icon-only (table) vs icon+label (sheet). */
-function SentimentPicker({
+function Picker({
   value,
-  onPick,
-  saving,
-  size = "sm",
+  onChange,
+  all,
+  options,
 }: {
-  value?: CallSentiment;
-  onPick: (s: CallSentiment) => void;
-  saving: boolean;
-  size?: "sm" | "lg";
+  value: string;
+  onChange: (v: string) => void;
+  all: string;
+  options: { value: string; label: string }[];
 }) {
   return (
-    <div className="flex items-center gap-1">
-      {(
-        Object.entries(SENTIMENT_META) as [CallSentiment, (typeof SENTIMENT_META)[CallSentiment]][]
-      ).map(([key, meta]) => {
-        const active = value === key;
-        const Icon = meta.icon;
-        return (
-          <button
-            key={key}
-            type="button"
-            disabled={saving}
-            title={meta.label}
-            onClick={(e) => {
-              e.stopPropagation();
-              onPick(key);
-            }}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full border transition-all disabled:opacity-50",
-              size === "lg" ? "px-2.5 py-1.5 text-xs" : "h-6 w-6 justify-center",
-              active
-                ? meta.cls + " ring-1 ring-current"
-                : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/40",
-            )}
-          >
-            <Icon className={size === "lg" ? "h-3.5 w-3.5" : "h-3.5 w-3.5"} />
-            {size === "lg" && meta.label}
-          </button>
-        );
-      })}
-    </div>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-9 w-36 text-xs">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>{all}</SelectItem>
+        {options.map((o) => (
+          <SelectItem key={o.value} value={o.value}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
-/** AI-suggested tone — manager-triggered (never automatic), transcribes the recording via
- * Groq and classifies tone via Gemini. Shown alongside, never in place of, the manual
- * SentimentPicker above: this is a suggestion the manager can agree or disagree with. */
-function AiSentimentPanel({
-  call,
-  onAnalyzed,
+function CallsTab({
+  from,
+  to,
+  teamId,
+  scope,
+  onOpen,
+  reloadKey,
 }: {
-  call: DispositionRecord;
-  onAnalyzed: (updated: DispositionRecord) => void;
+  from: string;
+  to: string;
+  teamId?: string;
+  scope: Scope | null;
+  onOpen: (id: string) => void;
+  reloadKey: number;
 }) {
-  const [analyzing, setAnalyzing] = useState(false);
-  const [showTranscript, setShowTranscript] = useState(false);
+  const [agent, setAgent] = useState(ALL);
+  const [review, setReview] = useState(ALL);
+  const [outcome, setOutcome] = useState(ALL);
+  const [tag, setTag] = useState(ALL);
+  const [caller, setCaller] = useState(ALL);
+  const [bucket, setBucket] = useState(ALL);
+  const [sort, setSort] = useState<Sort>("newest");
+  const [text, setText] = useState("");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const [rows, setRows] = useState<AuditCallRow[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleAnalyze = async () => {
-    setAnalyzing(true);
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) throw new Error("Your session expired — please sign in again");
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(text.trim()), 300);
+    return () => clearTimeout(t);
+  }, [text]);
 
-      const result = await analyzeCallSentiment({
-        data: { accessToken: session.access_token, callId: call.id },
+  const pick = <T extends string>(v: string) => (v === ALL ? undefined : (v as T));
+  const filters = useMemo(
+    () => ({
+      from,
+      to,
+      teamId,
+      agentId: pick(agent),
+      outcome: pick(outcome),
+      audit: pick<"pending" | "audited" | "fatal" | "exemplary" | "coaching">(review),
+      managerTag: pick<"none" | "happy" | "neutral" | "frustrated" | "rude">(tag),
+      caller: pick<"agent" | "ai">(caller),
+      bucket: pick<DPDBucket>(bucket),
+      search: query || undefined,
+      sort,
+    }),
+    [from, to, teamId, agent, outcome, review, tag, caller, bucket, query, sort],
+  );
+
+  useEffect(() => setPage(0), [filters]);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      const res = await listManagerCalls({
+        data: {
+          accessToken: await getAccessToken(),
+          filters,
+          limit: PAGE_SIZE,
+          offset: page * PAGE_SIZE,
+        },
       });
+      if (!live) return;
+      setRows(res.rows);
+      if (res.total !== null) setTotal(res.total);
+    })()
+      .catch((e) => live && setError(errorText(e, "Could not load calls")))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [filters, page, reloadKey]);
 
-      onAnalyzed({
-        ...call,
-        aiTranscript: result.transcript,
-        aiAgentTone: result.agent_tone,
-        aiDebtorTone: result.debtor_tone,
-        aiSentiment: result.overall_call_sentiment,
-        aiSentimentConfidence: result.confidence,
-        aiSentimentReasoning: result.reasoning,
-        aiSentimentAnalyzedAt: new Date().toISOString(),
-      });
-      toast.success("AI sentiment analysis complete");
-    } catch (e) {
-      toast.error(errorText(e, "AI analysis failed"));
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
-  if (!call.aiSentiment) {
-    return (
-      <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4">
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
-          disabled={analyzing || !call.recordingUrl}
-          onClick={handleAnalyze}
-        >
-          {analyzing ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="h-3.5 w-3.5" />
-          )}
-          {analyzing ? "Transcribing & analyzing…" : "Analyze with AI"}
-        </Button>
-        {!call.recordingUrl && (
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            Needs a recording to analyze — none available for this call yet.
-          </p>
-        )}
-      </div>
-    );
-  }
+  const agents = (scope?.agents ?? []).filter((a) => !teamId || a.teamIds.includes(teamId));
+  const pages = total ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1;
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4 space-y-2.5">
-      <div className="flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground">
-          <Sparkles className="h-3.5 w-3.5 text-primary" />
-          AI Suggested Sentiment
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-52">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            aria-label="Search calls"
+            placeholder="Customer, number, loan ID"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            className="h-9 pl-8 text-xs"
+          />
+        </div>
+        <Picker
+          value={agent}
+          onChange={setAgent}
+          all="All agents"
+          options={agents.map((a) => ({ value: a.id, label: a.name }))}
+        />
+        <Picker
+          value={review}
+          onChange={setReview}
+          all="Any review"
+          options={[
+            { value: "pending", label: "Not reviewed" },
+            { value: "audited", label: "Reviewed" },
+            { value: "fatal", label: "Fatal errors" },
+            { value: "exemplary", label: "Best calls" },
+            { value: "coaching", label: "Needs coaching" },
+          ]}
+        />
+        <Picker
+          value={outcome}
+          onChange={setOutcome}
+          all="All dispositions"
+          options={Object.keys(OUTCOME_LABEL).map((value) => ({
+            value,
+            label: value === "voicemail" ? "Voicemail" : OUTCOME_LABEL[value],
+          }))}
+        />
+        <Picker
+          value={tag}
+          onChange={setTag}
+          all="Manager's tag: any"
+          options={[
+            { value: "none", label: "Not tagged" },
+            { value: "happy", label: "Happy" },
+            { value: "neutral", label: "Neutral" },
+            { value: "frustrated", label: "Frustrated" },
+            { value: "rude", label: "Rude" },
+          ]}
+        />
+        <Picker
+          value={caller}
+          onChange={setCaller}
+          all="Agent + AI"
+          options={[
+            { value: "agent", label: "Agent only" },
+            { value: "ai", label: "AI Bot only" },
+          ]}
+        />
+        <Picker
+          value={bucket}
+          onChange={setBucket}
+          all="All buckets"
+          options={BUCKETS.map((b) => ({ value: b, label: BUCKET_META[b].label }))}
+        />
+        <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
+          <SelectTrigger className="h-9 w-36 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="oldest">Oldest first</SelectItem>
+            <SelectItem value="longest">Longest first</SelectItem>
+            <SelectItem value="score_high">Best score first</SelectItem>
+            <SelectItem value="score_low">Lowest score first</SelectItem>
+          </SelectContent>
+        </Select>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {total === null ? "" : `${total.toLocaleString("en-IN")} calls`}
         </span>
-        {call.aiSentimentAnalyzedAt && (
-          <span className="text-[10px] text-muted-foreground">
-            {fmtDateTime(call.aiSentimentAnalyzedAt).date}
-          </span>
-        )}
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
-        {[
-          { label: "Agent", tone: call.aiAgentTone },
-          { label: "Debtor", tone: call.aiDebtorTone },
-          { label: "Overall", tone: call.aiSentiment },
-        ].map(({ label, tone }) => {
-          const toneMeta = tone ? SENTIMENT_META[tone] : undefined;
-          return (
-            <div key={label} className="text-center">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                {label}
-              </div>
-              <div
-                className={cn(
-                  "mt-0.5 text-xs font-semibold capitalize",
-                  toneMeta ? toneMeta.cls.split(" ").find((c) => c.startsWith("text-")) : "",
-                )}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
+      <Card className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border bg-muted/30 text-left text-muted-foreground">
+              {[
+                "Date",
+                "Agent",
+                "Customer",
+                "Disposition",
+                "Duration",
+                "Manager's Tag",
+                "Auditor's Score",
+              ].map((h) => (
+                <th key={h} className="whitespace-nowrap px-4 py-2.5 font-medium">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((c) => (
+              <tr
+                key={c.call_id}
+                tabIndex={0}
+                className="cursor-pointer hover:bg-accent/30 focus:bg-accent/30 focus:outline-none"
+                onClick={() => onOpen(c.call_id)}
+                onKeyDown={(e) => e.key === "Enter" && onOpen(c.call_id)}
               >
-                {toneMeta?.label ?? "—"}
-              </div>
-            </div>
-          );
-        })}
+                <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
+                  {istDateTime(c.created_at)}
+                </td>
+                <td className="px-4 py-2.5 text-foreground">{c.agent_name}</td>
+                <td className="px-4 py-2.5">
+                  <div className="font-medium text-foreground">
+                    {c.customer_name || "Manual call"}
+                  </div>
+                  <div className="text-muted-foreground">{c.loan_reference ?? ""}</div>
+                </td>
+                <td className="px-4 py-2.5">
+                  <div className="text-foreground">{dispositionLabel(c.outcome)}</div>
+                  <div className="text-muted-foreground">{c.outcome_reason ?? ""}</div>
+                </td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5">
+                    {fmtSeconds(c.duration_seconds)}
+                    {c.recording_url && (
+                      <Mic aria-label="Has recording" className="h-3 w-3 text-primary" />
+                    )}
+                  </span>
+                </td>
+                <td className="px-4 py-2.5 capitalize text-foreground">
+                  {c.manager_sentiment ?? "—"}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2.5">
+                  {c.audit_id ? (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 font-semibold text-foreground",
+                        c.fatal && "text-destructive",
+                      )}
+                    >
+                      {c.exemplary && <Star className="h-3.5 w-3.5 text-amber-500" />}
+                      {c.final_percent}% · {c.grade}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Not reviewed</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={7} className="py-14 text-center text-sm text-muted-foreground">
+                  {loading ? "Loading…" : "No calls match these filters."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </Card>
+
+      <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+        Page {page + 1} of {pages}
+        <Button
+          aria-label="Previous page"
+          size="icon"
+          variant="outline"
+          className="h-8 w-8"
+          disabled={page === 0}
+          onClick={() => setPage((p) => p - 1)}
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <Button
+          aria-label="Next page"
+          size="icon"
+          variant="outline"
+          className="h-8 w-8"
+          disabled={page + 1 >= pages}
+          onClick={() => setPage((p) => p + 1)}
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Button>
       </div>
-
-      {call.aiSentimentConfidence != null && (
-        <p className="text-[11px] text-muted-foreground">
-          Confidence: {Math.round(call.aiSentimentConfidence * 100)}%
-        </p>
-      )}
-      {call.aiSentimentReasoning && (
-        <p className="text-xs text-foreground leading-relaxed">{call.aiSentimentReasoning}</p>
-      )}
-
-      {call.aiTranscript && (
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowTranscript((p) => !p)}
-            className="text-[11px] text-primary hover:underline"
-          >
-            {showTranscript ? "Hide transcript" : "Show transcript"}
-          </button>
-          {showTranscript && (
-            <div className="mt-2 max-h-48 overflow-auto rounded-md bg-muted/30 p-2.5 text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
-              {call.aiTranscript}
-            </div>
-          )}
-        </div>
-      )}
-
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-7 gap-1.5 text-[11px] text-muted-foreground"
-        disabled={analyzing}
-        onClick={handleAnalyze}
-      >
-        {analyzing ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <Sparkles className="h-3 w-3" />
-        )}
-        Re-analyze
-      </Button>
     </div>
   );
 }
 
-function CallDetailSheet({
-  call,
-  managerEmail,
-  onSentimentSaved,
+function PerformanceTab({
+  from,
+  to,
+  teamId,
+  reloadKey,
 }: {
-  call: DispositionRecord;
-  managerEmail: string;
-  onSentimentSaved: (updated: DispositionRecord) => void;
+  from: string;
+  to: string;
+  teamId?: string;
+  reloadKey: number;
 }) {
-  const { date, time } = fmtDateTime(call.time);
-  const caller = callerTypeOf(call);
-  const [saving, setSaving] = useState(false);
+  const [data, setData] = useState<TeamPerformance | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const handlePick = async (sentiment: CallSentiment) => {
-    setSaving(true);
-    try {
-      await setCallSentiment(call.id, sentiment, managerEmail);
-      onSentimentSaved({
-        ...call,
-        sentiment,
-        auditedByName: "You",
-        auditedAt: new Date().toISOString(),
+  useEffect(() => {
+    let live = true;
+    setError(null);
+    (async () => {
+      const res = await getManagerPerformance({
+        data: { accessToken: await getAccessToken(), from, to, teamId },
       });
-      toast.success(`Marked ${SENTIMENT_META[sentiment].label.toLowerCase()}`);
-    } catch (e) {
-      toast.error(errorText(e, "Failed to save sentiment"));
-    } finally {
-      setSaving(false);
-    }
-  };
+      if (live) setData(res);
+    })().catch((e) => live && setError(errorText(e, "Could not load team performance")));
+    return () => {
+      live = false;
+    };
+  }, [from, to, teamId, reloadKey]);
+
+  if (error) return <p className="text-sm text-destructive">{error}</p>;
+  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
+
+  const cards = [
+    { label: "Calls", value: data.calls },
+    { label: "Connected", value: data.connected },
+    { label: "Talk Time", value: fmtSeconds(data.talk_seconds) },
+    { label: "Reviewed", value: data.audited },
+    { label: "Not Reviewed", value: data.not_audited },
+    { label: "Average Score", value: scoreText(data.avg_score) },
+    { label: "Fatal Errors", value: data.fatal, bad: data.fatal > 0 },
+    { label: "Need Coaching", value: data.coaching },
+  ];
 
   return (
-    <div className="flex flex-col h-full">
-      <SheetHeader className="px-6 py-4 border-b border-border">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <SheetTitle className="text-base">{call.debtorName}</SheetTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {date} {time}
-              {call.portfolioName ? ` · ${call.portfolioName}` : ""}
-            </p>
-          </div>
-          <Badge variant="outline" className={cn("shrink-0", OUTCOME_META[call.outcome]?.cls)}>
-            {OUTCOME_META[call.outcome]?.label ?? call.outcome}
-          </Badge>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3 mt-3">
-          {[
-            {
-              icon: caller === "ai" ? Bot : User,
-              label: caller === "ai" ? "AI Bot" : call.agentName,
-            },
-            {
-              icon: Clock,
-              label: call.durationSeconds != null ? fmtDuration(call.durationSeconds) : "—",
-            },
-            { icon: Mic, label: call.recordingUrl ? "Recording available" : "No recording" },
-          ].map(({ icon: Icon, label }) => (
-            <div
-              key={label}
-              className="flex items-center gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-xs text-foreground"
-            >
-              <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              {label}
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {cards.map((c) => (
+          <Card key={c.label} className="p-3">
+            <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              {c.label}
             </div>
-          ))}
-        </div>
-      </SheetHeader>
-
-      <div className="px-6 pt-4 pb-2">
-        <RecordingPlayer url={call.recordingUrl} />
+            <div
+              className={cn("mt-1 text-2xl font-bold text-foreground", c.bad && "text-destructive")}
+            >
+              {c.value}
+            </div>
+          </Card>
+        ))}
       </div>
 
-      {/* Call sentiment — the actual audit judgment, listen to the recording (or read the
-          notes) and tag how the call went. */}
-      <div className="px-6 pb-4">
-        <div className="rounded-lg border border-border bg-card p-4 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-              Call Sentiment
-            </span>
-            {call.sentiment && call.auditedByName && (
-              <span className="text-[10px] text-muted-foreground">
-                Audited by {call.auditedByName}
-                {call.auditedAt ? ` · ${fmtDateTime(call.auditedAt).date}` : ""}
-              </span>
+      <Card className="overflow-x-auto">
+        <h2 className="px-4 pt-4 text-sm font-semibold text-foreground">Agents, best first</h2>
+        <table className="mt-2 w-full text-xs">
+          <thead>
+            <tr className="border-b border-border text-left text-muted-foreground">
+              {[
+                "Agent",
+                "Calls",
+                "Connected",
+                "Talk Time",
+                "Reviewed",
+                "Avg Score",
+                "Best Calls",
+                "Fatal",
+                "Coaching",
+                "Weakest Area",
+              ].map((h) => (
+                <th key={h} className="whitespace-nowrap px-4 py-2 font-medium">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {data.agents.map((a) => (
+              <tr key={a.agent_id}>
+                <td className="px-4 py-2 font-medium text-foreground">{a.agent_name}</td>
+                <td className="px-4 py-2">{a.calls}</td>
+                <td className="px-4 py-2">{a.connected}</td>
+                <td className="px-4 py-2">{fmtSeconds(a.talk_seconds)}</td>
+                <td className="px-4 py-2">{a.audited}</td>
+                <td className="px-4 py-2 font-semibold">{scoreText(a.avg_score)}</td>
+                <td className="px-4 py-2">{a.best_calls}</td>
+                <td className={cn("px-4 py-2", a.fatal > 0 && "font-semibold text-destructive")}>
+                  {a.fatal}
+                </td>
+                <td className="px-4 py-2">{a.coaching}</td>
+                <td className="px-4 py-2 text-muted-foreground">{a.weakest ?? "—"}</td>
+              </tr>
+            ))}
+            {data.agents.length === 0 && (
+              <tr>
+                <td colSpan={10} className="py-8 text-center text-muted-foreground">
+                  No calls in this period.
+                </td>
+              </tr>
             )}
-          </div>
-          <SentimentPicker value={call.sentiment} onPick={handlePick} saving={saving} size="lg" />
-        </div>
-      </div>
+          </tbody>
+        </table>
+      </Card>
 
-      <div className="px-6 pb-4">
-        <AiSentimentPanel call={call} onAnalyzed={onSentimentSaved} />
-      </div>
-
-      <div className="flex-1 overflow-auto px-6 py-4">
-        <div className="text-xs font-semibold text-foreground mb-2">Notes</div>
-        <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-foreground leading-relaxed whitespace-pre-wrap">
-          {call.notes?.trim() || "No notes logged for this call."}
-        </div>
-        {call.ptpAmount != null && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            Promise to pay: ₹{call.ptpAmount.toLocaleString("en-IN")}
-            {call.ptpDate ? ` by ${call.ptpDate}` : ""}
-          </p>
-        )}
-        {call.paidAmount != null && (
-          <p className="mt-1 text-xs text-muted-foreground">
-            Paid: ₹{call.paidAmount.toLocaleString("en-IN")}
-          </p>
-        )}
-      </div>
+      {data.parameters.length > 0 && (
+        <Card className="p-4">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">
+            Scorecard results, weakest first
+          </h2>
+          <ul className="space-y-2.5">
+            {data.parameters.map((p) => (
+              <li key={p.id} className="text-xs">
+                <div className="mb-1 flex justify-between gap-3">
+                  <span className="text-foreground">{p.label}</span>
+                  <span className="font-semibold text-foreground">{p.percent}%</span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary"
+                    style={{ width: `${p.percent}%` }}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
     </div>
   );
 }
-
-/* ─── page ───────────────────────────────────────────────────────────────── */
 
 function CallAuditPage() {
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
   const { user } = useAuth();
-  const managerId = user?.email ?? user?.id ?? "";
-  const { activeTeam } = useActiveTeam(managerId);
-  const agents = useTeamAgents(activeTeam?.id);
-  const teamAgentIds = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
+  const { activeTeam } = useActiveTeam(user?.email ?? user?.id ?? "");
+  const teamId = activeTeam?.id;
+  const [range, setRange] = useState<DateRange>({
+    from: istDayKeyDaysAgo(29),
+    to: istDayKeyDaysAgo(0),
+  });
+  const [scope, setScope] = useState<Scope | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [exporting, setExporting] = useState(false);
 
-  const [allDisps, setAllDisps] = useState<DispositionRecord[]>(() => getDispositions());
   useEffect(() => {
-    const reload = () => setAllDisps(getDispositions());
-    window.addEventListener("dispositions-updated", reload);
-    refreshDispositions();
-    return () => window.removeEventListener("dispositions-updated", reload);
+    getAccessToken()
+      .then((accessToken) => getManagerScope({ data: { accessToken } }))
+      .then(setScope)
+      .catch((e) => toast.error(errorText(e, "Could not load your team")));
   }, []);
-  useStorageSync(() => setAllDisps(getDispositions()));
 
-  const calls = useMemo(
-    () =>
-      allDisps
-        .filter((d) => teamAgentIds.has(d.agentId))
-        .sort((a, b) => (a.time < b.time ? 1 : -1)),
-    [allDisps, teamAgentIds],
+  const from = range.from || istDayKeyDaysAgo(29);
+  const to = range.to || istDayKeyDaysAgo(0);
+  const tab = search.tab ?? "calls";
+
+  const openCall = useCallback(
+    (call?: string) => navigate({ search: (s: AuditSearch) => ({ ...s, call }), replace: true }),
+    [navigate],
   );
 
-  const [search, setSearch] = useState("");
-  const [dateRange, setDateRange] = useState<DateRange>(EMPTY_RANGE);
-  const [filterCaller, setFilterCaller] = useState<CallerType | "all">("all");
-  const [filterOutcome, setFilterOutcome] = useState<string>("all");
-  const [filterBucket, setFilterBucket] = useState<DPDBucket | "all">("all");
-  const [filterSentiment, setFilterSentiment] = useState<CallSentiment | "unreviewed" | "all">(
-    "all",
-  );
-  const [bucketDropOpen, setBucketDropOpen] = useState(false);
-  const [selected, setSelected] = useState<DispositionRecord | null>(null);
-  // Which row's sentiment picker is currently saving — disables that row's buttons only.
-  const [savingId, setSavingId] = useState<string | null>(null);
-
-  const BUCKET_ORDER: DPDBucket[] = ["X", "1", "2", "NPA", "WriteOff"];
-  const bucketFor = (d: DispositionRecord): DPDBucket => bucketOf(d.dpd ?? 0);
-
-  const filtered = useMemo(() => {
-    return calls.filter((c) => {
-      if (!inDateRange(c.time, dateRange)) return false;
-      if (filterCaller !== "all" && callerTypeOf(c) !== filterCaller) return false;
-      if (filterOutcome !== "all" && c.outcome !== filterOutcome) return false;
-      if (filterBucket !== "all" && bucketFor(c) !== filterBucket) return false;
-      if (filterSentiment === "unreviewed" && c.sentiment) return false;
-      if (
-        filterSentiment !== "all" &&
-        filterSentiment !== "unreviewed" &&
-        c.sentiment !== filterSentiment
-      )
-        return false;
-      if (search) {
-        const q = search.toLowerCase();
-        if (
-          !c.debtorName.toLowerCase().includes(q) &&
-          !c.agentName.toLowerCase().includes(q) &&
-          !c.phone?.toLowerCase().includes(q)
-        )
-          return false;
-      }
-      return true;
-    });
-  }, [calls, search, dateRange, filterCaller, filterOutcome, filterBucket, filterSentiment]);
-
-  const withRecording = calls.filter((c) => !!c.recordingUrl).length;
-  const unreviewed = calls.filter((c) => !c.sentiment).length;
-  const flagged = calls.filter(
-    (c) => c.sentiment === "rude" || c.sentiment === "frustrated",
-  ).length;
-
-  const handleInlinePick = async (call: DispositionRecord, sentiment: CallSentiment) => {
-    setSavingId(call.id);
+  const download = async () => {
+    setExporting(true);
     try {
-      await setCallSentiment(call.id, sentiment, managerId);
-      toast.success(`${call.debtorName}: marked ${SENTIMENT_META[sentiment].label.toLowerCase()}`);
+      const accessToken = await getAccessToken();
+      const rows: AuditCallRow[] = [];
+      for (let offset = 0; ; offset += 1000) {
+        const page = await getManagerExportPage({
+          data: { accessToken, from, to, teamId, limit: 1000, offset },
+        });
+        rows.push(...page);
+        if (page.length < 1000) break;
+      }
+      await downloadXlsx(reportFilename("team-audit-feedback", { from, to }), [
+        auditFeedbackSheet(rows, window.location.origin, "manager"),
+      ]);
+      toast.success(`${rows.length} reviewed calls downloaded`);
     } catch (e) {
-      toast.error(errorText(e, "Failed to save sentiment"));
+      toast.error(errorText(e, "Could not build this report"));
     } finally {
-      setSavingId(null);
+      setExporting(false);
     }
   };
 
   return (
     <>
-      <div className="space-y-6">
-        <div className="animate-in fade-in slide-in-from-top-4 duration-500 flex items-center justify-between">
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">Call Audit</h1>
             <p className="text-sm text-muted-foreground">
-              Review how your team's calls actually went — tag sentiment, not just the outcome.
+              Your team's calls, scores and what the auditor said.
             </p>
           </div>
-        </div>
-
-        {/* Stats strip — audit-focused: how much is reviewed and how much needs attention,
-            not just raw counts. Each card is colored by what it means, not just labeled. */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[
-            {
-              label: "Total Calls",
-              value: calls.length,
-              icon: PhoneCall,
-              cls: "text-foreground",
-              iconCls: "bg-primary/10 text-primary",
-              borderCls: "border-l-primary/50",
-            },
-            {
-              label: "Needs Review",
-              value: unreviewed,
-              icon: ShieldQuestion,
-              cls: unreviewed > 0 ? "text-amber-600" : "text-foreground",
-              iconCls: "bg-amber-500/10 text-amber-600",
-              borderCls: unreviewed > 0 ? "border-l-amber-500" : "border-l-border",
-            },
-            {
-              label: "Rude / Frustrated",
-              value: flagged,
-              icon: Angry,
-              cls: flagged > 0 ? "text-destructive" : "text-foreground",
-              iconCls: "bg-destructive/10 text-destructive",
-              borderCls: flagged > 0 ? "border-l-destructive" : "border-l-border",
-            },
-            {
-              label: "With Recording",
-              value: withRecording,
-              icon: Mic,
-              cls: "text-foreground",
-              iconCls: "bg-purple-500/10 text-purple-600",
-              borderCls: "border-l-purple-500/50",
-            },
-          ].map(({ label, value, icon: Icon, cls, iconCls, borderCls }) => (
-            <Card key={label} className={cn("p-3 border-l-4", borderCls)}>
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {label}
-                </div>
-                <div className={cn("rounded-md p-1", iconCls)}>
-                  <Icon className="h-3.5 w-3.5" />
-                </div>
-              </div>
-              <div className={cn("text-2xl font-bold mt-1", cls)}>{value}</div>
-            </Card>
-          ))}
-        </div>
-
-        {calls.length === 0 && (
-          <p className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-            No calls logged yet for your team — this fills in as agents log dispositions. Once a
-            call has a recording, tag its sentiment here (or from the detail panel) — there's no
-            automatic transcription/sentiment pipeline wired up yet, so this is a manual QA tag.
-          </p>
-        )}
-
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 min-w-[200px] max-w-xs">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search debtor, agent, phone…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8 h-9 text-sm"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          <Select
-            value={filterSentiment}
-            onValueChange={(v) => setFilterSentiment(v as CallSentiment | "unreviewed" | "all")}
-          >
-            <SelectTrigger className="w-36 h-9 text-xs">
-              <SelectValue placeholder="Sentiment" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Any sentiment</SelectItem>
-              <SelectItem value="unreviewed">Needs review</SelectItem>
-              {(Object.entries(SENTIMENT_META) as [CallSentiment, { label: string }][]).map(
-                ([key, meta]) => (
-                  <SelectItem key={key} value={key}>
-                    {meta.label}
-                  </SelectItem>
-                ),
-              )}
-            </SelectContent>
-          </Select>
-          <DateRangeFilter value={dateRange} onChange={setDateRange} />
-          <Select
-            value={filterCaller}
-            onValueChange={(v) => setFilterCaller(v as CallerType | "all")}
-          >
-            <SelectTrigger className="w-32 h-9 text-xs">
-              <SelectValue placeholder="Caller" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Agent + AI</SelectItem>
-              <SelectItem value="agent">Agent only</SelectItem>
-              <SelectItem value="ai">AI Bot only</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={filterOutcome} onValueChange={setFilterOutcome}>
-            <SelectTrigger className="w-36 h-9 text-xs">
-              <SelectValue placeholder="Outcome" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All outcomes</SelectItem>
-              {Object.entries(OUTCOME_META).map(([key, meta]) => (
-                <SelectItem key={key} value={key}>
-                  {meta.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setBucketDropOpen((p) => !p)}
-              className={cn(
-                "inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-xs transition-all",
-                filterBucket !== "all"
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
-              )}
-            >
-              <Filter className="h-3 w-3 opacity-60" />
-              {filterBucket === "all" ? "Bucket" : BUCKET_META[filterBucket].label}
-              <ChevronDown className="h-3 w-3 opacity-60" />
-            </button>
-            {bucketDropOpen && (
-              <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-lg border border-border bg-card shadow-lg py-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFilterBucket("all");
-                    setBucketDropOpen(false);
-                  }}
-                  className={cn(
-                    "w-full px-3 py-1.5 text-left text-xs hover:bg-accent/50 transition-colors",
-                    filterBucket === "all"
-                      ? "text-foreground font-medium"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  All buckets
-                </button>
-                {BUCKET_ORDER.map((b) => {
-                  const count = calls.filter((c) => bucketFor(c) === b).length;
-                  if (count === 0) return null;
-                  const meta = BUCKET_META[b];
-                  return (
-                    <button
-                      key={b}
-                      type="button"
-                      onClick={() => {
-                        setFilterBucket(b);
-                        setBucketDropOpen(false);
-                      }}
-                      className={cn(
-                        "w-full px-3 py-1.5 text-left text-xs hover:bg-accent/50 transition-colors flex items-center justify-between",
-                        filterBucket === b
-                          ? "text-foreground font-medium"
-                          : "text-muted-foreground",
-                      )}
-                    >
-                      <span className={meta.color.split(" ").find((c) => c.startsWith("text-"))}>
-                        {meta.label}
-                      </span>
-                      <span className="opacity-50">{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {(filterCaller !== "all" ||
-            filterOutcome !== "all" ||
-            filterBucket !== "all" ||
-            filterSentiment !== "all" ||
-            search) && (
+          <div className="flex flex-wrap items-center gap-2">
+            <DateRangeFilter value={range} onChange={setRange} />
             <Button
-              variant="ghost"
-              size="sm"
-              className="h-9 text-xs text-muted-foreground gap-1"
-              onClick={() => {
-                setSearch("");
-                setDateRange(EMPTY_RANGE);
-                setFilterCaller("all");
-                setFilterOutcome("all");
-                setFilterBucket("all");
-                setFilterSentiment("all");
-              }}
+              variant="outline"
+              className="h-9 gap-2 text-xs"
+              disabled={exporting}
+              onClick={download}
             >
-              <X className="h-3.5 w-3.5" />
-              Clear
+              {exporting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              Audit + Feedback Excel
             </Button>
-          )}
-          <span className="ml-auto text-xs text-muted-foreground">{filtered.length} calls</span>
+          </div>
         </div>
 
-        {/* Call table */}
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="py-2.5 pl-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Date
-                  </th>
-                  <th className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Caller
-                  </th>
-                  <th className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Debtor
-                  </th>
-                  <th className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Sentiment
-                  </th>
-                  <th className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Outcome
-                  </th>
-                  <th className="py-2.5 text-center text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Dur.
-                  </th>
-                  <th className="py-2.5 pr-4 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Action
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filtered.map((call) => {
-                  const { date, time } = fmtDateTime(call.time);
-                  const caller = callerTypeOf(call);
-                  const bucket = bucketFor(call);
-                  const rowAccent =
-                    call.sentiment === "rude"
-                      ? "border-l-destructive bg-destructive/[0.03]"
-                      : call.sentiment === "frustrated"
-                        ? "border-l-amber-500 bg-amber-500/[0.03]"
-                        : call.sentiment === "happy"
-                          ? "border-l-success"
-                          : call.sentiment === "neutral"
-                            ? "border-l-muted-foreground/30"
-                            : "border-l-transparent";
-                  return (
-                    <tr
-                      key={call.id}
-                      className={cn(
-                        "border-l-4 hover:bg-accent/30 transition-colors cursor-pointer",
-                        rowAccent,
-                      )}
-                      onClick={() => setSelected(call)}
-                    >
-                      <td className="py-3 pl-4">
-                        <div className="text-[10px] text-muted-foreground">
-                          {date} {time}
-                        </div>
-                      </td>
-                      <td className="py-3">
-                        <div className="flex items-center gap-1.5">
-                          {caller === "ai" ? (
-                            <Bot className="h-3.5 w-3.5 text-purple-500" />
-                          ) : (
-                            <User className="h-3.5 w-3.5 text-primary" />
-                          )}
-                          <span className="text-xs text-foreground">
-                            {caller === "ai" ? "AI Bot" : call.agentName}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-3">
-                        <div className="text-xs font-medium text-foreground">{call.debtorName}</div>
-                      </td>
-                      <td className="py-3">
-                        {call.sentiment ? (
-                          <SentimentPicker
-                            value={call.sentiment}
-                            onPick={(s) => handleInlinePick(call, s)}
-                            saving={savingId === call.id}
-                          />
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
-                              title="Not yet audited"
-                            >
-                              <ShieldQuestion className="h-3.5 w-3.5" />
-                              Unreviewed
-                            </span>
-                            <SentimentPicker
-                              value={call.sentiment}
-                              onPick={(s) => handleInlinePick(call, s)}
-                              saving={savingId === call.id}
-                            />
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3">
-                        <Badge
-                          variant="outline"
-                          className={cn("text-[10px]", OUTCOME_META[call.outcome]?.cls)}
-                        >
-                          {OUTCOME_META[call.outcome]?.label ?? call.outcome}
-                        </Badge>
-                        <span
-                          className={cn(
-                            "ml-1.5 inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-medium",
-                            BUCKET_META[bucket].color,
-                          )}
-                        >
-                          {BUCKET_META[bucket].label}
-                        </span>
-                      </td>
-                      <td className="py-3 text-center">
-                        <span className="text-xs text-muted-foreground">
-                          {call.durationSeconds != null ? fmtDuration(call.durationSeconds) : "—"}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4 text-right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 text-xs gap-1 text-primary hover:text-primary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelected(call);
-                          }}
-                          disabled={!call.recordingUrl}
-                        >
-                          <Play className="h-3 w-3" />
-                          {call.recordingUrl ? "Play" : "View"}
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filtered.length === 0 && calls.length > 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-16 text-center text-sm text-muted-foreground">
-                      No calls match your filters.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <Tabs
+          value={tab}
+          onValueChange={(v) =>
+            navigate({ search: (s: AuditSearch) => ({ ...s, tab: v as Tab }), replace: true })
+          }
+        >
+          <TabsList>
+            <TabsTrigger value="calls">Calls</TabsTrigger>
+            <TabsTrigger value="performance">Team Performance</TabsTrigger>
+            <TabsTrigger value="reviews">Reviews</TabsTrigger>
+          </TabsList>
+          <TabsContent value="calls" className="mt-4">
+            <CallsTab
+              from={from}
+              to={to}
+              teamId={teamId}
+              scope={scope}
+              onOpen={openCall}
+              reloadKey={reloadKey}
+            />
+          </TabsContent>
+          <TabsContent value="performance" className="mt-4">
+            <PerformanceTab from={from} to={to} teamId={teamId} reloadKey={reloadKey} />
+          </TabsContent>
+          <TabsContent value="reviews" className="mt-4">
+            <ReceivedReviews teamId={teamId} />
+          </TabsContent>
+        </Tabs>
       </div>
 
-      <Sheet
-        open={!!selected}
-        onOpenChange={(open) => {
-          if (!open) setSelected(null);
-        }}
-      >
-        <SheetContent
-          side="right"
-          className="w-full max-w-2xl p-0 overflow-hidden flex flex-col sm:max-w-2xl"
-        >
-          {selected && (
-            <CallDetailSheet
-              call={selected}
-              managerEmail={managerId}
-              onSentimentSaved={setSelected}
-            />
+      <Sheet open={!!search.call} onOpenChange={(open) => !open && openCall(undefined)}>
+        <SheetContent side="right" className="w-full max-w-2xl overflow-hidden p-0 sm:max-w-2xl">
+          <SheetTitle className="sr-only">Call details</SheetTitle>
+          {search.call && (
+            <ManagerCallSheet callId={search.call} onChanged={() => setReloadKey((k) => k + 1)} />
           )}
         </SheetContent>
       </Sheet>
