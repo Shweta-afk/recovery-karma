@@ -1,4 +1,6 @@
-import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
+import { useAuth } from "@/lib/auth";
 import { AppShell } from "@/components/app-shell";
 import { CallSessionProvider } from "@/lib/call-session";
 import { GlobalCallBar } from "@/components/global-call-bar";
@@ -11,6 +13,13 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 function DashboardLayout() {
+  const { user, loading } = useAuth();
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!loading && user?.role === "auditor") navigate({ to: "/auditor" });
+  }, [user, loading, navigate]);
+  if (user?.role === "auditor") return <AppShell>{null}</AppShell>;
+
   return (
     <CallSessionProvider>
       <AppShell>

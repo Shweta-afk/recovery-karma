@@ -10,7 +10,7 @@ import { roleNeedsEmailOtp, tokenHasEmailOtp } from "./login-otp";
 import { loginUrlFor, wrongAddressRedirect } from "./company-address";
 import { errorText } from "./app-error";
 
-export type Role = "agent" | "manager" | "admin" | "superadmin";
+export type Role = "agent" | "manager" | "admin" | "auditor" | "superadmin";
 
 /**
  * Where a role's "home" is - the single source of truth for it.
@@ -27,8 +27,9 @@ export type Role = "agent" | "manager" | "admin" | "superadmin";
  */
 export function homeRouteForRole(
   role: Role | undefined,
-): "/dashboard" | "/manager" | "/admin" | "/superadmin" {
+): "/dashboard" | "/manager" | "/admin" | "/auditor" | "/superadmin" {
   if (role === "superadmin") return "/superadmin";
+  if (role === "auditor") return "/auditor";
   if (role === "admin") return "/admin";
   if (role === "manager") return "/manager";
   return "/dashboard";

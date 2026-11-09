@@ -872,6 +872,42 @@ promise_date" as promises would start counting callbacks.
 
 ---
 
+## Call Auditor portal and the banker's feedback file (2026-11-09)
+
+New company role `auditor` (`/auditor`: Overview, All Calls, Teams & Managers, Reports; no dialer).
+Sees every call in their company, by team and manager; admins can look in read-only. Created from
+Admin → Users, not counted against agent/manager seats.
+
+- **No RLS policy changed.** Everything goes through `call-audit.server.ts` (service role after
+  `verifyCaller`, scoped to the caller's company). `call_audits` and `team_audit_reviews` are
+  server-only. SQL: `migrations/20261109_call_auditor.sql` (view `call_audit_rows`, functions
+  `call_audit_list` / `call_audit_summary`, service_role only).
+- **Rules are pure** in `call-audit.ts`: scorecard (weights sum to 100; N/A leaves the
+  denominator; any fatal error = 0%). The server recomputes scores. Bump `SCORECARD_VERSION` when
+  changing parameters.
+- **AI still only runs on click** (now also for auditors). It never completes a review: a call
+  shows "AI done, waiting for you" until the auditor records whether the AI was right. The
+  auditor's review is separate from the manager's `call_logs.sentiment` tag and never overwrites it.
+- **Receiving end**: agents → My Call Reviews, managers → Call Reviews, with acknowledge + reply.
+  `internal_note` is never sent to them; `feedback_manager` only to the team's manager.
+- **Reports** (`call-audit-reports.ts`) follow the company's own CSVs: Call Log starts with their
+  49 export columns then adds everything else plus one `Bank: <field>` column per `debtors.extra`
+  key; Audit + Feedback has three columns per scorecard parameter; Performance is their per-agent
+  per-day layout. Blank = not recorded, never 0 (no source yet: Cause Code, Drop Reason, Provider
+  Cause, Disconnected By, Tea/Meeting/Mobile/Bio breaks).
+- **Feedback File** (Manager → Feedback File, `portfolio-feedback.ts`): per portfolio and period,
+  sheets Feedback by Loan (their Allocation report layout, `Grouping Disposition` = the dated trail),
+  All Feedback, Summary. It goes to the bank, so it must never contain audit data (a test pins
+  this). Recording links are opt-in and are 7-day signed URLs.
+- **Call length and "connected" come from the ledger.** `call_logs.duration_seconds` is NULL on
+  every row (never written), so `call_audit_rows.duration_seconds` falls back to
+  `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that
+  figure is ringing, not talk). Connected = ledger `completed`, else the disposition (`isAnswered`);
+  the SQL summary and JS reports must stay in step. Contact Group stays disposition-based.
+- ⚠️ As of 2026-11-09 no call has a recording: SkyCRM's `download_audio` answers 500
+  (`host='disk'`), so `call_logs.recording_url` is NULL on all 3,079 rows. The portal's player and
+  AI work once the importer starts storing files.
+
 ## Superadmin portal (platform owner) — rebuilt 2026-10-09
 
 The view for SamvadX/Axiotta itself, across every company. Pages (sidebar order): **Overview**
@@ -1125,6 +1161,7 @@ server on first upload; the browser uploads straight to a signed upload URL).
 | `superadmin/` (Overview), `superadmin/companies`, company detail tabs, `superadmin/revenue` | ✅ Real (2026-10-09) — usage via `superadmin_usage_totals`, revenue via `invoices`. See "Superadmin portal" above                                                                                                                                                 |
 | `superadmin/wallet`, `superadmin/insights`, `superadmin/invoices`, `superadmin/activity`    | ✅ Real; shared date filter + Excel added 2026-10-09. Invoices: payments, credit notes and "Still owed" since 2026-10-10                                                                                                                                          |
 | `superadmin/contracts`, `superadmin/help`                                                   | ✅ Real. Contracts = uploads, templates, drafts, published changes + acceptances; superadmin-only for now (`CONTRACTS_VISIBLE_TO_COMPANIES`). Help = glossary + page guides                                                                                       |
+| `auditor/*`, `manager/feedback-file`, `manager/reviews`, `dashboard/my-reviews` | ✅ Built 2026-11-09; `20261109_call_auditor.sql` is live. See "Call Auditor portal" above |
 | `superadmin/archives` (Saved Archives)                                                      | ✅ Live 2026-10-29: SamvadX's own copies of portfolio-end and month archives; download + "Save copy"                                                                                                                                 |
 | `admin/billing` (Billing & Agreements)                                                      | ✅ Real (2026-10-12): the company's invoices (opening = Viewed) and terms/agreements with Sign. `admin/contracts` redirects here                                                                                                                                  |
 

@@ -35,6 +35,16 @@ async function authorisedRecording(
     throw new Error("Recording not found");
   }
 
+  // A call auditor reviews every call of their company, and RLS shows them none. The company
+  // check above is the whole rule for them.
+  if (caller.role === "auditor") {
+    return {
+      object: row.recording_object as string,
+      contentType: (row.recording_content_type as string | null) ?? null,
+      clientId: caller.clientId,
+    };
+  }
+
   const url = process.env.SUPABASE_URL;
   const anon = process.env.SUPABASE_ANON_KEY;
   if (!url || !anon) throw new Error("Recordings are not available right now");

@@ -114,14 +114,15 @@ export const analyzeCallSentiment = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const caller = await verifyCaller(data.accessToken);
     if (!caller) throw new Error("Not authenticated");
-    if (caller.role !== "manager" && caller.role !== "admin") {
-      throw new Error("Only managers or admins can run AI sentiment analysis");
+    if (caller.role !== "manager" && caller.role !== "admin" && caller.role !== "auditor") {
+      throw new Error("Only managers, admins or call auditors can run AI sentiment analysis");
     }
 
     const admin = getSupabaseAdmin();
     const { data: rawLog, error: logErr } = await admin
       .from("call_logs")
-      .select("id, recording_url, debtors!inner(client_id)")
+      // Company comes from the agent, not the debtor: a Manual Dial call has no debtor row.
+      .select("id, recording_url, agents!call_logs_agent_id_fkey!inner(client_id)")
       .eq("id", data.callId)
       .single();
     if (logErr || !rawLog) throw new Error("Call log not found");
@@ -130,9 +131,9 @@ export const analyzeCallSentiment = createServerFn({ method: "POST" })
     const log = rawLog as unknown as {
       id: string;
       recording_url: string | null;
-      debtors: { client_id: string };
+      agents: { client_id: string };
     };
-    if (log.debtors?.client_id !== caller.clientId) throw new Error("Not authorized for this call");
+    if (log.agents?.client_id !== caller.clientId) throw new Error("Not authorized for this call");
     if (!log.recording_url) throw new Error("No recording available for this call yet");
 
     // A recording SamvadX stored itself (marker, see telephony/recording-marker.ts) is read from

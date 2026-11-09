@@ -6,7 +6,7 @@ import { ManualDialDock } from "@/components/manual-dial-dock";
 import { IncomingCallPopup } from "@/components/incoming-call-popup";
 import { BrowserPhone } from "@/components/telephony/browser-phone";
 import { TeamPickerScreen } from "@/components/team-picker-screen";
-import { useAuth } from "@/lib/auth";
+import { homeRouteForRole, useAuth } from "@/lib/auth";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -25,8 +25,8 @@ function ManagerLayout() {
   const { teams, activeTeam, setActiveTeam } = useActiveTeam(managerId);
 
   useEffect(() => {
-    if (!loading && user && user.role === "agent") {
-      navigate({ to: "/dashboard" });
+    if (!loading && user && (user.role === "agent" || user.role === "auditor")) {
+      navigate({ to: homeRouteForRole(user.role) });
     }
   }, [user, loading, navigate]);
 
@@ -35,7 +35,7 @@ function ManagerLayout() {
   // opening an invoice link from an email — on a blank page forever.
   if (loading || !user) return <AppShell>{null}</AppShell>;
 
-  if (user.role === "agent") {
+  if (user.role === "agent" || user.role === "auditor") {
     return (
       <AppShell>
         <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center p-8">

@@ -12,7 +12,7 @@ export const tokenSchema = z.string().min(20).max(8192);
 export const idSchema = z.string().uuid();
 
 /** Roles an admin may hand out. "superadmin" is deliberately absent: it lives in its own table. */
-export const grantableRoleSchema = z.enum(["agent", "manager", "admin"]);
+export const grantableRoleSchema = z.enum(["agent", "manager", "admin", "auditor"]);
 
 /** A positive rupee amount for a top-up / allocation. */
 export const amountSchema = z.number().finite().positive().max(100_000_000);

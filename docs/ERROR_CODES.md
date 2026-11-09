@@ -79,20 +79,20 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 
 ### Calling and call analysis (3xxx)
 
-| Code    | User sees                            | What it really means                                                                                    |
-| ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| SX-3001 | Calling is not set up yet.           | `SKYCRM_SECRET` missing on Railway. `skycrm-provider.ts`                                                |
-| SX-3002 | Calling is not set up yet.           | `TELEPHONY_PROVIDER` on Railway is not a known value (e.g. stale `tata`/`exotel`). `telephony/index.ts` |
-| SX-3101 | Calling is not available right now.  | SkyCRM rejected our token (status 401).                                                                 |
-| SX-3102 | Could not reach the calling service. | Network error reaching SkyCRM.                                                                          |
-| SX-3103 | The calling service had a problem.   | SkyCRM returned non-JSON (usually their 500 HTML page).                                                 |
-| SX-3104 | The call could not be placed.        | SkyCRM returned status ≥ 300; their message is in the log.                                              |
-| SX-3105 | SMS is not available yet.            | SkyCRM has no SMS endpoint.                                                                             |
+| Code    | User sees                                 | What it really means                                                                                      |
+| ------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| SX-3001 | Calling is not set up yet.                | `SKYCRM_SECRET` missing on Railway. `skycrm-provider.ts`                                                  |
+| SX-3002 | Calling is not set up yet.                | `TELEPHONY_PROVIDER` on Railway is not a known value (e.g. stale `tata`/`exotel`). `telephony/index.ts`   |
+| SX-3101 | Calling is not available right now.       | SkyCRM rejected our token (status 401).                                                                   |
+| SX-3102 | Could not reach the calling service.      | Network error reaching SkyCRM.                                                                            |
+| SX-3103 | The calling service had a problem.        | SkyCRM returned non-JSON (usually their 500 HTML page).                                                   |
+| SX-3104 | The call could not be placed.             | SkyCRM returned status ≥ 300; their message is in the log.                                                |
+| SX-3105 | SMS is not available yet.                 | SkyCRM has no SMS endpoint.                                                                               |
 | SX-3106 | Your phone (extension …) isn't connected. | SkyCRM's `dial_response` says the agent's extension is Unavailable (softphone not registered / VPN down). |
-| SX-3201 | Could not transcribe this recording. | Groq Whisper returned an error. `call-sentiment-actions.server.ts`                                      |
-| SX-3202 | Could not analyse this call.         | Gemini returned an error.                                                                               |
-| SX-3203 | Could not analyse this call.         | Gemini returned an empty answer.                                                                        |
-| SX-3204 | Call analysis is busy right now.     | Gemini kept failing (rate limit) after all retries.                                                     |
+| SX-3201 | Could not transcribe this recording.      | Groq Whisper returned an error. `call-sentiment-actions.server.ts`                                        |
+| SX-3202 | Could not analyse this call.              | Gemini returned an error.                                                                                 |
+| SX-3203 | Could not analyse this call.              | Gemini returned an empty answer.                                                                          |
+| SX-3204 | Call analysis is busy right now.          | Gemini kept failing (rate limit) after all retries.                                                       |
 
 ### Invoices, billing, contracts (4xxx)
 
@@ -196,6 +196,27 @@ All are database errors on the action named; the database message is in the log.
 | SX-6409 | Could not read the month's archive.                                | Reading `monthly_archive_rows` for a month copy failed.                                                    |
 | SX-6410 | Could not load that archive.                                       | Reading `saved_archive_files` for a download failed.                                                       |
 | SX-6411 | Could not create a download link.                                  | Signed URL from the `saved-archives` bucket failed.                                                        |
+
+### Call Auditor and feedback file (7xxx)
+
+| Code    | User sees                         | What it really means                                                    |
+| ------- | --------------------------------- | ----------------------------------------------------------------------- |
+| SX-7101 | Could not load calls.             | `call_audit_list` failed. Check `20261109_call_auditor.sql` is applied. |
+| SX-7102 | Could not load teams.             | Reading teams, agents or portfolios for the auditor failed.             |
+| SX-7103 | Could not load this call.         | Reading one row of `call_audit_rows` failed.                            |
+| SX-7104 | Could not load the overview.      | `call_audit_summary` failed.                                            |
+| SX-7105 | Could not load this call.         | Reading the call before saving a review failed.                         |
+| SX-7106 | Could not save this review.       | Upserting `call_audits` failed.                                         |
+| SX-7107 | Could not save this review.       | Inserting `team_audit_reviews` failed.                                  |
+| SX-7108 | Could not load reviews.           | Reading `team_audit_reviews` failed.                                    |
+| SX-7109 | Could not load agent time.        | Reading `agent_status_log` for the Performance report failed.           |
+| SX-7110 | Could not load your reviews.      | Reading `call_audits` for an agent or manager failed.                   |
+| SX-7111 | Could not load your reviews.      | Reading `team_audit_reviews` for a manager failed.                      |
+| SX-7112 | Could not save your reply.        | An agent's acknowledgement failed.                                      |
+| SX-7113 | Could not save your reply.        | A manager's acknowledgement failed.                                     |
+| SX-7201 | Could not load the feedback file. | A page of debtors, calls, payments, settlements or disputes failed.     |
+| SX-7202 | Could not load portfolios.        | The portfolio picker's read failed.                                     |
+| SX-7203 | Could not load this portfolio.    | Checking the caller may see the portfolio failed.                       |
 
 ### General (9xxx)
 

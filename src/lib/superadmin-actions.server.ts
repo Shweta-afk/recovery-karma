@@ -293,7 +293,7 @@ export const getCompanies = createServerFn({ method: "POST" })
           a.email,
         ]);
       } else if (a.role === "manager") counts.manager++;
-      else counts.agent++;
+      else if (a.role === "agent") counts.agent++;
       roleCounts.set(a.client_id, counts);
     }
     const balanceByClient = new Map(

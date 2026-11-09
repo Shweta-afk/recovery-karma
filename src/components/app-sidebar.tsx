@@ -26,6 +26,9 @@ import {
   HelpCircle,
   FileSignature,
   Archive,
+  Headphones,
+  Star,
+  FileSpreadsheet,
 } from "lucide-react";
 import {
   Sidebar,
@@ -48,6 +51,7 @@ const agentItems = [
   { title: "Messages", url: "/dashboard/messages", icon: MessageSquare },
   { title: "Payments", url: "/dashboard/payments", icon: CreditCard },
   { title: "Reports", url: "/dashboard/reports", icon: FileBarChart },
+  { title: "My Call Reviews", url: "/dashboard/my-reviews", icon: Star },
 ];
 
 const managerItems = [
@@ -67,6 +71,8 @@ const managerItems = [
   { title: "Debtors", url: "/dashboard/debtors", icon: Users },
   { title: "Payments", url: "/dashboard/payments", icon: CreditCard },
   { title: "Reports", url: "/manager/reports", icon: FileBarChart },
+  { title: "Feedback File", url: "/manager/feedback-file", icon: FileSpreadsheet },
+  { title: "Call Reviews", url: "/manager/reviews", icon: Star },
   { title: "Settings", url: "/dashboard/settings", icon: Settings },
 ];
 
@@ -76,6 +82,7 @@ const adminItems = [
   { title: "Users", url: "/admin/users", icon: UserCog },
   { title: "Teams", url: "/admin/teams", icon: Users },
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
+  { title: "Call Auditor", url: "/auditor", icon: Headphones },
   { title: "Insights", url: "/admin/insights", icon: Sparkles },
   { title: "Archive History", url: "/admin/archive", icon: DatabaseBackup },
   { title: "Portfolio Assignment", url: "/admin/portfolio", icon: Layers },
@@ -86,6 +93,13 @@ const adminItems = [
     icon: FileSignature,
   },
   { title: "System Settings", url: "/admin/settings", icon: Settings },
+];
+
+const auditorItems = [
+  { title: "Overview", url: "/auditor", icon: LayoutDashboard },
+  { title: "All Calls", url: "/auditor/calls", icon: Headphones },
+  { title: "Teams & Managers", url: "/auditor/teams", icon: Users },
+  { title: "Reports", url: "/auditor/reports", icon: FileSpreadsheet },
 ];
 
 const superadminItems = [
@@ -106,7 +120,7 @@ export function AppSidebar({ role }: { role: Role }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const isActive = (url: string) =>
-    url === "/manager" || url === "/admin" || url === "/superadmin"
+    url === "/manager" || url === "/admin" || url === "/superadmin" || url === "/auditor"
       ? pathname === url
       : pathname.startsWith(url);
 
@@ -175,6 +189,26 @@ export function AppSidebar({ role }: { role: Role }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 {adminItems.map((item) => (
+                  <SidebarMenuItem key={item.url}>
+                    <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                      <Link to={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {role === "auditor" && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Call Auditor</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {auditorItems.map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
                       <Link to={item.url}>

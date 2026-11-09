@@ -126,6 +126,14 @@ describe("routes render without composition errors", () => {
     expect(html.length).toBeGreaterThan(0);
   });
 
+  test("/manager/feedback-file renders the banker's file form", async () => {
+    expect(await renderRoute("/manager/feedback-file")).toContain("Feedback File");
+  });
+
+  test("/manager/reviews renders", async () => {
+    expect(await renderRoute("/manager/reviews")).toContain("Call Reviews");
+  });
+
   test("/manager renders", async () => {
     // renderRoute throws on any SSR render error; reaching the assertion is the pass.
     const html = await renderRoute("/manager");

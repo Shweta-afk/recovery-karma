@@ -67,7 +67,7 @@ import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
 import { PLATFORM_SUBDOMAIN, addressFor } from "@/lib/company-address";
 import { CompanyTelephonyCard } from "@/components/telephony/company-telephony-card";
 
-type EditableRole = "agent" | "manager" | "admin";
+type EditableRole = "agent" | "manager" | "admin" | "auditor";
 type CompanyStatus = "pending" | "approved" | "rejected";
 
 const TABS = ["overview", "users", "billing", "calling", "settings"] as const;
@@ -661,6 +661,7 @@ function SuperadminCompanyDetailPage() {
                                     <SelectItem value="agent">Agent</SelectItem>
                                     <SelectItem value="manager">Manager</SelectItem>
                                     <SelectItem value="admin">Admin</SelectItem>
+                                    <SelectItem value="auditor">Auditor</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </div>
