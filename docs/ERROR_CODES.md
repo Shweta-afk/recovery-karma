@@ -225,6 +225,7 @@ All are database errors on the action named; the database message is in the log.
 | SX-7201 | Could not load the feedback file. | A page of debtors, calls, payments, settlements or disputes failed.     |
 | SX-7202 | Could not load portfolios.        | The portfolio picker's read failed.                                     |
 | SX-7203 | Could not load this portfolio.    | Checking the caller may see the portfolio failed.                       |
+| SX-7204 | Could not load your teams.        | Reading a manager's teams to scope the feedback file failed.            |
 
 ### General (9xxx)
 

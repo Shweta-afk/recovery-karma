@@ -24,6 +24,7 @@ import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminArchiveRouteImport } from './routes/admin.archive'
 import { Route as AdminBillingRouteImport } from './routes/admin.billing'
 import { Route as AdminContractsRouteImport } from './routes/admin.contracts'
+import { Route as AdminFeedbackFileRouteImport } from './routes/admin.feedback-file'
 import { Route as AdminInsightsRouteImport } from './routes/admin.insights'
 import { Route as AdminLiveCallsRouteImport } from './routes/admin.live-calls'
 import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
@@ -140,6 +141,11 @@ const AdminBillingRoute = AdminBillingRouteImport.update({
 const AdminContractsRoute = AdminContractsRouteImport.update({
   id: '/contracts',
   path: '/contracts',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminFeedbackFileRoute = AdminFeedbackFileRouteImport.update({
+  id: '/feedback-file',
+  path: '/feedback-file',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminInsightsRoute = AdminInsightsRouteImport.update({
@@ -370,6 +376,7 @@ export interface FileRoutesByFullPath {
   '/admin/archive': typeof AdminArchiveRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/contracts': typeof AdminContractsRoute
+  '/admin/feedback-file': typeof AdminFeedbackFileRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
@@ -424,6 +431,7 @@ export interface FileRoutesByTo {
   '/admin/archive': typeof AdminArchiveRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/contracts': typeof AdminContractsRoute
+  '/admin/feedback-file': typeof AdminFeedbackFileRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
@@ -484,6 +492,7 @@ export interface FileRoutesById {
   '/admin/archive': typeof AdminArchiveRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/contracts': typeof AdminContractsRoute
+  '/admin/feedback-file': typeof AdminFeedbackFileRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
@@ -545,6 +554,7 @@ export interface FileRouteTypes {
     | '/admin/archive'
     | '/admin/billing'
     | '/admin/contracts'
+    | '/admin/feedback-file'
     | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
@@ -599,6 +609,7 @@ export interface FileRouteTypes {
     | '/admin/archive'
     | '/admin/billing'
     | '/admin/contracts'
+    | '/admin/feedback-file'
     | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
@@ -658,6 +669,7 @@ export interface FileRouteTypes {
     | '/admin/archive'
     | '/admin/billing'
     | '/admin/contracts'
+    | '/admin/feedback-file'
     | '/admin/insights'
     | '/admin/live-calls'
     | '/admin/portfolio'
@@ -822,6 +834,13 @@ declare module '@tanstack/react-router' {
       path: '/contracts'
       fullPath: '/admin/contracts'
       preLoaderRoute: typeof AdminContractsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/feedback-file': {
+      id: '/admin/feedback-file'
+      path: '/feedback-file'
+      fullPath: '/admin/feedback-file'
+      preLoaderRoute: typeof AdminFeedbackFileRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/insights': {
@@ -1125,6 +1144,7 @@ interface AdminRouteChildren {
   AdminArchiveRoute: typeof AdminArchiveRoute
   AdminBillingRoute: typeof AdminBillingRoute
   AdminContractsRoute: typeof AdminContractsRoute
+  AdminFeedbackFileRoute: typeof AdminFeedbackFileRoute
   AdminInsightsRoute: typeof AdminInsightsRoute
   AdminLiveCallsRoute: typeof AdminLiveCallsRoute
   AdminPortfolioRoute: typeof AdminPortfolioRoute
@@ -1139,6 +1159,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminArchiveRoute: AdminArchiveRoute,
   AdminBillingRoute: AdminBillingRoute,
   AdminContractsRoute: AdminContractsRoute,
+  AdminFeedbackFileRoute: AdminFeedbackFileRoute,
   AdminInsightsRoute: AdminInsightsRoute,
   AdminLiveCallsRoute: AdminLiveCallsRoute,
   AdminPortfolioRoute: AdminPortfolioRoute,

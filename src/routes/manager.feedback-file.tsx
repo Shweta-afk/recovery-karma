@@ -12,7 +12,7 @@ function FeedbackFilePage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Feedback File</h1>
         <p className="text-sm text-muted-foreground">
-          One portfolio's feedback, loan by loan, ready to send to the bank.
+          Every piece of feedback on a portfolio, loan by loan, ready to send to the bank.
         </p>
       </div>
       <FeedbackFileForm />

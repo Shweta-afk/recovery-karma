@@ -82,6 +82,7 @@ const adminItems = [
   { title: "Users", url: "/admin/users", icon: UserCog },
   { title: "Teams", url: "/admin/teams", icon: Users },
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
+  { title: "Feedback File", url: "/admin/feedback-file", icon: FileSpreadsheet },
   { title: "Call Auditor", url: "/auditor", icon: Headphones },
   { title: "Insights", url: "/admin/insights", icon: Sparkles },
   { title: "Archive History", url: "/admin/archive", icon: DatabaseBackup },

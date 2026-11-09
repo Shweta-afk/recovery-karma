@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DateRangeFilter } from "@/components/date-range-filter";
-import type { DateRange } from "@/lib/date-filter";
+import { EMPTY_RANGE, type DateRange } from "@/lib/date-filter";
 import { errorText } from "@/lib/app-error";
 import { getAccessToken } from "@/lib/access-token";
 import { downloadXlsx } from "@/lib/xlsx-export";
@@ -35,10 +35,9 @@ const safeName = (s: string) => s.replace(/[^\w-]+/g, "_").slice(0, 60);
 export function FeedbackFileForm() {
   const [portfolios, setPortfolios] = useState<PortfolioOption[] | null>(null);
   const [portfolioId, setPortfolioId] = useState("");
-  const [range, setRange] = useState<DateRange>({
-    from: istDayKeyDaysAgo(4),
-    to: istDayKeyDaysAgo(0),
-  });
+  const [team, setTeam] = useState("all");
+  // Everything by default: a banker can ask for the full history any day.
+  const [range, setRange] = useState<DateRange>(EMPTY_RANGE);
   const [includeNoActivity, setIncludeNoActivity] = useState(true);
   const [includeLinks, setIncludeLinks] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,8 +53,22 @@ export function FeedbackFileForm() {
   }, []);
 
   const today = istDayKeyDaysAgo(0);
-  const from = range.from || range.to || today;
-  const to = range.to || today;
+  const teams = [
+    ...new Map(
+      (portfolios ?? [])
+        .filter((p) => p.team_id)
+        .map((p) => [p.team_id as string, p.team_name ?? "Unnamed team"]),
+    ).entries(),
+  ];
+  const shown = (portfolios ?? []).filter(
+    (p) => team === "all" || (team === "none" ? !p.team_id : p.team_id === team),
+  );
+
+  const allTime = !range.from && !range.to;
+  // The date picker can hold a backwards range mid-entry; read it the right way round.
+  const swapped = !!range.from && !!range.to && range.from > range.to;
+  const from = swapped ? range.to : range.from;
+  const to = swapped ? range.from : range.to;
 
   const download = async () => {
     if (!portfolioId) return;
@@ -65,8 +78,8 @@ export function FeedbackFileForm() {
         data: {
           accessToken: await getAccessToken(),
           portfolioId,
-          from: from <= to ? from : to,
-          to: from <= to ? to : from,
+          from: from || undefined,
+          to: to || undefined,
           includeRecordingLinks: includeLinks,
         },
       });
@@ -79,15 +92,21 @@ export function FeedbackFileForm() {
           payments: data.payments,
           settlements: data.settlements,
           disputes: data.disputes,
+          messages: data.messages,
+          retentions: data.retentions,
+          reminders: data.reminders,
           agentNames: new Map(data.agentNames.map((a) => [a.id, a.name])),
-          from: from <= to ? from : to,
-          to: from <= to ? to : from,
+          from,
+          to,
           recordingLinks: new Map(Object.entries(data.recordingLinks)),
           includeNoActivity,
         },
         today,
       );
-      await downloadXlsx(`feedback-${safeName(data.portfolioName)}-${from}_to_${to}.xlsx`, sheets);
+      await downloadXlsx(
+        `feedback-${safeName(data.portfolioName)}-${allTime ? "all-time" : `${from || "start"}_to_${to || today}`}.xlsx`,
+        sheets,
+      );
       toast.success(`Feedback file ready: ${sheets[0].rows.length} loans`);
     } catch (e) {
       toast.error(errorText(e, "Could not build the feedback file"));
@@ -98,6 +117,32 @@ export function FeedbackFileForm() {
 
   return (
     <Card className="space-y-4 p-5">
+      {teams.length > 1 && (
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-foreground">Team</label>
+          <Select
+            value={team}
+            onValueChange={(v) => {
+              setTeam(v);
+              setPortfolioId("");
+            }}
+          >
+            <SelectTrigger className="h-9 max-w-md text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All teams</SelectItem>
+              {teams.map(([id, name]) => (
+                <SelectItem key={id} value={id}>
+                  {name}
+                </SelectItem>
+              ))}
+              <SelectItem value="none">No team</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       <div className="space-y-1.5">
         <label className="text-xs font-medium text-foreground">Portfolio</label>
         <Select value={portfolioId} onValueChange={setPortfolioId}>
@@ -105,9 +150,10 @@ export function FeedbackFileForm() {
             <SelectValue placeholder={portfolios ? "Choose a portfolio" : "Loading…"} />
           </SelectTrigger>
           <SelectContent>
-            {(portfolios ?? []).map((p) => (
+            {shown.map((p) => (
               <SelectItem key={p.id} value={p.id}>
                 {p.name}
+                {p.team_name ? ` · ${p.team_name}` : ""}
                 {p.closed_at ? " (closed)" : ""}
               </SelectItem>
             ))}
@@ -121,6 +167,15 @@ export function FeedbackFileForm() {
       <div className="space-y-1.5">
         <label className="text-xs font-medium text-foreground">Period</label>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={allTime ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => setRange(EMPTY_RANGE)}
+          >
+            All feedback
+          </Button>
           {PRESETS.map((p) => (
             <Button
               key={p.label}

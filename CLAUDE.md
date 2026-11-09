@@ -911,6 +911,15 @@ Admin → Users, not counted against agent/manager seats.
   sheets Feedback by Loan (their Allocation report layout, `Grouping Disposition` = the dated trail),
   All Feedback, Summary. It goes to the bank, so it must never contain audit data (a test pins
   this). Recording links are opt-in and are 7-day signed URLs.
+  Defaults to ALL feedback ever (2026-11-09). A loan's history is gathered from: this portfolio's
+  rows; other uploads of the same loan (same loan ID AND same borrower by phone or name, never by
+  `lender_name`, which holds things like a manager's name); and manual calls with no debtor whose
+  number belongs to exactly one loan in the company. Also payments, settlements, disputes,
+  messages, retention requests and reminders; a Source column says how each call got there.
+  Sheets: Feedback by Loan (first 36 columns = the company's Allocation report in its order; a test
+  pins it), Date-wise Feedback (a column per date), All Feedback, Summary. Access is enforced in
+  `portfolioScope`: a manager gets portfolios with their `manager_id` or one of their teams, not
+  everything RLS shows them; admins (`/admin/feedback-file`) and auditors get the whole company.
 - **Call length and "connected" come from the ledger.** `call_logs.duration_seconds` is NULL on
   every row (never written), so `call_audit_rows.duration_seconds` falls back to
   `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that

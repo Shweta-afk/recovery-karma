@@ -21,6 +21,11 @@ import {
   bestTimeToCall,
   buildFeedbackSheets,
   clampCell,
+  linkEarlierRows,
+  longDate,
+  matchManualCalls,
+  mergeLoanRows,
+  phoneKey,
   feedbackTrail,
   missedFollowUps,
   MAX_CELL,
@@ -243,7 +248,7 @@ describe("feedback by loan", () => {
   });
 
   test("All Feedback only shows the chosen period", () => {
-    const [, all] = buildFeedbackSheets(input({}), "2026-11-09");
+    const [, , all] = buildFeedbackSheets(input({}), "2026-11-09");
     expect(all.rows.filter((r) => r[5] === "Payment").length).toBe(0);
     expect(all.rows.filter((r) => r[5] === "Call").length).toBe(1);
   });
@@ -414,5 +419,338 @@ describe("audit queue", () => {
     // Sunday 8 Nov 2026 19:00 UTC is already Monday 9 Nov in IST.
     expect(istWeekStart(new Date("2026-11-08T19:00:00Z"))).toBe("2026-11-09");
     expect(istWeekStart(new Date("2026-11-08T10:00:00Z"))).toBe("2026-11-02");
+  });
+});
+
+describe("all feedback ever", () => {
+  const row = (id: string, ref: string | null, phone: string | null, name = "Ravi Kumar") => ({
+    id,
+    name,
+    phone_primary: phone,
+    loan_reference: ref,
+  });
+  const fileInput = (over: Partial<FeedbackInput>): FeedbackInput => ({
+    portfolioName: "P",
+    lenderName: "Bank",
+    debtors: [
+      {
+        ...row("d1", "L1", "9800000000"),
+        loan_amount: 1,
+        outstanding_balance: 1,
+        dpd: 1,
+        lender: "Bank",
+        product_type: "PL",
+        status: "active",
+        assigned_agent_id: null,
+      },
+    ],
+    calls: [],
+    payments: [],
+    settlements: [],
+    disputes: [],
+    agentNames: new Map(),
+    from: "",
+    to: "",
+    includeNoActivity: true,
+    ...over,
+  });
+
+  test("phone numbers compare on the last ten digits", () => {
+    expect(phoneKey("+91 98000-00000")).toBe("9800000000");
+    expect(phoneKey("12345")).toBeNull();
+  });
+
+  test("a loan listed twice in one file becomes one row", () => {
+    const { loans, canonicalOf } = mergeLoanRows([
+      row("a", " L1 ", "9800000000"),
+      row("b", "l1", "9800000000"),
+      row("c", null, "9811111111"),
+      row("d", null, "9822222222"),
+    ]);
+    expect(loans.map((l) => l.id)).toEqual(["a", "c", "d"]);
+    expect(canonicalOf.get("b")).toBe("a");
+  });
+
+  test("an earlier upload joins only with the same loan ID and the same borrower", () => {
+    const links = linkEarlierRows(
+      [row("now", "L1", "9800000000"), row("now2", "L2", "9833333333", "Sita Devi")],
+      [
+        row("byPhone", "L1", "+919800000000", "R K"),
+        row("byName", "l2", null, "SITA DEVI"),
+        row("otherPerson", "L1", "9844444444", "Someone Else"),
+        row("otherLoan", "L9", "9800000000"),
+      ],
+    );
+    expect(links.get("byPhone")).toBe("now");
+    expect(links.get("byName")).toBe("now2");
+    expect(links.has("otherPerson")).toBe(false);
+    expect(links.has("otherLoan")).toBe(false);
+  });
+
+  test("a manual call attaches only when its number belongs to exactly one loan", () => {
+    const loans = [row("d1", "L1", "9800000000")];
+    const manual = call({ debtor_id: null, customer_phone: "+919800000000" });
+    const owners = (...refs: string[]) => new Map([["9800000000", new Set(refs)]]);
+    const [hit] = matchManualCalls([manual], loans, owners("l1"));
+    expect(hit).toMatchObject({ debtor_id: "d1", link: "number" });
+    expect(matchManualCalls([manual], loans, owners("l1", "other-bank-loan"))).toEqual([]);
+    expect(matchManualCalls([manual], loans, new Map())).toEqual([]);
+    expect(
+      matchManualCalls(
+        [call({ debtor_id: null, customer_phone: "9899999999" })],
+        loans,
+        owners("l1"),
+      ),
+    ).toEqual([]);
+  });
+
+  test("no dates means everything, and the summary says so", () => {
+    const [, , all, summary] = buildFeedbackSheets(
+      fileInput({
+        calls: [call({ created_at: "2020-01-01T06:00:00Z" })],
+        payments: [
+          {
+            debtor_id: "d1",
+            amount: 5,
+            status: "completed",
+            source: null,
+            payment_method: null,
+            notes: null,
+            received_at: "2021-01-01T06:00:00Z",
+            created_at: "2021-01-01T06:00:00Z",
+          },
+        ],
+      }),
+      "2026-11-09",
+    );
+    expect(all.rows.length).toBe(2);
+    expect(summary.rows).toContainEqual(["Period", "All feedback to date"]);
+  });
+
+  test("every kind of feedback gets a row that lines up", () => {
+    const [, , all] = buildFeedbackSheets(
+      fileInput({
+        calls: [call({}), call({ call_id: "c2", link: "number" } as Partial<AuditCallRow>)],
+        settlements: [
+          {
+            debtor_id: "d1",
+            original_amount: 10,
+            proposed_amount: 5,
+            status: "open",
+            agent_notes: "n",
+            created_at: "2026-11-01T06:00:00Z",
+          },
+        ],
+        disputes: [
+          {
+            debtor_id: "d1",
+            dispute_type: "t",
+            debtor_reason: "r",
+            agent_notes: "n",
+            status: "open",
+            created_at: "2026-11-01T06:00:00Z",
+          },
+        ],
+        messages: [
+          {
+            debtor_id: "d1",
+            channel: "sms",
+            direction: "outbound",
+            content: "hello",
+            status: "sent",
+            sent_at: "2026-11-01T06:00:00Z",
+          },
+        ],
+        retentions: [
+          {
+            debtor_id: "d1",
+            reason: "keep",
+            status: "approved",
+            created_at: "2026-11-01T06:00:00Z",
+          },
+        ],
+        reminders: [
+          {
+            debtor_id: "d1",
+            kind: "ptp",
+            amount: 9,
+            due_date: "2026-11-02",
+            due_time: null,
+            message: "m",
+            created_at: "2026-11-01T06:00:00Z",
+          },
+        ],
+      }),
+      "2026-11-09",
+    );
+    for (const r of all.rows) expect(r.length).toBe(all.headers.length);
+    const types = all.rows.map((r) => r[5]);
+    for (const t of [
+      "Call",
+      "Settlement Request",
+      "Dispute",
+      "Message (sms)",
+      "Retention Request",
+      "PTP Reminder",
+    ]) {
+      expect(types).toContain(t);
+    }
+    expect(
+      all.rows.some((r) => r[all.headers.indexOf("Source")] === "Manual call, matched by number"),
+    ).toBe(true);
+  });
+
+  test("an update made without dialling is feedback but not a call attempt", () => {
+    const sheets = buildFeedbackSheets(
+      fileInput({
+        calls: [call({ dial_mode: "no_call", outcome: "promised", raw_notes: "spoke at branch" })],
+      }),
+      "2026-11-09",
+    );
+    const r = sheets[0].rows[0];
+    expect(r[LOAN_HEADERS.indexOf("Intensity of Calls")]).toBe(0);
+    expect(r[LOAN_HEADERS.indexOf("Connect Count")]).toBe(0);
+    expect(String(r[LOAN_HEADERS.indexOf("Grouping Disposition")])).toContain("spoke at branch");
+    expect(sheets[2].rows[0][5]).toBe("Disposition Update");
+  });
+});
+
+describe("the file matches the company's sample", () => {
+  test("first 36 columns are the Allocation report, in its order", () => {
+    expect(LOAN_HEADERS.slice(0, 36)).toEqual([
+      "Profile Name",
+      "Loan Account Number",
+      "Reference ID",
+      "Call Date",
+      "Agent ID",
+      "Agent Name",
+      "Supervisor Name",
+      "Customer Mobile Number",
+      "Customer Name",
+      "Intensity of Calls",
+      "Connect Count",
+      "Call Record Link",
+      "Team",
+      "Campaign Type (First Connected By)",
+      "Callback Miss to Call Count",
+      "PTP Miss to Call Count",
+      "Best Time to Call",
+      "Total Call Duration",
+      "Total Ringing Call Duration",
+      "Total Average Call Back Duration",
+      "Total Average Ringing Call Duration",
+      "Best Disposition Name",
+      "Best Disposition Remarks",
+      "Last Disposition Name",
+      "Last Disposition Remarks",
+      "Last Paid Date in Allocation",
+      "Last Paid Amount in Allocation",
+      "Generation Date",
+      "Generation Amount",
+      "PTP Date",
+      "PTP Amount",
+      "Callback Date",
+      "Till Date Collected",
+      "Code",
+      "Best Sub Code",
+      "Grouping Disposition",
+    ]);
+  });
+
+  test("Call Date reads like the sample", () => {
+    expect(longDate("2026-10-30")).toBe("Fri Oct 30 2026");
+  });
+
+  const loan = (id: string, ref: string) => ({
+    id,
+    name: id,
+    phone_primary: "9800000000",
+    loan_reference: ref,
+    loan_amount: 1,
+    outstanding_balance: 1,
+    dpd: 1,
+    lender: "B",
+    product_type: "PL",
+    status: "a",
+    assigned_agent_id: null,
+  });
+
+  test("date-wise sheet: a column per date, newest first, each loan's feedback under its day", () => {
+    const [byLoan, dated] = buildFeedbackSheets(
+      {
+        portfolioName: "P",
+        lenderName: "B",
+        debtors: [loan("d1", "L1"), loan("d2", "L2")],
+        calls: [
+          call({
+            call_id: "a",
+            debtor_id: "d1",
+            outcome: "callback",
+            raw_notes: "after 5",
+            created_at: "2026-11-07T06:00:00Z",
+          }),
+          call({
+            call_id: "b",
+            debtor_id: "d1",
+            outcome: "promised",
+            raw_notes: "will pay",
+            created_at: "2026-11-09T06:00:00Z",
+          }),
+          call({
+            call_id: "c",
+            debtor_id: "d1",
+            outcome: "no_answer",
+            created_at: "2026-11-09T09:00:00Z",
+          }),
+        ],
+        payments: [
+          {
+            debtor_id: "d2",
+            amount: 700,
+            status: "completed",
+            source: "agent",
+            payment_method: "upi",
+            notes: null,
+            received_at: "2026-11-08T06:00:00Z",
+            created_at: "2026-11-08T06:00:00Z",
+          },
+        ],
+        settlements: [],
+        disputes: [],
+        agentNames: new Map(),
+        from: "",
+        to: "",
+        includeNoActivity: true,
+      },
+      "2026-11-09",
+    );
+    expect(byLoan.headers.length).toBe(byLoan.rows[0].length);
+    expect(dated.headers.slice(3)).toEqual(["09/11/2026", "08/11/2026", "07/11/2026"]);
+    expect(dated.rows[0][3]).toBe("11:30 PTP - will pay | 14:30 Not Contacted");
+    expect(dated.rows[0][4]).toBe("");
+    expect(dated.rows[0][5]).toBe("11:30 Call Back - after 5");
+    expect(String(dated.rows[1][4])).toContain("Payment");
+    expect(String(dated.rows[1][4])).toContain("700");
+    for (const r of dated.rows) expect(r.length).toBe(dated.headers.length);
+  });
+
+  test("a loan left out of the main sheet is left out of the date-wise one", () => {
+    const sheets = buildFeedbackSheets(
+      {
+        portfolioName: "P",
+        lenderName: "B",
+        debtors: [loan("d1", "L1"), loan("d2", "L2")],
+        calls: [call({ debtor_id: "d1" })],
+        payments: [],
+        settlements: [],
+        disputes: [],
+        agentNames: new Map(),
+        from: "",
+        to: "",
+        includeNoActivity: false,
+      },
+      "2026-11-09",
+    );
+    expect(sheets[1].rows.map((r) => r[0])).toEqual(["L1"]);
   });
 });

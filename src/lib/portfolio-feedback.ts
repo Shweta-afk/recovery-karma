@@ -33,6 +33,130 @@ export interface FeedbackDebtor {
   product_type: string | null;
   status: string | null;
   assigned_agent_id: string | null;
+  phone_alternate?: string | null;
+  alt_phones?: string[] | null;
+}
+
+/** How a call reached this loan, when it isn't simply a call on this portfolio's row. */
+export type FeedbackCall = AuditCallRow & { link?: "earlier_allocation" | "number" };
+
+export interface FeedbackMessage {
+  debtor_id: string;
+  channel: string | null;
+  direction: string | null;
+  content: string | null;
+  status: string | null;
+  sent_at: string | null;
+}
+
+export interface FeedbackRetention {
+  debtor_id: string;
+  reason: string | null;
+  status: string | null;
+  created_at: string;
+}
+
+export interface FeedbackReminder {
+  debtor_id: string;
+  kind: string | null;
+  amount: number | null;
+  due_date: string | null;
+  due_time: string | null;
+  message: string | null;
+  created_at: string;
+}
+
+/* ─── one loan, wherever its history is ───────────────────────────────────────
+ *
+ * The same loan comes back in later uploads as a new debtor row, and call history stays on the row
+ * it was made against. Lender names can't join them (they're typed by hand: real values include
+ * a manager's name), so two rows are the same loan only with the same loan ID AND the same borrower.
+ */
+
+export const loanKey = (ref: string | null | undefined) => ref?.trim().toLowerCase() || null;
+
+/** Last 10 digits, or null when there aren't 10. */
+export function phoneKey(phone: string | null | undefined): string | null {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : null;
+}
+
+const nameKey = (name: string | null | undefined) =>
+  (name ?? "").toLowerCase().replace(/[^a-z]/g, "");
+
+type BorrowerRow = Pick<
+  FeedbackDebtor,
+  "id" | "name" | "phone_primary" | "loan_reference" | "phone_alternate" | "alt_phones"
+>;
+
+export function phoneKeysOf(d: BorrowerRow): string[] {
+  return [d.phone_primary, d.phone_alternate, ...(d.alt_phones ?? [])]
+    .map(phoneKey)
+    .filter((k): k is string => !!k);
+}
+
+export function sameBorrower(a: BorrowerRow, b: BorrowerRow): boolean {
+  const keys = new Set(phoneKeysOf(a));
+  if (phoneKeysOf(b).some((k) => keys.has(k))) return true;
+  const name = nameKey(a.name);
+  return name.length > 0 && name === nameKey(b.name);
+}
+
+/** One row per loan: a loan listed twice in a file folds into its first row. */
+export function mergeLoanRows<T extends BorrowerRow>(debtors: T[]) {
+  const loans: T[] = [];
+  const firstByKey = new Map<string, T>();
+  const canonicalOf = new Map<string, string>();
+  for (const d of debtors) {
+    const key = loanKey(d.loan_reference);
+    const first = key ? firstByKey.get(key) : undefined;
+    if (first) {
+      canonicalOf.set(d.id, first.id);
+      continue;
+    }
+    if (key) firstByKey.set(key, d);
+    loans.push(d);
+    canonicalOf.set(d.id, d.id);
+  }
+  return { loans, canonicalOf };
+}
+
+/** Rows from other uploads that are really these loans: other row id -> this portfolio's row. */
+export function linkEarlierRows(loans: BorrowerRow[], others: BorrowerRow[]): Map<string, string> {
+  const byKey = new Map<string, BorrowerRow>();
+  for (const l of loans) {
+    const key = loanKey(l.loan_reference);
+    if (key) byKey.set(key, l);
+  }
+  const links = new Map<string, string>();
+  for (const o of others) {
+    const key = loanKey(o.loan_reference);
+    const loan = key ? byKey.get(key) : undefined;
+    if (loan && sameBorrower(loan, o)) links.set(o.id, loan.id);
+  }
+  return links;
+}
+
+/** Manual calls with no account attached, placed on a loan by the number dialled. Only when that
+ *  number belongs to exactly one loan anywhere in the company: otherwise the call could be about
+ *  a different loan, possibly another bank's, and this file goes to the bank. */
+export function matchManualCalls(
+  calls: AuditCallRow[],
+  loans: BorrowerRow[],
+  loansByNumber: Map<string, Set<string>>,
+): FeedbackCall[] {
+  const loanByPhone = new Map<string, BorrowerRow>();
+  for (const l of loans) for (const k of phoneKeysOf(l)) loanByPhone.set(k, l);
+  const out: FeedbackCall[] = [];
+  for (const c of calls) {
+    const key = phoneKey(c.customer_phone);
+    const loan = key ? loanByPhone.get(key) : undefined;
+    if (!key || !loan) continue;
+    const owners = loansByNumber.get(key);
+    if (!owners || owners.size !== 1 || !owners.has(loanKey(loan.loan_reference) ?? "")) continue;
+    out.push({ ...c, debtor_id: loan.id, link: "number" });
+  }
+  return out;
 }
 
 export interface FeedbackPayment {
@@ -68,14 +192,17 @@ export interface FeedbackInput {
   portfolioName: string;
   lenderName: string | null;
   debtors: FeedbackDebtor[];
-  /** Calls inside the range, any order. */
-  calls: AuditCallRow[];
+  /** Calls inside the range, any order, with debtor_id already pointing at the row in `debtors`. */
+  calls: FeedbackCall[];
   /** Every completed payment on these loans, whatever the date: "Till Date Collected". */
   payments: FeedbackPayment[];
   settlements: FeedbackSettlement[];
   disputes: FeedbackDispute[];
+  messages?: FeedbackMessage[];
+  retentions?: FeedbackRetention[];
+  reminders?: FeedbackReminder[];
   agentNames: Map<string, string>;
-  /** "YYYY-MM-DD" IST bounds of the file. */
+  /** "YYYY-MM-DD" IST bounds of the file. Blank = no limit on that side; both blank = everything. */
   from: string;
   to: string;
   /** Call id -> link. Filled only when the manager asked for recording links. */
@@ -98,6 +225,12 @@ export const dmy = (day: string | null | undefined) =>
 export const istDateTime = (iso: string | null | undefined) =>
   iso ? `${dmy(istDay(iso))} ${ist(iso).slice(11, 19)}` : "";
 const istHour = (iso: string) => Number(ist(iso).slice(11, 13));
+
+/** "Fri Oct 30 2026", the way the sample's Call Date reads. */
+export const longDate = (day: string) => {
+  const parts = new Date(`${day}T00:00:00Z`).toUTCString().split(" ");
+  return `${parts[0].replace(",", "")} ${parts[2]} ${parts[1]} ${parts[3]}`;
+};
 
 export const dialModeLabel = (m: string | null | undefined) =>
   m ? (DIAL_MODE_META[m as DialMode]?.short ?? m) : "";
@@ -170,10 +303,10 @@ export function missedFollowUps(calls: AuditCallRow[], todayIst: string) {
 const avg = (nums: number[]) =>
   nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
 
+/** The first 36 are the company's own "ALLOCTION POTFOLIO REPORT", in its order (spelling
+ *  corrected). A test pins this. Extra columns go after them, never between. */
 export const LOAN_HEADERS = [
   "Profile Name",
-  "Lender",
-  "Product",
   "Loan Account Number",
   "Reference ID",
   "Call Date",
@@ -182,10 +315,6 @@ export const LOAN_HEADERS = [
   "Supervisor Name",
   "Customer Mobile Number",
   "Customer Name",
-  "Loan Amount",
-  "Outstanding",
-  "DPD",
-  "Account Status",
   "Intensity of Calls",
   "Connect Count",
   "Call Record Link",
@@ -212,8 +341,14 @@ export const LOAN_HEADERS = [
   "Till Date Collected",
   "Code",
   "Best Sub Code",
-  "Contact Group",
   "Grouping Disposition",
+  "Lender",
+  "Product",
+  "Loan Amount",
+  "Outstanding",
+  "DPD",
+  "Account Status",
+  "Contact Group",
 ];
 
 export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): XlsxSheet[] {
@@ -223,11 +358,14 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
     (p) => p.debtor_id,
   );
   const loanRows: (string | number)[][] = [];
+  const included: FeedbackDebtor[] = [];
 
   for (const d of input.debtors) {
     const calls = (callsByDebtor.get(d.id) ?? []).sort(byTime);
     if (!calls.length && !input.includeNoActivity) continue;
-    const connected = calls.filter(isAnswered);
+    // An update made without dialling is feedback, but not a call attempt.
+    const attempts = calls.filter((c) => c.dial_mode !== "no_call");
+    const connected = attempts.filter(isAnswered);
     const contacted = calls.some((c) => isConnectedOutcome(c.outcome));
     const best = bestCall(calls);
     const last = calls[calls.length - 1];
@@ -239,43 +377,38 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
     const generated = [...calls].reverse().find((c) => c.outcome === "paid");
     const ptp = [...calls].reverse().find((c) => c.outcome === "promised");
     const callback = [...calls].reverse().find((c) => c.outcome === "callback");
-    const missed = missedFollowUps(calls, todayIst);
+    const missed = missedFollowUps(attempts, todayIst);
     const links = calls
       .map((c) => input.recordingLinks?.get(c.call_id))
       .filter((l): l is string => !!l);
-    const rings = calls.map((c) => c.ring_seconds).filter((s): s is number => s != null);
-    const callbackLengths = calls
+    const rings = attempts.map((c) => c.ring_seconds).filter((s): s is number => s != null);
+    const callbackLengths = attempts
       .filter((c) => c.outcome === "callback")
       .map((c) => c.duration_seconds ?? 0);
     const callbackAvg = avg(callbackLengths);
     const ringAvg = avg(rings);
 
+    included.push(d);
     loanRows.push([
       input.portfolioName,
-      d.lender ?? input.lenderName ?? "",
-      d.product_type ?? "",
       d.loan_reference ?? "",
       "",
-      last ? dmy(istDay(last.created_at)) : "",
+      last ? longDate(istDay(last.created_at)) : "",
       owner?.agent_code ?? "",
       owner?.agent_name ??
         (d.assigned_agent_id ? (input.agentNames.get(d.assigned_agent_id) ?? "") : ""),
       owner?.manager_name ?? "",
       d.phone_primary ?? "",
       d.name,
-      money(d.loan_amount),
-      money(d.outstanding_balance),
-      d.dpd ?? "",
-      d.status ?? "",
-      calls.length,
+      attempts.length,
       connected.length,
       clampCell(links.join(" , "), " …"),
       owner?.team_name ?? "",
       connected.length ? dialModeLabel(connected[0].dial_mode) : "",
       missed.callback,
       missed.ptp,
-      bestTimeToCall(calls),
-      calls.length ? fmtSeconds(sum(calls.map((c) => c.duration_seconds ?? 0))) : "",
+      bestTimeToCall(attempts),
+      attempts.length ? fmtSeconds(sum(attempts.map((c) => c.duration_seconds ?? 0))) : "",
       rings.length ? fmtSeconds(sum(rings)) : "",
       callbackAvg != null ? fmtSeconds(callbackAvg) : "",
       ringAvg != null ? fmtSeconds(ringAvg) : "",
@@ -293,23 +426,75 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
       payments.length ? sum(payments.map((p) => Number(p.amount))) : "",
       connected.length ? "CONNECTED" : "NOT CONNECTED",
       best?.outcome_reason ?? "",
-      contacted ? "Contact" : "No Contact",
       feedbackTrail(calls),
+      d.lender ?? input.lenderName ?? "",
+      d.product_type ?? "",
+      money(d.loan_amount),
+      money(d.outstanding_balance),
+      d.dpd ?? "",
+      d.status ?? "",
+      contacted ? "Contact" : "No Contact",
     ]);
   }
 
+  const { sheet: allFeedback, entries } = allFeedbackSheet(input);
   return [
     { name: "Feedback by Loan", headers: LOAN_HEADERS, rows: loanRows },
-    allFeedbackSheet(input),
+    dateWiseSheet(included, entries),
+    allFeedback,
     summarySheet(input),
   ];
 }
 
-function allFeedbackSheet(input: FeedbackInput): XlsxSheet {
+interface FeedbackEntry {
+  debtorId: string;
+  at: string;
+  text: string;
+}
+
+/** One row per loan, one column per date that has any feedback, newest date first. */
+function dateWiseSheet(loans: FeedbackDebtor[], entries: FeedbackEntry[]): XlsxSheet {
+  const byLoanDay = new Map<string, FeedbackEntry[]>();
+  const days = new Set<string>();
+  const shown = new Set(loans.map((l) => l.id));
+  for (const e of [...entries].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))) {
+    if (!shown.has(e.debtorId)) continue;
+    const day = istDay(e.at);
+    days.add(day);
+    const key = `${e.debtorId}|${day}`;
+    const list = byLoanDay.get(key);
+    if (list) list.push(e);
+    else byLoanDay.set(key, [e]);
+  }
+  const columns = [...days].sort().reverse();
+  return {
+    name: "Date-wise Feedback",
+    headers: [
+      "Loan Account Number",
+      "Customer Name",
+      "Customer Mobile Number",
+      ...columns.map(dmy),
+    ],
+    rows: loans.map((l) => [
+      l.loan_reference ?? "",
+      l.name,
+      l.phone_primary ?? "",
+      ...columns.map((day) =>
+        clampCell(
+          (byLoanDay.get(`${l.id}|${day}`) ?? [])
+            .map((e) => `${ist(e.at).slice(11, 16)} ${e.text}`)
+            .join(" | "),
+        ),
+      ),
+    ]),
+  };
+}
+
+function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: FeedbackEntry[] } {
   const debtorById = new Map(input.debtors.map((d) => [d.id, d]));
   const inRange = (iso: string) => {
     const day = istDay(iso);
-    return day >= input.from && day <= input.to;
+    return (!input.from || day >= input.from) && (!input.to || day <= input.to);
   };
   type Line = { at: string; cells: (string | number)[] };
   const base = (debtorId: string, at: string) => {
@@ -323,13 +508,15 @@ function allFeedbackSheet(input: FeedbackInput): XlsxSheet {
     ];
   };
   const lines: Line[] = [];
+  const entries: FeedbackEntry[] = [];
   for (const c of input.calls) {
     if (!c.debtor_id) continue;
+    entries.push({ debtorId: c.debtor_id, at: c.created_at, text: callFeedbackText(c) });
     lines.push({
       at: c.created_at,
       cells: [
         ...base(c.debtor_id, c.created_at),
-        "Call",
+        c.dial_mode === "no_call" ? "Disposition Update" : "Call",
         c.agent_name,
         c.customer_phone ?? "",
         dialModeLabel(c.dial_mode),
@@ -344,6 +531,11 @@ function allFeedbackSheet(input: FeedbackInput): XlsxSheet {
         c.callback_time ?? "",
         c.outcome === "paid" ? money(c.promise_amount) : "",
         input.recordingLinks?.get(c.call_id) ?? "",
+        c.link === "number"
+          ? "Manual call, matched by number"
+          : c.link === "earlier_allocation"
+            ? "Earlier allocation"
+            : "This allocation",
       ],
     });
   }
@@ -356,7 +548,12 @@ function allFeedbackSheet(input: FeedbackInput): XlsxSheet {
     sub: string,
     remarks: string,
     amount: number | string,
-  ) =>
+  ) => {
+    entries.push({
+      debtorId,
+      at,
+      text: [type, disposition, sub, remarks, amount].filter((v) => v !== "").join(" - "),
+    });
     lines.push({
       at,
       cells: [
@@ -376,8 +573,10 @@ function allFeedbackSheet(input: FeedbackInput): XlsxSheet {
         "",
         amount,
         "",
+        "",
       ],
     });
+  };
   for (const p of input.payments) {
     const at = p.received_at ?? p.created_at;
     if (!inRange(at)) continue;
@@ -418,8 +617,47 @@ function allFeedbackSheet(input: FeedbackInput): XlsxSheet {
       "",
     );
   }
+  for (const m of input.messages ?? []) {
+    if (!m.sent_at || !inRange(m.sent_at)) continue;
+    other(
+      m.debtor_id,
+      m.sent_at,
+      m.channel ? `Message (${m.channel})` : "Message",
+      m.direction ?? "",
+      m.status ?? "",
+      "",
+      m.content ?? "",
+      "",
+    );
+  }
+  for (const r of input.retentions ?? []) {
+    if (!inRange(r.created_at)) continue;
+    other(
+      r.debtor_id,
+      r.created_at,
+      "Retention Request",
+      "",
+      r.status ?? "",
+      "",
+      r.reason ?? "",
+      "",
+    );
+  }
+  for (const r of input.reminders ?? []) {
+    if (!inRange(r.created_at)) continue;
+    other(
+      r.debtor_id,
+      r.created_at,
+      r.kind === "ptp" ? "PTP Reminder" : "Callback Reminder",
+      "",
+      r.due_date ? `Due ${dmy(r.due_date)}${r.due_time ? ` ${r.due_time}` : ""}` : "",
+      "",
+      r.message ?? "",
+      money(r.amount),
+    );
+  }
   lines.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
-  return {
+  const sheet: XlsxSheet = {
     name: "All Feedback",
     headers: [
       "Loan Account Number",
@@ -442,9 +680,11 @@ function allFeedbackSheet(input: FeedbackInput): XlsxSheet {
       "Callback Time",
       "Amount",
       "Call Record Link",
+      "Source",
     ],
     rows: lines.map((l) => l.cells),
   };
+  return { sheet, entries };
 }
 
 function summarySheet(input: FeedbackInput): XlsxSheet {
@@ -458,11 +698,21 @@ function summarySheet(input: FeedbackInput): XlsxSheet {
   const rows: (string | number)[][] = [
     ["Portfolio", input.portfolioName],
     ["Lender", input.lenderName ?? ""],
-    ["Period", `${dmy(input.from)} to ${dmy(input.to)}`],
+    [
+      "Period",
+      input.from || input.to
+        ? `${input.from ? dmy(input.from) : "Start"} to ${input.to ? dmy(input.to) : "Today"}`
+        : "All feedback to date",
+    ],
     ["Total loans in portfolio", input.debtors.length],
     ["Loans called in period", called.size],
     ["Loans connected in period", connected.size],
-    ["Total call attempts", input.calls.length],
+    ["Total call attempts", input.calls.filter((c) => c.dial_mode !== "no_call").length],
+    [
+      "Calls from earlier allocations",
+      input.calls.filter((c) => c.link === "earlier_allocation").length,
+    ],
+    ["Manual calls matched by number", input.calls.filter((c) => c.link === "number").length],
     ["", ""],
     ["Best disposition per loan", "Loans"],
   ];
