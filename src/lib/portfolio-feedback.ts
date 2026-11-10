@@ -12,6 +12,7 @@
 //   "Total AVERAGE Call BACK duration" = average length of calls that ended in a Call Back.
 import type { XlsxSheet } from "./xlsx-export";
 import {
+  DISPOSITION_CODE,
   DISPOSITION_RANK,
   dispositionLabel,
   fmtSeconds,
@@ -480,8 +481,22 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
 interface FeedbackEntry {
   debtorId: string;
   at: string;
-  code: string;
+  /** The disposition's number; null for events that have none, like a message. */
+  code: number | null;
   text: string;
+}
+
+/** Non-call events that correspond to a disposition. */
+const EVENT_CODE: Record<string, number> = {
+  Payment: DISPOSITION_CODE.paid,
+  "Settlement Request": DISPOSITION_CODE.settlement,
+  Dispute: DISPOSITION_CODE.dispute,
+};
+
+/** One code stays a real number in Excel; several on one day read "200 | 600". */
+function codeCell(items: FeedbackEntry[]): string | number {
+  const codes = items.map((e) => e.code).filter((c): c is number => c !== null);
+  return codes.length === 1 ? codes[0] : codes.join(" | ");
 }
 
 function firstPtpOfLoans(input: FeedbackInput): Map<string, PtpMark> {
@@ -522,7 +537,7 @@ function dateWiseSheet(loans: FeedbackDebtor[], entries: FeedbackEntry[]): XlsxS
       ...columns.flatMap((day) => {
         const items = byLoanDay.get(`${l.id}|${day}`) ?? [];
         return [
-          clampCell(items.map((e) => e.code).join(" | ")),
+          codeCell(items),
           clampCell(items.map((e) => `${ist(e.at).slice(11, 16)} ${e.text}`).join(" | ")),
         ];
       }),
@@ -557,7 +572,7 @@ function ccReportSheet(
     entries.push({
       debtorId: c.debtor_id,
       at: c.created_at,
-      code: dispositionLabel(c.outcome),
+      code: DISPOSITION_CODE[c.outcome] ?? null,
       text: callFeedbackText(c),
     });
     const generated = c.outcome === "promised" ? firstPtps.get(c.debtor_id) : undefined;
@@ -605,7 +620,7 @@ function ccReportSheet(
     entries.push({
       debtorId,
       at,
-      code: type,
+      code: EVENT_CODE[type] ?? null,
       text: [type, disposition, sub, remarks, amount].filter((v) => v !== "").join(" - "),
     });
     lines.push({

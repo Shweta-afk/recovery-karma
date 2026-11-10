@@ -1,7 +1,9 @@
 // Rules behind the Call Auditor portal and the banker's feedback file. Run: bun test scripts/
 import { describe, expect, test } from "bun:test";
 import {
+  DISPOSITION_CODE,
   FATAL_ERRORS,
+  OUTCOME_LABEL,
   SCORECARD,
   auditHasContent,
   buildAuditQueue,
@@ -735,13 +737,13 @@ describe("the file matches the company's sample", () => {
       "07/11/2026 Code",
       "07/11/2026 Feedback",
     ]);
-    expect(dated.rows[0][3]).toBe("PTP | Not Contacted");
+    expect(dated.rows[0][3]).toBe("200 | 600");
     expect(dated.rows[0][4]).toBe("11:30 PTP - will pay | 14:30 Not Contacted");
     expect(dated.rows[0][5]).toBe("");
     expect(dated.rows[0][6]).toBe("");
-    expect(dated.rows[0][7]).toBe("Call Back");
+    expect(dated.rows[0][7]).toBe(300);
     expect(dated.rows[0][8]).toBe("11:30 Call Back - after 5");
-    expect(dated.rows[1][5]).toBe("Payment");
+    expect(dated.rows[1][5]).toBe(100);
     expect(String(dated.rows[1][6])).toContain("700");
     for (const r of dated.rows) expect(r.length).toBe(dated.headers.length);
   });
@@ -775,6 +777,23 @@ describe("the file matches the company's sample", () => {
       promise_amount: amount,
       created_at: `${day}T06:00:00.000Z`,
     });
+
+  test("every disposition has the number from the company's own export", () => {
+    expect(DISPOSITION_CODE).toEqual({
+      paid: 100,
+      promised: 200,
+      callback: 300,
+      settlement: 400,
+      dispute: 500,
+      no_answer: 600,
+      voicemail: 600,
+      wrong_number: 600,
+      refused: 700,
+    });
+    for (const outcome of Object.keys(OUTCOME_LABEL)) {
+      expect(DISPOSITION_CODE[outcome]).toBeGreaterThan(0);
+    }
+  });
 
   test("Generation Date is the day the first PTP was marked, and a later PTP doesn't move it", () => {
     const [byLoan, , cc] = generationFile([

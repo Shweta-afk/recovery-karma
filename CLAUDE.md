@@ -943,13 +943,15 @@ Admin → Users, not counted against agent/manager seats.
 - **Feedback File wording (user, 2026-11-10).** Generation Date/Amount = the loan's FIRST PTP: the
   PTP date moves when a promise is renewed, the generation date never does, whatever period the
   file covers (`firstPtpBy`, `earlierPtps`). Date-wise Feedback has a Code and a Feedback column per
-  date. The per-event sheet is named **CC Report**.
+  date; Code is a number (`DISPOSITION_CODE`, from the company's call export: Paid 100, PTP 200,
+  Call Back 300, Settlement 400, Dispute 500, Not Contacted 600, RTP 700). The per-event sheet is named **CC Report**.
 - **Disconnected By** (`telephony_calls.ended_by`, `20261110_ledger_ended_by.sql`): SkyCRM's events
   don't say who hung up, so SamvadX records it. An End press = agent (`providerHangup`,
   `markAgentEndedCall` for the browser phone's own button); a final `completed` event with no End
   press = customer. Older calls are blank unless the ledger still says `canceled`.
 - **DID Used** comes from `telephony_calls.did_number`, which is NULL on every call as of
-  2026-11-10 (`telephony_dids` is empty). `call_audit_rows.duration_seconds` falls back to the
+  2026-11-10 (`telephony_dids` is empty). SkyCRM can't fill it: `dialing_phone` takes no caller ID,
+  outbound events and CDRs carry none, and outbound recording names hold only extension + number. `call_audit_rows.duration_seconds` falls back to the
   ledger for calls not yet copied: `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that
   figure is ringing, not talk). Connected = ledger `completed`, else the disposition (`isAnswered`);
   the SQL summary and JS reports must stay in step. Contact Group stays disposition-based.

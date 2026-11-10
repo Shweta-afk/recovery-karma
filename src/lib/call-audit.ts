@@ -364,6 +364,20 @@ export const DISPOSITION_RANK: Record<string, number> = {
   no_answer: 100,
 };
 
+/** Each disposition's number on the Date-wise Feedback sheet, from the company's own call export
+ *  ("Best Disposition Rank"). Voicemail and wrong number sit under Not Contacted there. */
+export const DISPOSITION_CODE: Record<string, number> = {
+  paid: 100,
+  promised: 200,
+  callback: 300,
+  settlement: 400,
+  dispute: 500,
+  no_answer: 600,
+  voicemail: 600,
+  wrong_number: 600,
+  refused: 700,
+};
+
 export const dispositionLabel = (outcome: string | null | undefined) =>
   outcome ? (OUTCOME_LABEL[outcome] ?? outcome) : "";
 
