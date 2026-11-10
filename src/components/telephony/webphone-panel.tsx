@@ -155,7 +155,7 @@ function Phone2({ config }: { config: WebphoneConfig }) {
                   {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </Button>
               )}
-              <Button variant="destructive" onClick={() => void wp.hangup()}>
+              <Button variant="destructive" onClick={() => void wp.endByAgent()}>
                 <PhoneOff className="mr-1 h-4 w-4" /> Hang up
               </Button>
             </div>

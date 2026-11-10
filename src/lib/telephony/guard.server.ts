@@ -533,6 +533,18 @@ export async function updateLedgerIfOpen(
   if (error) console.warn(`[telephony-guard] ledger update failed: ${error.message}`);
 }
 
+/** The provider's final event on an answered call nobody pressed End on: the customer hung up.
+ *  Only when no one recorded an End press first. Separate from the main ledger update so that a
+ *  database without the column (20261110_ledger_ended_by.sql) loses only this. */
+export async function markEndedByCustomer(id: string): Promise<void> {
+  const { error } = await db()
+    .from("telephony_calls")
+    .update({ ended_by: "customer" })
+    .eq("id", id)
+    .is("ended_by", null);
+  if (error) console.warn(`[telephony-guard] ended_by update failed: ${error.message}`);
+}
+
 export async function ledgerByProviderCallId(providerCallId: string): Promise<LedgerRow | null> {
   const { data } = await db()
     .from("telephony_calls")

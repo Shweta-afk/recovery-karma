@@ -18,6 +18,7 @@ import { errorText } from "@/lib/app-error";
 import { getAccessToken } from "@/lib/access-token";
 import { downloadXlsx, reportFilename, type XlsxSheet } from "@/lib/xlsx-export";
 import { istDayKeyDaysAgo, type AuditCallRow, type TeamReviewRow } from "@/lib/call-audit";
+import type { PtpMark } from "@/lib/portfolio-feedback";
 import {
   agentScorecardSheet,
   aiVsAuditorSheet,
@@ -35,6 +36,7 @@ import {
   getAuditExportPage,
   getAuditOrg,
   getAuditPresence,
+  listEarlierPtps,
   listTeamReviews,
 } from "@/lib/call-audit.server";
 
@@ -46,6 +48,7 @@ export const Route = createFileRoute("/auditor/reports")({
 interface Loaded {
   calls: AuditCallRow[];
   presence: PresenceRow[];
+  earlierPtps: PtpMark[];
   reviews: TeamReviewRow[];
   origin: string;
 }
@@ -65,7 +68,7 @@ const REPORTS: { id: string; title: string; about: string; build: (d: Loaded) =>
     title: "Call Log",
     about:
       "One row per call, in your export's column order, then everything else we hold including every bank-file column.",
-    build: (d) => callLogSheet(d.calls, d.origin),
+    build: (d) => callLogSheet(d.calls, d.origin, d.earlierPtps),
   },
   {
     id: "performance",
@@ -162,6 +165,7 @@ function AuditorReports() {
     return {
       calls,
       presence,
+      earlierPtps: await listEarlierPtps({ data: { accessToken, before: from } }),
       reviews: team === "all" ? allReviews : allReviews.filter((r) => r.team_id === team),
       origin: window.location.origin,
     };

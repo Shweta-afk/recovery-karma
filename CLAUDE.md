@@ -927,9 +927,17 @@ Admin → Users, not counted against agent/manager seats.
   pins it), Date-wise Feedback (a column per date), All Feedback, Summary. Access is enforced in
   `portfolioScope`: a manager gets portfolios with their `manager_id` or one of their teams, not
   everything RLS shows them; admins (`/admin/feedback-file`) and auditors get the whole company.
-- **Call length and "connected" come from the ledger.** `call_logs.duration_seconds` is NULL on
-  every row (never written), so `call_audit_rows.duration_seconds` falls back to
-  `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that
+- **Feedback File wording (user, 2026-11-10).** Generation Date/Amount = the loan's FIRST PTP: the
+  PTP date moves when a promise is renewed, the generation date never does, whatever period the
+  file covers (`firstPtpBy`, `earlierPtps`). Date-wise Feedback has a Code and a Feedback column per
+  date. The per-event sheet is named **CC Report**.
+- **Disconnected By** (`telephony_calls.ended_by`, `20261110_ledger_ended_by.sql`): SkyCRM's events
+  don't say who hung up, so SamvadX records it. An End press = agent (`providerHangup`,
+  `markAgentEndedCall` for the browser phone's own button); a final `completed` event with no End
+  press = customer. Older calls are blank unless the ledger still says `canceled`.
+- **DID Used** comes from `telephony_calls.did_number`, which is NULL on every call as of
+  2026-11-10 (`telephony_dids` is empty). `call_audit_rows.duration_seconds` falls back to the
+  ledger for calls not yet copied: `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that
   figure is ringing, not talk). Connected = ledger `completed`, else the disposition (`isAnswered`);
   the SQL summary and JS reports must stay in step. Contact Group stays disposition-based.
 - ⚠️ As of 2026-11-09 no call has a recording: SkyCRM's `download_audio` answers 500

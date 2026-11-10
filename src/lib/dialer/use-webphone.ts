@@ -8,6 +8,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
+import { getAccessToken } from "@/lib/access-token";
+import { markAgentEndedCall } from "@/lib/telephony-actions.server";
 import {
   SipWebphone,
   type WebphoneCall,
@@ -28,6 +30,7 @@ export interface UseWebphone {
   dial: (target: string) => Promise<void>;
   answer: () => Promise<void>;
   hangup: () => Promise<void>;
+  endByAgent: () => Promise<void>;
   setMuted: (muted: boolean) => void;
 }
 
@@ -50,9 +53,7 @@ export function useWebphone(config: WebphoneConfig | null): UseWebphone {
 
   const connect = useCallback(async () => {
     if (!config) {
-      setError(
-        "Webphone is not configured.",
-      );
+      setError("Webphone is not configured.");
       return;
     }
     if (phoneRef.current) return; // already connected
@@ -108,6 +109,14 @@ export function useWebphone(config: WebphoneConfig | null): UseWebphone {
     await phoneRef.current?.hangup();
   }, []);
 
+  /** The agent's own End press, as against the phone dropping the leg for any other reason. */
+  const endByAgent = useCallback(async () => {
+    void getAccessToken()
+      .then((accessToken) => markAgentEndedCall({ data: { accessToken } }))
+      .catch(() => undefined);
+    await phoneRef.current?.hangup();
+  }, []);
+
   const setMuted = useCallback((muted: boolean) => {
     phoneRef.current?.setMuted(muted);
   }, []);
@@ -133,6 +142,7 @@ export function useWebphone(config: WebphoneConfig | null): UseWebphone {
     dial,
     answer,
     hangup,
+    endByAgent,
     setMuted,
   };
 }

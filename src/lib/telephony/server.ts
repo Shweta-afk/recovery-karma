@@ -210,6 +210,8 @@ async function dialAgentsFor(caller: VerifiedCaller, numbers: string[]): Promise
 /** Hang up through the provider with whatever it needs from the ledger, then close the ledger row. */
 async function providerHangup(providerCallId: string): Promise<void> {
   const ledger = await ledgerByProviderCallId(providerCallId).catch(() => null);
+  // Before the hangup request: the provider's final event can arrive while it is in flight.
+  if (ledger && !ledger.ended_at) await updateLedger(ledger.id, { ended_by: "agent" });
   await getTelephonyProvider().hangup(providerCallId, {
     agentHandle: ledger?.agent_handle,
     remotePhone: ledger?.remote_phone,

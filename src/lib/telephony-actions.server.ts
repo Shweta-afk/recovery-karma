@@ -635,6 +635,30 @@ export const reportDisposition = createServerFn({ method: "POST" })
     }
   });
 
+/** The agent pressed End on the browser phone itself, which drops their leg without going through
+ *  hangupCall. Marks their latest call, so Disconnected By doesn't read as the customer. */
+export const markAgentEndedCall = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!caller.agentId) return { ok: false };
+    const since = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const { data: latest } = await db()
+      .from("telephony_calls")
+      .select("id")
+      .eq("agent_id", caller.agentId)
+      .gte("started_at", since)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!latest) return { ok: false };
+    const { error } = await db()
+      .from("telephony_calls")
+      .update({ ended_by: "agent" })
+      .eq("id", (latest as { id: string }).id);
+    return { ok: !error };
+  });
+
 /** Copy a call's talk time from the ledger onto its call log, for when the provider's final event
  *  arrived before the agent saved the disposition (a later event copies it itself). Server-side
  *  because agents can neither read the ledger nor UPDATE call_logs. */
