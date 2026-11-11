@@ -466,7 +466,14 @@ async function dial(
       await updateLedger(ledgerId, { provider_call_id: providerCallId });
       next = engine.bindProviderCall(next, leg.id, providerCallId);
     } catch (err) {
-      await updateLedger(ledgerId, { ended_at: new Date().toISOString(), status: "failed" });
+      await updateLedger(ledgerId, {
+        ended_at: new Date().toISOString(),
+        status: "failed",
+        vendor_events: `start refused: ${err instanceof Error ? err.message : String(err)}`.slice(
+          0,
+          500,
+        ),
+      });
       // One debtor's number being unreachable must not abort the whole batch.
       console.error(
         `[dialer] startCall failed for leg ${leg.id}:`,
@@ -761,7 +768,15 @@ export const startCall = createServerFn({ method: "POST" })
         hints: { aiScore: data.aiScore, ivr: data.ivr },
       }));
     } catch (err) {
-      await updateLedger(ledgerId, { ended_at: new Date().toISOString(), status: "failed" });
+      // Keep SkyCRM's own reason: without it a refused dial is just "failed" in the ledger.
+      await updateLedger(ledgerId, {
+        ended_at: new Date().toISOString(),
+        status: "failed",
+        vendor_events: `start refused: ${err instanceof Error ? err.message : String(err)}`.slice(
+          0,
+          500,
+        ),
+      });
       throw err;
     }
     await updateLedger(ledgerId, { provider_call_id: providerCallId });

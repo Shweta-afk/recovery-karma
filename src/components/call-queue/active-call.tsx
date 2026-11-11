@@ -48,6 +48,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -218,6 +228,7 @@ function ActiveCallContent({
   // calls made by OTHER agents (now readable — see the migration referenced below) are present,
   // and re-read whenever anything in the app writes a disposition.
   const [dispositionsTick, setDispositionsTick] = useState(0);
+  const [confirmDnc, setConfirmDnc] = useState(false);
   useEffect(() => {
     const bump = () => setDispositionsTick((t) => t + 1);
     window.addEventListener("dispositions-updated", bump);
@@ -1334,11 +1345,36 @@ function ActiveCallContent({
                       <input
                         type="checkbox"
                         checked={disposition.doNotCall}
-                        onChange={(e) => up({ doNotCall: e.target.checked })}
+                        // Ticking asks first — agents have ticked this by mistake, and it blocks
+                        // the number for the whole company (2026-11-11). Unticking needs no check.
+                        onChange={(e) =>
+                          e.target.checked ? setConfirmDnc(true) : up({ doNotCall: false })
+                        }
                         className="rounded"
                       />
                       <span className="text-sm">Do not call again</span>
                     </label>
+                    <AlertDialog open={confirmDnc} onOpenChange={setConfirmDnc}>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Mark {debtor.name} as Do Not Call?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Are you sure? Nobody in your company will be able to call {debtor.phone}{" "}
+                            again. Only an admin can undo this, from Admin → Settings → Do-not-call
+                            list.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>No</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            onClick={() => up({ doNotCall: true })}
+                          >
+                            Yes, do not call
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                   <Button
                     className="w-full gap-1.5"

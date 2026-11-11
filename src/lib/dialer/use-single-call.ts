@@ -292,11 +292,19 @@ export function useSingleCall(
             // so it can never actually report failure. This is the ONLY place that learns
             // the real outcome, so it has to be the one to tell the agent, or a failed dial
             // silently looks identical to a successful one until the call just ends itself.
-            toast.error(`Call failed to start: ${msg}`);
-            // "failed" is not a CallPhase ("ringing" | "connected" | "ended") and there is
-            // no errorMessage field, so the old shape left the panel stuck on a phase
-            // nothing renders. End the call now that the agent has been told why.
-            setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
+            // A timeout may still have placed the call, so that one ends normally and the
+            // agent records what happened. Anything else is the server REFUSING the dial
+            // (do-not-call, calling hours, lines busy…): nothing was dialled, so close the call
+            // instead of opening a disposition. Agents were saving "No answer" for calls that
+            // never happened (5 in a row to a do-not-call number, 2026-11-11).
+            const maybePlaced = /timed out after/i.test(msg);
+            if (maybePlaced) {
+              toast.error(`Call failed to start: ${msg}`);
+              setActiveCall((c) => (c ? { ...c, phase: "ended" } : c));
+            } else {
+              toast.error(`Call not placed: ${msg}`, { duration: 8000 });
+              setActiveCall((c) => (c && !c.providerCallId ? null : c));
+            }
             reset();
           }
         });
