@@ -24,6 +24,7 @@ import {
   type FeedbackReminder,
   type FeedbackRetention,
   type FeedbackSettlement,
+  type PtpMark,
 } from "./portfolio-feedback";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- newer tables and views than the generated types */
@@ -175,7 +176,7 @@ export const getPortfolioFeedbackData = createServerFn({ method: "POST" })
     // No dates means everything: the earliest call on the platform is years after this.
     const bounds = istRangeBounds(data.from ?? "2000-01-01", data.to ?? istDayKeyDaysAgo(0));
     const callColumns =
-      "call_id, created_at, agent_id, agent_name, agent_code, dial_mode, outcome, outcome_reason, promise_amount, promise_date, callback_date, callback_time, duration_seconds, ring_seconds, raw_notes, recording_url, debtor_id, customer_phone, team_name, manager_name, ledger_status";
+      "call_id, created_at, agent_id, agent_name, agent_code, dial_mode, outcome, outcome_reason, promise_amount, promise_date, callback_date, callback_time, duration_seconds, ring_seconds, raw_notes, recording_url, debtor_id, customer_phone, team_name, manager_name, ledger_status, did_number, ended_by";
 
     const [rawDebtors, portfolioCalls, agents, manualCalls, deletedPortfolios] = await Promise.all([
       pageAll<FeedbackDebtor>((a, b) =>
@@ -321,6 +322,23 @@ export const getPortfolioFeedbackData = createServerFn({ method: "POST" })
     ];
 
     const everyRow = [...rawDebtors.map((d) => d.id), ...earlierIds];
+    // A period that starts late must still show when each loan's first PTP was marked.
+    const olderPtps = data.from
+      ? await inChunks(everyRow, 200, (chunk) =>
+          pageAll<PtpMark>((a, b) =>
+            admin
+              .from("call_audit_rows")
+              .select("debtor_id, created_at, promise_amount")
+              .eq("client_id", caller.clientId)
+              .eq("outcome", "promised")
+              .in("debtor_id", chunk)
+              .lt("created_at", bounds.from)
+              .order("created_at")
+              .order("call_id")
+              .range(a, b),
+          ),
+        )
+      : [];
     const related = async <T extends { debtor_id: string }>(
       table: string,
       columns: string,
@@ -411,6 +429,7 @@ export const getPortfolioFeedbackData = createServerFn({ method: "POST" })
       lenderName: (portfolio.lender_name as string | null) ?? null,
       debtors,
       calls,
+      earlierPtps: olderPtps.map(toLoan),
       payments,
       settlements,
       disputes,

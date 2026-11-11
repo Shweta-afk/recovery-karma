@@ -8,8 +8,10 @@ import {
   didByNumber,
   insertInboundLedger,
   ledgerForWebhook,
+  markEndedByCustomer,
   updateLedger,
 } from "./guard.server";
+import { copyTalkTimeToCallLogs } from "./talk-time";
 import type { CallStatusEvent } from "./types";
 
 /** Swap a vendor-keyed webhook event onto our providerCallId and keep the ledger current.
@@ -67,6 +69,16 @@ export async function reconcileWithLedger(
     }
   }
   await updateLedger(ledger.id, patch);
+  if (status.status === "completed" && status.durationSeconds !== undefined) {
+    await markEndedByCustomer(ledger.id);
+  }
+  // The agent has usually saved the disposition by now. A later save copies it from the ledger.
+  await copyTalkTimeToCallLogs(
+    getSupabaseAdmin() as never,
+    ours,
+    status.status,
+    status.durationSeconds,
+  );
   return {
     status: { ...status, providerCallId: ours, customIdentifier: ours },
     ownerClientId: ledger.client_id,

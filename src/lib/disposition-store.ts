@@ -5,7 +5,7 @@ import { createJsonCache } from "./json-cache";
 // Type-only (erased) — the valid call_logs.outcome union, shared with fetch-debtors.
 import type { CallLogOutcome } from "./fetch-debtors";
 import type { DialMode } from "./call-queue/types";
-import { addDoNotCall, reportDisposition } from "./telephony-actions.server";
+import { addDoNotCall, reportDisposition, syncCallLogTalkTime } from "./telephony-actions.server";
 import { getAccessToken } from "./access-token";
 
 export type CallOutcome =
@@ -391,7 +391,18 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   // this number.
   void mirrorToProvider(d);
   if (d.doNotCall) await markDoNotCall(d, isAdHoc);
+  if (d.providerCallId) await copyTalkTime(d.providerCallId);
   await refreshDispositions();
+}
+
+/** Fill duration_seconds from the call ledger. The saved row must already exist. Never fails the
+ *  save: if the ledger has no figure yet, the provider's final event fills it in later. */
+async function copyTalkTime(providerCallId: string): Promise<void> {
+  try {
+    await syncCallLogTalkTime({ data: { accessToken: await getAccessToken(), providerCallId } });
+  } catch (err) {
+    console.warn("[dispositions] talk time sync failed:", err);
+  }
 }
 
 async function markDoNotCall(d: DispositionRecord, isAdHoc: boolean): Promise<void> {

@@ -15,6 +15,7 @@ import {
   type LedgerRow,
 } from "./telephony/guard.server";
 import { skycrmCallbackDatetime, skycrmSubDisposition } from "./telephony/skycrm-disposition";
+import { copyTalkTimeToCallLogs } from "./telephony/talk-time";
 import { normalisePhone, type TelephonySettingsRow } from "./telephony/guard-rules";
 import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
@@ -124,7 +125,10 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
       last_login_at: string | null;
       last_login_error: string | null;
     };
-    const skyByAgent = new Map<string, NonNullable<CompanyTelephony["agents"][number]["skycrmUser"]>>(
+    const skyByAgent = new Map<
+      string,
+      NonNullable<CompanyTelephony["agents"][number]["skycrmUser"]>
+    >(
       ((skyUsers.error ? [] : skyUsers.data) ?? []).map((u: SkyRow) => [
         u.agent_id,
         {
@@ -210,7 +214,10 @@ export const createSkycrmUsers = createServerFn({ method: "POST" })
     }
     const prior = new Map<string, { username: string; password: string; status: string }>(
       (existing.data ?? []).map(
-        (r: { agent_id: string; username: string; password: string; status: string }) => [r.agent_id, r],
+        (r: { agent_id: string; username: string; password: string; status: string }) => [
+          r.agent_id,
+          r,
+        ],
       ),
     );
 
@@ -225,27 +232,32 @@ export const createSkycrmUsers = createServerFn({ method: "POST" })
       if (p.is_active === false) continue;
       const before = prior.get(p.id);
       if (before?.status === "created") continue;
-      const username = before?.username ?? skycrmUsername({ id: p.id, name: p.name, extension: p.agent_extension });
+      const username =
+        before?.username ??
+        skycrmUsername({ id: p.id, name: p.name, extension: p.agent_extension });
       const password = before?.password ?? skycrmPassword();
       const userLevel = skycrmUserLevel(p.role);
       // Saved BEFORE the call, so a crash mid-way can't leave a SkyCRM user whose password we lost.
-      const saved = await db()
-        .from("skycrm_users")
-        .upsert(
-          {
-            agent_id: p.id,
-            client_id: data.clientId,
-            username,
-            password,
-            user_level: userLevel,
-            status: "failed",
-            last_error: "creating…",
-            attempted_at: new Date().toISOString(),
-          },
-          { onConflict: "agent_id" },
-        );
+      const saved = await db().from("skycrm_users").upsert(
+        {
+          agent_id: p.id,
+          client_id: data.clientId,
+          username,
+          password,
+          user_level: userLevel,
+          status: "failed",
+          last_error: "creating…",
+          attempted_at: new Date().toISOString(),
+        },
+        { onConflict: "agent_id" },
+      );
       if (saved.error) {
-        results.push({ name: p.name ?? username, username, ok: false, detail: saved.error.message });
+        results.push({
+          name: p.name ?? username,
+          username,
+          ok: false,
+          detail: saved.error.message,
+        });
         continue;
       }
       const res = await createSkycrmUser({ name: username, password, userLevel });
@@ -257,7 +269,12 @@ export const createSkycrmUsers = createServerFn({ method: "POST" })
             : { status: "failed", last_error: res.detail },
         )
         .eq("agent_id", p.id);
-      results.push({ name: p.name ?? username, username, ok: res.ok, detail: res.ok ? undefined : res.detail });
+      results.push({
+        name: p.name ?? username,
+        username,
+        ok: res.ok,
+        detail: res.ok ? undefined : res.detail,
+      });
     }
 
     const created = results.filter((r) => r.ok).length;
@@ -267,7 +284,13 @@ export const createSkycrmUsers = createServerFn({ method: "POST" })
         action: "skycrm_users_created",
         clientId: data.clientId,
         summary: `Created ${created} of ${results.length} SkyCRM users`,
-        detail: { results: results.map((r) => ({ username: r.username, ok: r.ok, detail: r.detail ?? null })) },
+        detail: {
+          results: results.map((r) => ({
+            username: r.username,
+            ok: r.ok,
+            detail: r.detail ?? null,
+          })),
+        },
       });
     }
     return { created, failed: results.length - created, results };
@@ -610,6 +633,45 @@ export const reportDisposition = createServerFn({ method: "POST" })
       );
       return { ok: false };
     }
+  });
+
+/** The agent pressed End on the browser phone itself, which drops their leg without going through
+ *  hangupCall. Marks their latest call, so Disconnected By doesn't read as the customer. */
+export const markAgentEndedCall = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!caller.agentId) return { ok: false };
+    const since = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const { data: latest } = await db()
+      .from("telephony_calls")
+      .select("id")
+      .eq("agent_id", caller.agentId)
+      .gte("started_at", since)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!latest) return { ok: false };
+    const { error } = await db()
+      .from("telephony_calls")
+      .update({ ended_by: "agent" })
+      .eq("id", (latest as { id: string }).id);
+    return { ok: !error };
+  });
+
+/** Copy a call's talk time from the ledger onto its call log, for when the provider's final event
+ *  arrived before the agent saved the disposition (a later event copies it itself). Server-side
+ *  because agents can neither read the ledger nor UPDATE call_logs. */
+export const syncCallLogTalkTime = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, providerCallId: z.string().min(1).max(200) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    const ledger = await ledgerByProviderCallId(data.providerCallId);
+    if (!ledger || ledger.client_id !== caller.clientId) return { ok: false };
+    await copyTalkTimeToCallLogs(db(), data.providerCallId, ledger.status, ledger.duration_seconds);
+    return { ok: true };
   });
 
 /** The caller's most recent call (last 12 h) to this number, from the call ledger. */

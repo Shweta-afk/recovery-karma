@@ -33,6 +33,7 @@ import {
   channelsFor,
   recordRefusal,
   updateLedger,
+  updateLedgerIfOpen,
   type DialAgent,
 } from "./guard.server";
 import { evaluateCall, normalisePhone } from "./guard-rules";
@@ -209,13 +210,20 @@ async function dialAgentsFor(caller: VerifiedCaller, numbers: string[]): Promise
 /** Hang up through the provider with whatever it needs from the ledger, then close the ledger row. */
 async function providerHangup(providerCallId: string): Promise<void> {
   const ledger = await ledgerByProviderCallId(providerCallId).catch(() => null);
+  // Before the hangup request: the provider's final event can arrive while it is in flight.
+  if (ledger && !ledger.ended_at) await updateLedger(ledger.id, { ended_by: "agent" });
   await getTelephonyProvider().hangup(providerCallId, {
     agentHandle: ledger?.agent_handle,
     remotePhone: ledger?.remote_phone,
     direction: ledger?.direction,
   });
   if (ledger && !ledger.ended_at) {
-    await updateLedger(ledger.id, { ended_at: new Date().toISOString(), status: "canceled" });
+    // `ledger` was read before the hangup. The provider's final event often lands while that
+    // request is in flight, and overwriting it turned finished calls into "canceled".
+    await updateLedgerIfOpen(ledger.id, {
+      ended_at: new Date().toISOString(),
+      status: "canceled",
+    });
   }
 }
 

@@ -23,6 +23,7 @@ import {
   type ScoreAnswers,
   type TeamReviewRow,
 } from "./call-audit";
+import type { PtpMark } from "./portfolio-feedback";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- these tables and functions are newer than the generated types */
 
@@ -169,6 +170,30 @@ export const getAuditExportPage = createServerFn({ method: "POST" })
       offset: data.offset,
       with_total: data.offset === 0,
     });
+  });
+
+/** PTPs marked before a report's period, so its Genration Date stays the loan's true first day. */
+export const listEarlierPtps = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, before: isoDateSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireViewer(data.accessToken);
+    const b = istRangeBounds(data.before, data.before);
+    const admin = getSupabaseAdmin() as any;
+    return everyPage<PtpMark>(
+      (from, to) =>
+        admin
+          .from("call_audit_rows")
+          .select("debtor_id, loan_reference, created_at, promise_amount")
+          .eq("client_id", caller.clientId)
+          .eq("outcome", "promised")
+          .lt("created_at", b.from)
+          .order("created_at")
+          .order("call_id")
+          .range(from, to),
+      "SX-7116",
+    );
   });
 
 export const getAuditCall = createServerFn({ method: "POST" })
@@ -634,7 +659,7 @@ export const acknowledgeTeamReview = createServerFn({ method: "POST" })
 const MANAGER_COLUMNS = [
   "call_id, created_at, agent_id, agent_name, agent_code, team_id, team_name, manager_id, manager_name",
   "call_type, dial_mode, outcome, outcome_reason, promise_amount, promise_date, callback_date, callback_time",
-  "duration_seconds, raw_notes, recording_url, recording_status, ledger_status",
+  "duration_seconds, raw_notes, recording_url, recording_status, ledger_status, did_number",
   "customer_name, customer_phone, loan_reference, dpd, lender, portfolio_id, portfolio_name, portfolio_lender",
   "manager_sentiment, manager_audited_by, manager_audited_at",
   "ai_agent_tone, ai_debtor_tone, ai_sentiment, ai_sentiment_confidence, ai_sentiment_reasoning, ai_sentiment_analyzed_at",

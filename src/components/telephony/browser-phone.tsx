@@ -335,7 +335,7 @@ function RegisteredPhone({
             variant="destructive"
             className="h-7 w-7"
             title="End call"
-            onClick={() => void wp.hangup()}
+            onClick={() => void wp.endByAgent()}
           >
             <PhoneOff className="h-4 w-4" />
           </Button>

@@ -8,6 +8,7 @@ import {
   buildTeamPerformance,
   istWeekStart,
   computeScore,
+  disconnectedBy,
   gradeFor,
   isAnswered,
   istRangeBounds,
@@ -31,6 +32,7 @@ import {
   MAX_CELL,
   type FeedbackDebtor,
   type FeedbackInput,
+  type PtpMark,
 } from "../src/lib/portfolio-feedback";
 
 const call = (over: Partial<AuditCallRow>): AuditCallRow =>
@@ -725,13 +727,182 @@ describe("the file matches the company's sample", () => {
       "2026-11-09",
     );
     expect(byLoan.headers.length).toBe(byLoan.rows[0].length);
-    expect(dated.headers.slice(3)).toEqual(["09/11/2026", "08/11/2026", "07/11/2026"]);
-    expect(dated.rows[0][3]).toBe("11:30 PTP - will pay | 14:30 Not Contacted");
-    expect(dated.rows[0][4]).toBe("");
-    expect(dated.rows[0][5]).toBe("11:30 Call Back - after 5");
-    expect(String(dated.rows[1][4])).toContain("Payment");
-    expect(String(dated.rows[1][4])).toContain("700");
+    expect(dated.headers.slice(3)).toEqual([
+      "09/11/2026 Code",
+      "09/11/2026 Feedback",
+      "08/11/2026 Code",
+      "08/11/2026 Feedback",
+      "07/11/2026 Code",
+      "07/11/2026 Feedback",
+    ]);
+    expect(dated.rows[0][3]).toBe("PTP | Not Contacted");
+    expect(dated.rows[0][4]).toBe("11:30 PTP - will pay | 14:30 Not Contacted");
+    expect(dated.rows[0][5]).toBe("");
+    expect(dated.rows[0][6]).toBe("");
+    expect(dated.rows[0][7]).toBe("Call Back");
+    expect(dated.rows[0][8]).toBe("11:30 Call Back - after 5");
+    expect(dated.rows[1][5]).toBe("Payment");
+    expect(String(dated.rows[1][6])).toContain("700");
     for (const r of dated.rows) expect(r.length).toBe(dated.headers.length);
+  });
+
+  const generationFile = (calls: AuditCallRow[], earlierPtps?: PtpMark[]) =>
+    buildFeedbackSheets(
+      {
+        portfolioName: "P",
+        lenderName: "B",
+        debtors: [loan("d1", "L1")],
+        calls,
+        earlierPtps,
+        payments: [],
+        settlements: [],
+        disputes: [],
+        agentNames: new Map(),
+        from: "",
+        to: "",
+        includeNoActivity: true,
+      },
+      "2026-11-09",
+    );
+  const cell = (sheet: { headers: string[]; rows: unknown[][] }, name: string, row = 0) =>
+    sheet.rows[row][sheet.headers.indexOf(name)];
+  const ptp = (day: string, date: string, amount: number) =>
+    call({
+      call_id: day,
+      debtor_id: "d1",
+      outcome: "promised",
+      promise_date: date,
+      promise_amount: amount,
+      created_at: `${day}T06:00:00.000Z`,
+    });
+
+  test("Generation Date is the day the first PTP was marked, and a later PTP doesn't move it", () => {
+    const [byLoan, , cc] = generationFile([
+      ptp("2026-11-09", "2026-11-20", 900),
+      ptp("2026-11-03", "2026-11-10", 500),
+    ]);
+    expect(cell(byLoan, "Generation Date")).toBe("03/11/2026");
+    expect(cell(byLoan, "Generation Amount")).toBe(500);
+    expect(cell(byLoan, "PTP Date")).toBe("20/11/2026");
+    for (const row of [0, 1]) expect(cell(cc, "Generation Date", row)).toBe("03/11/2026");
+  });
+
+  test("a PTP from before the file's period still sets the Generation Date", () => {
+    const [byLoan] = generationFile(
+      [ptp("2026-11-09", "2026-11-20", 900)],
+      [
+        {
+          debtor_id: "d1",
+          created_at: "2026-10-01T06:00:00.000Z",
+          promise_amount: 300,
+        },
+      ],
+    );
+    expect(cell(byLoan, "Generation Date")).toBe("01/10/2026");
+    expect(cell(byLoan, "Generation Amount")).toBe(300);
+  });
+
+  test("a loan with no PTP has no Generation Date, even after a paid call", () => {
+    const [byLoan] = generationFile([call({ debtor_id: "d1", outcome: "paid" })]);
+    expect(cell(byLoan, "Generation Date")).toBe("");
+  });
+
+  test("the third sheet is the CC Report, with who disconnected, agent number and DID", () => {
+    const sheets = generationFile([
+      call({
+        debtor_id: "d1",
+        ended_by: "customer",
+        agent_code: "AGT-7",
+        did_number: "07969263700",
+      }),
+    ]);
+    const cc = sheets[2];
+    expect(cc.name).toBe("CC Report");
+    expect(cc.headers).not.toContain("By");
+    expect(cell(cc, "Disconnected By")).toBe("Customer");
+    expect(cell(cc, "Agent Number")).toBe("AGT-7");
+    expect(cell(cc, "Agent Name")).toBe("Asha");
+    expect(cell(cc, "DID Used")).toBe("07969263700");
+    expect(cell(sheets[0], "DID Used")).toBe("07969263700");
+    for (const r of cc.rows) expect(r.length).toBe(cc.headers.length);
+  });
+
+  test("a bank paid-file row says so under Source, not Disconnected By", () => {
+    const sheets = buildFeedbackSheets(
+      {
+        portfolioName: "P",
+        lenderName: "B",
+        debtors: [loan("d1", "L1")],
+        calls: [],
+        payments: [
+          {
+            debtor_id: "d1",
+            amount: 700,
+            status: "completed",
+            source: "bank_reported",
+            payment_method: null,
+            notes: null,
+            received_at: "2026-11-08T06:00:00Z",
+            created_at: "2026-11-08T06:00:00Z",
+          },
+        ],
+        settlements: [],
+        disputes: [],
+        agentNames: new Map(),
+        from: "",
+        to: "",
+        includeNoActivity: true,
+      },
+      "2026-11-09",
+    );
+    expect(cell(sheets[2], "Disconnected By")).toBe("");
+    expect(cell(sheets[2], "Source")).toBe("Bank paid file");
+    expect(sheets[2].rows[0].length).toBe(sheets[2].headers.length);
+  });
+
+  test("Disconnected By: recorded value first; older End presses show as canceled", () => {
+    expect(disconnectedBy({ ended_by: "agent" })).toBe("Agent");
+    expect(disconnectedBy({ ended_by: "customer", ledger_status: "completed" })).toBe("Customer");
+    expect(disconnectedBy({ ledger_status: "canceled" })).toBe("Agent");
+    expect(disconnectedBy({ ledger_status: "completed" })).toBe("");
+    expect(disconnectedBy({})).toBe("");
+  });
+
+  test("the call log's Genration columns are the first PTP; a paid call fills Paid instead", () => {
+    const sheet = callLogSheet(
+      [
+        call({
+          call_id: "p",
+          debtor_id: "d1",
+          loan_reference: "L1",
+          outcome: "promised",
+          promise_amount: 900,
+          ended_by: "agent",
+        }),
+        call({
+          call_id: "q",
+          debtor_id: "d1",
+          loan_reference: "L1",
+          outcome: "paid",
+          promise_amount: 400,
+        }),
+      ],
+      "https://x",
+      [
+        {
+          debtor_id: "old",
+          loan_reference: "l1",
+          created_at: "2026-10-01T06:00:00.000Z",
+          promise_amount: 300,
+        },
+      ],
+    );
+    expect(cell(sheet, "Genration Date", 0)).toBe("01/10/2026");
+    expect(cell(sheet, "Genration Amount", 0)).toBe(300);
+    expect(cell(sheet, "Disconnected By", 0)).toBe("Agent");
+    expect(cell(sheet, "Genration Date", 1)).toBe("");
+    expect(cell(sheet, "Paid Amount", 1)).toBe(400);
+    for (const r of sheet.rows) expect(r.length).toBe(sheet.headers.length);
   });
 
   test("a loan left out of the main sheet is left out of the date-wise one", () => {

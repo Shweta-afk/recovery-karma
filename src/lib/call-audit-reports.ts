@@ -3,13 +3,14 @@
 // then keeps going with everything else we hold, ending with one column per bank-file field.
 //
 // Blank means "not recorded", never zero. Some sample columns have no source today: Cause Code,
-// Drop Reason, Provider Cause, Disconnected By and the Tea / Meeting / Mobile / Bio breaks.
+// Drop Reason, Provider Cause and the Tea / Meeting / Mobile / Bio breaks.
 import type { XlsxCell, XlsxSheet } from "./xlsx-export";
 import {
   DISPOSITION_RANK,
   FATAL_ERRORS,
   SCORECARD,
   SCORE_FRACTION,
+  disconnectedBy,
   dispositionLabel,
   fmtSeconds,
   isAnswered,
@@ -17,7 +18,16 @@ import {
   type AuditCallRow,
   type TeamReviewRow,
 } from "./call-audit";
-import { bestCall, dialModeLabel, dmy, istDateTime, istDay } from "./portfolio-feedback";
+import {
+  bestCall,
+  dialModeLabel,
+  dmy,
+  firstPtpBy,
+  istDateTime,
+  istDay,
+  loanKey,
+  type PtpMark,
+} from "./portfolio-feedback";
 
 export interface PresenceRow {
   agent_id: string;
@@ -52,7 +62,17 @@ const seqBy = <T>(items: T[], key: (t: T) => string) => {
   return m;
 };
 
-export function callLogSheet(rows: AuditCallRow[], origin: string): XlsxSheet {
+export function callLogSheet(
+  rows: AuditCallRow[],
+  origin: string,
+  /** PTPs marked before the report's period, so Genration Date stays the true first day. */
+  earlierPtps: PtpMark[] = [],
+): XlsxSheet {
+  const ptpKey = (m: PtpMark) => loanKey(m.loan_reference) ?? m.debtor_id;
+  const firstPtps = firstPtpBy(
+    [...earlierPtps, ...rows.filter((r) => r.outcome === "promised")],
+    ptpKey,
+  );
   const byDebtor = seqBy(
     rows.filter((r) => r.debtor_id),
     (r) => r.debtor_id as string,
@@ -176,6 +196,7 @@ export function callLogSheet(rows: AuditCallRow[], origin: string): XlsxSheet {
     const start = new Date(c.created_at).getTime();
     const answered = isAnswered(c);
     const contact = isConnectedOutcome(c.outcome);
+    const generated = c.outcome === "promised" ? firstPtps.get(ptpKey(c) ?? "") : undefined;
     const cells: XlsxCell[] = [
       c.portfolio_lender ?? c.lender ?? "",
       c.portfolio_name ?? "",
@@ -207,18 +228,18 @@ export function callLogSheet(rows: AuditCallRow[], origin: string): XlsxSheet {
       c.raw_notes ?? "",
       dispositionLabel(c.outcome),
       c.outcome_reason ?? "",
-      "",
+      disconnectedBy(c),
       "",
       c.product_type ?? c.portfolio_product ?? "",
       num(c.dpd),
-      c.outcome === "paid" ? dmy(istDay(c.created_at)) : "",
-      c.outcome === "paid" ? num(c.promise_amount) : "",
+      generated ? dmy(istDay(generated.created_at)) : "",
+      generated ? num(generated.promise_amount) : "",
       c.outcome === "promised" && c.promise_date ? dmy(c.promise_date) : "",
       c.outcome === "promised" ? num(c.promise_amount) : "",
       c.callback_date ? dmy(c.callback_date) : "",
       c.callback_time ?? "",
-      "",
-      "",
+      c.outcome === "paid" ? dmy(istDay(c.created_at)) : "",
+      c.outcome === "paid" ? num(c.promise_amount) : "",
       "",
       "",
       best ? dispositionLabel(best.outcome) : "",
@@ -325,6 +346,7 @@ export function auditFeedbackSheet(
     "Agent Code",
     "Agent Name",
     "Dial Type",
+    "DID Used",
     "Call Duration",
     "Disposition",
     "Sub-Disposition",
@@ -392,6 +414,7 @@ export function auditFeedbackSheet(
         c.agent_code ?? "",
         c.agent_name,
         dialModeLabel(c.dial_mode),
+        c.did_number ?? "",
         fmtSeconds(c.duration_seconds),
         dispositionLabel(c.outcome),
         c.outcome_reason ?? "",
@@ -554,6 +577,7 @@ export function fatalLogSheet(rows: AuditCallRow[], origin: string): XlsxSheet {
       "Call Date",
       "Loan Account Number",
       "Customer Name",
+      "DID Used",
       "Fatal Errors",
       "Feedback to Agent",
       "Agent's Reply",
@@ -570,6 +594,7 @@ export function fatalLogSheet(rows: AuditCallRow[], origin: string): XlsxSheet {
         istDateTime(c.created_at),
         c.loan_reference ?? "",
         c.customer_name ?? "",
+        c.did_number ?? "",
         (c.fatal_codes ?? []).map((f) => label.get(f) ?? f).join(", "),
         c.feedback_agent ?? "",
         c.agent_response ?? "",
@@ -586,6 +611,7 @@ export function aiVsAuditorSheet(rows: AuditCallRow[], origin: string): XlsxShee
       "Team",
       "Agent Name",
       "Loan Account Number",
+      "DID Used",
       "AI Agent Tone",
       "AI Customer Tone",
       "AI Overall Tone",
@@ -606,6 +632,7 @@ export function aiVsAuditorSheet(rows: AuditCallRow[], origin: string): XlsxShee
         c.team_name ?? "",
         c.agent_name,
         c.loan_reference ?? "",
+        c.did_number ?? "",
         c.ai_agent_tone ?? "",
         c.ai_debtor_tone ?? "",
         c.ai_sentiment ?? "",

@@ -89,6 +89,7 @@ export function FeedbackFileForm() {
           lenderName: data.lenderName,
           debtors: data.debtors,
           calls: data.calls,
+          earlierPtps: data.earlierPtps,
           payments: data.payments,
           settlements: data.settlements,
           disputes: data.disputes,

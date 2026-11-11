@@ -187,6 +187,8 @@ export interface AuditCallRow {
   ledger_status: string | null;
   remote_phone: string | null;
   did_number: string | null;
+  /** "agent" or "customer", recorded from 2026-11-10 (20261110_ledger_ended_by.sql). */
+  ended_by?: string | null;
   agent_handle: string | null;
   vendor_callid: string | null;
   ledger_started_at: string | null;
@@ -331,6 +333,18 @@ export const isConnectedOutcome = (outcome: string | null | undefined) =>
  *  disposition only for calls with no ledger row. */
 export const isAnswered = (c: { ledger_status?: string | null; outcome: string | null }) =>
   c.ledger_status ? c.ledger_status === "completed" : isConnectedOutcome(c.outcome);
+
+/** Who ended the call. SkyCRM doesn't report it, so SamvadX records an End press as the agent and
+ *  an answered call that finished without one as the customer. Calls before 2026-11-10 only show
+ *  "Agent" when the ledger still says canceled (only an End press writes that); otherwise blank. */
+export function disconnectedBy(c: {
+  ended_by?: string | null;
+  ledger_status?: string | null;
+}): string {
+  if (c.ended_by === "agent") return "Agent";
+  if (c.ended_by === "customer") return "Customer";
+  return c.ledger_status === "canceled" ? "Agent" : "";
+}
 
 /** Higher = better result for "Best Disposition". Not Contacted is the floor. */
 export const DISPOSITION_RANK: Record<string, number> = {

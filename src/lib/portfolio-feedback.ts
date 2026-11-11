@@ -5,9 +5,10 @@
 //
 // Internal quality scores and auditor comments never appear here: this file leaves the company.
 //
-// Two columns are our reading of the sample, since it left them blank:
-//   "Genration Date/Amount" = payments an agent reported on a call (outcome "paid"), as against
-//   "Last paid" / "Till Date Collected", which are recorded payments.
+// "Generation Date" is the day the loan's first PTP was marked (user, 2026-11-10). A PTP date moves
+// every time a promise is renewed; the generation date never does, whatever period the file covers.
+//
+// One column is our reading of the sample, since it left it blank:
 //   "Total AVERAGE Call BACK duration" = average length of calls that ended in a Call Back.
 import type { XlsxSheet } from "./xlsx-export";
 import {
@@ -16,6 +17,7 @@ import {
   fmtSeconds,
   isAnswered,
   isConnectedOutcome,
+  disconnectedBy,
   type AuditCallRow,
 } from "./call-audit";
 import { DIAL_MODE_META } from "./call-queue/types";
@@ -188,12 +190,37 @@ export interface FeedbackDispute {
   created_at: string;
 }
 
+/** A call on which a PTP was marked. */
+export interface PtpMark {
+  debtor_id: string | null;
+  loan_reference?: string | null;
+  created_at: string;
+  promise_amount: number | null;
+}
+
+/** The earliest PTP per key: the one a loan's Generation Date and Amount come from. */
+export function firstPtpBy<T extends PtpMark>(
+  marks: T[],
+  keyOf: (m: T) => string | null,
+): Map<string, T> {
+  const first = new Map<string, T>();
+  for (const m of marks) {
+    const key = keyOf(m);
+    if (!key) continue;
+    const seen = first.get(key);
+    if (!seen || m.created_at < seen.created_at) first.set(key, m);
+  }
+  return first;
+}
+
 export interface FeedbackInput {
   portfolioName: string;
   lenderName: string | null;
   debtors: FeedbackDebtor[];
   /** Calls inside the range, any order, with debtor_id already pointing at the row in `debtors`. */
   calls: FeedbackCall[];
+  /** PTPs marked before the file's period, so a short period keeps the true Generation Date. */
+  earlierPtps?: PtpMark[];
   /** Every completed payment on these loans, whatever the date: "Till Date Collected". */
   payments: FeedbackPayment[];
   settlements: FeedbackSettlement[];
@@ -212,7 +239,7 @@ export interface FeedbackInput {
 
 /** Excel refuses a cell longer than this. */
 export const MAX_CELL = 32_000;
-export const clampCell = (s: string, hint = " … (continues on the All Feedback sheet)") =>
+export const clampCell = (s: string, hint = " … (continues on the CC Report sheet)") =>
   s.length > MAX_CELL ? s.slice(0, MAX_CELL - hint.length) + hint : s;
 
 const IST_MS = 330 * 60_000;
@@ -349,6 +376,7 @@ export const LOAN_HEADERS = [
   "DPD",
   "Account Status",
   "Contact Group",
+  "DID Used",
 ];
 
 export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): XlsxSheet[] {
@@ -357,6 +385,7 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
     input.payments.filter((p) => (p.status ?? "completed") === "completed"),
     (p) => p.debtor_id,
   );
+  const firstPtps = firstPtpOfLoans(input);
   const loanRows: (string | number)[][] = [];
   const included: FeedbackDebtor[] = [];
 
@@ -374,7 +403,7 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
       (a.received_at ?? a.created_at) < (b.received_at ?? b.created_at) ? -1 : 1,
     );
     const lastPayment = payments[payments.length - 1];
-    const generated = [...calls].reverse().find((c) => c.outcome === "paid");
+    const generated = firstPtps.get(d.id);
     const ptp = [...calls].reverse().find((c) => c.outcome === "promised");
     const callback = [...calls].reverse().find((c) => c.outcome === "callback");
     const missed = missedFollowUps(attempts, todayIst);
@@ -434,14 +463,15 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
       d.dpd ?? "",
       d.status ?? "",
       contacted ? "Contact" : "No Contact",
+      attempts[attempts.length - 1]?.did_number ?? "",
     ]);
   }
 
-  const { sheet: allFeedback, entries } = allFeedbackSheet(input);
+  const { sheet: ccReport, entries } = ccReportSheet(input, firstPtps);
   return [
     { name: "Feedback by Loan", headers: LOAN_HEADERS, rows: loanRows },
     dateWiseSheet(included, entries),
-    allFeedback,
+    ccReport,
     summarySheet(input),
   ];
 }
@@ -449,10 +479,19 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
 interface FeedbackEntry {
   debtorId: string;
   at: string;
+  code: string;
   text: string;
 }
 
-/** One row per loan, one column per date that has any feedback, newest date first. */
+function firstPtpOfLoans(input: FeedbackInput): Map<string, PtpMark> {
+  return firstPtpBy(
+    [...(input.earlierPtps ?? []), ...input.calls.filter((c) => c.outcome === "promised")],
+    (m) => m.debtor_id,
+  );
+}
+
+/** One row per loan and two columns per date that has any feedback (its code, then the feedback),
+ *  newest date first. */
 function dateWiseSheet(loans: FeedbackDebtor[], entries: FeedbackEntry[]): XlsxSheet {
   const byLoanDay = new Map<string, FeedbackEntry[]>();
   const days = new Set<string>();
@@ -473,24 +512,27 @@ function dateWiseSheet(loans: FeedbackDebtor[], entries: FeedbackEntry[]): XlsxS
       "Loan Account Number",
       "Customer Name",
       "Customer Mobile Number",
-      ...columns.map(dmy),
+      ...columns.flatMap((day) => [`${dmy(day)} Code`, `${dmy(day)} Feedback`]),
     ],
     rows: loans.map((l) => [
       l.loan_reference ?? "",
       l.name,
       l.phone_primary ?? "",
-      ...columns.map((day) =>
-        clampCell(
-          (byLoanDay.get(`${l.id}|${day}`) ?? [])
-            .map((e) => `${ist(e.at).slice(11, 16)} ${e.text}`)
-            .join(" | "),
-        ),
-      ),
+      ...columns.flatMap((day) => {
+        const items = byLoanDay.get(`${l.id}|${day}`) ?? [];
+        return [
+          clampCell(items.map((e) => e.code).join(" | ")),
+          clampCell(items.map((e) => `${ist(e.at).slice(11, 16)} ${e.text}`).join(" | ")),
+        ];
+      }),
     ]),
   };
 }
 
-function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: FeedbackEntry[] } {
+function ccReportSheet(
+  input: FeedbackInput,
+  firstPtps: Map<string, PtpMark>,
+): { sheet: XlsxSheet; entries: FeedbackEntry[] } {
   const debtorById = new Map(input.debtors.map((d) => [d.id, d]));
   const inRange = (iso: string) => {
     const day = istDay(iso);
@@ -511,14 +553,23 @@ function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: Fe
   const entries: FeedbackEntry[] = [];
   for (const c of input.calls) {
     if (!c.debtor_id) continue;
-    entries.push({ debtorId: c.debtor_id, at: c.created_at, text: callFeedbackText(c) });
+    entries.push({
+      debtorId: c.debtor_id,
+      at: c.created_at,
+      code: dispositionLabel(c.outcome),
+      text: callFeedbackText(c),
+    });
+    const generated = c.outcome === "promised" ? firstPtps.get(c.debtor_id) : undefined;
     lines.push({
       at: c.created_at,
       cells: [
         ...base(c.debtor_id, c.created_at),
         c.dial_mode === "no_call" ? "Disposition Update" : "Call",
+        disconnectedBy(c),
+        c.agent_code ?? "",
         c.agent_name,
         c.customer_phone ?? "",
+        c.did_number ?? "",
         dialModeLabel(c.dial_mode),
         fmtSeconds(c.duration_seconds),
         isAnswered(c) ? "Answered" : "Not Answered",
@@ -527,6 +578,7 @@ function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: Fe
         c.raw_notes ?? "",
         c.outcome === "promised" ? money(c.promise_amount) : "",
         c.promise_date ? dmy(c.promise_date) : "",
+        generated ? dmy(istDay(generated.created_at)) : "",
         c.callback_date ? dmy(c.callback_date) : "",
         c.callback_time ?? "",
         c.outcome === "paid" ? money(c.promise_amount) : "",
@@ -543,7 +595,7 @@ function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: Fe
     debtorId: string,
     at: string,
     type: string,
-    who: string,
+    source: string,
     disposition: string,
     sub: string,
     remarks: string,
@@ -552,6 +604,7 @@ function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: Fe
     entries.push({
       debtorId,
       at,
+      code: type,
       text: [type, disposition, sub, remarks, amount].filter((v) => v !== "").join(" - "),
     });
     lines.push({
@@ -559,21 +612,25 @@ function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: Fe
       cells: [
         ...base(debtorId, at),
         type,
-        who,
-        "",
-        "",
-        "",
-        "",
+        "", // Disconnected By
+        "", // Agent Number
+        "", // Agent Name
+        "", // Number Called
+        "", // DID Used
+        "", // Dial Type
+        "", // Call Duration
+        "", // Call Status
         disposition,
         sub,
         remarks,
-        "",
-        "",
-        "",
-        "",
+        "", // PTP Amount
+        "", // PTP Date
+        "", // Generation Date
+        "", // Callback Date
+        "", // Callback Time
         amount,
-        "",
-        "",
+        "", // Call Record Link
+        source,
       ],
     });
   };
@@ -658,7 +715,7 @@ function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: Fe
   }
   lines.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   const sheet: XlsxSheet = {
-    name: "All Feedback",
+    name: "CC Report",
     headers: [
       "Loan Account Number",
       "Customer Name",
@@ -666,8 +723,11 @@ function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: Fe
       "Date",
       "Time (IST)",
       "Feedback Type",
-      "By",
+      "Disconnected By",
+      "Agent Number",
+      "Agent Name",
       "Number Called",
+      "DID Used",
       "Dial Type",
       "Call Duration",
       "Call Status",
@@ -676,6 +736,7 @@ function allFeedbackSheet(input: FeedbackInput): { sheet: XlsxSheet; entries: Fe
       "Feedback / Remarks",
       "PTP Amount",
       "PTP Date",
+      "Generation Date",
       "Callback Date",
       "Callback Time",
       "Amount",
