@@ -91,6 +91,14 @@ export interface DispositionRecord {
   aiSentimentReasoning?: string;
   aiSentimentAnalyzedAt?: string; // ISO
   time: string; // ISO
+  /** The loan this call is about: loan reference + borrower name, lowercased. The same loan
+   * uploaded again (next month's file, a continued portfolio) is a NEW debtor row, so follow-ups
+   * group calls by this rather than by debtorId — a PTP on last month's row is settled by a
+   * "paid" logged on this month's row. Absent for ad-hoc calls and rows cached before 2026-11-11. */
+  loanKey?: string;
+  /** The account is no longer worked: paid (bank file), removed, or its portfolio was closed. Its
+   * open PTPs and callbacks are not follow-ups any more. */
+  accountClosed?: boolean;
 }
 
 const KEY = "recoveryai_dispositions_cache";
@@ -133,7 +141,7 @@ export async function refreshDispositions(): Promise<void> {
         .order("created_at", { ascending: false })
         .range(from, to),
     ),
-    supabase.from("portfolios").select("id, name, team_id"),
+    supabase.from("portfolios").select("id, name, team_id, closed_at"),
     supabase.from("agents").select("id, email, name"),
     supabase.from("team_agents").select("team_id, agent_id"),
   ]);
@@ -282,6 +290,12 @@ export async function refreshDispositions(): Promise<void> {
       aiSentimentReasoning: l.ai_sentiment_reasoning ?? undefined,
       aiSentimentAnalyzedAt: l.ai_sentiment_analyzed_at ?? undefined,
       time: l.created_at,
+      loanKey: loanKeyOf(debtor?.loan_reference, debtor?.name),
+      accountClosed: debtor
+        ? debtor.status === "paid" ||
+          debtor.status === "removed" ||
+          !!(portfolio as { closed_at?: string | null } | undefined)?.closed_at
+        : undefined,
     };
   });
 
@@ -496,6 +510,60 @@ export interface CaseFollowup {
   notes: string;
 }
 
+/** See DispositionRecord.loanKey. */
+export function loanKeyOf(
+  loanReference: string | null | undefined,
+  name: string | null | undefined,
+): string | undefined {
+  const loan = loanReference?.trim().toLowerCase();
+  if (!loan) return undefined;
+  return `${loan}|${(name ?? "").trim().toLowerCase().replace(/\s+/g, " ")}`;
+}
+
+function accountKey(d: DispositionRecord): string {
+  return d.loanKey ? `loan:${d.loanKey}` : `debtor:${d.debtorId}`;
+}
+
+/**
+ * The latest call on each account that `scope` (one agent's or one team's calls) has touched,
+ * judged over EVERY call visible (`all`), kept only when that latest call is itself in scope and
+ * the account is still live. Two bugs this fixes (2026-11-11):
+ *  - a PTP on an earlier upload of a loan stayed "overdue" after the borrower paid and the agent
+ *    logged Paid on the new upload's row — calls were grouped by debtor row, not by loan;
+ *  - a PTP on an account whose portfolio had since been closed (or that the bank's paid file had
+ *    marked paid) stayed on the tracker and kept escalating, although nobody works it any more;
+ *    and a later call by someone outside the scope (another agent, the manager) was ignored.
+ * Returns each account's latest call plus how many in-scope calls it has.
+ */
+function latestOpenPerAccount(
+  scope: DispositionRecord[],
+  all: DispositionRecord[],
+): Array<{ latest: DispositionRecord; scopeCalls: number }> {
+  const scopeIds = new Set(scope.map((d) => d.id));
+  const scopeCount = new Map<string, number>();
+  for (const d of scope) {
+    if (!d.debtorId) continue;
+    const k = accountKey(d);
+    scopeCount.set(k, (scopeCount.get(k) ?? 0) + 1);
+  }
+  const latest = new Map<string, DispositionRecord>();
+  const seen = new Set<string>();
+  for (const d of [...scope, ...all]) {
+    if (!d.debtorId || seen.has(d.id)) continue;
+    seen.add(d.id);
+    const k = accountKey(d);
+    if (!scopeCount.has(k)) continue;
+    const prev = latest.get(k);
+    if (!prev || Date.parse(d.time) > Date.parse(prev.time)) latest.set(k, d);
+  }
+  const out: Array<{ latest: DispositionRecord; scopeCalls: number }> = [];
+  for (const [k, d] of latest) {
+    if (!scopeIds.has(d.id) || d.accountClosed) continue;
+    out.push({ latest: d, scopeCalls: scopeCount.get(k) ?? 1 });
+  }
+  return out;
+}
+
 /**
  * Every open, dated commitment across these dispositions — PTPs and callbacks alike.
  *
@@ -503,22 +571,16 @@ export interface CaseFollowup {
  * counts. A debtor who promised on Monday and was marked refused on Tuesday has no live
  * commitment, and a callback superseded by an actual conversation is not still owed.
  */
-export function computeCaseFollowups(disps: DispositionRecord[]): CaseFollowup[] {
-  const byDebtor = new Map<string, DispositionRecord[]>();
-  for (const d of disps) {
-    const list = byDebtor.get(d.debtorId);
-    if (list) list.push(d);
-    else byDebtor.set(d.debtorId, [d]);
-  }
-
+export function computeCaseFollowups(
+  disps: DispositionRecord[],
+  all: DispositionRecord[] = disps,
+): CaseFollowup[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
   const rows: CaseFollowup[] = [];
-  for (const [debtorId, records] of byDebtor) {
-    const latest = [...records].sort(
-      (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime(),
-    )[0];
+  for (const { latest } of latestOpenPerAccount(disps, all)) {
+    const debtorId = latest.debtorId;
 
     let kind: CaseFollowup["kind"];
     let dueDate: string | undefined;
@@ -559,35 +621,32 @@ export function computeCaseFollowups(disps: DispositionRecord[]): CaseFollowup[]
 
 /** One agent's open commitments — feeds step 1 of the escalation chain. */
 export function getCaseFollowups(agentId: string): CaseFollowup[] {
-  return computeCaseFollowups(getAgentDispositions(agentId));
+  return computeCaseFollowups(getAgentDispositions(agentId), getDispositions());
 }
 
 /** Every commitment across a manager's team — feeds step 2. */
 export function getTeamCaseFollowups(agentIds: string[]): CaseFollowup[] {
   const idSet = new Set(agentIds);
-  return computeCaseFollowups(getDispositions().filter((d) => idSet.has(d.agentId)));
+  const all = getDispositions();
+  return computeCaseFollowups(
+    all.filter((d) => idSet.has(d.agentId)),
+    all,
+  );
 }
 
 /** Shared by getPtpFollowups (one agent) and getTeamPtpFollowups (a manager's whole team) —
  * the "still open" logic (only the latest disposition per debtor counts) doesn't change based
  * on whose calls are being looked at. */
-function computePtpFollowups(disps: DispositionRecord[]): PtpFollowup[] {
-  const byDebtor = new Map<string, DispositionRecord[]>();
-  for (const d of disps) {
-    const list = byDebtor.get(d.debtorId);
-    if (list) list.push(d);
-    else byDebtor.set(d.debtorId, [d]);
-  }
-
+export function computePtpFollowups(
+  disps: DispositionRecord[],
+  all: DispositionRecord[] = disps,
+): PtpFollowup[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
   const rows: PtpFollowup[] = [];
-  for (const [debtorId, records] of byDebtor) {
-    const sorted = [...records].sort(
-      (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime(),
-    );
-    const latest = sorted[0];
+  for (const { latest, scopeCalls } of latestOpenPerAccount(disps, all)) {
+    const debtorId = latest.debtorId;
     if (latest.outcome !== "promised" || !latest.ptpDate || latest.ptpAmount == null) continue;
 
     const daysLeft = Math.round(
@@ -602,7 +661,7 @@ function computePtpFollowups(disps: DispositionRecord[]): PtpFollowup[] {
       ptpDateIso: latest.ptpDate,
       ptpTime: latest.ptpTime,
       daysLeft,
-      prevAttempts: sorted.length - 1,
+      prevAttempts: scopeCalls - 1,
       notes: latest.notes,
       dpd: latest.dpd,
     });
@@ -617,7 +676,7 @@ function computePtpFollowups(disps: DispositionRecord[]): PtpFollowup[] {
  * PTP_FOLLOWUPS mock fixture that used to feed the Call Queue's "PTP Follow-up Tracker".
  */
 export function getPtpFollowups(agentId: string): PtpFollowup[] {
-  return computePtpFollowups(getAgentDispositions(agentId));
+  return computePtpFollowups(getAgentDispositions(agentId), getDispositions());
 }
 
 /** Same as getPtpFollowups but across every agent on a manager's team — feeds the manager-side
@@ -625,7 +684,11 @@ export function getPtpFollowups(agentId: string): PtpFollowup[] {
  * about overdue PTPs regardless of which of the manager's agents logged them. */
 export function getTeamPtpFollowups(agentIds: string[]): PtpFollowup[] {
   const idSet = new Set(agentIds);
-  return computePtpFollowups(getDispositions().filter((d) => idSet.has(d.agentId)));
+  const all = getDispositions();
+  return computePtpFollowups(
+    all.filter((d) => idSet.has(d.agentId)),
+    all,
+  );
 }
 
 export function getTeamDispositions(teamId: string): DispositionRecord[] {

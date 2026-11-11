@@ -7,7 +7,12 @@
  * generalising the chain beyond PTPs).
  */
 import { expect, test } from "bun:test";
-import { computeCaseFollowups, type DispositionRecord } from "../src/lib/disposition-store";
+import {
+  computeCaseFollowups,
+  computePtpFollowups,
+  loanKeyOf,
+  type DispositionRecord,
+} from "../src/lib/disposition-store";
 
 const DAY = 86_400_000;
 const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toISOString();
@@ -91,4 +96,60 @@ test("each debtor yields at most one live commitment", () => {
   expect(rows).toHaveLength(2);
   // The newer callback supersedes that debtor's older promise.
   expect(rows.every((r) => r.kind === "callback")).toBe(true);
+});
+
+// ── 2026-11-11: follow-ups are judged per LOAN, over everyone's calls ──────────────────────
+const OLD_ROW = "22222222-2222-2222-2222-222222222222";
+const NEW_ROW = "33333333-3333-3333-3333-333333333333";
+const LOAN = loanKeyOf("A0001695019892804798", "JITESH ARUN PEDNEKAR");
+
+test("a PTP on last month's upload is closed by Paid logged on this month's upload", () => {
+  const ptp = disp({
+    debtorId: OLD_ROW,
+    loanKey: LOAN,
+    ptpDate: dateOnly(-60),
+    ptpAmount: 20000,
+    time: iso(-6),
+  });
+  const paid = disp({
+    debtorId: NEW_ROW,
+    loanKey: LOAN,
+    outcome: "paid",
+    paidAmount: 20000,
+    time: iso(-1),
+  });
+  expect(computePtpFollowups([ptp, paid])).toHaveLength(0);
+  expect(computeCaseFollowups([ptp, paid])).toHaveLength(0);
+});
+
+test("a PTP on an account whose portfolio closed (or the bank marked paid) is not a follow-up", () => {
+  const ptp = disp({ ptpDate: dateOnly(-78), ptpAmount: 2000, accountClosed: true });
+  expect(computePtpFollowups([ptp])).toHaveLength(0);
+  expect(computeCaseFollowups([ptp])).toHaveLength(0);
+});
+
+test("a later call by someone outside the scope still supersedes the PTP", () => {
+  const mine = disp({
+    agentId: "agent@x.com",
+    ptpDate: dateOnly(-5),
+    ptpAmount: 500,
+    time: iso(-10),
+  });
+  const managers = disp({ agentId: "manager@x.com", outcome: "no_answer", time: iso(-2) });
+  expect(computePtpFollowups([mine], [mine, managers])).toHaveLength(0);
+});
+
+test("an open PTP on a live account still shows, with its attempts counted per loan", () => {
+  const first = disp({ debtorId: OLD_ROW, loanKey: LOAN, outcome: "no_answer", time: iso(-3) });
+  const ptp = disp({
+    debtorId: NEW_ROW,
+    loanKey: LOAN,
+    ptpDate: dateOnly(2),
+    ptpAmount: 900,
+    time: iso(-1),
+  });
+  const rows = computePtpFollowups([first, ptp]);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].debtorId).toBe(NEW_ROW);
+  expect(rows[0].prevAttempts).toBe(1);
 });

@@ -322,6 +322,9 @@ export interface CallControlProps {
   onAddPhone: (phone: string) => Promise<void>;
   /** Places a fresh call to a specific number for the debtor already on screen. */
   onCallNumber: (phone: string) => void;
+  /** Opens the debtor's full profile. Omitted where the page has no profile sheet; the name is
+   * then plain text. Never offered for an ad-hoc Manual Dial contact (no account behind it). */
+  onOpenProfile?: () => void;
 }
 
 /**

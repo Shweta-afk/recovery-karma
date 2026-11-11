@@ -1,3 +1,4 @@
+import { todayIstKey } from "@/lib/date-filter";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -439,6 +440,8 @@ function ManagerQueuePage() {
   // Active-call state lives here (not inside a single tab) so a call started from Agent
   // Live View or My Queue keeps its panel visible even if the manager switches tabs mid-call.
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
+  // Profile of the borrower on the call, opened by clicking their name on the call screen.
+  const [callProfile, setCallProfile] = useState<Debtor | null>(null);
   const [activeEscalationId, setActiveEscalationId] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<DispositionForm>(EMPTY_DISPOSITION);
   // Places a real call through the telephony provider (mode: "server") — this used to be a fake
@@ -488,6 +491,20 @@ function ManagerQueuePage() {
     if (!disposition.outcome) {
       toast.error("Select an outcome before submitting");
       return;
+    }
+    // A PTP or callback date in the past (e.g. 11 Sep typed for 9 Nov) lands straight in
+    // "overdue" and escalates; refuse it here — the date picker blocks it too.
+    {
+      const due =
+        disposition.outcome === "promised"
+          ? disposition.ptpDate
+          : disposition.outcome === "callback"
+            ? disposition.callbackDate
+            : "";
+      if (due && due < todayIstKey()) {
+        toast.error("That date is in the past — pick today or a later date");
+        return;
+      }
     }
     if (activeCall) {
       const debtor = activeCall.debtor;
@@ -618,6 +635,7 @@ function ManagerQueuePage() {
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
           onAddPhone={handleAddPhone}
           onCallNumber={handleCallNumber}
+          onOpenProfile={() => setCallProfile(activeCall.debtor as unknown as Debtor)}
         />
       )}
       {activeCall && activeCall.view === "modal" && (
@@ -632,8 +650,22 @@ function ManagerQueuePage() {
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "panel" } : null))}
           onAddPhone={handleAddPhone}
           onCallNumber={handleCallNumber}
+          onOpenProfile={() => setCallProfile(activeCall.debtor as unknown as Debtor)}
         />
       )}
+      <Sheet
+        open={!!callProfile}
+        onOpenChange={(open) => {
+          if (!open) setCallProfile(null);
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="w-full max-w-2xl p-0 overflow-hidden flex flex-col sm:max-w-2xl"
+        >
+          {callProfile && <DebtorProfile d={callProfile} onClose={() => setCallProfile(null)} />}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

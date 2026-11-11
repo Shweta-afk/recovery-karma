@@ -709,6 +709,20 @@ export function CallQueueContent({
       toast.error("Select an outcome before submitting");
       return;
     }
+    // A PTP or callback date in the past (e.g. 11 Sep typed for 9 Nov) lands straight in
+    // "overdue" and escalates; refuse it here — the date picker blocks it too.
+    {
+      const due =
+        disposition.outcome === "promised"
+          ? disposition.ptpDate
+          : disposition.outcome === "callback"
+            ? disposition.callbackDate
+            : "";
+      if (due && due < todayIstKey()) {
+        toast.error("That date is in the past — pick today or a later date");
+        return;
+      }
+    }
     if (disposition.escalate && activeCall) {
       setEscalationCall({ debtor: activeCall.debtor, notes: disposition.notes });
     }
@@ -1541,6 +1555,34 @@ export function CallQueueContent({
             {dialer.running ? dialer.legs.filter((c) => c.status === "ringing").length : 0}
           </span>
           <span className="text-xs text-muted-foreground">outbound calls active right now</span>
+          {/* Who is ringing — each name opens that borrower's profile. */}
+          {dialer.running && (
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              {dialer.legs
+                .filter((c) => c.status === "ringing")
+                .map((c) => {
+                  const debtor = findQueueDebtor(c.loanId);
+                  return debtor ? (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setProfileDebtor(debtor)}
+                      title="Open this borrower's profile"
+                      className="rounded-full border border-blue-400/30 bg-background px-2 py-0.5 text-xs font-medium text-primary hover:underline"
+                    >
+                      {debtor.name}
+                    </button>
+                  ) : (
+                    <span
+                      key={c.id}
+                      className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground"
+                    >
+                      {c.debtor}
+                    </span>
+                  );
+                })}
+            </div>
+          )}
           {prodFilter !== "all" && (
             <button
               type="button"
@@ -2126,6 +2168,7 @@ export function CallQueueContent({
           onMinimize={() => setActiveCall((c) => (c ? { ...c, view: "minimized" } : null))}
           onAddPhone={handleAddPhone}
           onCallNumber={handleCallNumber}
+          onOpenProfile={() => setProfileDebtor(activeCall.debtor)}
         />
       )}
       {activeCall && activeCall.view === "modal" && (
@@ -2141,6 +2184,7 @@ export function CallQueueContent({
           onMinimize={() => setActiveCall((c) => (c ? { ...c, view: "minimized" } : null))}
           onAddPhone={handleAddPhone}
           onCallNumber={handleCallNumber}
+          onOpenProfile={() => setProfileDebtor(activeCall.debtor)}
         />
       )}
 

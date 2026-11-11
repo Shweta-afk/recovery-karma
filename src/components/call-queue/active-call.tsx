@@ -13,6 +13,7 @@ import {
   Mic,
   PauseCircle,
   PhoneOff,
+  UserRound,
   UserRoundCog,
   CalendarClock,
   IndianRupee,
@@ -67,6 +68,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { todayIstKey } from "@/lib/date-filter";
 import {
   bucketOf,
   formatINR,
@@ -205,6 +207,7 @@ function ActiveCallContent({
   onMinimize,
   onAddPhone,
   onCallNumber,
+  onOpenProfile,
 }: CallControlProps) {
   const { debtor, phase, muted, held, elapsed } = call;
   // The call ended without ever being answered (no answer, busy, switched off, failed). The
@@ -351,6 +354,9 @@ function ActiveCallContent({
       });
   }, [debtor.id, debtor.contactHistory, dispositionsTick]);
 
+  // A Manual Dial number that matched no account has a synthetic id — no profile to open.
+  const profileLink = onOpenProfile && isUuid(debtor.id) ? onOpenProfile : undefined;
+
   /* ── Ringing: compact single-row ── */
   if (phase === "ringing") {
     return (
@@ -364,14 +370,37 @@ function ActiveCallContent({
               .join("")}
           </div>
           <div>
-            <div className="font-semibold text-foreground text-sm">{debtor.name}</div>
+            {profileLink ? (
+              <button
+                type="button"
+                onClick={profileLink}
+                title="Open this borrower's profile"
+                className="font-semibold text-primary text-sm hover:underline text-left"
+              >
+                {debtor.name}
+              </button>
+            ) : (
+              <div className="font-semibold text-foreground text-sm">{debtor.name}</div>
+            )}
             <div className="text-xs text-muted-foreground">
               {debtor.loanReference ?? debtor.id} · {debtor.phone}
             </div>
           </div>
-          <span className="flex items-center gap-1.5 text-sm text-blue-500 font-medium ml-2">
-            <span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" /> Ringing…
-          </span>
+          <div className="ml-2">
+            <span className="flex items-center gap-1.5 text-sm text-blue-500 font-medium">
+              <span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" /> Ringing…
+            </span>
+            {profileLink && (
+              <button
+                type="button"
+                onClick={profileLink}
+                className="mt-0.5 flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <UserRound className="h-3 w-3" />
+                View {debtor.name}&apos;s profile
+              </button>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onSwitchView}>
@@ -533,6 +562,7 @@ function ActiveCallContent({
             </label>
             <Input
               type="date"
+              min={todayIstKey()}
               value={disposition.ptpDate}
               onChange={(e) => up({ ptpDate: e.target.value })}
               className="h-9"
@@ -558,6 +588,7 @@ function ActiveCallContent({
             <label className="text-xs text-muted-foreground">Callback Date</label>
             <Input
               type="date"
+              min={todayIstKey()}
               value={disposition.callbackDate}
               onChange={(e) => up({ callbackDate: e.target.value })}
               className="h-9"
@@ -674,9 +705,20 @@ function ActiveCallContent({
               )}
             </div>
             <div className="min-w-0">
-              <div className="font-semibold text-foreground text-base leading-tight truncate">
-                {debtor.name}
-              </div>
+              {profileLink ? (
+                <button
+                  type="button"
+                  onClick={profileLink}
+                  title="Open this borrower's profile"
+                  className="block max-w-full font-semibold text-primary text-base leading-tight truncate hover:underline text-left"
+                >
+                  {debtor.name}
+                </button>
+              ) : (
+                <div className="font-semibold text-foreground text-base leading-tight truncate">
+                  {debtor.name}
+                </div>
+              )}
               <div className="flex items-center gap-1 text-xs text-muted-foreground truncate">
                 <span className="inline-flex items-center gap-1">
                   {debtor.loanReference ?? debtor.id}
