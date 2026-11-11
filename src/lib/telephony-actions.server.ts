@@ -15,7 +15,7 @@ import {
   type LedgerRow,
 } from "./telephony/guard.server";
 import { skycrmCallbackDatetime, skycrmSubDisposition } from "./telephony/skycrm-disposition";
-import { copyTalkTimeToCallLogs } from "./telephony/talk-time";
+import { copyRingTimeToCallLogs, copyTalkTimeToCallLogs } from "./telephony/talk-time";
 import { normalisePhone, type TelephonySettingsRow } from "./telephony/guard-rules";
 import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
@@ -671,6 +671,7 @@ export const syncCallLogTalkTime = createServerFn({ method: "POST" })
     const ledger = await ledgerByProviderCallId(data.providerCallId);
     if (!ledger || ledger.client_id !== caller.clientId) return { ok: false };
     await copyTalkTimeToCallLogs(db(), data.providerCallId, ledger.status, ledger.duration_seconds);
+    await copyRingTimeToCallLogs(db(), data.providerCallId, ledger);
     return { ok: true };
   });
 

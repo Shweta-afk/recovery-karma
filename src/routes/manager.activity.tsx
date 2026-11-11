@@ -294,10 +294,10 @@ function TeamActivityPage() {
           <DateRangeFilter value={dateRange} onChange={setDateRange} />
           <span
             className="flex items-center gap-1.5 text-xs text-muted-foreground rounded-lg border border-border bg-card px-2.5 py-1.5"
-            title="Calling time is real, from logged calls. Ringing, idle, disposition, break and login/logout times are estimated — real presence tracking is coming soon."
+            title="Ringing comes from the call ledger: the whole call when the borrower never picked up. For answered calls it is not split from talk time yet — SkyCRM doesn't send the answer time."
           >
             <Info className="h-3.5 w-3.5 flex-shrink-0" />
-            Ringing/idle/disposition/break/login times are estimated
+            Ringing = unanswered calls only
           </span>
           {activeTeam && (
             <Button variant="outline" className="gap-1.5 shrink-0" onClick={openManageTeam}>
@@ -616,9 +616,7 @@ function ManageTeamDialog({
             />
             <div className="max-h-48 overflow-y-auto rounded-md border border-border divide-y divide-border">
               {availableAgents.length === 0 && (
-                <p className="py-4 text-center text-xs text-muted-foreground">
-                  No agents found.
-                </p>
+                <p className="py-4 text-center text-xs text-muted-foreground">No agents found.</p>
               )}
               {availableAgents.map((a: AgentRef) => {
                 const selected = selectedAgentIds.has(a.id);

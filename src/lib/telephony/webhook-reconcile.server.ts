@@ -11,7 +11,7 @@ import {
   markEndedByCustomer,
   updateLedger,
 } from "./guard.server";
-import { copyTalkTimeToCallLogs } from "./talk-time";
+import { copyRingTimeToCallLogs, copyTalkTimeToCallLogs } from "./talk-time";
 import type { CallStatusEvent } from "./types";
 
 /** Swap a vendor-keyed webhook event onto our providerCallId and keep the ledger current.
@@ -79,6 +79,7 @@ export async function reconcileWithLedger(
     status.status,
     status.durationSeconds,
   );
+  await copyRingTimeToCallLogs(getSupabaseAdmin(), ours, { ...ledger, ...patch } as never);
   return {
     status: { ...status, providerCallId: ours, customIdentifier: ours },
     ownerClientId: ledger.client_id,

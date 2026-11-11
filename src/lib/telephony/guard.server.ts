@@ -503,6 +503,7 @@ export interface LedgerRow {
   status: string;
   answered_at: string | null;
   ended_at: string | null;
+  started_at?: string | null;
   /** Every live event's vendor words, in order (20261105_ledger_vendor_events.sql). */
   vendor_events?: string | null;
   /** Talk time on a completed call, ringing time otherwise — see talk-time.ts. */
@@ -510,7 +511,7 @@ export interface LedgerRow {
 }
 
 const LEDGER_COLS =
-  "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, answered_at, ended_at, vendor_events, duration_seconds";
+  "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, started_at, answered_at, ended_at, vendor_events, duration_seconds";
 
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {
   if (!id) return;
