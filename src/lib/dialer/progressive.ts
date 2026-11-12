@@ -102,7 +102,30 @@ export type ProgressiveAction =
   /** Skip the rest of the countdown. */
   | { type: "callNow" }
   | { type: "skip"; now: number }
-  | { type: "stop" };
+  | { type: "stop" }
+  /** Bring back a run saved before the page was left or reloaded — always paused. */
+  | { type: "restore"; saved: SavedProgressive };
+
+/** What is kept across a reload / leaving the page: the list and where the run had got to. */
+export interface SavedProgressive {
+  ids: string[];
+  index: number;
+  called: number;
+  skipped: number;
+  /** The run was on a call when the page went away: that borrower was called, so carry on after. */
+  wasCalling: boolean;
+}
+
+export function toSaved(s: ProgressiveState): SavedProgressive | null {
+  if (s.status === "idle" || s.status === "done" || !s.ids.length) return null;
+  return {
+    ids: s.ids,
+    index: s.index,
+    called: s.called,
+    skipped: s.skipped,
+    wasCalling: s.status === "calling",
+  };
+}
 
 function advance(s: ProgressiveState, now: number): ProgressiveState {
   const index = s.index + 1;
@@ -157,6 +180,21 @@ export function progressiveReducer(s: ProgressiveState, a: ProgressiveAction): P
       return advance({ ...s, skipped: s.skipped + 1 }, a.now);
     case "stop":
       return PROGRESSIVE_IDLE;
+    case "restore": {
+      if (s.status !== "idle") return s;
+      const { ids, called, skipped, wasCalling } = a.saved;
+      const index = a.saved.index + (wasCalling ? 1 : 0);
+      if (!ids.length || index >= ids.length) return s;
+      return {
+        ...PROGRESSIVE_IDLE,
+        status: "paused",
+        ids,
+        index,
+        called,
+        skipped,
+        pauseReason: "Picked up where you left off — press Resume to carry on",
+      };
+    }
   }
 }
 

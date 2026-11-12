@@ -5,6 +5,7 @@ import {
   dueToDial,
   planProgressive,
   progressiveReducer as r,
+  toSaved,
 } from "../src/lib/dialer/progressive";
 
 describe("planProgressive", () => {
@@ -77,5 +78,20 @@ describe("progressive session", () => {
     expect(dueToDial(s, 1e12)).toBeNull();
     s = r(s, { type: "resume" });
     expect(dueToDial(s, 0)).toBe("b");
+  });
+
+  test("a saved run comes back paused at the same place (after the call it was on)", () => {
+    let s = r(r(started, { type: "dialed", id: "a" }), { type: "dispositioned", id: "a", now: 0 });
+    // index 1 ("b") is next; saved, then brought back after a reload.
+    const saved = toSaved(s)!;
+    let back = r(PROGRESSIVE_IDLE, { type: "restore", saved });
+    expect(back.status).toBe("paused");
+    expect(back.called).toBe(1);
+    back = r(back, { type: "resume" });
+    expect(dueToDial(back, 0)).toBe("b");
+    // Saved while ON the call to "b": that call happened, so carry on after it.
+    s = r(back, { type: "dialed", id: "b" });
+    expect(r(PROGRESSIVE_IDLE, { type: "restore", saved: toSaved(s)! }).status).toBe("idle");
+    expect(toSaved(r(s, { type: "stop" }))).toBeNull();
   });
 });

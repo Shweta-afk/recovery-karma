@@ -7,7 +7,9 @@ import {
   dueToDial,
   planProgressive,
   progressiveReducer,
+  toSaved,
   type ProgressivePlan,
+  type SavedProgressive,
 } from "./progressive";
 import type { ActiveCall, QueueDebtor } from "@/lib/call-queue/types";
 
@@ -34,9 +36,39 @@ export interface ProgressiveDial {
 export function useProgressiveDial(args: {
   activeCall: ActiveCall | null;
   startCall: (debtor: QueueDebtor) => void;
+  /** Where the run is kept across a reload or leaving the page (one per signed-in user). Null =
+   *  not kept. */
+  storageKey: string | null;
+  /** Borrowers by id, for a run brought back after a reload (its rows weren't kept). */
+  loadTargets: (ids: string[]) => Promise<QueueDebtor[]>;
 }): ProgressiveDial {
-  const { activeCall, startCall } = args;
+  const { activeCall, startCall, storageKey } = args;
   const [state, dispatch] = useReducer(progressiveReducer, PROGRESSIVE_IDLE);
+  const loadRef = useRef(args.loadTargets);
+  loadRef.current = args.loadTargets;
+
+  // Keep the run: a manager pauses after 100 calls, goes off to use Manual Dial (not on My Queue),
+  // comes back and resumes at 101 (user, 2026-11-12). Browser storage, this tab only.
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      if (raw) dispatch({ type: "restore", saved: JSON.parse(raw) as SavedProgressive });
+    } catch {
+      /* storage unavailable */
+    }
+  }, [storageKey]);
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const saved = toSaved(state);
+      if (saved) sessionStorage.setItem(storageKey, JSON.stringify(saved));
+      else if (state.status === "idle" || state.status === "done")
+        sessionStorage.removeItem(storageKey);
+    } catch {
+      /* storage full or unavailable */
+    }
+  }, [state, storageKey]);
   const targets = useRef(new Map<string, QueueDebtor>());
   const [now, setNow] = useState(() => Date.now());
   const startCallRef = useRef(startCall);
@@ -82,10 +114,29 @@ export function useProgressiveDial(args: {
     const id = dueToDial(state, now);
     if (!id || activeCall) return;
     const debtor = targets.current.get(id);
-    if (!debtor) return;
+    if (!debtor) {
+      // A run brought back after a reload: load the next borrowers, then this effect runs again.
+      if (loading.current) return;
+      loading.current = true;
+      const batch = state.ids.slice(state.index, state.index + 100);
+      void loadRef
+        .current(batch)
+        .then((rows) => {
+          for (const r of rows) targets.current.set(r.id, r);
+          // Gone from the queue since (paid, reassigned, closed): skip it.
+          if (!rows.some((r) => r.id === id)) dispatch({ type: "skip", now: 0 });
+        })
+        .catch(() => dispatch({ type: "pause", reason: "Couldn't load the next borrowers" }))
+        .finally(() => {
+          loading.current = false;
+          setNow(Date.now());
+        });
+      return;
+    }
     dispatch({ type: "dialed", id });
     startCallRef.current(debtor);
   }, [state, now, activeCall]);
+  const loading = useRef(false);
 
   const start = useCallback(
     (rows: QueueDebtor[], opts: { todayKey: string; doNotCall: Set<string> }) => {

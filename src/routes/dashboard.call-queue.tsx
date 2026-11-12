@@ -626,6 +626,10 @@ export function CallQueueContent({
   const progressive = useProgressiveDial({
     activeCall,
     startCall: (d) => startCall(d, { dialMode: "sequential" }),
+    // Kept per signed-in user in this tab, so leaving Call Queue (e.g. a manager going to use
+    // Manual Dial) or a reload brings the run back paused at the same place.
+    storageKey: isSelf ? `samvadx:progressive:${actingAgentId}` : null,
+    loadTargets: (ids) => fetchAllDebtorRows({ ...baseQuery, extraHead: false, ids }),
   });
 
   // Passes the call's own provider id: a call dialled from the Manual Dial dock (or one still
@@ -1513,7 +1517,8 @@ export function CallQueueContent({
                               : b === "2"
                                 ? "bg-warning/8 text-warning-foreground/70 border-warning/15"
                                 : "bg-destructive/8 text-destructive/70 border-destructive/15";
-                          const statusMeta = QUEUE_STATUS_META[d.queueStatus];
+                          const statusMeta =
+                            QUEUE_STATUS_META[d.queueStatus] ?? QUEUE_STATUS_META.fresh;
                           return (
                             <TableRow key={d.id} className="hover:bg-violet-500/5">
                               <TableCell>
@@ -2350,7 +2355,7 @@ function QueueRow({
       : d.aiScore >= 5
         ? "bg-warning text-warning-foreground"
         : "bg-destructive text-destructive-foreground";
-  const statusMeta = QUEUE_STATUS_META[d.queueStatus];
+  const statusMeta = QUEUE_STATUS_META[d.queueStatus] ?? QUEUE_STATUS_META.fresh;
   return (
     <TableRow
       className={cn(
