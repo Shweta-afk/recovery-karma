@@ -10,6 +10,7 @@ import { expect, test } from "bun:test";
 import {
   computeCaseFollowups,
   computePtpFollowups,
+  effectiveDisposition,
   loanKeyOf,
   type DispositionRecord,
 } from "../src/lib/disposition-store";
@@ -94,8 +95,8 @@ test("each debtor yields at most one live commitment", () => {
     disp({ debtorId: other, outcome: "callback", callbackDate: dateOnly(-1) }),
   ]);
   expect(rows).toHaveLength(2);
-  // The newer callback supersedes that debtor's older promise.
-  expect(rows.every((r) => r.kind === "callback")).toBe(true);
+  // A PTP stays open until paid (2026-11-12): the later callback doesn't replace it.
+  expect(rows.map((r) => r.kind).sort()).toEqual(["callback", "ptp"]);
 });
 
 // ── 2026-11-11: follow-ups are judged per LOAN, over everyone's calls ──────────────────────
@@ -128,15 +129,39 @@ test("a PTP on an account whose portfolio closed (or the bank marked paid) is no
   expect(computeCaseFollowups([ptp])).toHaveLength(0);
 });
 
-test("a later call by someone outside the scope still supersedes the PTP", () => {
+test("a later Paid by someone outside the scope closes the PTP", () => {
   const mine = disp({
     agentId: "agent@x.com",
     ptpDate: dateOnly(-5),
     ptpAmount: 500,
     time: iso(-10),
   });
-  const managers = disp({ agentId: "manager@x.com", outcome: "no_answer", time: iso(-2) });
-  expect(computePtpFollowups([mine], [mine, managers])).toHaveLength(0);
+  const paid = disp({ agentId: "manager@x.com", outcome: "paid", paidAmount: 500, time: iso(-2) });
+  expect(computePtpFollowups([mine], [mine, paid])).toHaveLength(0);
+});
+
+// ── 2026-11-12: PTP stays until paid; callback stays through no-answers ───────────────────
+test("a PTP stays open through later no-answers, callbacks and refusals until paid", () => {
+  const ptp = disp({ ptpDate: dateOnly(-3), ptpAmount: 700, time: iso(-5) });
+  const later = [
+    disp({ outcome: "no_answer", time: iso(-4) }),
+    disp({ outcome: "callback", callbackDate: dateOnly(1), time: iso(-3) }),
+    disp({ outcome: "refused", time: iso(-2) }),
+  ];
+  expect(computePtpFollowups([ptp, ...later])).toHaveLength(1);
+  expect(effectiveDisposition([ptp, ...later])?.id).toBe(ptp.id);
+  const paid = disp({ outcome: "paid", paidAmount: 700, time: iso(-1) });
+  expect(effectiveDisposition([ptp, ...later, paid])?.outcome).toBe("paid");
+});
+
+test("a callback stays through no-answers but a real conversation replaces it", () => {
+  const cb = disp({ outcome: "callback", callbackDate: dateOnly(1), time: iso(-3) });
+  const ring = disp({ outcome: "no_answer", time: iso(-2) });
+  const vm = disp({ outcome: "voicemail", time: iso(-1) });
+  expect(effectiveDisposition([cb, ring, vm])?.id).toBe(cb.id);
+  expect(computeCaseFollowups([cb, ring, vm])).toHaveLength(1);
+  const refused = disp({ outcome: "refused", time: iso(0) });
+  expect(effectiveDisposition([cb, ring, refused])?.outcome).toBe("refused");
 });
 
 test("an open PTP on a live account still shows, with its attempts counted per loan", () => {

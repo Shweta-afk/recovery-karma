@@ -531,6 +531,30 @@ export function loanKeyOf(
   return `${loan}|${(name ?? "").trim().toLowerCase().replace(/\s+/g, " ")}`;
 }
 
+/** Outcomes that mean nobody spoke to the borrower. */
+const NO_CONTACT_OUTCOMES: ReadonlySet<string> = new Set(["no_answer", "voicemail"]);
+
+/**
+ * What an account is "currently marked as", from its calls (2026-11-12, user's rule):
+ *  - a PTP stays the account's state until a Paid is logged after it — later no-answers,
+ *    callbacks or other outcomes don't take it out of PTP;
+ *  - otherwise a Callback stays through later no-answers / voicemails (a call that just rang
+ *    doesn't undo an agreed call-back); a real conversation with another outcome replaces it;
+ *  - otherwise the latest call.
+ * The database's debtor_list (queue status) applies the same rule — change them together
+ * (migrations/20261112_sticky_ptp_callback_status.sql).
+ */
+export function effectiveDisposition(records: DispositionRecord[]): DispositionRecord | undefined {
+  if (!records.length) return undefined;
+  const sorted = [...records].sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
+  const ptp = sorted.find((r) => r.outcome === "promised");
+  const paid = sorted.find((r) => r.outcome === "paid");
+  if (ptp && (!paid || Date.parse(paid.time) < Date.parse(ptp.time))) return ptp;
+  const contact = sorted.find((r) => !NO_CONTACT_OUTCOMES.has(r.outcome));
+  if (contact?.outcome === "callback") return contact;
+  return sorted[0];
+}
+
 function accountKey(d: DispositionRecord): string {
   return d.loanKey ? `loan:${d.loanKey}` : `debtor:${d.debtorId}`;
 }
@@ -557,19 +581,22 @@ function latestOpenPerAccount(
     const k = accountKey(d);
     scopeCount.set(k, (scopeCount.get(k) ?? 0) + 1);
   }
-  const latest = new Map<string, DispositionRecord>();
+  const byAccount = new Map<string, DispositionRecord[]>();
   const seen = new Set<string>();
   for (const d of [...scope, ...all]) {
     if (!d.debtorId || seen.has(d.id)) continue;
     seen.add(d.id);
     const k = accountKey(d);
     if (!scopeCount.has(k)) continue;
-    const prev = latest.get(k);
-    if (!prev || Date.parse(d.time) > Date.parse(prev.time)) latest.set(k, d);
+    const list = byAccount.get(k);
+    if (list) list.push(d);
+    else byAccount.set(k, [d]);
   }
   const out: Array<{ latest: DispositionRecord; scopeCalls: number }> = [];
-  for (const [k, d] of latest) {
-    if (!scopeIds.has(d.id) || d.accountClosed) continue;
+  for (const [k, records] of byAccount) {
+    // Not simply the latest call: a PTP stays open until paid (see effectiveDisposition).
+    const d = effectiveDisposition(records);
+    if (!d || !scopeIds.has(d.id) || d.accountClosed) continue;
     out.push({ latest: d, scopeCalls: scopeCount.get(k) ?? 1 });
   }
   return out;
@@ -714,12 +741,19 @@ export function getTeamDispositions(teamId: string): DispositionRecord[] {
  * Accounts table on the manager/admin portfolio dashboards, so the two can never disagree
  * about what an account is marked as. */
 export function getLatestDispositionByDebtor(): Map<string, DispositionRecord> {
-  const latest = new Map<string, DispositionRecord>();
+  const byDebtor = new Map<string, DispositionRecord[]>();
   for (const d of getDispositions()) {
     if (!d.debtorId) continue;
-    const prev = latest.get(d.debtorId);
-    if (prev && prev.time >= d.time) continue;
-    latest.set(d.debtorId, d);
+    const list = byDebtor.get(d.debtorId);
+    if (list) list.push(d);
+    else byDebtor.set(d.debtorId, [d]);
+  }
+  // The account's current state, by the same rule as the queue (PTP until paid, callback through
+  // no-answers) — see effectiveDisposition.
+  const latest = new Map<string, DispositionRecord>();
+  for (const [id, records] of byDebtor) {
+    const d = effectiveDisposition(records);
+    if (d) latest.set(id, d);
   }
   return latest;
 }
