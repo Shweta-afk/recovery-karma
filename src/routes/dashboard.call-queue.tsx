@@ -2194,6 +2194,9 @@ export function CallQueueContent({
           onDisposition={setDisposition}
           onMute={() => setActiveCall((c) => (c ? { ...c, muted: !c.muted } : null))}
           onHold={() => setActiveCall((c) => (c ? { ...c, held: !c.held } : null))}
+          onMarkAnswered={() =>
+            setActiveCall((c) => (c && c.phase === "ringing" ? { ...c, phase: "connected" } : c))
+          }
           onToggleRingingDetails={() =>
             setActiveCall((c) => (c ? { ...c, expandRinging: !c.expandRinging } : c))
           }
@@ -2213,6 +2216,9 @@ export function CallQueueContent({
           onDisposition={setDisposition}
           onMute={() => setActiveCall((c) => (c ? { ...c, muted: !c.muted } : null))}
           onHold={() => setActiveCall((c) => (c ? { ...c, held: !c.held } : null))}
+          onMarkAnswered={() =>
+            setActiveCall((c) => (c && c.phase === "ringing" ? { ...c, phase: "connected" } : c))
+          }
           onToggleRingingDetails={() =>
             setActiveCall((c) => (c ? { ...c, expandRinging: !c.expandRinging } : c))
           }

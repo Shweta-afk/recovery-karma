@@ -337,6 +337,9 @@ export interface CallControlProps {
   onOpenProfile?: () => void;
   /** Ringing call: switch between the slim bar and the full call screen. */
   onToggleRingingDetails?: () => void;
+  /** The agent heard the borrower pick up: show the call as connected. SkyCRM sends no
+   *  "answered" event, so without this the screen says Ringing until the call ends. */
+  onMarkAnswered?: () => void;
 }
 
 /**

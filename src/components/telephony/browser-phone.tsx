@@ -21,6 +21,7 @@ import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
 import { getMyWebphoneLogin, logMissedInbound } from "@/lib/telephony-actions.server";
 import { useNavigate } from "@tanstack/react-router";
 import { setPhoneState } from "@/lib/telephony/phone-status";
+import { startAnswerDetector } from "@/lib/telephony/answer-detector";
 import { useCallSession } from "@/lib/call-session";
 import {
   askNotificationPermission,
@@ -330,6 +331,21 @@ function RegisteredPhone({
       })();
     }
   }, [customerRinging, call?.id, call?.state, call]);
+
+  // The borrower picked up — heard, not reported: SkyCRM sends no "answered" event, so the call
+  // screen said Ringing for the whole conversation. While the app's call rings and the agent's
+  // leg is up, listen to the far end; speech → show the call as connected (answer-detector.ts).
+  const appRinging = session.activeCall?.phase === "ringing";
+  const legUp = call?.state === "connected";
+  useEffect(() => {
+    if (!appRinging || !legUp) return;
+    const stream = audioEl.current?.srcObject;
+    if (!(stream instanceof MediaStream)) return;
+    return startAnswerDetector(stream, () => {
+      session.setActiveCall((c) => (c && c.phase === "ringing" ? { ...c, phase: "connected" } : c));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appRinging, legUp, call?.id]);
 
   const answerIncoming = () => {
     unlockAudio();

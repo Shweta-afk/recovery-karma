@@ -273,7 +273,14 @@ export function useSingleCall(
                       ...c,
                       // An ended call never comes back to life: a late "ringing"/"connected"
                       // answer (or the agent having already pressed End) must not reopen it.
-                      phase: c.phase === "ended" ? "ended" : phase,
+                      // …and a call the agent marked Answered isn't put back to "ringing":
+                      // SkyCRM keeps reporting ringing until the call ends.
+                      phase:
+                        c.phase === "ended"
+                          ? "ended"
+                          : c.phase === "connected" && phase === "ringing"
+                            ? "connected"
+                            : phase,
                       providerCallId: result.providerCallId,
                       // Keep any URL we already have: the provider publishes recordings
                       // asynchronously, so a later poll can report none.

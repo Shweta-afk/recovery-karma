@@ -219,6 +219,7 @@ function ActiveCallContent({
   onCallNumber,
   onOpenProfile,
   onToggleRingingDetails,
+  onMarkAnswered,
 }: CallControlProps) {
   const { debtor, phase, muted, held, elapsed } = call;
   // The call ended without ever being answered (no answer, busy, switched off, failed). The
@@ -431,6 +432,17 @@ function ActiveCallContent({
             >
               <Maximize2 className="h-3.5 w-3.5" />
               Expand
+            </Button>
+          )}
+          {onMarkAnswered && (
+            <Button
+              size="sm"
+              className="h-8 gap-1 text-xs bg-success text-white hover:bg-success/90"
+              onClick={onMarkAnswered}
+              title="The borrower picked up — show the call as connected"
+            >
+              <PhoneCall className="h-3.5 w-3.5" />
+              Answered
             </Button>
           )}
           {/* Still ringing and the agent can tell it won't be answered: end it and save
@@ -1199,6 +1211,17 @@ function ActiveCallContent({
               >
                 <Minimize2 className="h-3.5 w-3.5" />
                 Collapse
+              </Button>
+            )}
+            {phase === "ringing" && onMarkAnswered && (
+              <Button
+                size="sm"
+                className="gap-1.5 h-8 bg-success text-white hover:bg-success/90"
+                onClick={onMarkAnswered}
+                title="The borrower picked up — show the call as connected"
+              >
+                <PhoneCall className="h-3.5 w-3.5" />
+                Answered
               </Button>
             )}
             {liveView && (
