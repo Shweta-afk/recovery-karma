@@ -59,6 +59,9 @@ export interface ActiveCall {
   dialMode?: DialMode;
   phase: CallPhase;
   view: CallView;
+  /** While ringing: show the whole call screen (account details) instead of the slim bar. Off by
+   *  default; the agent opens it with Expand (user, 2026-11-12). */
+  expandRinging?: boolean;
   muted: boolean;
   held: boolean;
   elapsed: number; // seconds
@@ -327,6 +330,8 @@ export interface CallControlProps {
   /** Opens the debtor's full profile. Omitted where the page has no profile sheet; the name is
    * then plain text. Never offered for an ad-hoc Manual Dial contact (no account behind it). */
   onOpenProfile?: () => void;
+  /** Ringing call: switch between the slim bar and the full call screen. */
+  onToggleRingingDetails?: () => void;
 }
 
 /**

@@ -218,6 +218,7 @@ function ActiveCallContent({
   onAddPhone,
   onCallNumber,
   onOpenProfile,
+  onToggleRingingDetails,
 }: CallControlProps) {
   const { debtor, phase, muted, held, elapsed } = call;
   // The call ended without ever being answered (no answer, busy, switched off, failed). The
@@ -370,9 +371,9 @@ function ActiveCallContent({
   const profileLink = onOpenProfile && isUuid(debtor.id) ? onOpenProfile : undefined;
 
   /* ── Ringing: compact single-row ── */
-  // Progressive Dial shows the whole call screen while the call rings (user, 2026-11-12), so the
-  // agent has read the account before the borrower picks up; other calls keep the slim bar.
-  const fullWhileRinging = phase === "ringing" && call.dialMode === "sequential";
+  // While ringing the slim bar is the default; Expand opens the whole call screen so the agent
+  // can read the account before the borrower picks up (user, 2026-11-12), Collapse closes it.
+  const fullWhileRinging = phase === "ringing" && !!call.expandRinging;
   const liveView = phase === "connected" || fullWhileRinging;
 
   if (phase === "ringing" && !fullWhileRinging) {
@@ -420,6 +421,18 @@ function ActiveCallContent({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {onToggleRingingDetails && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1 text-xs"
+              onClick={onToggleRingingDetails}
+              title="Show the borrower's full details while it rings"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+              Expand
+            </Button>
+          )}
           {/* Still ringing and the agent can tell it won't be answered: end it and save
               "No answer" in one click (Progressive Dial then calls the next borrower). */}
           <select
@@ -1171,6 +1184,18 @@ function ActiveCallContent({
 
             {/* Only while the call is live — after it ends the button did nothing but sit there
                 looking like the call was still up. */}
+            {fullWhileRinging && onToggleRingingDetails && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 h-8"
+                onClick={onToggleRingingDetails}
+                title="Back to the slim bar"
+              >
+                <Minimize2 className="h-3.5 w-3.5" />
+                Collapse
+              </Button>
+            )}
             {liveView && (
               <Button
                 size="sm"
@@ -1997,8 +2022,8 @@ export function ActiveCallPanel(props: CallControlProps) {
   const expanded =
     props.call.phase === "connected" ||
     props.call.phase === "ended" ||
-    // Progressive Dial: the full screen while it rings, too.
-    (props.call.phase === "ringing" && props.call.dialMode === "sequential");
+    // Ringing with Expand pressed: the full screen.
+    (props.call.phase === "ringing" && !!props.call.expandRinging);
 
   if (expanded) {
     // Floating panel — padded off the screen edges rather than a full-bleed overlay

@@ -2186,6 +2186,9 @@ export function CallQueueContent({
           onDisposition={setDisposition}
           onMute={() => setActiveCall((c) => (c ? { ...c, muted: !c.muted } : null))}
           onHold={() => setActiveCall((c) => (c ? { ...c, held: !c.held } : null))}
+          onToggleRingingDetails={() =>
+            setActiveCall((c) => (c ? { ...c, expandRinging: !c.expandRinging } : c))
+          }
           onEnd={endCall}
           onSubmit={submitDisposition}
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "modal" } : null))}
@@ -2202,6 +2205,9 @@ export function CallQueueContent({
           onDisposition={setDisposition}
           onMute={() => setActiveCall((c) => (c ? { ...c, muted: !c.muted } : null))}
           onHold={() => setActiveCall((c) => (c ? { ...c, held: !c.held } : null))}
+          onToggleRingingDetails={() =>
+            setActiveCall((c) => (c ? { ...c, expandRinging: !c.expandRinging } : c))
+          }
           onEnd={endCall}
           onSubmit={submitDisposition}
           onSwitchView={() => setActiveCall((c) => (c ? { ...c, view: "panel" } : null))}
