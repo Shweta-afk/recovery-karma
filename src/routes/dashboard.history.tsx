@@ -40,6 +40,8 @@ import {
   refreshDispositions,
   type DispositionRecord,
 } from "@/lib/disposition-store";
+import { listMissedInboundForAgent, type MissedInboundEntry } from "@/lib/telephony-actions.server";
+import { getAccessToken } from "@/lib/access-token";
 import { useAuth } from "@/lib/auth";
 import { DIAL_MODE_META, UNKNOWN_DIAL_MODE_LABEL, type DialMode } from "@/lib/call-queue/types";
 import { DateRangeFilter } from "@/components/date-range-filter";
@@ -215,6 +217,34 @@ export function toActivityEvents(disps: DispositionRecord[], now = new Date()): 
     .sort((a, b) => +new Date(b.rawTime) - +new Date(a.rawTime));
 }
 
+/** Missed incoming calls as history rows: inbound, "Missed call", and whether anyone called the
+ *  number back since. */
+function missedToEvents(rows: MissedInboundEntry[], now = new Date()): ActivityEvent[] {
+  return rows.map((m) => {
+    const at = new Date(m.at);
+    return {
+      id: `missed-${m.id}`,
+      date: at.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+      day: dayBucket(at, now),
+      time: at.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }),
+      debtorName: m.debtorName || m.phone || "Unknown caller",
+      loanId: m.loanReference ?? "",
+      contact: m.phone ?? "",
+      channel: "call_agent",
+      direction: "inbound",
+      actor: "Incoming",
+      result: MISSED_CALL_LABEL,
+      tone: m.calledBack ? "neutral" : "negative",
+      detail: m.calledBack
+        ? "Missed incoming call — called back since"
+        : "Missed incoming call — not called back yet",
+      rawTime: m.at,
+    };
+  });
+}
+
+const MISSED_CALL_LABEL = "Missed call";
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const CHANNEL_ORDER: Channel[] = ["call_agent", "call_ai", "ivr", "sms", "whatsapp"];
@@ -267,7 +297,34 @@ function ActivityHistoryPage() {
     return () => window.removeEventListener("dispositions-updated", load);
   }, [viewingAgentId]);
 
-  const events = useMemo(() => toActivityEvents(disps), [disps]);
+  // Missed incoming calls live in the call ledger, not call_logs (nobody dispositioned them).
+  const [missed, setMissed] = useState<MissedInboundEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    setMissed([]);
+    if (!viewingAgentId) return;
+    void (async () => {
+      try {
+        const rows = await listMissedInboundForAgent({
+          data: { accessToken: await getAccessToken(), agentEmail: viewingAgentId },
+        });
+        if (!cancelled) setMissed(rows);
+      } catch (e) {
+        console.warn("[history] missed calls not loaded:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [viewingAgentId]);
+
+  const events = useMemo(
+    () =>
+      [...toActivityEvents(disps), ...missedToEvents(missed)].sort(
+        (a, b) => +new Date(b.rawTime) - +new Date(a.rawTime),
+      ),
+    [disps, missed],
+  );
 
   const channelCounts = useMemo(() => {
     const counts: Record<string, number> = { all: events.length };
@@ -281,6 +338,7 @@ function ActivityHistoryPage() {
       const label = OUTCOME_LABEL[key];
       counts[label] = events.filter((e) => e.result === label).length;
     }
+    counts[MISSED_CALL_LABEL] = events.filter((e) => e.result === MISSED_CALL_LABEL).length;
     return counts;
   }, [events]);
 
@@ -470,6 +528,19 @@ function ActivityHistoryPage() {
             </button>
           );
         })}
+        <button
+          type="button"
+          onClick={() => setResult(MISSED_CALL_LABEL)}
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all",
+            result === MISSED_CALL_LABEL
+              ? TONE_CLS.negative
+              : "border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+          )}
+        >
+          {MISSED_CALL_LABEL}{" "}
+          <span className="opacity-60">({resultCounts[MISSED_CALL_LABEL] ?? 0})</span>
+        </button>
       </div>
 
       {/* Filter bar */}

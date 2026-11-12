@@ -886,6 +886,90 @@ export const logMissedInbound = createServerFn({ method: "POST" })
     return { ok: !!row };
   });
 
+export interface MissedInboundEntry {
+  id: string;
+  at: string;
+  phone: string | null;
+  debtorName: string | null;
+  loanReference: string | null;
+  /** Someone in the company called the number after this missed call. */
+  calledBack: boolean;
+}
+
+/** One agent's missed incoming calls (last 30 days) for Activity History. Agents get only their
+ *  own; managers and admins any agent in their company. */
+export const listMissedInboundForAgent = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, agentEmail: z.string().max(320) }).parse(d),
+  )
+  .handler(async ({ data }): Promise<MissedInboundEntry[]> => {
+    const caller = await requireCaller(data.accessToken);
+    const { data: agent } = await db()
+      .from("agents")
+      .select("id, client_id")
+      .eq("email", data.agentEmail)
+      .maybeSingle();
+    const target = agent as { id: string; client_id: string } | null;
+    if (!target || target.client_id !== caller.clientId) return [];
+    if (caller.role === "agent" && target.id !== caller.agentId) return [];
+    const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const { data: rows, error } = await db()
+      .from("telephony_calls")
+      .select("id, remote_phone, started_at, callback_done_at, debtors(name, loan_reference)")
+      .eq("client_id", caller.clientId)
+      .eq("agent_id", target.id)
+      .eq("direction", "inbound")
+      .is("answered_at", null)
+      .not("ended_at", "is", null)
+      .gte("started_at", since)
+      .order("started_at", { ascending: false })
+      .limit(500);
+    if (error) return [];
+    const missed = (rows ?? []) as Array<{
+      id: string;
+      remote_phone: string | null;
+      started_at: string;
+      callback_done_at: string | null;
+      debtors: { name: string; loan_reference: string | null } | null;
+    }>;
+    // Called back = any outbound call from the company to that number after the miss.
+    const phones = [
+      ...new Set(
+        missed.map((r) => normalisePhone(r.remote_phone ?? "")).filter((p) => p.length === 10),
+      ),
+    ];
+    const lastOut = new Map<string, string>();
+    for (let i = 0; i < phones.length; i += 100) {
+      const { data: out } = await db()
+        .from("telephony_calls")
+        .select("remote_phone, started_at")
+        .eq("client_id", caller.clientId)
+        .eq("direction", "outbound")
+        .gte("started_at", since)
+        .or(
+          phones
+            .slice(i, i + 100)
+            .map((p) => `remote_phone.like.%${p}`)
+            .join(","),
+        );
+      for (const o of (out ?? []) as Array<{ remote_phone: string | null; started_at: string }>) {
+        const k = normalisePhone(o.remote_phone ?? "");
+        if ((lastOut.get(k) ?? "") < o.started_at) lastOut.set(k, o.started_at);
+      }
+    }
+    return missed.map((r) => {
+      const k = normalisePhone(r.remote_phone ?? "");
+      return {
+        id: r.id,
+        at: r.started_at,
+        phone: r.remote_phone,
+        debtorName: r.debtors?.name ?? null,
+        loanReference: r.debtors?.loan_reference ?? null,
+        calledBack: !!r.callback_done_at || (lastOut.get(k) ?? "") > r.started_at,
+      };
+    });
+  });
+
 export interface IncomingCall {
   providerCallId: string;
   phone: string | null;
