@@ -12,6 +12,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
+import { waitForPhone } from "@/lib/telephony/phone-status";
 import { getAccessToken } from "@/lib/access-token";
 import { applyEvent, isTerminal } from "@/lib/telephony/call-machine";
 import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provider";
@@ -185,6 +186,13 @@ export function useSingleCall(
 
         startTransition(async () => {
           try {
+            // SkyCRM rings the agent's browser phone first and refuses the call (SX-3106) while
+            // it isn't connected — e.g. right after a reload. Give it a few seconds to connect.
+            if (!(await waitForPhone(8000))) {
+              throw new Error(
+                'Your phone isn\'t connected yet — wait until the green "Phone … ready" shows at the bottom right, then call again.',
+              );
+            }
             const accessToken = await getAccessToken();
             const result = await withTimeout(
               serverStartCall({

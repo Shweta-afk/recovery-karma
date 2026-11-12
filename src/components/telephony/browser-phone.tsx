@@ -20,6 +20,7 @@ import { useWebphone } from "@/lib/dialer/use-webphone";
 import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
 import { getMyWebphoneLogin, logMissedInbound } from "@/lib/telephony-actions.server";
 import { useNavigate } from "@tanstack/react-router";
+import { setPhoneState } from "@/lib/telephony/phone-status";
 import { useCallSession } from "@/lib/call-session";
 import {
   askNotificationPermission,
@@ -276,6 +277,11 @@ function RegisteredPhone({
   }, [wp.disconnect, start]);
 
   const ready = wp.regState === "registered" && wp.transportUp;
+  // Shared with the dialer, which waits for this before asking SkyCRM to ring the phone.
+  useEffect(() => {
+    setPhoneState(ready ? "ready" : "connecting");
+  }, [ready]);
+  useEffect(() => () => setPhoneState("none"), []);
 
   // Heal by itself after a gateway restart or a network drop: SIP.js does not reconnect a closed
   // WebSocket on its own. Never in the middle of a call.
