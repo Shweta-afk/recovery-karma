@@ -536,9 +536,9 @@ const NO_CONTACT_OUTCOMES: ReadonlySet<string> = new Set(["no_answer", "voicemai
 
 /**
  * What an account is "currently marked as", from its calls (2026-11-12, user's rule):
- *  - a PTP stays the account's state until a Paid is logged after it — later no-answers,
+ *  - a PTP stays the account's state until a Paid or Settlement is logged after it — later no-answers,
  *    callbacks or other outcomes don't take it out of PTP;
- *  - otherwise a Callback stays through later no-answers / voicemails (a call that just rang
+ *  - otherwise a Callback or Settlement stays through later no-answers / voicemails (a call that just rang
  *    doesn't undo an agreed call-back); a real conversation with another outcome replaces it;
  *  - otherwise the latest call.
  * The database's debtor_list (queue status) applies the same rule — change them together
@@ -548,10 +548,11 @@ export function effectiveDisposition(records: DispositionRecord[]): DispositionR
   if (!records.length) return undefined;
   const sorted = [...records].sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
   const ptp = sorted.find((r) => r.outcome === "promised");
-  const paid = sorted.find((r) => r.outcome === "paid");
+  // Paid or a Settlement after the PTP ends it (a settlement shows in the Settlement queue).
+  const paid = sorted.find((r) => r.outcome === "paid" || r.outcome === "settlement");
   if (ptp && (!paid || Date.parse(paid.time) < Date.parse(ptp.time))) return ptp;
   const contact = sorted.find((r) => !NO_CONTACT_OUTCOMES.has(r.outcome));
-  if (contact?.outcome === "callback") return contact;
+  if (contact?.outcome === "callback" || contact?.outcome === "settlement") return contact;
   return sorted[0];
 }
 

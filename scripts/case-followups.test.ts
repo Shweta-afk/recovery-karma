@@ -178,3 +178,11 @@ test("an open PTP on a live account still shows, with its attempts counted per l
   expect(rows[0].debtorId).toBe(NEW_ROW);
   expect(rows[0].prevAttempts).toBe(1);
 });
+
+test("a Settlement after a PTP ends it, and a settlement stays through no-answers", () => {
+  const ptp = disp({ ptpDate: dateOnly(-3), ptpAmount: 700, time: iso(-5) });
+  const settle = disp({ outcome: "settlement", time: iso(-3) });
+  const ring = disp({ outcome: "no_answer", time: iso(-1) });
+  expect(effectiveDisposition([ptp, settle, ring])?.id).toBe(settle.id);
+  expect(computePtpFollowups([ptp, settle, ring])).toHaveLength(0);
+});

@@ -23,7 +23,7 @@ export interface EscalationDebtorSnapshot {
   lastContacted: string | null;
   portfolio: string;
   language: string;
-  queueStatus: "fresh" | "callback" | "ptp" | "escalated" | "no_answer";
+  queueStatus: "fresh" | "callback" | "ptp" | "settlement" | "escalated" | "no_answer";
   scheduledAt: string;
   ptpAmount?: number;
 }

@@ -16,6 +16,7 @@ import type { CallOutcome, QueueDebtor } from "./types";
 const OUTCOME_TO_QUEUE_STATUS: Partial<Record<CallOutcome, QueueDebtor["queueStatus"]>> = {
   promised: "ptp",
   callback: "callback",
+  settlement: "settlement",
   no_answer: "no_answer",
 };
 

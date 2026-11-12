@@ -354,6 +354,7 @@ export function CallQueueContent({
     if (
       queueFilter === "callback" ||
       queueFilter === "ptp" ||
+      queueFilter === "settlement" ||
       queueFilter === "no_answer" ||
       queueFilter === "fresh" ||
       queueFilter === "escalated"
@@ -900,6 +901,7 @@ export function CallQueueContent({
     retained: sumFacets(facets, (g) => inPortfolio(g) && !!g.retained).n,
     callback: statusCount("callback"),
     ptp: statusCount("ptp"),
+    settlement: statusCount("settlement"),
     no_answer: statusCount("no_answer"),
     fresh: statusCount("fresh"),
     escalated: statusCount("escalated"),
@@ -988,6 +990,7 @@ export function CallQueueContent({
     { key: "retained", label: "Retained" },
     { key: "callback", label: "Callback" },
     { key: "ptp", label: "PTP" },
+    { key: "settlement", label: "Settlement" },
     { key: "no_answer", label: "No Answer" },
     { key: "fresh", label: "Fresh" },
     { key: "escalated", label: "Escalated" },

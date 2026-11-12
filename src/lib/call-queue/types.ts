@@ -8,6 +8,7 @@ export const QUEUE_FILTERS = [
   "retained",
   "callback",
   "ptp",
+  "settlement",
   "no_answer",
   "fresh",
   "escalated",
@@ -37,7 +38,7 @@ export type CallOutcome =
   | "settlement";
 
 export interface QueueDebtor extends Debtor {
-  queueStatus: "fresh" | "callback" | "ptp" | "escalated" | "no_answer";
+  queueStatus: "fresh" | "callback" | "ptp" | "settlement" | "escalated" | "no_answer";
   scheduledAt: string;
   ptpAmount?: number;
   retained?: boolean;
@@ -266,6 +267,10 @@ export const QUEUE_STATUS_META: Record<QueueDebtor["queueStatus"], { label: stri
       cls: "bg-warning/8 text-warning-foreground/70 border-warning/15",
     },
     ptp: { label: "PTP", cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15" },
+    settlement: {
+      label: "Settlement",
+      cls: "bg-teal-500/8 text-teal-600/70 border-teal-400/15",
+    },
     no_answer: { label: "No Answer", cls: "bg-muted text-muted-foreground border-border" },
     escalated: {
       label: "Escalated",
@@ -301,7 +306,7 @@ export const STATUS_META: Record<AgentStatus, { label: string; dot: string; txt:
 };
 
 // Module-scope so they're stable across renders (used in filteredQueue's useMemo deps).
-export const PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = ["callback", "ptp"];
+export const PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = ["callback", "ptp", "settlement"];
 export const NON_PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = [
   "fresh",
   "no_answer",
