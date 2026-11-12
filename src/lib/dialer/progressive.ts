@@ -12,8 +12,9 @@
 // Pure: the reducer and target planning have no React or I/O, tested in
 // scripts/progressive-dial.test.ts.
 
-/** Seconds between saving a disposition and the next call. */
-export const PROGRESSIVE_GAP_SECONDS = 5;
+/** Seconds between saving a disposition and the next call — time to read notes and get ready
+ *  (user, 2026-11-12). "Call now" skips the wait. */
+export const PROGRESSIVE_GAP_SECONDS = 30;
 
 export interface ProgressiveCandidate {
   id: string;
