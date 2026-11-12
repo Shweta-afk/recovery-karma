@@ -57,6 +57,10 @@ import {
 } from "@/lib/portfolio-store";
 import { formatISTDate } from "@/lib/agent-time-stats";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
+import { useProgressiveDial } from "@/lib/dialer/use-progressive-dial";
+import { ProgressiveStrip } from "@/components/call-queue/progressive-strip";
+import { checkDoNotCall } from "@/lib/telephony-actions.server";
+import { getAccessToken as getProgressiveToken } from "@/lib/access-token";
 import type { DialTarget } from "@/lib/dialer/engine";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
@@ -616,6 +620,13 @@ export function CallQueueContent({
       singleCall.dial(debtor, { agentPhone: opts?.agentPhone, callerId: opts?.callerId });
   };
 
+  // Progressive Dial: one borrower at a time through this same startCall, so the call screen,
+  // auto-answer and disposition are the ones every single call uses (see dialer/progressive.ts).
+  const progressive = useProgressiveDial({
+    activeCall,
+    startCall: (d) => startCall(d, { dialMode: "sequential" }),
+  });
+
   // Passes the call's own provider id: a call dialled from the Manual Dial dock (or one still
   // being polled from an earlier visit to this page) was placed by another hook instance, so
   // this one has no leg of its own to drop.
@@ -829,6 +840,9 @@ export function CallQueueContent({
         },
       }));
     }
+    // Before clearing the call: tells a Progressive Dial session this call is done, so it moves
+    // on rather than pausing as if the call had closed without one.
+    if (activeCall) progressive.dispositioned(activeCall.debtor.id);
     singleCall.reset();
     setActiveCall(null);
   };
@@ -1296,7 +1310,7 @@ export function CallQueueContent({
                 the display label changed). Real engine + simulated provider via useDialerRun. */}
               <Button
                 size="sm"
-                disabled={dialer.running && activeDialMode !== "predictive"}
+                disabled={(dialer.running && activeDialMode !== "predictive") || progressive.active}
                 onClick={async () => {
                   if (dialer.running) {
                     dialer.stop();
@@ -1366,65 +1380,61 @@ export function CallQueueContent({
                 )}
               </Button>
 
-              {/* "Progressive Dial" button — dialerMode "productive" internally (kept as-is; only
-                the display label changed). Same engine, capacity forced to one line: dial the
-                next debtor in list order, wait for it to reach a terminal state (no-answer /
-                busy / completed) or connect, then move to the next. No overdial. */}
+              {/* "Progressive Dial" button — one borrower at a time, in queue order, through the
+                ordinary call path (useProgressiveDial). It used to start a server dialer run
+                (dialerMode "productive") that never worked with the browser phone. Own queue
+                only: from Agent Live View the calls would go out on the viewer's phone. */}
               <Button
                 size="sm"
                 variant="outline"
-                disabled={dialer.running && activeDialMode !== "productive"}
+                disabled={dialer.running || !isSelf}
+                title={isSelf ? undefined : "Progressive Dial works on your own queue"}
                 onClick={async () => {
-                  if (dialer.running) {
-                    dialer.stop();
-                    setActiveDialMode(null);
+                  if (progressive.active) {
+                    progressive.stop();
                     return;
                   }
-                  const target = await fetchQueueTargets();
-                  setDialTargetRows(target);
+                  let target: QueueDebtor[];
+                  let blocked: Set<string>;
+                  try {
+                    target = await fetchQueueTargets();
+                    blocked = new Set(
+                      await checkDoNotCall({
+                        data: {
+                          accessToken: await getProgressiveToken(),
+                          phones: target.map((d) => d.phone).filter(Boolean),
+                        },
+                      }),
+                    );
+                  } catch (e) {
+                    toast.error(errorText(e, "Could not start Progressive Dial"));
+                    return;
+                  }
+                  const plan = progressive.start(target, {
+                    todayKey: todayIstKey(),
+                    doNotCall: blocked,
+                  });
                   const activeFilter = FILTERS.find((f) => f.key === queueFilter);
-                  const agentNumbers = await fetchDialerAgentNumbers();
-                  if (!agentNumbers.length) {
+                  const left = [
+                    plan.skippedCalledToday && `${plan.skippedCalledToday} already called today`,
+                    plan.skippedDoNotCall && `${plan.skippedDoNotCall} on do-not-call`,
+                  ].filter(Boolean);
+                  if (!plan.ids.length) {
                     toast.error(
-                      "No agents with a phone number configured — set one in Admin → Users before dialing.",
+                      `No one to call in ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "this queue"}${left.length ? ` (${left.join(", ")})` : ""}`,
                     );
                     return;
                   }
-                  const orderedTargets: DialTarget[] = target.map((d) => ({
-                    id: d.id,
-                    name: d.name,
-                    phone: d.phone,
-                    portfolioId: d.portfolioId,
-                    aiScore: d.aiScore,
-                    // CSV alt_phones plus any an agent added by hand (Debtor Profile → Add Phone)
-                    // — planProductiveBatch works through these after the primary number.
-                    altPhones: d.altPhones,
-                  }));
-                  setActiveDialMode("productive");
-                  setProductiveTargets(orderedTargets);
-                  try {
-                    await dialer.start({
-                      settings: { ...dialerSettings, dialerMode: "productive" },
-                      targets: orderedTargets,
-                      agentNumbers,
-                      callerId: manualDialCallerId,
-                    });
-                  } catch (e) {
-                    setActiveDialMode(null);
-                    setProductiveTargets([]);
-                    toast.error(errorText(e, "Failed to start the dialer"));
-                    return;
-                  }
                   toast.success(
-                    `Progressive calling ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"}, one at a time`,
+                    `Progressive Dial: ${plan.ids.length} borrower${plan.ids.length === 1 ? "" : "s"}, one at a time${left.length ? ` — left out ${left.join(", ")}` : ""}`,
                   );
                 }}
                 className="gap-1.5 text-sm"
               >
-                {dialer.running && activeDialMode === "productive" ? (
+                {progressive.active ? (
                   <>
                     <Square className="h-3.5 w-3.5" />
-                    Stop Dialer
+                    Stop Progressive
                   </>
                 ) : (
                   <>
@@ -2246,6 +2256,9 @@ export function CallQueueContent({
           }}
         />
       )}
+
+      {/* ── Progressive Dial bar (bottom-centre) ── */}
+      {isSelf && <ProgressiveStrip dial={progressive} onClose={progressive.stop} />}
 
       {/* ── Escalation Modal ── */}
       {escalationCall && (

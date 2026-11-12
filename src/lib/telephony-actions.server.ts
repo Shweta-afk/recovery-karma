@@ -9,6 +9,7 @@ import { logSuperadminActivity } from "./superadmin-actions.server";
 import { getTelephonyProvider } from "./telephony";
 import {
   debtorByPhone,
+  doNotCallSet,
   ledgerByProviderCallId,
   loadChannelState,
   loadTelephonySettings,
@@ -512,6 +513,19 @@ export const listDoNotCall = createServerFn({ method: "POST" })
     }));
   });
 
+/** Which of these numbers are on the caller's company do-not-call list — returns only the
+ *  matches, as 10-digit numbers, so an agent learns nothing beyond the numbers they asked about.
+ *  Progressive Dial uses it to leave blocked borrowers out of a run before dialling. */
+export const checkDoNotCall = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, phones: z.array(z.string().max(20)).max(2000) }).parse(d),
+  )
+  .handler(async ({ data }): Promise<string[]> => {
+    const caller = await requireCaller(data.accessToken);
+    enforceRateLimit(`dnc-check:${caller.authUserId}`, 20, 60_000);
+    return [...(await doNotCallSet(caller.clientId, data.phones))];
+  });
+
 /** Any user in the company may add a number (an agent marks it when the borrower asks). */
 export const addDoNotCall = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
@@ -613,11 +627,14 @@ export const reportDisposition = createServerFn({ method: "POST" })
     const callback =
       skycrmCallbackDatetime(data.followUpDate, data.followUpTime) ??
       skycrmCallbackDatetime(data.callbackAt?.slice(0, 10), data.callbackAt?.slice(11));
+    // SkyCRM shows caller_name as "Agent Name" on its Quality page; until 2026-11-12 we sent the
+    // ledger id there, so their reports listed long codes. The agent who took the call, by name.
+    const agentName = await agentDisplayName(ledger.agent_id ?? caller.agentId);
     try {
       await sendDisposition({
         extension: ledger.agent_handle,
         phone_number: ledger.remote_phone,
-        caller_name: ledger.id,
+        caller_name: (agentName || ledger.agent_handle).slice(0, 100),
         disposition: skycrmDispositionFor(data.outcome),
         sub_disposition: skycrmSubDisposition(data.outcome, data.reason),
         remark: (data.remark ?? "").slice(0, 500),
@@ -692,6 +709,12 @@ async function latestCallTo(agentId: string, phone: string): Promise<LedgerRow |
     .limit(1)
     .maybeSingle();
   return (data as LedgerRow | null) ?? null;
+}
+
+async function agentDisplayName(agentId: string | null): Promise<string | null> {
+  if (!agentId) return null;
+  const { data } = await db().from("agents").select("name").eq("id", agentId).maybeSingle();
+  return (data as { name: string | null } | null)?.name?.trim() || null;
 }
 
 async function callerExtension(agentId: string | null): Promise<string | null> {
