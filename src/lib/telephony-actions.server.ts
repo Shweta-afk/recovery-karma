@@ -10,6 +10,7 @@ import { getTelephonyProvider } from "./telephony";
 import {
   debtorByPhone,
   doNotCallSet,
+  insertInboundLedger,
   ledgerByProviderCallId,
   loadChannelState,
   loadTelephonySettings,
@@ -847,6 +848,42 @@ export const getMyWebphoneLogin = createServerFn({ method: "POST" })
         ...(turn ? { iceTransportPolicy: turn.iceTransportPolicy } : {}),
       },
     };
+  });
+
+/**
+ * An incoming call that rang this agent's browser phone and was not answered. SkyCRM's inbound
+ * webhook events have never reached us (0 inbound ledger rows as of 2026-11-12), so the phone
+ * reports the miss itself: it goes in the ledger as an ended inbound call, which is what the
+ * "Missed calls" card lists (with Call back) and what clears once anyone calls the number back.
+ */
+export const logMissedInbound = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, phone: z.string().min(3).max(30) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    enforceRateLimit(`missed-inbound:${caller.authUserId}`, 30, 60_000);
+    const extension = await callerExtension(caller.agentId);
+    if (!caller.agentId || !extension) return { ok: false };
+    const phone = normalisePhone(data.phone);
+    if (phone.length !== 10) return { ok: false };
+    const debtor = await debtorByPhone(caller.clientId, phone).catch(() => null);
+    const row = await insertInboundLedger({
+      clientId: caller.clientId,
+      agentId: caller.agentId,
+      provider: getTelephonyProvider().name,
+      agentHandle: extension,
+      remotePhone: phone,
+      vendorCallId: `browser-${crypto.randomUUID()}`,
+      debtorId: debtor?.id ?? null,
+    });
+    if (row) {
+      await db()
+        .from("telephony_calls")
+        .update({ status: "no_answer", ended_at: new Date().toISOString() })
+        .eq("id", row.id);
+    }
+    return { ok: !!row };
   });
 
 export interface IncomingCall {

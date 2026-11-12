@@ -18,7 +18,15 @@ import { useAuth } from "@/lib/auth";
 import { getAccessToken } from "@/lib/access-token";
 import { useWebphone } from "@/lib/dialer/use-webphone";
 import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
-import { getMyWebphoneLogin } from "@/lib/telephony-actions.server";
+import { getMyWebphoneLogin, logMissedInbound } from "@/lib/telephony-actions.server";
+import { useNavigate } from "@tanstack/react-router";
+import { useCallSession } from "@/lib/call-session";
+import {
+  askNotificationPermission,
+  inboundDebtor,
+  useCallerInfo,
+  useRingtone,
+} from "./incoming-call";
 
 /** Fired by use-single-call.ts when the agent places a call; SkyCRM rings us right after. */
 export const DIAL_STARTED_EVENT = "samvadx:dial-started";
@@ -277,6 +285,69 @@ function RegisteredPhone({
     return () => clearTimeout(t);
   }, [ready, wp.regState, call, reconnect]);
   const ringing = call?.direction === "inbound" && call.state === "ringing";
+  // A ring right after the agent clicked Call is SkyCRM ringing the agent's own leg (answered by
+  // itself above); any other ring is a borrower calling in.
+  const customerRinging = ringing && Date.now() - lastDialAt.current >= AUTO_ANSWER_WINDOW_MS;
+  useRingtone(customerRinging);
+  const caller = useCallerInfo(customerRinging ? call?.remote : null);
+  const { user: me } = useAuth();
+  const session = useCallSession();
+  const navigate = useNavigate();
+
+  // A borrower's ring that stopped without being answered: record it as a missed call, so the
+  // Missed calls card shows who called and offers Call back.
+  const ringSeen = useRef<{ id: string; phone: string; answered: boolean } | null>(null);
+  useEffect(() => {
+    if (customerRinging && call) {
+      if (ringSeen.current?.id !== call.id) {
+        ringSeen.current = { id: call.id, phone: call.remote, answered: false };
+      }
+      return;
+    }
+    const seen = ringSeen.current;
+    if (!seen) return;
+    if (call?.id === seen.id && call.state === "connected") {
+      seen.answered = true;
+      return;
+    }
+    if (call?.id === seen.id && call.state === "ringing") return;
+    ringSeen.current = null;
+    if (!seen.answered) {
+      void (async () => {
+        try {
+          await logMissedInbound({
+            data: { accessToken: await getAccessToken(), phone: seen.phone },
+          });
+        } catch (err) {
+          console.warn("[browser-phone] missed call not recorded:", err);
+        }
+      })();
+    }
+  }, [customerRinging, call?.id, call?.state, call]);
+
+  const answerIncoming = () => {
+    unlockAudio();
+    askNotificationPermission();
+    void wp.answer();
+    if (!call) return;
+    // Open the call screen for this borrower so the agent sees the account and saves a
+    // disposition when it ends — unless a call is already on screen (never overwrite one).
+    if (session.activeCall) return;
+    const isAgent = me?.role === "agent";
+    session.setActiveCall({
+      debtor: inboundDebtor(caller, call.remote),
+      dialStartedAt: new Date().toISOString(),
+      answeredAt: new Date().toISOString(),
+      phase: "connected",
+      view: isAgent ? "panel" : "minimized",
+      muted: false,
+      held: false,
+      elapsed: 0,
+    });
+    if (isAgent && !window.location.pathname.startsWith("/dashboard/call-queue")) {
+      void navigate({ to: "/dashboard/call-queue" });
+    }
+  };
   const live = call?.state === "connected";
   const elapsed =
     live && call?.connectedAt ? Math.max(0, Math.floor((now - call.connectedAt) / 1000)) : 0;
@@ -292,20 +363,31 @@ function RegisteredPhone({
       )}
 
       {ringing && (
-        <div className="w-72 rounded-lg border bg-card p-3 shadow-lg animate-in slide-in-from-bottom-4">
+        <div className="w-80 rounded-lg border-2 border-primary bg-card p-3 shadow-xl animate-in slide-in-from-bottom-4">
           <p className="flex items-center gap-2 text-sm font-semibold">
-            <PhoneIncoming className="h-4 w-4 text-primary" /> Incoming call
+            <PhoneIncoming className="h-4 w-4 animate-pulse text-primary" /> Incoming call
           </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{call?.remote}</p>
+          {caller.match ? (
+            <div className="mt-1">
+              <p className="text-base font-semibold text-foreground">{caller.match.debtor.name}</p>
+              <p className="text-xs text-muted-foreground">
+                Loan {caller.match.row.loanReference ?? "—"} · {caller.match.portfolio.name}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {caller.phone}
+                {caller.count > 1 && ` · ${caller.count} accounts with this number`}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-1 text-sm text-foreground">
+              {caller.phone ?? call?.remote}
+              <span className="block text-xs text-muted-foreground">
+                {caller.loading ? "Looking up the borrower…" : "Not a borrower in your accounts"}
+              </span>
+            </p>
+          )}
           <div className="mt-3 flex gap-2">
-            <Button
-              size="sm"
-              className="flex-1"
-              onClick={() => {
-                unlockAudio();
-                void wp.answer();
-              }}
-            >
+            <Button size="sm" className="flex-1" onClick={answerIncoming}>
               <Phone className="mr-1 h-4 w-4" /> Answer
             </Button>
             <Button size="sm" variant="outline" className="flex-1" onClick={() => void wp.hangup()}>
