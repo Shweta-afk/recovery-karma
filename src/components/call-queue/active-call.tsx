@@ -370,7 +370,12 @@ function ActiveCallContent({
   const profileLink = onOpenProfile && isUuid(debtor.id) ? onOpenProfile : undefined;
 
   /* ── Ringing: compact single-row ── */
-  if (phase === "ringing") {
+  // Progressive Dial shows the whole call screen while the call rings (user, 2026-11-12), so the
+  // agent has read the account before the borrower picks up; other calls keep the slim bar.
+  const fullWhileRinging = phase === "ringing" && call.dialMode === "sequential";
+  const liveView = phase === "connected" || fullWhileRinging;
+
+  if (phase === "ringing" && !fullWhileRinging) {
     return (
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -804,6 +809,10 @@ function ActiveCallContent({
                 <span className="h-2.5 w-2.5 rounded-full bg-success animate-pulse" />
                 {fmtElapsed(elapsed)}
               </span>
+            ) : phase === "ringing" ? (
+              <span className="flex items-center gap-1.5 text-sm font-medium text-blue-500">
+                <span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" /> Ringing…
+              </span>
             ) : (
               <span
                 className={cn(
@@ -1162,14 +1171,14 @@ function ActiveCallContent({
 
             {/* Only while the call is live — after it ends the button did nothing but sit there
                 looking like the call was still up. */}
-            {phase === "connected" && (
+            {liveView && (
               <Button
                 size="sm"
                 className="gap-1.5 h-8 bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 onClick={onEnd}
               >
                 <PhoneOff className="h-3.5 w-3.5" />
-                End Call
+                {phase === "ringing" ? "Cancel" : "End Call"}
               </Button>
             )}
             {phase === "connected" && onMinimize && (
@@ -1190,7 +1199,7 @@ function ActiveCallContent({
         <div className="flex flex-1 overflow-hidden">
           {/* ── LEFT: notes + history (during call) / disposition (after end) ── */}
           <div className="w-[440px] flex-shrink-0 border-r border-border flex flex-col overflow-hidden">
-            {phase === "connected" && (
+            {liveView && (
               <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 {/* AI score insight */}
                 <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
@@ -1985,7 +1994,11 @@ function ActiveCallContent({
   );
 }
 export function ActiveCallPanel(props: CallControlProps) {
-  const expanded = props.call.phase === "connected" || props.call.phase === "ended";
+  const expanded =
+    props.call.phase === "connected" ||
+    props.call.phase === "ended" ||
+    // Progressive Dial: the full screen while it rings, too.
+    (props.call.phase === "ringing" && props.call.dialMode === "sequential");
 
   if (expanded) {
     // Floating panel — padded off the screen edges rather than a full-bleed overlay
