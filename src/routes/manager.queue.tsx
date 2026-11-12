@@ -487,7 +487,10 @@ function ManagerQueuePage() {
     startCall({ ...activeCall.debtor, phone }, activeEscalationId);
   };
 
-  const submitDisposition = () => {
+  // `override` = fields filled in the same click (the ringing row's "No answer — save").
+  const submitDisposition = (override?: Partial<DispositionForm>) =>
+    saveDispositionForm(override ? { ...disposition, ...override } : disposition);
+  const saveDispositionForm = (disposition: DispositionForm) => {
     if (!disposition.outcome) {
       toast.error("Select an outcome before submitting");
       return;

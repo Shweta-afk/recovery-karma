@@ -229,6 +229,7 @@ function ActiveCallContent({
   // and re-read whenever anything in the app writes a disposition.
   const [dispositionsTick, setDispositionsTick] = useState(0);
   const [confirmDnc, setConfirmDnc] = useState(false);
+  const [ringReason, setRingReason] = useState("Ringing");
   useEffect(() => {
     const bump = () => setDispositionsTick((t) => t + 1);
     window.addEventListener("dispositions-updated", bump);
@@ -414,6 +415,32 @@ function ActiveCallContent({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Still ringing and the agent can tell it won't be answered: end it and save
+              "No answer" in one click (Progressive Dial then calls the next borrower). */}
+          <select
+            value={ringReason}
+            onChange={(e) => setRingReason(e.target.value)}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            title="No-answer reason"
+          >
+            {OUTCOME_REASONS.no_answer.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1 text-xs"
+            onClick={() => {
+              onEnd();
+              onSubmit({ outcome: "no_answer", reason: ringReason });
+            }}
+          >
+            <CheckCheck className="h-3.5 w-3.5" />
+            No answer — save
+          </Button>
           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onSwitchView}>
             {call.view === "panel" ? (
               <Maximize2 className="h-4 w-4" />
@@ -1235,11 +1262,28 @@ function ActiveCallContent({
                   </p>
                 </div>
 
-                {/* Productive disposition — available during the call */}
+                {/* Disposition during the call (2026-11-12): an agent who can hear it is still
+                    ringing, or already knows the outcome, saves here and the call ends with it —
+                    Progressive Dial then moves straight to the next borrower. */}
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-foreground">Log outcome</p>
-                  {dispositionPools([{ ...POSITIVE_POOL, outcomes: PRODUCTIVE_OUTCOMES }])}
+                  {dispositionPools([
+                    { ...POSITIVE_POOL, outcomes: PRODUCTIVE_OUTCOMES },
+                    { ...DIFFICULT_POOL, outcomes: NON_PRODUCTIVE_OUTCOMES },
+                  ])}
                   {outcomeFields()}
+                  <Button
+                    className="w-full gap-1.5"
+                    disabled={!disposition.outcome}
+                    onClick={() => {
+                      onEnd();
+                      handleSaveClose();
+                    }}
+                    title={disposition.outcome ? undefined : "Pick an outcome first"}
+                  >
+                    <PhoneOff className="h-4 w-4" />
+                    {disposition.outcome ? "End call & save" : "Pick an outcome to save"}
+                  </Button>
                 </div>
 
                 {/* Previous notes & call history — scrollable */}

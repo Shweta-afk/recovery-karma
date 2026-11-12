@@ -68,4 +68,14 @@ describe("progressive session", () => {
     expect(r(s, { type: "stop" })).toEqual(PROGRESSIVE_IDLE);
     expect(r(PROGRESSIVE_IDLE, { type: "start", ids: [] }).status).toBe("done");
   });
+
+  test("Pause during a call stops after that call's disposition", () => {
+    let s = r(r(started, { type: "dialed", id: "a" }), { type: "pause" });
+    expect(s.status).toBe("calling");
+    s = r(s, { type: "dispositioned", id: "a", now: 0 });
+    expect(s.status).toBe("paused");
+    expect(dueToDial(s, 1e12)).toBeNull();
+    s = r(s, { type: "resume" });
+    expect(dueToDial(s, 0)).toBe("b");
+  });
 });

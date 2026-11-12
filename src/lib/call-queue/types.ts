@@ -312,7 +312,9 @@ export interface CallControlProps {
   onMute: () => void;
   onHold: () => void;
   onEnd: () => void;
-  onSubmit: () => void;
+  /** Saves the disposition. `override` fills fields in one click (the ringing row's "No answer
+   *  — save"), since a state update made just before would not be visible yet. */
+  onSubmit: (override?: Partial<DispositionForm>) => void;
   onSwitchView: () => void;
   /** Omitted where there is no floating call bar to minimise to (Manager → My Queue's own
    * calls) — the button is then hidden rather than doing nothing. */

@@ -12,9 +12,9 @@
 // Pure: the reducer and target planning have no React or I/O, tested in
 // scripts/progressive-dial.test.ts.
 
-/** Seconds between saving a disposition and the next call — time to read notes and get ready
- *  (user, 2026-11-12). "Call now" skips the wait. */
-export const PROGRESSIVE_GAP_SECONDS = 30;
+/** Seconds between saving a disposition and the next call. Back to back (user, 2026-11-12, after
+ *  trying 30 s); the 2 s only lets the last call's hang-up reach SkyCRM before the next dial. */
+export const PROGRESSIVE_GAP_SECONDS = 2;
 
 export interface ProgressiveCandidate {
   id: string;
@@ -71,6 +71,8 @@ export interface ProgressiveState {
   called: number;
   skipped: number;
   pauseReason: string | null;
+  /** Pause pressed during a call: stop after this call's disposition instead of dialling on. */
+  holdAfter: boolean;
 }
 
 export const PROGRESSIVE_IDLE: ProgressiveState = {
@@ -82,6 +84,7 @@ export const PROGRESSIVE_IDLE: ProgressiveState = {
   called: 0,
   skipped: 0,
   pauseReason: null,
+  holdAfter: false,
 };
 
 export type ProgressiveAction =
@@ -123,9 +126,12 @@ export function progressiveReducer(s: ProgressiveState, a: ProgressiveAction): P
     case "dialed":
       if (s.status !== "countdown" || s.ids[s.index] !== a.id) return s;
       return { ...s, status: "calling", current: a.id, dialAt: null, called: s.called + 1 };
-    case "dispositioned":
+    case "dispositioned": {
       if (s.status !== "calling" || s.current !== a.id) return s;
-      return advance(s, a.now);
+      const next = advance({ ...s, holdAfter: false }, a.now);
+      if (!s.holdAfter || next.status !== "countdown") return next;
+      return { ...next, status: "paused", dialAt: null, pauseReason: "Paused by you" };
+    }
     case "callCleared":
       if (s.status !== "calling" || s.current !== a.id) return s;
       // Not skipped: the reason may be company-wide (calling hours, lines busy), and moving on
@@ -135,12 +141,14 @@ export function progressiveReducer(s: ProgressiveState, a: ProgressiveAction): P
       if (s.status !== "countdown") return s;
       return { ...s, status: "paused", dialAt: null, pauseReason: "You started another call" };
     case "pause":
+      if (s.status === "calling") return { ...s, holdAfter: true };
       if (s.status !== "countdown") return s;
       return { ...s, status: "paused", dialAt: null, pauseReason: a.reason ?? null };
     case "callNow":
       if (s.status !== "countdown") return s;
       return { ...s, dialAt: 0 };
     case "resume":
+      if (s.status === "calling") return { ...s, holdAfter: false };
       if (s.status !== "paused") return s;
       // A call that was cleared without a disposition is retried: resuming means "carry on".
       return { ...s, status: "countdown", dialAt: 0, pauseReason: null };
