@@ -1401,14 +1401,25 @@ export function CallQueueContent({
                   let blocked: Set<string>;
                   try {
                     target = await fetchQueueTargets();
-                    blocked = new Set(
-                      await checkDoNotCall({
+                    // In batches: the check takes at most 2,000 numbers a request, and a full
+                    // queue can hold 6,000+ (it failed with SX-9000 for those agents, 2026-11-12).
+                    const keys = [
+                      ...new Set(
+                        target
+                          .map((d) => (d.phone ?? "").replace(/\D/g, "").slice(-10))
+                          .filter((p) => p.length === 10),
+                      ),
+                    ];
+                    blocked = new Set<string>();
+                    for (let i = 0; i < keys.length; i += 1000) {
+                      const hits = await checkDoNotCall({
                         data: {
                           accessToken: await getProgressiveToken(),
-                          phones: target.map((d) => d.phone).filter(Boolean),
+                          phones: keys.slice(i, i + 1000),
                         },
-                      }),
-                    );
+                      });
+                      for (const h of hits) blocked.add(h);
+                    }
                   } catch (e) {
                     toast.error(errorText(e, "Could not start Progressive Dial"));
                     return;

@@ -523,7 +523,7 @@ export const checkDoNotCall = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }): Promise<string[]> => {
     const caller = await requireCaller(data.accessToken);
-    enforceRateLimit(`dnc-check:${caller.authUserId}`, 20, 60_000);
+    enforceRateLimit(`dnc-check:${caller.authUserId}`, 60, 60_000);
     return [...(await doNotCallSet(caller.clientId, data.phones))];
   });
 
