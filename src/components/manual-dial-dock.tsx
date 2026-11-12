@@ -19,7 +19,7 @@
  * Productive/Progressive boards occupy this same corner during a run, and an agent mid-call is
  * not starting another manual dial.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Phone, PhoneOutgoing, X, History, Link2, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -32,7 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCanCall } from "@/lib/calling-access";
+import { useCanCall, MANAGER_LOCAL_CALL_EVENT } from "@/lib/calling-access";
 import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
@@ -68,6 +68,12 @@ function timeLabel(iso: string): string {
 export function ManualDialDock() {
   const { user } = useAuth();
   const canCall = useCanCall();
+  const [managerLocalCall, setManagerLocalCall] = useState(false);
+  useEffect(() => {
+    const on = (e: Event) => setManagerLocalCall(!!(e as CustomEvent<boolean>).detail);
+    window.addEventListener(MANAGER_LOCAL_CALL_EVENT, on);
+    return () => window.removeEventListener(MANAGER_LOCAL_CALL_EVENT, on);
+  }, []);
   const { activeCall, setActiveCall } = useCallSession();
   const singleCall = useSingleCall(setActiveCall, { mode: "server" });
 
@@ -115,11 +121,11 @@ export function ManualDialDock() {
   // already up.
   if (activeCall) return null;
 
-  // manager/queue is the one route that keeps its OWN activeCall state instead of using
-  // useCallSession, so a call started there is invisible to the check above — the dock would
-  // stay live during it and a second click would open a concurrent call with two separate
-  // state holders driving it. Hidden there entirely; that page has its own dialer.
-  if (pathname.startsWith("/manager/queue")) return null;
+  // manager/queue keeps its OWN activeCall for calls started in its My Queue tab, invisible to
+  // the check above. It announces them (MANAGER_LOCAL_CALL_EVENT), and the dock hides while one
+  // is up — two state holders must never drive two calls at once. The rest of the time the dock
+  // shows there too: managers work their own queue on that page (user, 2026-11-12).
+  if (pathname.startsWith("/manager/queue") && managerLocalCall) return null;
   // Managers dial only where the company has "Managers can call" switched on.
   if (user?.role === "manager" && canCall !== true) return null;
 

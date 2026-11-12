@@ -32,3 +32,7 @@ export function useCanCall(): boolean | null {
   }, []);
   return can;
 }
+
+/** Fired by Manager → Call Queue with `detail: true/false` while a call started from its My Queue
+ *  tab (its own call state, not the shared one) is up, so the Manual Dial dock can step aside. */
+export const MANAGER_LOCAL_CALL_EVENT = "samvadx:manager-local-call";

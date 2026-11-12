@@ -38,7 +38,7 @@ import { cn } from "@/lib/utils";
 import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
 import { formatINR, bucketOf, BUCKET_META, type Debtor } from "@/lib/mock-debtors";
 import { useTeamAgents, type AgentRef } from "@/lib/team-store";
-import { useCanCall } from "@/lib/calling-access";
+import { useCanCall, MANAGER_LOCAL_CALL_EVENT } from "@/lib/calling-access";
 import { useActiveTeam } from "@/lib/active-team-store";
 import {
   QUEUE_STATUS_META,
@@ -455,6 +455,17 @@ function ManagerQueuePage() {
   // Active-call state lives here (not inside a single tab) so a call started from Agent
   // Live View or My Queue keeps its panel visible even if the manager switches tabs mid-call.
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
+  // Tell the Manual Dial dock a call is up here (it can't see this page's own call state).
+  const hasLocalCall = !!activeCall;
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(MANAGER_LOCAL_CALL_EVENT, { detail: hasLocalCall }));
+  }, [hasLocalCall]);
+  useEffect(
+    () => () => {
+      window.dispatchEvent(new CustomEvent(MANAGER_LOCAL_CALL_EVENT, { detail: false }));
+    },
+    [],
+  );
   // Profile of the borrower on the call, opened by clicking their name on the call screen.
   const [callProfile, setCallProfile] = useState<Debtor | null>(null);
   const [activeEscalationId, setActiveEscalationId] = useState<string | null>(null);
