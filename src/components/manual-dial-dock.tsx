@@ -32,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useCanCall } from "@/lib/calling-access";
 import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
@@ -66,6 +67,7 @@ function timeLabel(iso: string): string {
 
 export function ManualDialDock() {
   const { user } = useAuth();
+  const canCall = useCanCall();
   const { activeCall, setActiveCall } = useCallSession();
   const singleCall = useSingleCall(setActiveCall, { mode: "server" });
 
@@ -118,6 +120,8 @@ export function ManualDialDock() {
   // stay live during it and a second click would open a concurrent call with two separate
   // state holders driving it. Hidden there entirely; that page has its own dialer.
   if (pathname.startsWith("/manager/queue")) return null;
+  // Managers dial only where the company has "Managers can call" switched on.
+  if (user?.role === "manager" && canCall !== true) return null;
 
   const dial = async () => {
     const dialled = number.trim();

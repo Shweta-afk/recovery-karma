@@ -27,6 +27,7 @@ interface Draft {
   inboundQueue: string;
   callWindowStart: string;
   callWindowEnd: string;
+  managersCanCall: boolean;
 }
 
 function draftFrom(t: CompanyTelephony): Draft {
@@ -40,6 +41,7 @@ function draftFrom(t: CompanyTelephony): Draft {
     inboundQueue: s?.inbound_queue ?? "",
     callWindowStart: (s?.call_window_start ?? "08:00").slice(0, 5),
     callWindowEnd: (s?.call_window_end ?? "19:00").slice(0, 5),
+    managersCanCall: !!s?.managers_can_call,
   };
 }
 
@@ -100,6 +102,7 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
           inboundQueue: draft.inboundQueue.trim() || null,
           callWindowStart: draft.callWindowStart,
           callWindowEnd: draft.callWindowEnd,
+          managersCanCall: draft.managersCanCall,
         },
       });
       toast.success("Telephony settings saved");
@@ -179,6 +182,19 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
               <label className="flex items-center gap-3 sm:col-span-2">
                 <Switch checked={draft.enabled} onCheckedChange={(v) => up({ enabled: v })} />
                 <span className="text-sm">Calling enabled</span>
+              </label>
+              <label className="flex items-center gap-3 sm:col-span-2">
+                <Switch
+                  checked={draft.managersCanCall}
+                  onCheckedChange={(v) => up({ managersCanCall: v })}
+                />
+                <span className="text-sm">
+                  Managers can call
+                  <span className="block text-xs text-muted-foreground">
+                    Managers dial their own assigned accounts and use Manual Dial, like agents. They
+                    need an extension.
+                  </span>
+                </span>
               </label>
               <Field label="Extensions allowed" hint={`${assigned} assigned · blank = no cap`}>
                 <Input
@@ -333,7 +349,10 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
                     )}
                     {a.skycrmUser?.status === "created" &&
                       (a.skycrmUser.lastLoginError ? (
-                        <p className="truncate text-[11px] text-destructive" title={a.skycrmUser.lastLoginError}>
+                        <p
+                          className="truncate text-[11px] text-destructive"
+                          title={a.skycrmUser.lastLoginError}
+                        >
                           SkyCRM login refused — {a.skycrmUser.lastLoginError}
                         </p>
                       ) : (

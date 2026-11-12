@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
 import { formatINR, bucketOf, BUCKET_META, type Debtor } from "@/lib/mock-debtors";
 import { useTeamAgents, type AgentRef } from "@/lib/team-store";
+import { useCanCall } from "@/lib/calling-access";
 import { useActiveTeam } from "@/lib/active-team-store";
 import {
   QUEUE_STATUS_META,
@@ -107,10 +108,14 @@ export const Route = createFileRoute("/manager/queue")({
 // collide with one and never needs resetting just because the roster changed underneath it.
 const ALL_AGENTS = "__all__";
 
-function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
+function AgentLiveViewTab({ agents, self }: { agents: AgentRef[]; self?: AgentRef }) {
   const [selected, setSelected] = useState<string>(ALL_AGENTS);
   useEffect(() => {
-    if (selected !== ALL_AGENTS && !agents.some((a) => a.id === selected)) {
+    if (
+      selected !== ALL_AGENTS &&
+      selected !== self?.id &&
+      !agents.some((a) => a.id === selected)
+    ) {
       setSelected(ALL_AGENTS);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,7 +130,10 @@ function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
   }
 
   const viewingAll = selected === ALL_AGENTS;
-  const selectedAgent = agents.find((a) => a.id === selected);
+  // "My accounts": the manager's own assigned accounts (their manager ID on the upload), worked
+  // like an agent's queue — only where "Managers can call" is on (user, 2026-11-12).
+  const viewingSelf = !!self && selected === self.id;
+  const selectedAgent = viewingSelf ? self : agents.find((a) => a.id === selected);
 
   return (
     <div className="space-y-4">
@@ -137,6 +145,7 @@ function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL_AGENTS}>All — whole team combined</SelectItem>
+            {self && <SelectItem value={self.id}>My accounts (you)</SelectItem>}
             {agents.map((a) => (
               <SelectItem key={a.id} value={a.id}>
                 {a.name}
@@ -153,6 +162,11 @@ function AgentLiveViewTab({ agents }: { agents: AgentRef[] }) {
             Productive/Progressive bulk dial is turned off here since accounts can span different
             portfolios' settings; call a row directly instead. Disposition/PTP logging still credits{" "}
             <strong>you</strong>, not whoever the account is assigned to.
+          </>
+        ) : viewingSelf ? (
+          <>
+            Your own accounts — the ones assigned to you. Call them like any agent: Call,
+            Progressive Dial and Manual Dial all work, and the calls are logged as yours.
           </>
         ) : (
           <>
@@ -415,6 +429,7 @@ function ManagerQueuePage() {
   const managerName = user?.name ?? "Manager";
   const { activeTeam } = useActiveTeam(managerId);
   const agents = useTeamAgents(activeTeam?.id);
+  const canCall = useCanCall();
   // Arriving here from the floating call bar (a Manual Dial call that ended, or Expand): open
   // My Queue, whose Call Queue renders that call's disposition screen. Agent Live View renders
   // nothing when the manager has no team yet.
@@ -613,7 +628,10 @@ function ManagerQueuePage() {
         </TabsList>
 
         <TabsContent value="live" className="mt-4">
-          <AgentLiveViewTab agents={agents} />
+          <AgentLiveViewTab
+            agents={agents}
+            self={canCall ? ({ id: managerId, name: managerName } as AgentRef) : undefined}
+          />
         </TabsContent>
         <TabsContent value="my" className="mt-4">
           <MyQueueTab

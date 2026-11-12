@@ -27,6 +27,7 @@ import type { TelephonyEvent, CallStatusEvent } from "./types";
 import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-disposition";
 import {
   doNotCallSet,
+  assertMayDial,
   ledgerByProviderCallId,
   loadTelephonySettings,
   prepareCall,
@@ -536,6 +537,7 @@ export const startDialerRun = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
     enforceRateLimit(`dialer-run:${caller.authUserId}`, 10, 60_000);
+    await assertMayDial(caller);
     if (typeof data.runId !== "string" || !data.runId) throw new Error("Missing runId");
     // A run id another company already owns must never be overwritten by a guessed one.
     if (owners.has(`run:${data.runId}`) && !owns(caller, `run:${data.runId}`)) {
@@ -736,6 +738,7 @@ export const startCall = createServerFn({ method: "POST" })
     const caller = await requireCaller(data?.accessToken);
     // A real call costs money and rings real phones; 30/min per user is well above any human.
     enforceRateLimit(`start-call:${caller.authUserId}`, 30, 60_000);
+    await assertMayDial(caller);
 
     const agentNumber = cleanAgentNumber(data.agentNumber);
     const debtorNumber = cleanNumber(data.debtorNumber, "Debtor number");

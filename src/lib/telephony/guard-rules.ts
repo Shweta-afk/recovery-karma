@@ -15,6 +15,8 @@ export interface TelephonySettingsRow {
   /** "HH:MM" or "HH:MM:SS" (Postgres TIME) */
   call_window_start: string;
   call_window_end: string;
+  /** Managers in this company may place calls themselves (20261112_managers_can_call.sql). */
+  managers_can_call?: boolean;
 }
 
 export type CallBlockCode =

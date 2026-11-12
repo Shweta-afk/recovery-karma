@@ -53,7 +53,7 @@ export async function loadTelephonySettings(
   const { data, error } = await db()
     .from("telephony_settings")
     .select(
-      "enabled, seat_limit, channel_limit, inbound_did, inbound_queue, call_window_start, call_window_end",
+      "enabled, seat_limit, channel_limit, inbound_did, inbound_queue, call_window_start, call_window_end, managers_can_call",
     )
     .eq("client_id", clientId)
     .maybeSingle();
@@ -63,6 +63,16 @@ export async function loadTelephonySettings(
     return null;
   }
   return (data as TelephonySettingsRow | null) ?? null;
+}
+
+/** A manager may dial only where a superadmin switched "Managers can call" on for the company.
+ *  Agents and admins are unaffected. */
+export async function assertMayDial(caller: { role: string; clientId: string }): Promise<void> {
+  if (caller.role !== "manager") return;
+  const settings = await loadTelephonySettings(caller.clientId);
+  if (!settings?.managers_can_call) {
+    throw new Error("Calling isn't switched on for managers in your company. Ask SamvadX support.");
+  }
 }
 
 /** Which of `phones` are on the company's do-not-call list (as normalised 10-digit keys). */

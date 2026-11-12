@@ -312,6 +312,8 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
         channelReserved: z.number().int().min(0).max(1000),
         inboundDid: z.string().trim().max(20).nullable(),
         inboundQueue: z.string().trim().max(50).nullable(),
+        /** Managers may place calls themselves. Left out = unchanged. */
+        managersCanCall: z.boolean().optional(),
         callWindowStart: timeSchema,
         callWindowEnd: timeSchema,
       })
@@ -363,6 +365,7 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
       inbound_queue: data.inboundQueue || null,
       call_window_start: data.callWindowStart,
       call_window_end: data.callWindowEnd,
+      ...(data.managersCanCall === undefined ? {} : { managers_can_call: data.managersCanCall }),
       updated_at: new Date().toISOString(),
     };
     let { error } = await db().from("telephony_settings").upsert(row, { onConflict: "client_id" });
@@ -884,6 +887,16 @@ export const logMissedInbound = createServerFn({ method: "POST" })
         .eq("id", row.id);
     }
     return { ok: !!row };
+  });
+
+/** What the signed-in person may do with calling — the browser hides what the server refuses. */
+export const getMyCallingAccess = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }): Promise<{ canCall: boolean }> => {
+    const caller = await requireCaller(data.accessToken);
+    if (caller.role !== "manager") return { canCall: caller.role === "agent" };
+    const settings = await loadTelephonySettings(caller.clientId);
+    return { canCall: !!settings?.managers_can_call };
   });
 
 export interface MissedInboundEntry {
