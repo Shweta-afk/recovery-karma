@@ -459,13 +459,18 @@ function ActiveCallContent({
             <CheckCheck className="h-3.5 w-3.5" />
             No answer — save
           </Button>
-          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onSwitchView}>
-            {call.view === "panel" ? (
-              <Maximize2 className="h-4 w-4" />
-            ) : (
-              <Minimize2 className="h-4 w-4" />
-            )}
-          </Button>
+          {/* The old icon only switched this bar into a pop-up box with the same name and
+              number — agents pressed it expecting the borrower's details (2026-11-12). Where
+              Expand exists it is the one control; this stays only for pages without it. */}
+          {!onToggleRingingDetails && (
+            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onSwitchView}>
+              {call.view === "panel" ? (
+                <Maximize2 className="h-4 w-4" />
+              ) : (
+                <Minimize2 className="h-4 w-4" />
+              )}
+            </Button>
+          )}
           <Button
             size="sm"
             className="gap-1.5 h-8 bg-destructive text-destructive-foreground hover:bg-destructive/90"
@@ -2050,7 +2055,9 @@ export function ActiveCallModal(props: CallControlProps) {
   // The two-column call screen (fixed 440px left column) does not fit a max-w-2xl dialog with
   // no height: it overflowed and the disposition's Save button could end up off screen. The
   // dialog is only for the compact ringing row; once the call is live or over, use the panel.
-  if (props.call.phase !== "ringing") return <ActiveCallPanel {...props} />;
+  if (props.call.phase !== "ringing" || props.call.expandRinging) {
+    return <ActiveCallPanel {...props} />;
+  }
   return (
     <Dialog open onOpenChange={() => {}}>
       <DialogContent className="max-w-2xl" onInteractOutside={(e) => e.preventDefault()}>
