@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { CallControls } from "./call-controls";
 import { useFullExtra } from "@/lib/debtor-extra";
 import { useLoanReferenceMatch } from "@/lib/loan-ref-lookup";
 import {
@@ -200,10 +201,10 @@ function AddPhoneRow({ onAdd }: { onAdd: (phone: string) => Promise<void> }) {
  * Flip this to true only once the provider exposes call control AND TelephonyProvider has the
  * methods to drive it; the buttons come back together.
  */
-const PROVIDER_CALL_CONTROL = false;
-
-const NO_CALL_CONTROL_HINT =
-  "Not available yet — this call runs on the agent's phone, which the app cannot mute, hold or bridge. Needs telephony-provider call control.";
+// 2026-11-16: SkyCRM exposes call control (mute_calls, hold_calls, call_transfer, call_swaping,
+// conf_hangup), so these are now real — see CallControls (call-controls.tsx) and
+// src/lib/telephony/call-control.ts. The agent-side "Whisper" placeholder is gone: whispering is
+// what a manager does to an agent's call, from Live Calls (call_monitor_api).
 
 function ActiveCallContent({
   call,
@@ -297,13 +298,6 @@ function ActiveCallContent({
   const [dialPadInput, setDialPadInput] = useState("");
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergedWith, setMergedWith] = useState<string | null>(null);
-
-  const SUPERVISORS = [
-    "Amit Sharma (Supervisor)",
-    "Preethi Menon (Manager)",
-    "Rohit Bose (Team Lead)",
-  ];
-  const AGENTS_LIST = ["Ravi Mehta", "Sonal Desai", "Mohit Rao", "Leena Krishnan", "Tarun Bose"];
 
   const up = (patch: Partial<DispositionForm>) => onDisposition({ ...disposition, ...patch });
 
@@ -913,18 +907,6 @@ function ActiveCallContent({
                 {notConnected ? "Not connected" : `Call ended · ${fmtElapsed(elapsed)}`}
               </span>
             )}
-            {conferenced && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-xs text-blue-500">
-                <GitMerge className="h-3 w-3" />
-                3-way{mergedWith ? ` · ${mergedWith.split(" ")[0]}` : ""}
-              </span>
-            )}
-            {whisper && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-xs text-violet-500">
-                <EarOff className="h-3 w-3" />
-                Whisper{whisperTarget ? ` · ${whisperTarget.split(" ")[0]}` : ""}
-              </span>
-            )}
             {held && (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-400/30 px-2 py-0.5 text-xs text-amber-500">
                 <PauseCircle className="h-3 w-3" />
@@ -937,274 +919,7 @@ function ActiveCallContent({
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {phase === "connected" && (
               <>
-                <Button
-                  size="sm"
-                  variant={muted ? "default" : "outline"}
-                  className={cn("gap-1 h-8", muted && "bg-destructive text-destructive-foreground")}
-                  onClick={onMute}
-                  disabled={!PROVIDER_CALL_CONTROL}
-                  title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
-                >
-                  {muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                  {muted ? "Unmute" : "Mute"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant={held ? "default" : "outline"}
-                  className={cn("gap-1 h-8", held && "bg-amber-500/80 text-white")}
-                  onClick={onHold}
-                  disabled={!PROVIDER_CALL_CONTROL}
-                  title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
-                >
-                  <PauseCircle className="h-3.5 w-3.5" />
-                  {held ? "Resume" : "Hold"}
-                </Button>
-                <div className="relative">
-                  <Button
-                    size="sm"
-                    variant={whisper ? "default" : "outline"}
-                    className={cn("gap-1 h-8", whisper && "bg-violet-600 text-white")}
-                    onClick={() => {
-                      if (whisper) {
-                        setWhisper(false);
-                        setWhisperTarget(null);
-                        toast("Whisper OFF");
-                      } else {
-                        setWhisperOpen((o) => !o);
-                        setAddCallOpen(false);
-                        setTransferOpen(false);
-                        setManualDialOpen(false);
-                      }
-                    }}
-                    disabled={!PROVIDER_CALL_CONTROL}
-                    title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
-                  >
-                    {whisper ? <EarOff className="h-3.5 w-3.5" /> : <Ear className="h-3.5 w-3.5" />}
-                    {whisper ? `Whisper · ${whisperTarget?.split(" ")[0]}` : "Whisper"}
-                  </Button>
-                  {whisperOpen && !whisper && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setWhisperOpen(false)} />
-                      <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          Whisper with (customer won't hear)
-                        </p>
-                        <div className="space-y-0.5">
-                          {SUPERVISORS.map((name) => (
-                            <button
-                              key={name}
-                              type="button"
-                              onClick={() => {
-                                setWhisperTarget(name);
-                                setWhisper(true);
-                                setWhisperOpen(false);
-                                toast.success(`Whisper ON with ${name}`);
-                              }}
-                              className="w-full text-left px-2 py-2 rounded text-sm text-foreground hover:bg-accent/60 transition-colors flex items-center gap-2"
-                            >
-                              <Ear className="h-3.5 w-3.5 text-violet-500 flex-shrink-0" />
-                              <span>{name}</span>
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-[10px] text-muted-foreground border-t border-border pt-2">
-                          You and the selected person can speak. The customer cannot hear this
-                          conversation.
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-                <div className="relative">
-                  <Button
-                    size="sm"
-                    variant={conferenced ? "default" : "outline"}
-                    className={cn("gap-1 h-8", conferenced && "bg-blue-600 text-white")}
-                    onClick={() => {
-                      if (conferenced) {
-                        setConferenced(false);
-                        setMergedWith(null);
-                        setMergeOpen(false);
-                        toast("Back to 1:1");
-                      } else {
-                        setMergeOpen((o) => !o);
-                        setAddCallOpen(false);
-                        setTransferOpen(false);
-                        setManualDialOpen(false);
-                        setWhisperOpen(false);
-                      }
-                    }}
-                    disabled={!PROVIDER_CALL_CONTROL}
-                    title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
-                  >
-                    <GitMerge className="h-3.5 w-3.5" />
-                    {conferenced
-                      ? `Merged${mergedWith ? ` · ${mergedWith.split(" ")[0]}` : ""}`
-                      : "Merge"}
-                  </Button>
-                  {mergeOpen && !conferenced && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setMergeOpen(false)} />
-                      <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          Merge with
-                        </p>
-                        {/* Manager — portal auto-connects to the live call */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setConferenced(true);
-                            setMergedWith("Preethi Menon (Manager)");
-                            setMergeOpen(false);
-                            toast.success("Manager portal auto-connected to the call", {
-                              description: "Preethi Menon joined — 3-way live",
-                            });
-                          }}
-                          className="w-full text-left px-2 py-2 rounded text-sm text-violet-600 hover:bg-accent/60 transition-colors flex items-center gap-2"
-                        >
-                          <UserRoundCog className="h-4 w-4 flex-shrink-0" />
-                          <span className="flex-1">Manager</span>
-                          <span className="text-[9px] opacity-60">auto-connect</span>
-                        </button>
-                        <div className="border-t border-border pt-1.5 space-y-0.5 max-h-40 overflow-y-auto">
-                          <p className="text-[10px] text-muted-foreground px-2">Agents</p>
-                          {AGENTS_LIST.map((name) => (
-                            <button
-                              key={name}
-                              type="button"
-                              onClick={() => {
-                                setConferenced(true);
-                                setMergedWith(name);
-                                setMergeOpen(false);
-                                toast.success(`${name} merged into the call`);
-                              }}
-                              className="w-full text-left px-2 py-1.5 rounded text-sm text-foreground hover:bg-accent/60 transition-colors flex items-center gap-2"
-                            >
-                              <GitMerge className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
-                              <span>{name}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Add Call */}
-                <div className="relative">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1 h-8"
-                    onClick={() => {
-                      setAddCallOpen((o) => !o);
-                      setTransferOpen(false);
-                      setManualDialOpen(false);
-                    }}
-                    disabled={!PROVIDER_CALL_CONTROL}
-                    title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
-                  >
-                    <PhoneForwarded className="h-3.5 w-3.5" />
-                    Add Call
-                  </Button>
-                  {addCallOpen && (
-                    <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Add participant
-                      </p>
-                      <div className="flex gap-1.5">
-                        <Input
-                          placeholder="+91 XXXXX XXXXX"
-                          value={addCallNumber}
-                          onChange={(e) => setAddCallNumber(e.target.value)}
-                          className="h-7 text-xs flex-1"
-                        />
-                        <Button
-                          size="sm"
-                          className="h-7 px-2 text-xs gap-1"
-                          onClick={() => {
-                            if (!addCallNumber) return;
-                            toast.success(`Calling ${addCallNumber}…`);
-                            setConferenced(true);
-                            setAddCallOpen(false);
-                            setAddCallNumber("");
-                          }}
-                        >
-                          <Phone className="h-3 w-3" />
-                          Call
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Transfer */}
-                <div className="relative">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1 h-8"
-                    onClick={() => {
-                      setTransferOpen((o) => !o);
-                      setAddCallOpen(false);
-                      setManualDialOpen(false);
-                    }}
-                    disabled={!PROVIDER_CALL_CONTROL}
-                    title={PROVIDER_CALL_CONTROL ? undefined : NO_CALL_CONTROL_HINT}
-                  >
-                    <ArrowRightLeft className="h-3.5 w-3.5" />
-                    Transfer
-                  </Button>
-                  {transferOpen && (
-                    <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-xl p-3 space-y-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Transfer to
-                      </p>
-                      <div className="space-y-0.5 max-h-48 overflow-y-auto">
-                        {[...SUPERVISORS, ...AGENTS_LIST].map((name) => (
-                          <button
-                            key={name}
-                            type="button"
-                            onClick={() => {
-                              toast.success(`Transferring to ${name}…`);
-                              setTransferOpen(false);
-                              onEnd();
-                            }}
-                            className={cn(
-                              "w-full text-left px-2 py-1.5 rounded text-xs hover:bg-accent/60 transition-colors flex items-center justify-between",
-                              SUPERVISORS.includes(name) ? "text-violet-500" : "text-foreground",
-                            )}
-                          >
-                            <span>{name}</span>
-                            {SUPERVISORS.includes(name) && (
-                              <span className="text-[9px] opacity-50">Supervisor</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="border-t border-border pt-2 flex gap-1.5">
-                        <Input
-                          placeholder="Custom number…"
-                          value={transferTarget}
-                          onChange={(e) => setTransferTarget(e.target.value)}
-                          className="h-7 text-xs flex-1"
-                        />
-                        <Button
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => {
-                            if (!transferTarget) return;
-                            toast.success(`Transferring to ${transferTarget}…`);
-                            setTransferOpen(false);
-                            onEnd();
-                          }}
-                        >
-                          <ArrowRightLeft className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <CallControls muted={muted} held={held} onMute={onMute} onHold={onHold} />
 
                 {/* Dialpad */}
                 <div className="relative">

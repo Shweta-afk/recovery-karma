@@ -615,6 +615,15 @@ export async function createSkycrmUser(user: {
 
 export type MonitorMode = "listen" | "whisper" | "barge";
 
+/** Mute / hold / conference / transfer on the agent's own live call (call-control.ts builds the
+ *  request). Signed as the agent. Returns SkyCRM's answer as-is; the caller reads success. */
+export function sendCallControl(
+  req: { path: string; body: Record<string, string> },
+  agentExtension: string,
+): Promise<Record<string, unknown>> {
+  return post(req.path, req.body, agentExtension) as unknown as Promise<Record<string, unknown>>;
+}
+
 export function startCallMonitor(
   mode: MonitorMode,
   supervisorExtension: string,

@@ -18,7 +18,13 @@ import {
 } from "./telephony/guard.server";
 import { skycrmCallbackDatetime, skycrmSubDisposition } from "./telephony/skycrm-disposition";
 import { copyRingTimeToCallLogs, copyTalkTimeToCallLogs } from "./telephony/talk-time";
-import { normalisePhone, type TelephonySettingsRow } from "./telephony/guard-rules";
+import { evaluateCall, normalisePhone, type TelephonySettingsRow } from "./telephony/guard-rules";
+import {
+  callControlRequest,
+  callControlSucceeded,
+  mobileTarget,
+  type CallTarget,
+} from "./telephony/call-control";
 import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
 import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.server";
@@ -27,6 +33,7 @@ import { enforceRateLimit } from "./rate-limit.server";
 import {
   createSkycrmUser,
   loginSkycrmUser,
+  sendCallControl,
   startCallMonitor,
   pauseQueue,
   registerQueue,
@@ -1236,6 +1243,136 @@ export const dismissMissedCall = createServerFn({ method: "POST" })
  * not re-implemented here. SkyCRM then rings the caller's own extension; their browser phone
  * answers it (the board fires the dial-started event first). Stopping = hanging up that phone.
  */
+/** People an agent can add to (or transfer) their call: everyone in the company with an extension,
+ *  except themselves. */
+export const listCallTargets = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: tokenSchema }).parse(d))
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    const { data: rows } = await db()
+      .from("agents")
+      .select("id, name, role, agent_extension, is_active")
+      .eq("client_id", caller.clientId)
+      .not("agent_extension", "is", null);
+    return (
+      (rows ?? []) as {
+        id: string;
+        name: string | null;
+        role: string;
+        agent_extension: string | null;
+        is_active: boolean | null;
+      }[]
+    )
+      .filter((r) => r.id !== caller.agentId && r.is_active !== false && r.agent_extension?.trim())
+      .map((r) => ({
+        name: r.name ?? r.agent_extension!.trim(),
+        role: r.role,
+        extension: r.agent_extension!.trim(),
+      }))
+      .sort((a, b) =>
+        a.role === b.role ? a.name.localeCompare(b.name) : a.role === "agent" ? 1 : -1,
+      );
+  });
+
+/** Mute, hold, add a person (conference), swap, merge, transfer — on the caller's OWN live call.
+ *  The extension and call direction come from the server (agents table + call ledger), never the
+ *  browser; an added extension must be in the caller's company, and an added mobile number goes
+ *  through the same do-not-call list and calling window as any dial. */
+export const controlMyCall = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        action: z.enum([
+          "mute",
+          "unmute",
+          "hold",
+          "resume",
+          "add",
+          "threeway",
+          "swap",
+          "cancel_add",
+          "complete_transfer",
+          "remove_added",
+        ]),
+        targetExtension: z
+          .string()
+          .trim()
+          .regex(/^\d{3,6}$/)
+          .optional(),
+        targetNumber: z.string().trim().max(20).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!isSkycrm()) throw new Error("Call controls are not available on this calling setup");
+    enforceRateLimit(`call-control:${caller.authUserId}`, 30, 60_000);
+    const myExtension = await callerExtension(caller.agentId);
+    if (!myExtension) throw new Error("You need your own extension to use call controls");
+
+    const since = new Date(Date.now() - 4 * 3600_000).toISOString();
+    const { data: open } = await db()
+      .from("telephony_calls")
+      .select("id, direction")
+      .eq("agent_id", caller.agentId)
+      .is("ended_at", null)
+      .gte("started_at", since)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!open) throw new Error("You are not on a call right now");
+    const direction =
+      (open as { direction: string }).direction === "inbound" ? "inbound" : "outbound";
+
+    let target: CallTarget | undefined;
+    let targetLabel = "";
+    if (data.action === "add") {
+      if (data.targetExtension) {
+        if (data.targetExtension === myExtension) throw new Error("That is your own extension");
+        const { data: person } = await db()
+          .from("agents")
+          .select("name, client_id")
+          .eq("agent_extension", data.targetExtension)
+          .maybeSingle();
+        if (!person || (person as { client_id: string }).client_id !== caller.clientId) {
+          throw new Error("That extension is not in your company");
+        }
+        target = { extension: data.targetExtension };
+        targetLabel = (person as { name: string | null }).name ?? data.targetExtension;
+      } else if (data.targetNumber) {
+        const number = mobileTarget(data.targetNumber);
+        if (!number) throw new Error("Enter a 10-digit mobile number");
+        const decision = evaluateCall({
+          settings: await loadTelephonySettings(caller.clientId),
+          provider: "skycrm",
+          agentExtension: myExtension,
+          onDoNotCall: (await doNotCallSet(caller.clientId, [number])).size > 0,
+          now: new Date(),
+        });
+        if (!decision.ok) throw new Error(decision.message);
+        target = { number };
+        targetLabel = number;
+      } else {
+        throw new Error("Choose who to add to the call");
+      }
+    }
+
+    const req = callControlRequest(data.action, { agentExtension: myExtension, direction, target });
+    const res = await sendCallControl(req, myExtension);
+    const ok = callControlSucceeded(res);
+    const vendorMessage = String(res.message ?? res.Message ?? res.error ?? res.status ?? "").slice(
+      0,
+      160,
+    );
+    // Never logs the added mobile number.
+    console.log(
+      `[call-control] ext ${myExtension} ${data.action}${target && "extension" in target ? ` → ext ${target.extension}` : target ? " → a mobile number" : ""} (${direction}): ${ok ? "ok" : "refused"} ${vendorMessage}`,
+    );
+    if (!ok) throw new Error(`SkyCRM did not do it: ${vendorMessage || "no reason given"}`);
+    return { ok: true, targetLabel, vendorMessage };
+  });
+
 export const monitorLiveCall = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
