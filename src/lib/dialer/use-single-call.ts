@@ -12,7 +12,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
-import { waitForPhone } from "@/lib/telephony/phone-status";
+import { requestPhoneReconnect, waitForPhone } from "@/lib/telephony/phone-status";
 import { getAccessToken } from "@/lib/access-token";
 import { applyEvent, isTerminal } from "@/lib/telephony/call-machine";
 import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provider";
@@ -194,20 +194,39 @@ export function useSingleCall(
               );
             }
             const accessToken = await getAccessToken();
-            const result = await withTimeout(
-              serverStartCall({
-                data: {
-                  accessToken,
-                  callLogId: debtor.id,
-                  agentNumber: phoneToUse,
-                  debtorNumber: debtor.phone,
-                  callerId: opts?.callerId,
-                  aiScore: debtor.aiScore,
-                },
-              }),
-              START_CALL_TIMEOUT_MS,
-              "Starting the call",
-            );
+            const place = async () =>
+              withTimeout(
+                serverStartCall({
+                  data: {
+                    accessToken: await getAccessToken(),
+                    callLogId: debtor.id,
+                    agentNumber: phoneToUse,
+                    debtorNumber: debtor.phone,
+                    callerId: opts?.callerId,
+                    aiScore: debtor.aiScore,
+                  },
+                }),
+                START_CALL_TIMEOUT_MS,
+                "Starting the call",
+              );
+            let result: Awaited<ReturnType<typeof place>>;
+            try {
+              result = await place();
+            } catch (first) {
+              // SkyCRM says the phone isn't registered although it looked ready here (a
+              // registration lost on their side, 2026-11-16): reconnect the phone and try once
+              // more before telling the agent.
+              const text = first instanceof Error ? first.message : String(first);
+              if (!/SX-3106/.test(text) || cancelPendingRef.current || cancelledSeq === seq) {
+                throw first;
+              }
+              toast("Reconnecting your phone…", { duration: 4000 });
+              requestPhoneReconnect();
+              await new Promise((r) => setTimeout(r, 1500));
+              if (!(await waitForPhone(12000))) throw first;
+              result = await place();
+            }
+            void accessToken;
             pidRef.current = result.providerCallId;
             latestServerCallId = result.providerCallId;
             // Recorded on the call straight away (not only once a status arrives) so any

@@ -20,7 +20,7 @@ import { useWebphone } from "@/lib/dialer/use-webphone";
 import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
 import { getMyWebphoneLogin, logMissedInbound } from "@/lib/telephony-actions.server";
 import { useNavigate } from "@tanstack/react-router";
-import { setPhoneState } from "@/lib/telephony/phone-status";
+import { PHONE_REREGISTER_EVENT, setPhoneState } from "@/lib/telephony/phone-status";
 import { startAnswerDetector } from "@/lib/telephony/answer-detector";
 import { useCallSession } from "@/lib/call-session";
 import {
@@ -278,6 +278,14 @@ function RegisteredPhone({
   }, [wp.disconnect, start]);
 
   const ready = wp.regState === "registered" && wp.transportUp;
+  // SkyCRM refused a call as "phone not connected" while this looked ready: reconnect now.
+  useEffect(() => {
+    const onReregister = () => {
+      if (!call) void reconnect();
+    };
+    window.addEventListener(PHONE_REREGISTER_EVENT, onReregister);
+    return () => window.removeEventListener(PHONE_REREGISTER_EVENT, onReregister);
+  }, [call, reconnect]);
   // Shared with the dialer, which waits for this before asking SkyCRM to ring the phone.
   useEffect(() => {
     setPhoneState(ready ? "ready" : "connecting");

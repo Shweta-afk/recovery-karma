@@ -19,6 +19,14 @@ export function getPhoneState(): PhoneState {
   return state;
 }
 
+/** Ask the browser phone to reconnect (SkyCRM said it isn't registered although it looked ready).
+ *  The phone reports its own state as it reconnects, so waitForPhone then waits for it. */
+export const PHONE_REREGISTER_EVENT = "samvadx:phone-reregister";
+export function requestPhoneReconnect(): void {
+  if (state === "none") return;
+  window.dispatchEvent(new CustomEvent(PHONE_REREGISTER_EVENT));
+}
+
 /** Resolves true once the phone is ready (or there is no browser phone), false after `ms`. */
 export function waitForPhone(ms: number): Promise<boolean> {
   if (state !== "connecting") return Promise.resolve(true);

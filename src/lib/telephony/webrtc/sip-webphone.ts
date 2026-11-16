@@ -89,7 +89,10 @@ export class SipWebphone {
       displayName: this.config.displayName,
       authorizationUsername: this.config.extension,
       authorizationPassword: this.config.password,
-      transportOptions: { server: this.config.wssUrl },
+      // keepAliveInterval: a tiny keep-alive every 25 s, so an idle connection isn't dropped along
+      // the way (gateway, NAT) while this side still thinks it's registered — SkyCRM then refuses
+      // calls as "Unavailable" (SX-3106) with the pill showing ready (2026-11-16).
+      transportOptions: { server: this.config.wssUrl, keepAliveInterval: 25 },
       // Media: browser mic → far end, far-end audio → our <audio>. No video.
       sessionDescriptionHandlerFactoryOptions: {
         peerConnectionConfiguration: {
@@ -119,7 +122,8 @@ export class SipWebphone {
 
   async register(): Promise<void> {
     if (!this.ua) throw new Error("connect() must be called before register()");
-    this.registerer = new Registerer(this.ua);
+    // Re-register every ~2 min (default 10): a registration SkyCRM lost is noticed and renewed fast.
+    this.registerer = new Registerer(this.ua, { expires: 120 });
     this.registerer.stateChange.addListener((state) => {
       switch (state) {
         case RegistererState.Registered:
