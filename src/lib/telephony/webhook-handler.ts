@@ -64,7 +64,11 @@ export async function handleTelephonyWebhook(request: Request): Promise<Response
   try {
     // Imported lazily so the SSR entry doesn't pull the dialer engine in on cold boot.
     const [{ getTelephonyProvider }, { ingestCallStatusEvent }, { reconcileWithLedger }] =
-      await Promise.all([import("./index"), import("./server"), import("./webhook-reconcile.server")]);
+      await Promise.all([
+        import("./index"),
+        import("./server"),
+        import("./webhook-reconcile.server"),
+      ]);
 
     const parsed = getTelephonyProvider().parseStatusWebhook(payload);
     const { status, ownerClientId, stale } = await reconcileWithLedger(parsed);

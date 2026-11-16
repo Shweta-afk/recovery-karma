@@ -14,7 +14,11 @@ export function skycrmUserLevel(role: string): SkycrmUserLevel {
   return "user";
 }
 
-export function skycrmUsername(agent: { id: string; name: string | null; extension: string | null }): string {
+export function skycrmUsername(agent: {
+  id: string;
+  name: string | null;
+  extension: string | null;
+}): string {
   const ext = agent.extension?.trim();
   if (ext && /^\d{3,6}$/.test(ext)) return ext;
   const first =

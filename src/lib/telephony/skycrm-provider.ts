@@ -25,7 +25,11 @@ import type {
   HangupContext,
 } from "./types";
 import { appError } from "../app-error";
-import { forgetSkycrmCredentials, skycrmCredentials, type SkycrmCredentials } from "./skycrm-credentials.server";
+import {
+  forgetSkycrmCredentials,
+  skycrmCredentials,
+  type SkycrmCredentials,
+} from "./skycrm-credentials.server";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -579,7 +583,10 @@ export async function createSkycrmUser(user: {
       signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
-    return { ok: false, detail: `could not reach SkyCRM (${err instanceof Error ? err.message : String(err)})` };
+    return {
+      ok: false,
+      detail: `could not reach SkyCRM (${err instanceof Error ? err.message : String(err)})`,
+    };
   }
   const text = await response.text();
   let parsed: { status?: unknown; error?: unknown } = {};

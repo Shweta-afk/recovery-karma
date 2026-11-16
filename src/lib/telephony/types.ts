@@ -107,12 +107,7 @@ export type CallState =
   | "canceled";
 
 export type TerminalCallState =
-  | "completed"
-  | "no_answer"
-  | "busy"
-  | "failed"
-  | "abandoned"
-  | "canceled";
+  "completed" | "no_answer" | "busy" | "failed" | "abandoned" | "canceled";
 
 /** Who is on our side of the call once it connects. Drives mode routing in the engine. */
 export type CallParticipant = "agent" | "ai" | "ivr";

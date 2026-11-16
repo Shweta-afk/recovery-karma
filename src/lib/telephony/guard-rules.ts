@@ -20,10 +20,7 @@ export interface TelephonySettingsRow {
 }
 
 export type CallBlockCode =
-  | "telephony_disabled"
-  | "no_extension"
-  | "outside_window"
-  | "do_not_call";
+  "telephony_disabled" | "no_extension" | "outside_window" | "do_not_call";
 
 export type CallDecision = { ok: true } | { ok: false; code: CallBlockCode; message: string };
 

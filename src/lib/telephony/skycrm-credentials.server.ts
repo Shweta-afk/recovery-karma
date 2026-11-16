@@ -29,7 +29,8 @@ export async function skycrmCredentials(extension: string): Promise<SkycrmCreden
       .eq("agents.agent_extension", ext)
       .limit(1)
       .maybeSingle();
-    if (data?.username && data?.password) value = { username: data.username, password: data.password };
+    if (data?.username && data?.password)
+      value = { username: data.username, password: data.password };
   } catch {
     value = null;
   }

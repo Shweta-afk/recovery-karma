@@ -87,7 +87,12 @@ export function RecordingAudio({
 
   return (
     <div className="space-y-1">
-      <audio controls autoPlay={compact} src={src} className={compact ? "mt-1 h-8 w-64 max-w-full" : "h-9 w-full"} />
+      <audio
+        controls
+        autoPlay={compact}
+        src={src}
+        className={compact ? "mt-1 h-8 w-64 max-w-full" : "h-9 w-full"}
+      />
       {showOpenLink && (
         <a
           href={src}

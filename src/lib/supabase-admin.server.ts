@@ -65,7 +65,9 @@ const callerCache = new Map<string, { caller: VerifiedCaller; until: number }>()
 
 function tokenExpiryMs(accessToken: string): number {
   try {
-    const payload = JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64url").toString());
+    const payload = JSON.parse(
+      Buffer.from(accessToken.split(".")[1] ?? "", "base64url").toString(),
+    );
     return typeof payload.exp === "number" ? payload.exp * 1000 : 0;
   } catch {
     return 0;

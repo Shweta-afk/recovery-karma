@@ -9,7 +9,9 @@ import { z } from "zod";
 export const tokenSchema = z.string().min(20).max(8192);
 
 /** Every primary key we accept from the browser is a uuid. */
-export const idSchema = z.string().uuid();
+// guid(), not uuid(): since Zod 4, uuid() also requires RFC version/variant digits. guid() accepts
+// any 8-4-4-4-12 hex id, as Zod 3's uuid() did, so no id that validated before is refused now.
+export const idSchema = z.guid();
 
 /** Roles an admin may hand out. "superadmin" is deliberately absent: it lives in its own table. */
 export const grantableRoleSchema = z.enum(["agent", "manager", "admin", "auditor"]);

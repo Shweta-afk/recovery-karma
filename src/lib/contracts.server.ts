@@ -203,14 +203,12 @@ async function markDocumentViewed(
     return;
   }
   // 23505 = another admin opened it at the same moment; the first view is already recorded.
-  await contractsDb()
-    .from("contract_document_status")
-    .insert({
-      document_id: documentId,
-      client_id: clientId,
-      viewed_at: now,
-      viewed_by_agent: agentId,
-    });
+  await contractsDb().from("contract_document_status").insert({
+    document_id: documentId,
+    client_id: clientId,
+    viewed_at: now,
+    viewed_by_agent: agentId,
+  });
 }
 
 async function requireSuperadmin(accessToken: string) {

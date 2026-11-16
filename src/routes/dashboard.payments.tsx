@@ -234,15 +234,21 @@ function PaymentsPage() {
   const activityRows = useMemo(() => {
     if (activity === "payments") return [];
     const wanted = activity === "ptp" ? "promised" : "callback";
-    return getDispositions()
-      .filter((d) => d.outcome === wanted)
-      .filter((d) => portfolioFilter === "all" || d.portfolioId === portfolioFilter)
-      // Doesn't go through visiblePayments (this reads dispositions, not payments) — so the
-      // agent role-gate is re-applied here directly rather than via the collector picker,
-      // which is hidden for agents anyway once collectorOptions collapses to just themselves.
-      .filter((d) => (isAgent ? d.agentId === selfId : collectorFilter === "all" || d.agentId === collectorFilter))
-      .filter((d) => inDateRange(d.time, dateRange))
-      .sort((a, b) => (a.time < b.time ? 1 : -1));
+    return (
+      getDispositions()
+        .filter((d) => d.outcome === wanted)
+        .filter((d) => portfolioFilter === "all" || d.portfolioId === portfolioFilter)
+        // Doesn't go through visiblePayments (this reads dispositions, not payments) — so the
+        // agent role-gate is re-applied here directly rather than via the collector picker,
+        // which is hidden for agents anyway once collectorOptions collapses to just themselves.
+        .filter((d) =>
+          isAgent
+            ? d.agentId === selfId
+            : collectorFilter === "all" || d.agentId === collectorFilter,
+        )
+        .filter((d) => inDateRange(d.time, dateRange))
+        .sort((a, b) => (a.time < b.time ? 1 : -1))
+    );
   }, [activity, portfolioFilter, collectorFilter, dateRange, dispositionsTick, isAgent, selfId]);
 
   // Managers collect too — from their own escalation queue and by dialling on an agent's
@@ -423,7 +429,9 @@ function PaymentsPage() {
                     }}
                     className={cn(
                       "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50",
-                      statusFilter === "all" ? "font-medium text-foreground" : "text-muted-foreground",
+                      statusFilter === "all"
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground",
                     )}
                   >
                     All
@@ -438,7 +446,9 @@ function PaymentsPage() {
                       }}
                       className={cn(
                         "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center justify-between",
-                        statusFilter === key ? "font-medium text-foreground" : "text-muted-foreground",
+                        statusFilter === key
+                          ? "font-medium text-foreground"
+                          : "text-muted-foreground",
                       )}
                     >
                       <span>{STATUS_META[key].label}</span>

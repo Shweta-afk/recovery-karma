@@ -9,7 +9,16 @@
  * team's, an admin the whole client. Nothing here filters by role.
  */
 import { useCallback, useEffect, useState } from "react";
-import { PhoneCall, RadioTower, AlertTriangle, Headphones, Ear, Users, PhoneOff, Loader2 } from "lucide-react";
+import {
+  PhoneCall,
+  RadioTower,
+  AlertTriangle,
+  Headphones,
+  Ear,
+  Users,
+  PhoneOff,
+  Loader2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { getAccessToken } from "@/lib/access-token";
@@ -144,7 +153,9 @@ function CallControls({ call }: { call: LiveCall }) {
       setActive(mode);
       toast.success(
         `${mode === "listen" ? "Listening to" : mode === "whisper" ? "Whispering to" : "Joined"} ${r.agentName}'s call — your phone connects in a moment`,
-        { description: `Your ext ${r.myExtension} → ext ${r.agentExtension} · SkyCRM: ${r.vendorMessage || "no message"}` },
+        {
+          description: `Your ext ${r.myExtension} → ext ${r.agentExtension} · SkyCRM: ${r.vendorMessage || "no message"}`,
+        },
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not join the call");
@@ -174,7 +185,11 @@ function CallControls({ call }: { call: LiveCall }) {
               : "border-border text-foreground hover:bg-muted",
           )}
         >
-          {busy === mode ? <Loader2 className="h-3 w-3 animate-spin" /> : <Icon className="h-3 w-3" />}
+          {busy === mode ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Icon className="h-3 w-3" />
+          )}
           {label}
         </button>
       ))}
