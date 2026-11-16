@@ -781,6 +781,7 @@ describe("the file matches the company's sample", () => {
   test("every disposition has the number from the company's own export", () => {
     expect(DISPOSITION_CODE).toEqual({
       paid: 100,
+      partial_paid: 100,
       promised: 200,
       callback: 300,
       settlement: 400,

@@ -944,7 +944,7 @@ Admin → Users, not counted against agent/manager seats.
   PTP date moves when a promise is renewed, the generation date never does, whatever period the
   file covers (`firstPtpBy`, `earlierPtps`). Date-wise Feedback has a Code and a Feedback column per
   date; Code is a number (`DISPOSITION_CODE`, from the company's call export: Paid 100, PTP 200,
-  Call Back 300, Settlement 400, Dispute 500, Not Contacted 600, RTP 700). The per-event sheet is named **CC Report**.
+  Call Back 300, Settlement 400, Dispute 500, Not Contacted 600, RTP 700; Partially Paid shares 100). The per-event sheet is named **CC Report**.
 - **Disconnected By** (`telephony_calls.ended_by`, `20261110_ledger_ended_by.sql`): SkyCRM's events
   don't say who hung up, so SamvadX records it. An End press = agent (`providerHangup`,
   `markAgentEndedCall` for the browser phone's own button); a final `completed` event with no End
@@ -955,8 +955,12 @@ Admin → Users, not counted against agent/manager seats.
   ledger for calls not yet copied: `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that
   figure is ringing, not talk). Connected = ledger `completed`, else the disposition (`isAnswered`);
   the SQL summary and JS reports must stay in step. Contact Group stays disposition-based.
-- ⚠️ As of 2026-11-09 no call has a recording: SkyCRM's `download_audio` answers 500
-  (`host='disk'`), so `call_logs.recording_url` is NULL on all 3,079 rows. The portal's player and
+- **Storage buckets must ask for ≤ 50 MB** (`scripts/storage-buckets.test.ts`): Supabase refuses a
+  bucket above the project's upload limit. `call-recordings` asked 100 MB and `saved-archives`
+  200 MB, so neither bucket ever existed: from 2026-11-15 (when SkyCRM's download started
+  working) every recording sweep died creating the bucket, and no archive copy was ever saved.
+- ⚠️ Until 2026-11-12 SkyCRM's `download_audio` answered 500 (`host='disk'`); as of 2026-11-16 no
+  recording had been stored (bucket bug above), so `call_logs.recording_url` was NULL everywhere. The portal's player and
   AI work once the importer starts storing files.
 
 ## Superadmin portal (platform owner) — rebuilt 2026-10-09

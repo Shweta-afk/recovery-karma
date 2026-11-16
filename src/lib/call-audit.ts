@@ -365,9 +365,11 @@ export const DISPOSITION_RANK: Record<string, number> = {
 };
 
 /** Each disposition's number on the Date-wise Feedback sheet, from the company's own call export
- *  ("Best Disposition Rank"). Voicemail and wrong number sit under Not Contacted there. */
+ *  ("Best Disposition Rank"). Voicemail and wrong number sit under Not Contacted there; their
+ *  export has no part payment, which is a payment, so it shares Paid's number. */
 export const DISPOSITION_CODE: Record<string, number> = {
   paid: 100,
+  partial_paid: 100,
   promised: 200,
   callback: 300,
   settlement: 400,

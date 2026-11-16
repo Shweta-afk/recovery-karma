@@ -47,11 +47,19 @@ export function audioContentType(name: string): string | null {
 }
 
 function sniffAudio(buf: Buffer): { ext: string; type: string } | null {
-  if (buf.length >= 12 && buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WAVE")
+  if (
+    buf.length >= 12 &&
+    buf.toString("latin1", 0, 4) === "RIFF" &&
+    buf.toString("latin1", 8, 12) === "WAVE"
+  )
     return { ext: "wav", type: "audio/wav" };
-  if (buf.length >= 3 && (buf.toString("latin1", 0, 3) === "ID3" || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0)))
+  if (
+    buf.length >= 3 &&
+    (buf.toString("latin1", 0, 3) === "ID3" || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0))
+  )
     return { ext: "mp3", type: "audio/mpeg" };
-  if (buf.length >= 4 && buf.toString("latin1", 0, 4) === "OggS") return { ext: "ogg", type: "audio/ogg" };
+  if (buf.length >= 4 && buf.toString("latin1", 0, 4) === "OggS")
+    return { ext: "ogg", type: "audio/ogg" };
   return null;
 }
 
@@ -97,25 +105,42 @@ export function extractRecording(body: Buffer): ExtractResult {
   const head = body.toString("latin1", 0, Math.min(body.length, 64)).trimStart();
   if (head.startsWith("{") || head.startsWith("<")) {
     // JSON error ({"status":500,"error":"HTTPSConnectionPool(host='disk'…"}) or a Django HTML page.
-    return { ok: false, kind: "vendor", detail: body.toString("utf8", 0, Math.min(body.length, 300)) };
+    return {
+      ok: false,
+      kind: "vendor",
+      detail: body.toString("utf8", 0, Math.min(body.length, 300)),
+    };
+  }
+  if (body.length < 4) {
+    return { ok: false, kind: "unknown", detail: `unrecognised ${body.length}-byte response` };
   }
   if (body.readUInt32LE(0) === 0x04034b50 || body.readUInt32LE(0) === 0x06054b50) {
     let entries: { name: string; data: Buffer }[];
     try {
       entries = readZipEntries(body);
     } catch (err) {
-      return { ok: false, kind: "unknown", detail: err instanceof Error ? err.message : String(err) };
+      return {
+        ok: false,
+        kind: "unknown",
+        detail: err instanceof Error ? err.message : String(err),
+      };
     }
     const audio =
       entries.find((e) => audioContentType(e.name) && e.data.length > 0) ??
       entries.find((e) => sniffAudio(e.data));
-    if (!audio) return { ok: false, kind: "empty", detail: `zip held ${entries.length} file(s), no audio` };
-    const type = audioContentType(audio.name) ?? sniffAudio(audio.data)?.type ?? "application/octet-stream";
+    if (!audio)
+      return { ok: false, kind: "empty", detail: `zip held ${entries.length} file(s), no audio` };
+    const type =
+      audioContentType(audio.name) ?? sniffAudio(audio.data)?.type ?? "application/octet-stream";
     const name = audio.name.split("/").pop() || audio.name;
     return { ok: true, file: { bytes: audio.data, name, contentType: type } };
   }
   const bare = sniffAudio(body);
-  if (bare) return { ok: true, file: { bytes: body, name: `recording.${bare.ext}`, contentType: bare.type } };
+  if (bare)
+    return {
+      ok: true,
+      file: { bytes: body, name: `recording.${bare.ext}`, contentType: bare.type },
+    };
   return { ok: false, kind: "unknown", detail: `unrecognised ${body.length}-byte response` };
 }
 
@@ -128,7 +153,12 @@ export function skycrmIstDate(d: Date): string {
 }
 
 /** Storage path: <company>/<IST yyyy-mm-dd>/<vendor callid>.<ext>. */
-export function recordingObjectPath(clientId: string, startedAt: Date, vendorCallId: string, name: string): string {
+export function recordingObjectPath(
+  clientId: string,
+  startedAt: Date,
+  vendorCallId: string,
+  name: string,
+): string {
   const ist = new Date(startedAt.getTime() + 5.5 * 3600_000).toISOString().slice(0, 10);
   const ext = (name.toLowerCase().split(".").pop() || "wav").replace(/[^a-z0-9]/g, "") || "wav";
   const safeId = vendorCallId.replace(/[^0-9A-Za-z._-]/g, "_");

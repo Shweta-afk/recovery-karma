@@ -63,7 +63,9 @@ async function ensureBucket(): Promise<void> {
   const { error } = await storage.createBucket(SAVED_ARCHIVES_BUCKET, {
     public: false,
     allowedMimeTypes: [XLSX_MIME],
-    fileSizeLimit: "200MB",
+    // Never above the project's 50 MB upload limit: Supabase refuses to create such a bucket, and
+    // "200MB" here meant no archive copy was ever saved (2026-10-29 to 2026-11-16).
+    fileSizeLimit: "50MB",
   });
   // A concurrent run may have just created it — only a genuine failure matters.
   if (error && !/already exists/i.test(error.message)) {

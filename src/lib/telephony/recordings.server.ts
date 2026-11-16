@@ -74,11 +74,16 @@ async function ensureBucket(): Promise<void> {
   const storage = getSupabaseAdmin().storage;
   const { data } = await storage.getBucket(CALL_RECORDINGS_BUCKET);
   if (data) return;
+  // Never above the project's 50 MB upload limit: Supabase refuses to create such a bucket. "100MB"
+  // here failed every sweep from 2026-11-15, the day SkyCRM's downloads started working, so no
+  // recording was ever stored.
   const { error } = await storage.createBucket(CALL_RECORDINGS_BUCKET, {
     public: false,
-    fileSizeLimit: "100MB",
+    fileSizeLimit: "50MB",
   });
-  if (error && !/already exists/i.test(error.message)) throw error;
+  if (error && !/already exists/i.test(error.message)) {
+    throw new Error(`could not create the ${CALL_RECORDINGS_BUCKET} bucket: ${error.message}`);
+  }
 }
 
 async function cdrIndex(rows: TodoRow[]): Promise<Map<string, SkyCrmCdrRow>> {
@@ -229,7 +234,9 @@ export async function importRecordings(limit = PER_SWEEP): Promise<SweepResult> 
     if (result.checked)
       console.log(
         `[recordings] checked ${result.checked}, stored ${result.stored}, none ${result.none}` +
-          (result.vendorDown ? `, SkyCRM download failing: ${result.vendorDown.slice(0, 120)}` : ""),
+          (result.vendorDown
+            ? `, SkyCRM download failing: ${result.vendorDown.slice(0, 120)}`
+            : ""),
       );
     return result;
   } finally {
