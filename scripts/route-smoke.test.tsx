@@ -70,7 +70,10 @@ beforeAll(async () => {
     useTeamAgents: () => [AGENT],
   }));
 
+  // Spread too: a partial fake leaks into every later test file (see module-mocks.test.ts).
+  const activeTeamStore = await import("../src/lib/active-team-store");
   mock.module("@/lib/active-team-store", () => ({
+    ...activeTeamStore,
     useActiveTeam: () => ({ teams: [TEAM], activeTeam: TEAM, setActiveTeam: () => {} }),
     getActiveTeamId: () => TEAM.id,
     setActiveTeamId: () => {},

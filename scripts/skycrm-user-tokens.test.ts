@@ -10,7 +10,15 @@ mock.module("../src/lib/telephony/skycrm-credentials.server", () => ({
   skycrmCredentials: async () => creds,
   forgetSkycrmCredentials: () => {},
 }));
-mock.module("@/lib/supabase-admin.server", () => ({ getSupabaseAdmin: () => ({}) }));
+// Bun shares a module mock with every test file that runs after this one, so the fake must offer
+// every export of the real module. A partial one (only getSupabaseAdmin) broke other files'
+// imports of verifyCaller whenever they happened to run later, which failed a Railway deploy on
+// 2026-11-16. module-mocks.test.ts checks this list against the real exports.
+mock.module("@/lib/supabase-admin.server", () => ({
+  getSupabaseAdmin: () => ({}),
+  verifyCaller: async () => null,
+  verifySuperadminCaller: async () => null,
+}));
 
 const { registerQueue, loginSkycrmUser, sendDisposition, startCallMonitor } = await import(
   // Fresh copy: another test file may have loaded the provider before SKYCRM_SECRET was set here.
@@ -29,7 +37,9 @@ function payloadOf(init: RequestInit | undefined, url: string): Record<string, u
   return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
 }
 
-function fakeFetch(answers: Array<{ status?: number; body: string; headers?: Record<string, string> }>) {
+function fakeFetch(
+  answers: Array<{ status?: number; body: string; headers?: Record<string, string> }>,
+) {
   const seen: Record<string, unknown>[] = [];
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     seen.push(payloadOf(init, String(url)));
@@ -91,7 +101,9 @@ describe("disposition_api", () => {
     globalThis.fetch = (async (_url: string, init?: RequestInit) => {
       const h = init?.headers as Record<string, string>;
       seen = { type: h["Content-Type"], body: String(init?.body) };
-      return new Response('{"status": 200, "message": "disposition phone 9999999999 successfully"}');
+      return new Response(
+        '{"status": 200, "message": "disposition phone 9999999999 successfully"}',
+      );
     }) as typeof fetch;
     await sendDisposition({
       extension: "8602",
@@ -104,7 +116,10 @@ describe("disposition_api", () => {
       direction: "Outbound",
     });
     expect(seen.type).toBe("application/json");
-    expect(JSON.parse(seen.body ?? "{}")).toMatchObject({ phone_number: "9999999999", callback_datetime: "" });
+    expect(JSON.parse(seen.body ?? "{}")).toMatchObject({
+      phone_number: "9999999999",
+      callback_datetime: "",
+    });
   });
 
   test("an HTTP error with no status field is a failure, not a silent success", async () => {
