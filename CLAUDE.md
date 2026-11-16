@@ -313,9 +313,8 @@ luck) onto `auth_client_debtor_ids()`.
 the pre-08-21 inline-read bodies (found via the Supabase advisor). Applied then by
 `20261011_rls_policies_converge_and_initplan.sql`, whose NULL-debtor branch leaked ad-hoc calls
 across companies to admins for a few minutes; `20261011_scope_null_debtor_rows_to_company.sql`
-ties NULL-debtor rows to the caller's company via `auth_client_agent_ids()`. **Still NOT live as of
-2026-10-11:** `20260919_debtors_update_scoped_and_guarded.sql` and `20260920_rls_hardening_round2.sql`
-(agents can still update any debtor in their company). Never assume a migration file is live —
+ties NULL-debtor rows to the caller's company via `auth_client_agent_ids()`. `20260919_debtors_update_scoped_and_guarded.sql` and `20260920_rls_hardening_round2.sql` were
+found fully live on 2026-11-16 (policies, both guard triggers, no anon-executable functions). Never assume a migration file is live —
 check `pg_policies`.
 
 **If a debtor profile or Activity History starts 500ing, this is the first thing to revert** —
