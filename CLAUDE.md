@@ -858,6 +858,19 @@ that way rather than spreading either vocabulary into new queries.
 
 ---
 
+## Partially Paid disposition (2026-11-16)
+
+Outcome `partial_paid` (label "Partially Paid", offered beside Paid). The agent enters the amount
+paid now + UTR (`promise_amount`, and a `payments` row with `payment_type 'partial'`, like Paid),
+and optionally a balance amount + due date (`call_logs.balance_amount` / `balance_date`,
+`migrations/20261116_partial_paid_disposition.sql`, live). In `DispositionRecord` the balance is
+`ptpAmount` / `ptpDate`, and the form reuses its PTP fields for it. With a balance date the call
+IS a PTP for the balance (`isOpenPromise`): queue status `ptp`, reminder, escalation if missed,
+sticky until a later Paid / Partially Paid / Settlement. Any Partially Paid ends an earlier PTP.
+`debtor_list` reports such a row as `promised` with the balance as amount/date — same rule as
+`effectiveDisposition`; change them together. Collections totals count it (`isPayment`,
+`isPaymentOutcome`). Tested in `scripts/case-followups.test.ts`.
+
 ## Escalations cover any dated commitment, not just PTPs
 
 `src/lib/ptp-escalation-store.ts` (name kept; so is the `ptp_escalations` table and its

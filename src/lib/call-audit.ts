@@ -316,6 +316,7 @@ export function fmtSeconds(total: number | null | undefined): string {
 
 export const OUTCOME_LABEL: Record<string, string> = {
   paid: "Paid",
+  partial_paid: "Partially Paid",
   promised: "PTP",
   refused: "RTP",
   no_answer: "Not Contacted",
@@ -324,6 +325,10 @@ export const OUTCOME_LABEL: Record<string, string> = {
   dispute: "Dispute",
   settlement: "Settlement",
 };
+
+/** Money received on the call: a full or a partial payment. Its amount is promise_amount. */
+export const isPaymentOutcome = (outcome: string | null | undefined) =>
+  outcome === "paid" || outcome === "partial_paid";
 
 export const isConnectedOutcome = (outcome: string | null | undefined) =>
   !!outcome && outcome !== "no_answer" && outcome !== "voicemail";
@@ -349,6 +354,7 @@ export function disconnectedBy(c: {
 /** Higher = better result for "Best Disposition". Not Contacted is the floor. */
 export const DISPOSITION_RANK: Record<string, number> = {
   paid: 900,
+  partial_paid: 850,
   settlement: 800,
   promised: 700,
   callback: 500,

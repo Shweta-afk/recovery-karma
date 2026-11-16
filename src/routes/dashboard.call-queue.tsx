@@ -705,6 +705,12 @@ export function CallQueueContent({
         return `Callback scheduled for ${d.callbackDate || "date TBD"}${d.callbackTime ? ` at ${d.callbackTime}` : ""}`;
       case "paid":
         return `Paid ${d.paidAmount ? formatINR(parseFloat(d.paidAmount)) : ""}${d.paidRef ? ` (Ref ${d.paidRef})` : ""}`.trim();
+      case "partial_paid": {
+        const paid = d.paidAmount ? formatINR(parseFloat(d.paidAmount)) : "";
+        const ref = d.paidRef ? ` (Ref ${d.paidRef})` : "";
+        const balance = d.ptpDate ? ` · balance${amt ? ` ${amt}` : ""} due ${d.ptpDate}` : "";
+        return `Partially paid ${paid}${ref}${balance}`.trim();
+      }
       case "settlement":
         return `Settlement ${d.settlementAmount ? formatINR(parseFloat(d.settlementAmount)) : ""}${d.settlementDate ? ` on ${d.settlementDate}` : ""}${d.settlementWaiver ? ` · ${d.settlementWaiver}% waiver` : ""}`.trim();
       case "refused":
@@ -728,11 +734,15 @@ export function CallQueueContent({
       toast.error("Select an outcome before submitting");
       return;
     }
-    // A PTP or callback date in the past (e.g. 11 Sep typed for 9 Nov) lands straight in
-    // "overdue" and escalates; refuse it here — the date picker blocks it too.
+    if (disposition.outcome === "partial_paid" && !(parseFloat(disposition.paidAmount) > 0)) {
+      toast.error("Enter the amount paid now");
+      return;
+    }
+    // A PTP, balance or callback date in the past (e.g. 11 Sep typed for 9 Nov) lands straight
+    // in "overdue" and escalates; refuse it here — the date picker blocks it too.
     {
       const due =
-        disposition.outcome === "promised"
+        disposition.outcome === "promised" || disposition.outcome === "partial_paid"
           ? disposition.ptpDate
           : disposition.outcome === "callback"
             ? disposition.callbackDate
@@ -805,8 +815,10 @@ export function CallQueueContent({
       );
 
       // 3 — PTP / callback: SMS the debtor and set an agent reminder for the scheduled date
-      if (disposition.outcome === "promised" || disposition.outcome === "callback") {
-        const isPTP = disposition.outcome === "promised";
+      // A partial payment with a balance date is a PTP for the balance.
+      const balanceDue = disposition.outcome === "partial_paid" && !!disposition.ptpDate;
+      if (disposition.outcome === "promised" || disposition.outcome === "callback" || balanceDue) {
+        const isPTP = disposition.outcome !== "callback";
         const dueDate = isPTP ? disposition.ptpDate : disposition.callbackDate;
         const dueTime = isPTP ? disposition.ptpTime : disposition.callbackTime;
         const amt = disposition.ptpAmount ? formatINR(parseFloat(disposition.ptpAmount)) : "";

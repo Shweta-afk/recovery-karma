@@ -67,7 +67,7 @@ export function UpdateDispositionDialog({
   };
 
   const needsDate = outcome === "promised" || outcome === "callback";
-  const needsAmount = outcome === "promised" || outcome === "paid";
+  const needsAmount = outcome === "promised" || outcome === "paid" || outcome === "partial_paid";
   const today = todayIstKey();
 
   const save = async () => {
@@ -85,7 +85,9 @@ export function UpdateDispositionDialog({
           ? `Callback scheduled for ${date}${time ? ` at ${time}` : ""}`
           : outcome === "paid"
             ? `Paid ${formatINR(amt ?? 0)}`
-            : OUTCOME_META[outcome].label;
+            : outcome === "partial_paid"
+              ? `Partially paid ${formatINR(amt ?? 0)}`
+              : OUTCOME_META[outcome].label;
     const note = ["Updated without a call", auto, reason, notes.trim()].filter(Boolean).join(" — ");
     const nowIso = new Date().toISOString();
 
@@ -108,7 +110,7 @@ export function UpdateDispositionDialog({
         ptpTime: outcome === "promised" ? time || undefined : undefined,
         callbackDate: outcome === "callback" ? date : undefined,
         callbackTime: outcome === "callback" ? time || undefined : undefined,
-        paidAmount: outcome === "paid" ? amt : undefined,
+        paidAmount: outcome === "paid" || outcome === "partial_paid" ? amt : undefined,
         loanAmount: d.loanAmount,
         dpd: d.dpd,
         dialMode: "no_call",
@@ -219,7 +221,7 @@ export function UpdateDispositionDialog({
           {needsAmount && (
             <div className="space-y-1">
               <Label className="text-xs">
-                {outcome === "paid" ? "Amount paid" : "PTP amount"} (₹)
+                {outcome === "promised" ? "PTP amount" : "Amount paid"} (₹)
               </Label>
               <Input
                 type="number"

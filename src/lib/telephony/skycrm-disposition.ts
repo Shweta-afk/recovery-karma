@@ -5,6 +5,7 @@
 
 const LABELS: Record<string, string> = {
   paid: "Paid",
+  partial_paid: "Partially Paid",
   promised: "Promise to Pay",
   refused: "Refused to Pay",
   no_answer: "No Answer",

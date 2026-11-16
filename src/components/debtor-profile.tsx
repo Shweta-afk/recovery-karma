@@ -37,7 +37,7 @@ import { formatINR, displayId, type Debtor } from "@/lib/mock-debtors";
 import { AssignedAgentLine } from "@/components/assigned-agent";
 import { CopyButton } from "@/components/ui/copy-button";
 import { TracePanel } from "@/components/profilex/trace-panel";
-import { getDispositions, isUuid, refreshDispositions } from "@/lib/disposition-store";
+import { getDispositions, isPayment, isUuid, refreshDispositions } from "@/lib/disposition-store";
 import { useFullExtra } from "@/lib/debtor-extra";
 import { requestRetention, getRetentionRequestsFor } from "@/lib/retention-store";
 import { errorText } from "@/lib/app-error";
@@ -246,7 +246,7 @@ export function DebtorProfile({
   const canUpdateDisposition = isUuid(d.id);
 
   const debtorPayments = useMemo(
-    () => debtorCalls.filter((r) => r.outcome === "paid" && r.paidAmount),
+    () => debtorCalls.filter((r) => isPayment(r.outcome) && r.paidAmount),
     [debtorCalls],
   );
 

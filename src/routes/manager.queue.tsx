@@ -521,11 +521,15 @@ function ManagerQueuePage() {
       toast.error("Select an outcome before submitting");
       return;
     }
-    // A PTP or callback date in the past (e.g. 11 Sep typed for 9 Nov) lands straight in
-    // "overdue" and escalates; refuse it here — the date picker blocks it too.
+    if (disposition.outcome === "partial_paid" && !(parseFloat(disposition.paidAmount) > 0)) {
+      toast.error("Enter the amount paid now");
+      return;
+    }
+    // A PTP, balance or callback date in the past (e.g. 11 Sep typed for 9 Nov) lands straight
+    // in "overdue" and escalates; refuse it here — the date picker blocks it too.
     {
       const due =
-        disposition.outcome === "promised"
+        disposition.outcome === "promised" || disposition.outcome === "partial_paid"
           ? disposition.ptpDate
           : disposition.outcome === "callback"
             ? disposition.callbackDate
@@ -578,8 +582,10 @@ function ManagerQueuePage() {
       // PTP / callback: SMS the debtor and set a reminder, same as the agent-side Call Queue —
       // the shared call modal now previews this SMS before Save & Close, so it has to actually
       // happen here too or the preview would be a lie.
-      if (disposition.outcome === "promised" || disposition.outcome === "callback") {
-        const isPTP = disposition.outcome === "promised";
+      // A partial payment with a balance date is a PTP for the balance.
+      const balanceDue = disposition.outcome === "partial_paid" && !!disposition.ptpDate;
+      if (disposition.outcome === "promised" || disposition.outcome === "callback" || balanceDue) {
+        const isPTP = disposition.outcome !== "callback";
         const dueDate = isPTP ? disposition.ptpDate : disposition.callbackDate;
         const dueTime = isPTP ? disposition.ptpTime : disposition.callbackTime;
         const amt = disposition.ptpAmount ? formatINR(parseFloat(disposition.ptpAmount)) : "";
