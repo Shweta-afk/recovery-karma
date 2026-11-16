@@ -66,6 +66,7 @@ import {
   refreshDispositions,
   calcStats,
   type DispositionRecord,
+  isPayment,
 } from "@/lib/disposition-store";
 import { getAgentBook, refreshAgentBooks } from "@/lib/agent-book-store";
 import { saveNotification } from "@/lib/notification-store";
@@ -134,6 +135,7 @@ function timeAgo(iso: string): string {
 }
 const OUTCOME_ICON: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   paid: { icon: CheckCircle2, color: "text-success" },
+  partial_paid: { icon: CheckCircle2, color: "text-success" },
   promised: { icon: MessageCircle, color: "text-primary" },
   refused: { icon: XCircle, color: "text-destructive" },
   no_answer: { icon: PhoneOff, color: "text-muted-foreground" },
@@ -146,6 +148,8 @@ function outcomeText(d: DispositionRecord): string {
   switch (d.outcome) {
     case "paid":
       return `${d.agentName} collected ${formatINR(d.paidAmount ?? 0)} from ${d.debtorName}`;
+    case "partial_paid":
+      return `${d.agentName} collected ${formatINR(d.paidAmount ?? 0)} (part payment) from ${d.debtorName}`;
     case "promised":
       return `${d.agentName} secured a PTP from ${d.debtorName} · ${formatINR(d.ptpAmount ?? 0)}`;
     case "refused":
@@ -986,7 +990,7 @@ function ReportsTab({ agents }: { agents: AgentComputedStat[] }) {
   const monthlyTrend = useMemo<MonthlyTrendRow[]>(() => {
     const roster = new Set(agents.map((a) => a.id));
     const paidDisps = getDispositions().filter(
-      (d) => roster.has(d.agentId) && d.outcome === "paid",
+      (d) => roster.has(d.agentId) && isPayment(d.outcome),
     );
     const byMonth = new Map<string, Record<string, number>>();
     for (const d of paidDisps) {

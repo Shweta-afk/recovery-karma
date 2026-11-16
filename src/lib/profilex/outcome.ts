@@ -86,6 +86,7 @@ export const TURNOUT_META: Record<Turnout, { label: string; order: number }> = {
 
 export const OUTCOME_LABEL: Record<string, string> = {
   paid: "Paid",
+  partial_paid: "Partially Paid",
   settlement: "Settlement",
   promised: "PTP",
   callback: "Call Back",

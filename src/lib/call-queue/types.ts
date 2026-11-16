@@ -29,6 +29,7 @@ export type CallView = "panel" | "modal" | "minimized";
 
 export type CallOutcome =
   | "paid"
+  | "partial_paid"
   | "promised"
   | "refused"
   | "no_answer"
@@ -123,6 +124,10 @@ export const EMPTY_DISPOSITION: DispositionForm = {
 
 export const OUTCOME_META: Record<CallOutcome, { label: string; cls: string }> = {
   paid: { label: "Paid", cls: "bg-success/8 text-success/70 border-success/15" },
+  partial_paid: {
+    label: "Partially Paid",
+    cls: "bg-emerald-500/8 text-emerald-700/70 border-emerald-400/15",
+  },
   promised: { label: "PTP", cls: "bg-blue-500/8 text-blue-500/70 border-blue-400/15" },
   refused: { label: "Refused", cls: "bg-destructive/8 text-destructive/70 border-destructive/15" },
   no_answer: { label: "No Answer", cls: "bg-muted text-muted-foreground border-border" },
@@ -154,6 +159,12 @@ export const OUTCOME_REASONS: Record<CallOutcome, string[]> = {
     "Payment Details Shared",
     "On-Call Online Payment",
     "Claim Paid",
+  ],
+  partial_paid: [
+    "Part Payment Collected",
+    "Balance Promised Later",
+    "Financial Difficulty",
+    "Paid What They Could",
   ],
   callback: [
     "Left Message",

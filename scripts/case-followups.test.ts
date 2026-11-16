@@ -186,3 +186,30 @@ test("a Settlement after a PTP ends it, and a settlement stays through no-answer
   expect(effectiveDisposition([ptp, settle, ring])?.id).toBe(settle.id);
   expect(computePtpFollowups([ptp, settle, ring])).toHaveLength(0);
 });
+
+// ── 2026-11-16: Partially Paid ─────────────────────────────────────────────────────────────
+test("a partial payment with a balance date is a PTP for the balance, until paid", () => {
+  const part = disp({
+    outcome: "partial_paid",
+    paidAmount: 3000,
+    ptpAmount: 5000,
+    ptpDate: dateOnly(-2),
+    time: iso(-4),
+  });
+  const ring = disp({ outcome: "no_answer", time: iso(-3) });
+  expect(effectiveDisposition([part, ring])?.id).toBe(part.id);
+  const ptps = computePtpFollowups([part, ring]);
+  expect(ptps).toHaveLength(1);
+  expect(ptps[0].ptpAmount).toBe(5000);
+  expect(computeCaseFollowups([part, ring])[0].kind).toBe("ptp");
+  const paid = disp({ outcome: "paid", paidAmount: 5000, time: iso(-1) });
+  expect(computePtpFollowups([part, ring, paid])).toHaveLength(0);
+});
+
+test("a partial payment ends an earlier PTP; without a balance date it promises nothing", () => {
+  const ptp = disp({ ptpDate: dateOnly(-3), ptpAmount: 8000, time: iso(-5) });
+  const part = disp({ outcome: "partial_paid", paidAmount: 3000, time: iso(-2) });
+  expect(effectiveDisposition([ptp, part])?.id).toBe(part.id);
+  expect(computePtpFollowups([ptp, part])).toHaveLength(0);
+  expect(computeCaseFollowups([ptp, part])).toHaveLength(0);
+});

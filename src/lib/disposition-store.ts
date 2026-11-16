@@ -10,6 +10,7 @@ import { getAccessToken } from "./access-token";
 
 export type CallOutcome =
   | "paid"
+  | "partial_paid"
   | "promised"
   | "refused"
   | "no_answer"
@@ -206,6 +207,9 @@ export async function refreshDispositions(): Promise<void> {
     outcome: string;
     promise_amount: number | string | null;
     promise_date: string | null;
+    // Optional: present only once 20261116_partial_paid_disposition.sql has been applied.
+    balance_amount?: number | string | null;
+    balance_date?: string | null;
     // Optional: present only once 20260811_call_logs_promise_time.sql has been applied.
     promise_time?: string | null;
     raw_notes: string | null;
@@ -268,10 +272,21 @@ export async function refreshDispositions(): Promise<void> {
       ringSeconds: l.ring_seconds ?? undefined,
       wrapSeconds: l.wrap_seconds ?? undefined,
       notes: l.raw_notes ?? "",
-      ptpAmount: l.outcome === "promised" ? amount : undefined,
-      ptpDate: l.outcome === "promised" ? (l.promise_date ?? undefined) : undefined,
+      // A Partially Paid call's PTP fields are its balance: what is still owed and when.
+      ptpAmount:
+        l.outcome === "promised"
+          ? amount
+          : l.outcome === "partial_paid" && l.balance_amount != null
+            ? Number(l.balance_amount)
+            : undefined,
+      ptpDate:
+        l.outcome === "promised"
+          ? (l.promise_date ?? undefined)
+          : l.outcome === "partial_paid"
+            ? (l.balance_date ?? undefined)
+            : undefined,
       ptpTime: l.outcome === "promised" ? (l.promise_time ?? undefined) : undefined,
-      paidAmount: l.outcome === "paid" ? amount : undefined,
+      paidAmount: isPayment(l.outcome) ? amount : undefined,
       loanAmount: debtor ? Number(debtor.loan_amount ?? 0) : undefined,
       dpd: debtor?.dpd ?? undefined,
       recordingUrl: l.recording_url ?? undefined,
@@ -313,10 +328,12 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   const agentUuid = idByEmail.get(d.agentId);
   if (!agentUuid) throw new Error(`No agent account found for ${d.agentId}`);
 
-  // promise_amount is dual-purpose: the PTP amount for "promised", the paid amount for "paid"
-  // — the two outcomes are mutually exclusive so this needs no extra column.
+  // promise_amount is dual-purpose: the PTP amount for "promised", the amount paid for "paid" /
+  // "partial_paid" — the outcomes are mutually exclusive so this needs no extra column. A
+  // partial payment's balance goes in balance_amount / balance_date.
   const amount =
-    d.outcome === "promised" ? d.ptpAmount : d.outcome === "paid" ? d.paidAmount : undefined;
+    d.outcome === "promised" ? d.ptpAmount : isPayment(d.outcome) ? d.paidAmount : undefined;
+  const partial = d.outcome === "partial_paid";
 
   // Manual Dial invents an id like `manual-1785496287078` for a number that has no debtor
   // row. call_logs.debtor_id is a UUID FK, so passing that straight through was rejected
@@ -360,6 +377,7 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
     ring_seconds: d.ringSeconds ?? null,
     wrap_seconds: d.wrapSeconds ?? null,
     dialed_phone: d.phone || null,
+    ...(partial ? { balance_amount: d.ptpAmount ?? null, balance_date: d.ptpDate || null } : {}),
   };
   let { error } = await supabase.from("call_logs").insert(full as never);
   if (error && /column|schema cache/i.test(error.message)) {
@@ -374,13 +392,13 @@ export async function saveDisposition(d: DispositionRecord): Promise<void> {
   // payments.debtor_id is also a UUID FK. A payment that cannot be attributed to a debtor
   // has no place in the financial audit trail, so an ad-hoc call records the outcome on the
   // call log only — the amount still reaches reporting via promise_amount.
-  if (d.outcome === "paid" && d.paidAmount && !isAdHoc) {
+  if (isPayment(d.outcome) && d.paidAmount && !isAdHoc) {
     const { error: payErr } = await supabase.from("payments").insert({
       debtor_id: d.debtorId,
       agent_id: agentUuid,
       amount: d.paidAmount,
       status: "completed",
-      payment_type: "full",
+      payment_type: partial ? "partial" : "full",
       notes: d.paidRef ? `Ref: ${d.paidRef}` : null,
       received_at: d.time,
     });
@@ -544,13 +562,31 @@ const NO_CONTACT_OUTCOMES: ReadonlySet<string> = new Set(["no_answer", "voicemai
  * The database's debtor_list (queue status) applies the same rule — change them together
  * (migrations/20261112_sticky_ptp_callback_status.sql).
  */
+/** "paid" and "partial_paid" both record money received now. */
+export function isPayment(outcome: string): boolean {
+  return outcome === "paid" || outcome === "partial_paid";
+}
+
+/** A promise to pay by a date: a PTP, or a partial payment with a date for the balance. */
+export function isOpenPromise(d: DispositionRecord): boolean {
+  return d.outcome === "promised" || (d.outcome === "partial_paid" && !!d.ptpDate);
+}
+
 export function effectiveDisposition(records: DispositionRecord[]): DispositionRecord | undefined {
   if (!records.length) return undefined;
   const sorted = [...records].sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
-  const ptp = sorted.find((r) => r.outcome === "promised");
-  // Paid or a Settlement after the PTP ends it (a settlement shows in the Settlement queue).
-  const paid = sorted.find((r) => r.outcome === "paid" || r.outcome === "settlement");
-  if (ptp && (!paid || Date.parse(paid.time) < Date.parse(ptp.time))) return ptp;
+  const ptp = sorted.find(isOpenPromise);
+  // Paid, Partially Paid or a Settlement AFTER the PTP ends it (a settlement shows in the
+  // Settlement queue; a partial payment with a balance date is itself the new PTP).
+  const ended =
+    !!ptp &&
+    sorted.some(
+      (r) =>
+        r !== ptp &&
+        (isPayment(r.outcome) || r.outcome === "settlement") &&
+        Date.parse(r.time) > Date.parse(ptp.time),
+    );
+  if (ptp && !ended) return ptp;
   const contact = sorted.find((r) => !NO_CONTACT_OUTCOMES.has(r.outcome));
   if (contact?.outcome === "callback" || contact?.outcome === "settlement") return contact;
   return sorted[0];
@@ -626,7 +662,7 @@ export function computeCaseFollowups(
     let dueTime: string | undefined;
     let amount: number | undefined;
 
-    if (latest.outcome === "promised" && latest.ptpDate && latest.ptpAmount != null) {
+    if (isOpenPromise(latest) && latest.ptpDate && latest.ptpAmount != null) {
       kind = "ptp";
       dueDate = latest.ptpDate;
       dueTime = latest.ptpTime;
@@ -686,7 +722,7 @@ export function computePtpFollowups(
   const rows: PtpFollowup[] = [];
   for (const { latest, scopeCalls } of latestOpenPerAccount(disps, all)) {
     const debtorId = latest.debtorId;
-    if (latest.outcome !== "promised" || !latest.ptpDate || latest.ptpAmount == null) continue;
+    if (!isOpenPromise(latest) || !latest.ptpDate || latest.ptpAmount == null) continue;
 
     const daysLeft = Math.round(
       (new Date(latest.ptpDate).getTime() - today.getTime()) / 86_400_000,
@@ -767,7 +803,7 @@ export function getDispositionsByPortfolio(portfolioId: string): DispositionReco
 export function calcStats(disps: DispositionRecord[]) {
   const total = disps.length;
   const ptps = disps.filter((d) => d.outcome === "promised");
-  const paid = disps.filter((d) => d.outcome === "paid");
+  const paid = disps.filter((d) => isPayment(d.outcome));
   const ptpAmount = ptps.reduce((s, d) => s + (d.ptpAmount ?? 0), 0);
   const paidAmount = paid.reduce((s, d) => s + (d.paidAmount ?? 0), 0);
   const contactRate =

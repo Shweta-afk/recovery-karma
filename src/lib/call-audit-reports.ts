@@ -17,6 +17,7 @@ import {
   isConnectedOutcome,
   type AuditCallRow,
   type TeamReviewRow,
+  isPaymentOutcome,
 } from "./call-audit";
 import {
   bestCall,
@@ -238,8 +239,8 @@ export function callLogSheet(
       c.outcome === "promised" ? num(c.promise_amount) : "",
       c.callback_date ? dmy(c.callback_date) : "",
       c.callback_time ?? "",
-      c.outcome === "paid" ? dmy(istDay(c.created_at)) : "",
-      c.outcome === "paid" ? num(c.promise_amount) : "",
+      isPaymentOutcome(c.outcome) ? dmy(istDay(c.created_at)) : "",
+      isPaymentOutcome(c.outcome) ? num(c.promise_amount) : "",
       "",
       "",
       best ? dispositionLabel(best.outcome) : "",
@@ -811,7 +812,7 @@ export function performanceSheet(rows: AuditCallRow[], presence: PresenceRow[]):
     const outbound = calls.filter((c) => c.direction !== "inbound").length;
     const callbackCalls = calls.filter((c) => c.outcome === "callback");
     const ptps = calls.filter((c) => c.outcome === "promised");
-    const paid = calls.filter((c) => c.outcome === "paid");
+    const paid = calls.filter((c) => isPaymentOutcome(c.outcome));
     const audited = calls.filter((c) => c.audit_id);
     const breaks = p.break + p.lunch;
     const productive = talk + wrap;

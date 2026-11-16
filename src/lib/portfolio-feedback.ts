@@ -19,6 +19,7 @@ import {
   isConnectedOutcome,
   disconnectedBy,
   type AuditCallRow,
+  isPaymentOutcome,
 } from "./call-audit";
 import { DIAL_MODE_META } from "./call-queue/types";
 import type { DialMode } from "./call-queue/types";
@@ -581,7 +582,7 @@ function ccReportSheet(
         generated ? dmy(istDay(generated.created_at)) : "",
         c.callback_date ? dmy(c.callback_date) : "",
         c.callback_time ?? "",
-        c.outcome === "paid" ? money(c.promise_amount) : "",
+        isPaymentOutcome(c.outcome) ? money(c.promise_amount) : "",
         input.recordingLinks?.get(c.call_id) ?? "",
         c.link === "number"
           ? "Manual call, matched by number"

@@ -545,7 +545,13 @@ function ActiveCallContent({
   /* ── Connected / Ended: full-screen two-panel layout ── */
 
   // Item 8 — productive outcomes are offered during the call; non-productive appear once it ends
-  const PRODUCTIVE_OUTCOMES: CallOutcome[] = ["paid", "promised", "settlement", "callback"];
+  const PRODUCTIVE_OUTCOMES: CallOutcome[] = [
+    "paid",
+    "partial_paid",
+    "promised",
+    "settlement",
+    "callback",
+  ];
   const NON_PRODUCTIVE_OUTCOMES: CallOutcome[] = ["refused", "no_answer", "voicemail", "dispute"];
 
   // Disposition picker — outcomes grouped into pools (Positive / Difficult), radio-style, with
@@ -697,6 +703,57 @@ function ActiveCallContent({
               onChange={(e) => up({ paidRef: e.target.value })}
               className="h-9"
             />
+          </div>
+        </div>
+      )}
+      {disposition.outcome === "partial_paid" && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Amount Paid Now</label>
+              <Input
+                inputMode="decimal"
+                placeholder="e.g. 3000"
+                value={disposition.paidAmount}
+                onChange={(e) => up({ paidAmount: e.target.value })}
+                className="h-9"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Reference (UTR)</label>
+              <Input
+                placeholder="UTR / Ref no."
+                value={disposition.paidRef}
+                onChange={(e) => up({ paidRef: e.target.value })}
+                className="h-9"
+              />
+            </div>
+          </div>
+          {/* The balance is a PTP: with a date the account shows as PTP and escalates if missed. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground flex items-center gap-1">
+                <IndianRupee className="h-3 w-3" />
+                Balance Amount (optional)
+              </label>
+              <Input
+                inputMode="decimal"
+                placeholder="e.g. 5200"
+                value={disposition.ptpAmount}
+                onChange={(e) => up({ ptpAmount: e.target.value })}
+                className="h-9"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Balance Due On (optional)</label>
+              <Input
+                type="date"
+                min={todayIstKey()}
+                value={disposition.ptpDate}
+                onChange={(e) => up({ ptpDate: e.target.value })}
+                className="h-9"
+              />
+            </div>
           </div>
         </div>
       )}
