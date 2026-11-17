@@ -16,6 +16,7 @@ import {
   type TrunkSettings,
 } from "./channel-plan";
 import { didPickMessage, istDayStart, normaliseDid, pickDid, type DidRow } from "./did-rules";
+import { pickPredictiveLedger } from "./predictive-rules";
 
 export interface DialAgent {
   id: string;
@@ -50,13 +51,13 @@ const db = () => getSupabaseAdmin() as any;
 export async function loadTelephonySettings(
   clientId: string,
 ): Promise<TelephonySettingsRow | null> {
-  const { data, error } = await db()
-    .from("telephony_settings")
-    .select(
-      "enabled, seat_limit, channel_limit, inbound_did, inbound_queue, call_window_start, call_window_end, managers_can_call",
-    )
-    .eq("client_id", clientId)
-    .maybeSingle();
+  const cols =
+    "enabled, seat_limit, channel_limit, inbound_did, inbound_queue, call_window_start, call_window_end, managers_can_call";
+  const read = (c: string) =>
+    db().from("telephony_settings").select(c).eq("client_id", clientId).maybeSingle();
+  let { data, error } = await read(`${cols}, predictive_queue`);
+  // Deployed ahead of 20261117_predictive_dialing.sql: no predictive queue, same as before.
+  if (error && isMissingObject(error)) ({ data, error } = await read(cols));
   // Missing table (migration not applied yet) must not take calling down: treat as "no row".
   if (error) {
     console.warn(`[telephony-guard] telephony_settings unreadable: ${error.message}`);
@@ -414,6 +415,10 @@ export async function prepareCall(args: {
   portfolioId?: string | null;
   /** A caller ID picked in the browser (manual dial); used only if it's one of the company's. */
   requestedCallerId?: string;
+  /** Vendor-routed predictive call into this queue. `agent` is only whose extension goes in the
+   *  request: the ledger row gets no agent until the vendor's answer names one, and the agent's
+   *  other open calls are left alone (they aren't on this call). */
+  predictive?: { queue: string };
 }): Promise<{ ledgerId: string; agentHandle: string; callerId?: string }> {
   const settings =
     args.settings === undefined ? await loadTelephonySettings(args.clientId) : args.settings;
@@ -437,13 +442,14 @@ export async function prepareCall(args: {
   // the provider's hangup event (no webhook yet, or a call ended from the browser phone) those
   // rows held a line each for STALE_CALL_MINUTES; 20 of them filled Axiotta's 20 lines on
   // 2026-11-03 and every dial said the company's lines were busy.
-  await db()
-    .from("telephony_calls")
-    .update({ ended_at: new Date().toISOString(), status: "superseded" })
-    .eq("client_id", args.clientId)
-    .eq("agent_handle", agentHandle)
-    .eq("direction", "outbound")
-    .is("ended_at", null);
+  if (!args.predictive)
+    await db()
+      .from("telephony_calls")
+      .update({ ended_at: new Date().toISOString(), status: "superseded" })
+      .eq("client_id", args.clientId)
+      .eq("agent_handle", agentHandle)
+      .eq("direction", "outbound")
+      .is("ended_at", null);
 
   const trunk = await loadTrunk();
   const did = await chooseDid({
@@ -498,7 +504,26 @@ export async function prepareCall(args: {
     );
     return { ledgerId: "", agentHandle, callerId: did?.number };
   }
-  return { ledgerId: data as string, agentHandle, callerId: did?.number };
+  const ledgerId = data as string;
+  if (args.predictive) {
+    const { error: markError } = await db()
+      .from("telephony_calls")
+      .update({
+        predictive_queue: args.predictive.queue,
+        request_extension: agentHandle,
+        agent_id: null,
+        agent_handle: null,
+      })
+      .eq("id", ledgerId);
+    if (markError) {
+      // Unmarked, the vendor's events could never be matched to this call (no agent, no callid).
+      await updateLedger(ledgerId, { ended_at: new Date().toISOString(), status: "failed" });
+      if (args.provider !== "sim")
+        throw new Error("Predictive calling isn't set up in the database yet — call not placed.");
+      return { ledgerId: "", agentHandle, callerId: did?.number };
+    }
+  }
+  return { ledgerId, agentHandle, callerId: did?.number };
 }
 
 export interface LedgerRow {
@@ -518,10 +543,26 @@ export interface LedgerRow {
   vendor_events?: string | null;
   /** Talk time on a completed call, ringing time otherwise — see talk-time.ts. */
   duration_seconds?: number | null;
+  /** Set on a vendor-routed predictive call: the queue it went into (20261117). */
+  predictive_queue?: string | null;
+  /** Predictive: the extension sent in the request — what hangup uses before an agent has it. */
+  request_extension?: string | null;
 }
 
-const LEDGER_COLS =
+const LEDGER_BASE_COLS =
   "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, started_at, answered_at, ended_at, vendor_events, duration_seconds";
+const LEDGER_COLS = `${LEDGER_BASE_COLS}, predictive_queue, request_extension`;
+
+/** Run a ledger read with the predictive columns, or without them before 20261117 is applied. */
+async function readLedger<T>(
+  query: (
+    cols: string,
+  ) => PromiseLike<{ data: T; error: { code?: string; message?: string } | null }>,
+): Promise<T | null> {
+  let { data, error } = await query(LEDGER_COLS);
+  if (error && isMissingObject(error)) ({ data, error } = await query(LEDGER_BASE_COLS));
+  return error ? null : data;
+}
 
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {
   if (!id) return;
@@ -557,44 +598,67 @@ export async function markEndedByCustomer(id: string): Promise<void> {
 }
 
 export async function ledgerByProviderCallId(providerCallId: string): Promise<LedgerRow | null> {
-  const { data } = await db()
-    .from("telephony_calls")
-    .select(LEDGER_COLS)
-    .eq("provider_call_id", providerCallId)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return (data as LedgerRow | null) ?? null;
+  return readLedger<LedgerRow | null>((cols) =>
+    db()
+      .from("telephony_calls")
+      .select(cols)
+      .eq("provider_call_id", providerCallId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  );
 }
 
-/** Match a webhook event to our call: by SkyCRM's call id once known, else the one open call on
+/** Match a webhook event to our call: by SkyCRM's call id once known; else an open predictive
+ *  call to that borrower (it has no agent until the answer names one); else the one open call on
  *  that extension (click-to-call means an agent is on at most one call at a time). */
 export async function ledgerForWebhook(args: {
   vendorCallId?: string;
   agentHandle?: string;
+  remotePhone?: string;
 }): Promise<LedgerRow | null> {
+  const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
   if (args.vendorCallId) {
-    const { data } = await db()
-      .from("telephony_calls")
-      .select(LEDGER_COLS)
-      .eq("vendor_callid", args.vendorCallId)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (data) return data as LedgerRow;
+    const hit = await readLedger<LedgerRow | null>((cols) =>
+      db()
+        .from("telephony_calls")
+        .select(cols)
+        .eq("vendor_callid", args.vendorCallId)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    );
+    if (hit) return hit;
   }
-  if (args.agentHandle) {
-    const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
-    const { data } = await db()
+  const last10 = args.remotePhone ? normalisePhone(args.remotePhone) : "";
+  if (last10.length === 10) {
+    // Fails quietly (null) before 20261117 is applied: then no predictive call exists to find.
+    const { data, error } = await db()
       .from("telephony_calls")
       .select(LEDGER_COLS)
-      .eq("agent_handle", args.agentHandle)
+      .not("predictive_queue", "is", null)
+      .is("vendor_callid", null)
       .is("ended_at", null)
       .gt("started_at", since)
+      .like("remote_phone", `%${last10}`)
       .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (data) return data as LedgerRow;
+      .limit(5);
+    const hit = error ? null : pickPredictiveLedger((data ?? []) as LedgerRow[], args.remotePhone);
+    if (hit) return hit;
+  }
+  if (args.agentHandle) {
+    const hit = await readLedger<LedgerRow | null>((cols) =>
+      db()
+        .from("telephony_calls")
+        .select(cols)
+        .eq("agent_handle", args.agentHandle)
+        .is("ended_at", null)
+        .gt("started_at", since)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    );
+    if (hit) return hit;
   }
   return null;
 }
@@ -626,7 +690,7 @@ export async function insertInboundLedger(row: {
     ...(row.debtorId ? { debtor_id: row.debtorId } : {}),
   };
   const insert = (values: Record<string, unknown>) =>
-    db().from("telephony_calls").insert(values).select(LEDGER_COLS).single();
+    db().from("telephony_calls").insert(values).select(LEDGER_BASE_COLS).single();
   let { data, error } = await insert({ ...base, ...extra });
   // did_id / debtor_id columns not there yet (20261026 not applied): record the call without them.
   if (error && isMissingObject(error) && Object.keys(extra).length)

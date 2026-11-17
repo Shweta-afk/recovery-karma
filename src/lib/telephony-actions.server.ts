@@ -27,6 +27,7 @@ import {
 } from "./telephony/call-control";
 import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
+import { parsePredictiveQueue } from "./telephony/predictive-rules";
 import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.server";
 import { skycrmPassword, skycrmUserLevel, skycrmUsername } from "./telephony/skycrm-users";
 import { enforceRateLimit } from "./rate-limit.server";
@@ -319,6 +320,8 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
         channelReserved: z.number().int().min(0).max(1000),
         inboundDid: z.string().trim().max(20).nullable(),
         inboundQueue: z.string().trim().max(50).nullable(),
+        /** SkyCRM queue for predictive (Productive) dialling. Left out = unchanged. */
+        predictiveQueue: z.string().trim().max(10).nullable().optional(),
         /** Managers may place calls themselves. Left out = unchanged. */
         managersCanCall: z.boolean().optional(),
         callWindowStart: timeSchema,
@@ -336,6 +339,9 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
     if (data.callWindowStart >= data.callWindowEnd) {
       throw new Error("The calling window must start before it ends.");
     }
+    const predictive =
+      data.predictiveQueue === undefined ? undefined : parsePredictiveQueue(data.predictiveQueue);
+    if (predictive && !predictive.ok) throw new Error(predictive.message);
 
     const state = await loadChannelState();
     const othersReserved = state.companies
@@ -373,6 +379,7 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
       call_window_start: data.callWindowStart,
       call_window_end: data.callWindowEnd,
       ...(data.managersCanCall === undefined ? {} : { managers_can_call: data.managersCanCall }),
+      ...(predictive?.ok ? { predictive_queue: predictive.queue } : {}),
       updated_at: new Date().toISOString(),
     };
     let { error } = await db().from("telephony_settings").upsert(row, { onConflict: "client_id" });
@@ -383,6 +390,19 @@ export const saveCompanyTelephony = createServerFn({ method: "POST" })
         );
       }
       const { channel_reserved: _drop, ...legacy } = row;
+      ({ error } = await db()
+        .from("telephony_settings")
+        .upsert(legacy, { onConflict: "client_id" }));
+    }
+    if (error && /predictive_queue/.test(error.message ?? "")) {
+      if (predictive?.ok && predictive.queue) {
+        throw new Error(
+          "A predictive queue needs migrations/20261117_predictive_dialing.sql applied first.",
+        );
+      }
+      const { predictive_queue: _drop, ...legacy } = row as typeof row & {
+        predictive_queue?: string | null;
+      };
       ({ error } = await db()
         .from("telephony_settings")
         .upsert(legacy, { onConflict: "client_id" }));

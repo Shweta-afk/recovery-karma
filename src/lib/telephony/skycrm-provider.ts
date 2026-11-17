@@ -23,6 +23,7 @@ import type {
   CallStatusEvent,
   CallStatus,
   HangupContext,
+  PredictiveCallRequest,
 } from "./types";
 import { appError } from "../app-error";
 import {
@@ -341,6 +342,40 @@ export const skycrmProvider: TelephonyProvider = {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[skycrm-provider] hangup warning: ${msg}`);
     }
+  },
+
+  // Predictive dialling, API spec v1.2 §24 (2026-11-17). SkyCRM dials the borrower first and puts
+  // the answer through to a free extension logged into `queue`; the Answered event names it.
+  // Form-encoded like every other call here (the spec's examples are JSON, as they are for
+  // dialing_phone, which only works form-encoded). login/logout take the queue as a list; one
+  // queue is sent as "8601", the same form registerQueue has used since 2026-09-11.
+  // UNCONFIRMED on a real account as of 2026-11-17: whether the Answered event carries the
+  // extension that took the call (not the one in the request), and what the first ringing event
+  // carries — reconcileWithLedger matches by the borrower's number until a callid is known.
+  predictive: {
+    async loginQueue(extension: string, queue: string): Promise<void> {
+      await post("login_in_queue1", { extension, queue }, extension);
+    },
+    async startCall(req: PredictiveCallRequest): Promise<StartCallResult> {
+      await post(
+        "predictive_call",
+        {
+          extension: req.extension,
+          prefix: dialPrefix(req.extension),
+          queue: req.queue,
+          mobile_no: skycrmNumber(req.debtorNumber),
+          ...(SKYCRM_CALLER_ID_FIELD && req.callerId
+            ? { [SKYCRM_CALLER_ID_FIELD]: req.callerId }
+            : {}),
+        },
+        req.extension,
+      );
+      // predictive_call answers {"status":200} with no id: our ledger row id is the handle.
+      return { providerCallId: req.requestId };
+    },
+    async logoutQueue(extension: string, queue: string): Promise<void> {
+      await post("logout_queue1", { extension, queue }, extension);
+    },
   },
 
   async sendSms(_req: SendSmsRequest): Promise<SendSmsResult> {

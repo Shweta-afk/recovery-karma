@@ -249,7 +249,7 @@ export function newDialerRun(args: {
 export function openLegs(
   run: DialerRun,
   targets: DialTarget[],
-  opts?: { idPrefix?: string; now?: number },
+  opts?: { idPrefix?: string; now?: number; vendorRouted?: boolean },
 ): { run: DialerRun; opened: CallRecord[] } {
   const now = opts?.now ?? Date.now();
   const prefix = opts?.idPrefix ?? "leg";
@@ -265,6 +265,7 @@ export function openLegs(
     state: "dialing",
     attempt: 1,
     queuedAt: now,
+    ...(opts?.vendorRouted ? { vendorRouted: true } : {}),
   }));
   const legs = [...run.legs, ...opened];
   return { run: { ...run, legs, stats: recomputeStats(legs) }, opened };
@@ -283,10 +284,23 @@ export function applyLegEvent(run: DialerRun, event: TelephonyEvent): DialerRun 
   if (event.type === "sms_status") return run; // not a call leg
   const legs = run.legs.map((leg) => {
     if (leg.providerCallId !== event.providerCallId) return leg;
-    const nextState = applyEvent(leg.state, event);
+    let nextState = applyEvent(leg.state, event);
+    // A vendor-routed (predictive) call the vendor reports as answered/completed but never put
+    // through to an agent: the borrower picked up and nobody took them — an abandon.
+    if (
+      event.type === "hangup" &&
+      leg.vendorRouted &&
+      !leg.agentHandle &&
+      !isTerminal(leg.state) &&
+      (nextState === "completed" || event.result === "completed")
+    ) {
+      nextState = "abandoned";
+    }
     const updated: CallRecord = { ...leg, state: nextState };
     if (event.type === "ring" && !updated.ringingAt) updated.ringingAt = event.at;
     if (event.type === "answer" && !updated.connectedAt) updated.connectedAt = event.at;
+    if (event.type === "answer" && event.agentHandle && !updated.agentHandle)
+      updated.agentHandle = event.agentHandle;
     if (event.type === "dtmf") {
       updated.dtmf = [...(updated.dtmf ?? []), event.digit];
       // IVR menu bridges to a human when the debtor presses the connect digit.

@@ -38,6 +38,13 @@ import {
   type DialAgent,
 } from "./guard.server";
 import { evaluateCall, normalisePhone } from "./guard-rules";
+import {
+  freeAgentHandles,
+  pendingLegs,
+  predictiveBatchSize,
+  predictiveMode,
+  requestExtension,
+} from "./predictive-rules";
 
 // ─── Process-wide state + event fan-out ─────────────────────────────────────────
 //
@@ -65,6 +72,8 @@ const g = globalThis as typeof globalThis & {
     runTargets: Map<string, Map<string, DialTarget>>;
     /** run id → last time a server function or event touched it; drives sweepRuns(). */
     runTouchedAt: Map<string, number>;
+    /** run id → its vendor predictive session: the queue and which agents are logged into it. */
+    predictiveSessions: Map<string, PredictiveSession>;
   };
 };
 
@@ -76,16 +85,28 @@ g.__recoveryaiTelephony ??= {
   owners: new Map(),
   runTargets: new Map(),
   runTouchedAt: new Map(),
+  predictiveSessions: new Map(),
 };
 // A hot-reloaded module can inherit a global created before these fields existed.
 g.__recoveryaiTelephony.owners ??= new Map();
 g.__recoveryaiTelephony.runTargets ??= new Map();
 g.__recoveryaiTelephony.runTouchedAt ??= new Map();
+g.__recoveryaiTelephony.predictiveSessions ??= new Map();
 
 const runs = g.__recoveryaiTelephony.runs;
 const owners = g.__recoveryaiTelephony.owners;
 const runTargets = g.__recoveryaiTelephony.runTargets;
 const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
+const predictiveSessions = g.__recoveryaiTelephony.predictiveSessions;
+
+interface PredictiveSession {
+  clientId: string;
+  queue: string;
+  /** Agent handles (SkyCRM extensions; phones on the sim) logged into `queue` for this run. */
+  loggedIn: Set<string>;
+  /** Calls placed so far — spreads the request extension round robin. */
+  calls: number;
+}
 
 // ─── Run retention ───────────────────────────────────────────────────────────────
 // Runs used to live in `runs` until the process restarted, and every status event walked all of
@@ -112,6 +133,7 @@ function sweepRuns(now = Date.now()): void {
       runTouchedAt.delete(id);
       loggedLegs.delete(id);
       runTargets.delete(id);
+      void endPredictiveSession(id);
     }
   }
 }
@@ -214,7 +236,8 @@ async function providerHangup(providerCallId: string): Promise<void> {
   // Before the hangup request: the provider's final event can arrive while it is in flight.
   if (ledger && !ledger.ended_at) await updateLedger(ledger.id, { ended_by: "agent" });
   await getTelephonyProvider().hangup(providerCallId, {
-    agentHandle: ledger?.agent_handle,
+    // A predictive call nobody has taken yet: the extension that was in the request.
+    agentHandle: ledger?.agent_handle ?? ledger?.request_extension,
     remotePhone: ledger?.remote_phone,
     direction: ledger?.direction,
   });
@@ -337,6 +360,28 @@ function ensureSubscribed(): void {
     applyEventToRuns(event);
     if (event.type === "hangup")
       void closeLedgerFor(event.providerCallId, event.result, event.durationSeconds);
+    // Real providers do this in reconcileWithLedger; pushed (sim) events land here instead.
+    if (event.type === "answer" && event.agentHandle)
+      void assignLedgerAgent(event.providerCallId, event.agentHandle);
+  });
+}
+
+/** A predictive call was answered by `agentHandle`: put that agent on its ledger row. */
+async function assignLedgerAgent(providerCallId: string, agentHandle: string): Promise<void> {
+  const ledger = await ledgerByProviderCallId(providerCallId).catch(() => null);
+  if (!ledger || !ledger.predictive_queue || ledger.agent_handle) return;
+  const col = getTelephonyProvider().name === "skycrm" ? "agent_extension" : "agent_phone";
+  const { data } = (await getSupabaseAdmin()
+    .from("agents")
+    .select("id")
+    .eq("client_id", ledger.client_id)
+    .eq(col, agentHandle)
+    .limit(1)
+    .maybeSingle()) as { data: { id: string } | null };
+  await updateLedger(ledger.id, {
+    agent_handle: agentHandle,
+    answered_at: new Date().toISOString(),
+    ...(data ? { agent_id: data.id } : {}),
   });
 }
 
@@ -384,6 +429,9 @@ function releaseAgentsForTerminalLegs(run: DialerRun): void {
  * first, which this endpoint cannot do — it needs the provider's own campaign dialer.
  * Opening more legs than we have free agents would just ring the same agent repeatedly,
  * so we stop when the pool is exhausted and report it via `unassigned`.
+ *
+ * Since 2026-11-17 "Productive Dial" uses predictiveDial() below instead whenever the provider
+ * offers a borrower-first dial and the company has a predictive queue; this stays the fallback.
  */
 async function dial(
   run: DialerRun,
@@ -492,6 +540,169 @@ async function dial(
   return { run: next, unassigned };
 }
 
+/** The handle the provider knows an agent by: SkyCRM extension, else phone (sim). Same rule as
+ *  prepareCall's agentHandle. */
+function agentHandleFor(provider: string, a: DialAgent): string | null {
+  return provider === "skycrm" ? a.extension?.trim() || null : a.phone;
+}
+
+/** Log the run's agents into the predictive queue (only those not already in it). */
+async function loginPredictiveAgents(
+  session: PredictiveSession,
+  agents: DialAgent[],
+): Promise<string[]> {
+  const prov = getTelephonyProvider();
+  const handles = agents.map((a) => agentHandleFor(prov.name, a)).filter((h): h is string => !!h);
+  for (const h of handles) {
+    if (session.loggedIn.has(h)) continue;
+    try {
+      await prov.predictive!.loginQueue(h, session.queue);
+      session.loggedIn.add(h);
+    } catch (err) {
+      console.warn(
+        `[dialer] queue login failed for ${h}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+  return handles.filter((h) => session.loggedIn.has(h));
+}
+
+/** Take the run's agents back out of the predictive queue. Best-effort: a failure is logged. */
+async function endPredictiveSession(runId: string): Promise<void> {
+  const session = predictiveSessions.get(runId);
+  if (!session) return;
+  predictiveSessions.delete(runId);
+  const pd = getTelephonyProvider().predictive;
+  if (!pd) return;
+  for (const h of session.loggedIn) {
+    await pd
+      .logoutQueue(h, session.queue)
+      .catch((err: unknown) =>
+        console.warn(
+          `[dialer] queue logout failed for ${h}:`,
+          err instanceof Error ? err.message : String(err),
+        ),
+      );
+  }
+}
+
+/**
+ * Vendor-side predictive dialling (SkyCRM §24): the provider dials the BORROWER first and puts
+ * whoever answers through to a free extension in the queue, so lines are paced off free agents ×
+ * pacing (predictiveBatchSize), not capped at one per agent like click-to-call (see dial()).
+ * Every number still goes through prepareCall: do-not-call, IST window, channel reservation and a
+ * ledger row before the vendor is called. The ledger row has no agent until the answer names one.
+ */
+async function predictiveDial(
+  run: DialerRun,
+  targets: DialTarget[],
+  idPrefix: string,
+  session: PredictiveSession,
+  callerId: string | undefined,
+  agents: DialAgent[],
+): Promise<{ run: DialerRun; blocked?: string }> {
+  const prov = getTelephonyProvider();
+  const pd = prov.predictive;
+  if (!pd) return { run, blocked: "Predictive calling isn't available on this calling service." };
+  const now = new Date();
+  if (!engine.withinTimeWindow(run.settings.rechurnTimeWindow, now)) return { run };
+
+  const settings = await loadTelephonySettings(session.clientId);
+  const pre = evaluateCall({
+    settings,
+    provider: prov.name,
+    agentExtension: "-",
+    onDoNotCall: false,
+    now,
+  });
+  if (!pre.ok) return { run, blocked: pre.message };
+
+  const inQueue = await loginPredictiveAgents(session, agents);
+  if (!inQueue.length)
+    return { run, blocked: "No agent with an extension could join the calling queue." };
+
+  const free = freeAgentHandles(inQueue, run.legs);
+  const dialed = new Set(run.legs.map((l) => l.debtorId));
+  const remaining = targets.filter((t) => !dialed.has(t.id));
+  const { lines, atCompanyCeiling } = await channelsFor(session.clientId, settings);
+  const n = predictiveBatchSize({
+    freeAgents: free.length,
+    pending: pendingLegs(run.legs),
+    abandonRateTarget: run.settings.abandonRateTarget,
+    liveAbandonRate: run.stats.liveAbandonRate,
+    callsPerCycle: run.settings.callsPerCycle,
+    lines,
+    remaining: remaining.length,
+  });
+  if (lines === 0 && free.length && remaining.length) {
+    void recordRefusal(session.clientId, atCompanyCeiling ? "company_limit" : "platform_busy");
+    return { run, blocked: "All calling lines for your company are busy." };
+  }
+  if (!n) return { run };
+
+  const batch = remaining.slice(0, n);
+  const { run: withLegs, opened } = engine.openLegs(run, batch, { idPrefix, vendorRouted: true });
+  let next = withLegs;
+  for (const leg of opened) {
+    const t = batch.find((x) => x.id === leg.debtorId);
+    const handle = requestExtension(free, inQueue, session.calls++) as string;
+    const agent = agents.find((a) => agentHandleFor(prov.name, a) === handle) ?? {
+      id: "",
+      phone: handle,
+      extension: prov.name === "skycrm" ? handle : null,
+    };
+    let ledgerId = "";
+    try {
+      const prepared = await prepareCall({
+        clientId: session.clientId,
+        provider: prov.name,
+        agent,
+        debtorPhone: leg.phone,
+        refId: leg.id,
+        settings,
+        debtorId: leg.debtorId,
+        portfolioId: t?.portfolioId,
+        requestedCallerId: callerId,
+        predictive: { queue: session.queue },
+      });
+      ledgerId = prepared.ledgerId;
+      const { providerCallId } = await pd.startCall({
+        extension: prepared.agentHandle,
+        queue: session.queue,
+        debtorNumber: leg.phone,
+        requestId: ledgerId,
+        callerId: prepared.callerId ?? callerId,
+        hints: { aiScore: t?.aiScore, bestContactTime: t?.bestContactTime },
+      });
+      rememberOwner(session.clientId, providerCallId, leg.id);
+      await updateLedger(ledgerId, { provider_call_id: providerCallId });
+      next = engine.bindProviderCall(next, leg.id, providerCallId);
+    } catch (err) {
+      await updateLedger(ledgerId, {
+        ended_at: new Date().toISOString(),
+        status: "failed",
+        vendor_events: `start refused: ${err instanceof Error ? err.message : String(err)}`.slice(
+          0,
+          500,
+        ),
+      });
+      console.error(
+        `[dialer] predictive_call failed for leg ${leg.id}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      next = engine.applyLegEvent(engine.bindProviderCall(next, leg.id, leg.id), {
+        type: "hangup",
+        providerCallId: leg.id,
+        at: Date.now(),
+        result: "failed",
+        durationSeconds: 0,
+      });
+    }
+  }
+  return { run: next };
+}
+
 // ─── AI/IVR leg persistence ──────────────────────────────────────────────────────
 // AI- and IVR-handled legs (no human agent) should be logged to call_logs — agent legs are
 // logged when the agent submits a disposition. Detection is wired below; the durable write is
@@ -553,6 +764,35 @@ export const startDialerRun = createServerFn({ method: "POST" })
     rememberOwner(caller.clientId, `run:${data.runId}`);
 
     const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
+
+    // "Productive Dial" (dialerMode "predictive") uses the provider's own predictive dial when it
+    // has one and the company has a queue for it; otherwise click-to-call as before.
+    const prov = getTelephonyProvider();
+    const routing = predictiveMode({
+      dialerMode: data.settings.dialerMode,
+      provider: prov.name,
+      providerSupportsPredictive: !!prov.predictive,
+      predictiveQueue: (await loadTelephonySettings(caller.clientId))?.predictive_queue,
+    });
+    if (routing.mode === "vendor") {
+      await endPredictiveSession(data.runId);
+      const session: PredictiveSession = {
+        clientId: caller.clientId,
+        queue: routing.queue,
+        loggedIn: new Set(),
+        calls: 0,
+      };
+      predictiveSessions.set(data.runId, session);
+      const res = await predictiveDial(base, targets, data.runId, session, data.callerId, agents);
+      if (res.blocked && !res.run.legs.length) {
+        await endPredictiveSession(data.runId);
+        throw new Error(res.blocked);
+      }
+      sweepRuns();
+      saveRun(res.run);
+      return res.run;
+    }
+
     const batch =
       data.settings.dialerMode === "productive"
         ? engine.planProductiveBatch(targets, [])
@@ -613,8 +853,12 @@ export const tickDialerRun = createServerFn({ method: "POST" })
       // Productive needs the full leg history to decide "primary vs next alt number vs next
       // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
       // modes can, so it gets the whole target list every tick instead of `remaining`.
+      const session = predictiveSessions.get(data.runId);
       let batch: DialTarget[];
-      if (run.settings.dialerMode === "productive") {
+      if (session) {
+        run = (await predictiveDial(run, targets, data.runId, session, data.callerId, agents)).run;
+        batch = [];
+      } else if (run.settings.dialerMode === "productive") {
         batch = engine.planProductiveBatch(targets, run.legs);
       } else {
         const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
@@ -660,6 +904,7 @@ export const stopDialerRun = createServerFn({ method: "POST" })
     for (const leg of run.legs) {
       if (!isTerminal(leg.state) && leg.providerCallId) await providerHangup(leg.providerCallId);
     }
+    await endPredictiveSession(data.runId);
     const stopped = engine.stopDialerRun(run);
     await persistLoggableLegs(stopped);
     loggedLegs.delete(data.runId);
@@ -903,7 +1148,12 @@ export async function ingestCallStatusEvent(
   if (status.status === "ringing") {
     event = { type: "ring", providerCallId: status.providerCallId, at };
   } else if (status.status === "connected") {
-    event = { type: "answer", providerCallId: status.providerCallId, at };
+    event = {
+      type: "answer",
+      providerCallId: status.providerCallId,
+      at,
+      ...(status.agentHandle ? { agentHandle: status.agentHandle } : {}),
+    };
   } else {
     event = {
       type: "hangup",

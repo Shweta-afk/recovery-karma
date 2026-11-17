@@ -17,6 +17,9 @@ export interface TelephonySettingsRow {
   call_window_end: string;
   /** Managers in this company may place calls themselves (20261112_managers_can_call.sql). */
   managers_can_call?: boolean;
+  /** SkyCRM queue for predictive dialling (20261117_predictive_dialing.sql). Blank = Productive
+   *  Dial falls back to click-to-call, one line per agent. */
+  predictive_queue?: string | null;
 }
 
 export type CallBlockCode =

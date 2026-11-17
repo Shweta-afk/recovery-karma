@@ -25,6 +25,7 @@ interface Draft {
   channelReserved: string;
   inboundDid: string;
   inboundQueue: string;
+  predictiveQueue: string;
   callWindowStart: string;
   callWindowEnd: string;
   managersCanCall: boolean;
@@ -39,6 +40,7 @@ function draftFrom(t: CompanyTelephony): Draft {
     channelReserved: String(s?.channel_reserved ?? 0),
     inboundDid: s?.inbound_did ?? "",
     inboundQueue: s?.inbound_queue ?? "",
+    predictiveQueue: s?.predictive_queue ?? "",
     callWindowStart: (s?.call_window_start ?? "08:00").slice(0, 5),
     callWindowEnd: (s?.call_window_end ?? "19:00").slice(0, 5),
     managersCanCall: !!s?.managers_can_call,
@@ -100,6 +102,7 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
           channelReserved,
           inboundDid: draft.inboundDid.trim() || null,
           inboundQueue: draft.inboundQueue.trim() || null,
+          predictiveQueue: draft.predictiveQueue.trim() || null,
           callWindowStart: draft.callWindowStart,
           callWindowEnd: draft.callWindowEnd,
           managersCanCall: draft.managersCanCall,
@@ -266,6 +269,18 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
                   value={draft.inboundQueue}
                   onChange={(e) => up({ inboundQueue: e.target.value })}
                   placeholder="None"
+                  className="h-8 text-xs"
+                />
+              </Field>
+              <Field
+                label="Predictive queue"
+                hint="SkyCRM queue for Productive Dial: SkyCRM dials borrowers first and connects answers to free agents. Blank = one line per agent"
+              >
+                <Input
+                  value={draft.predictiveQueue}
+                  onChange={(e) => up({ predictiveQueue: e.target.value })}
+                  placeholder="None"
+                  inputMode="numeric"
                   className="h-8 text-xs"
                 />
               </Field>

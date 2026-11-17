@@ -128,6 +128,12 @@ export interface CallRecord {
   portfolioId?: string;
   /** Agent email; set once the call is routed to a human */
   agentId?: string;
+  /** Vendor-routed predictive leg: the extension that took the answered call (from the vendor's
+   *  answer event). Unset until then — the dialer doesn't choose the agent. */
+  agentHandle?: string;
+  /** Placed with the provider's predictive dial (borrower first, vendor picks the agent) rather
+   *  than click-to-call. Such a leg that ends without ever reaching an agent is "abandoned". */
+  vendorRouted?: boolean;
   direction: CallDirection;
   participant: CallParticipant;
   /** Correlates provider webhooks/events back to this record */
@@ -151,7 +157,13 @@ export interface CallRecord {
 
 export type TelephonyEvent =
   | { type: "ring"; providerCallId: string; at: number }
-  | { type: "answer"; providerCallId: string; at: number }
+  | {
+      type: "answer";
+      providerCallId: string;
+      at: number;
+      /** Predictive calls: the extension the vendor connected the borrower to. */
+      agentHandle?: string;
+    }
   | { type: "dtmf"; providerCallId: string; at: number; digit: string }
   | { type: "recording"; providerCallId: string; at: number; recordingUrl: string }
   | {
@@ -164,6 +176,30 @@ export type TelephonyEvent =
   | { type: "sms_status"; providerMessageId: string; at: number; status: SmsStatus };
 
 export type TelephonyEventListener = (event: TelephonyEvent) => void;
+
+// ─── Predictive (vendor-routed) dialling ──────────────────────────────────────
+
+export interface PredictiveCallRequest {
+  /** Extension sent in the request (and in the token). The vendor connects the answer to ANY free
+   *  extension logged into `queue`, which the answer event reports. */
+  extension: string;
+  queue: string;
+  debtorNumber: string;
+  /** Our telephony_calls ledger row id; returned as providerCallId (the vendor returns no id). */
+  requestId: string;
+  callerId?: string;
+  hints?: StartCallRequest["hints"];
+}
+
+/** A provider that can dial the borrower first and route answers to a queue of extensions. */
+export interface PredictiveDialer {
+  /** Put an agent's extension in the queue — once per agent per batch. */
+  loginQueue(extension: string, queue: string): Promise<void>;
+  /** Dial one borrower; whoever answers goes to a free extension in the queue. */
+  startCall(req: PredictiveCallRequest): Promise<StartCallResult>;
+  /** Take the extension out of the queue when the batch ends. */
+  logoutQueue(extension: string, queue: string): Promise<void>;
+}
 
 // ─── Provider interface ───────────────────────────────────────────────────────
 
@@ -179,4 +215,6 @@ export interface TelephonyProvider {
    * providers deliver events via parseStatusWebhook + a realtime broadcast instead,
    * so this is optional. Returns an unsubscribe function. */
   subscribe?(listener: TelephonyEventListener): () => void;
+  /** Present when the provider offers vendor-side predictive dialling (SkyCRM §24, the sim). */
+  predictive?: PredictiveDialer;
 }

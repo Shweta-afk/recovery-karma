@@ -453,23 +453,45 @@ instruction not to omit them again. Do not wire them up against Exotel; that wal
 inside the provider, no conference API) is exactly why they were removed once already. Wire
 them only once a real vendor with call-control support is chosen and integrated.
 
-### The dialer's architectural ceiling — read before touching predictive/productive dialing
+### The dialer's architectural ceiling — and SkyCRM predictive dialling (2026-11-17)
 
-Click-to-call (what Exotel, KooKoo, and Tata all offer) **rings the agent's phone first**,
-then bridges the debtor once the agent answers. It's a plain REST call, not an SDK, and it
-cannot truly overdial — the agent leg has to be committed before the debtor is ever dialed.
-**Confirmed directly against Exotel's own docs: there is no API-level predictive/progressive
-dialing product.** Their "4 dialer types" marketing page is conceptual; only a flat-rate
-automated campaign API is real. Exotel's own guide says customers must build the call
-queue, agent-availability pool, and pacing/retry logic themselves on top of plain
-click-to-call — which is exactly what `src/lib/dialer/engine.ts` does. This is the ceiling of
-what click-to-call can ever do, not a bug to fix.
+Click-to-call (`dialing_phone`, and what Exotel/KooKoo/Tata offered) **rings the agent first**,
+then bridges the debtor, so it can never overdial: `dial()` in `telephony/server.ts` caps at one
+line per free agent. That is still how Progressive Dial, single calls and Manual Dial work.
 
-True predictive dialing (debtor dialed _before_ an agent is committed) and browser-only
-agents (no personal phone) both require **WebRTC/SIP**, which is a _separate, heavier_
-Exotel onboarding ("IP-PSTN Intermix") — a new legal entity (Veeno Communications), new KYC,
-Bangalore-only, feature in Alpha. **This has not been started.** Don't scaffold WebRTC
-provider code assuming credentials that don't exist yet.
+**"Productive Dial" (internally `dialerMode: "predictive"`) now uses SkyCRM's own predictive dial
+(API spec v1.2 §24)** when the provider offers one (`TelephonyProvider.predictive`) and the
+company has a **predictive queue** (superadmin → company → Calling card,
+`telephony_settings.predictive_queue`; `migrations/20261117_predictive_dialing.sql`, NOT applied
+as of 2026-11-17). Without a queue — or before the migration — it falls back to click-to-call.
+Flow (`predictiveDial()`): `login_in_queue1` once per agent on the run → `predictive_call`
+(`extension`, `prefix`, `queue`, `mobile_no`, form-encoded) per borrower → `logout_queue1` when the
+run stops or is evicted by `sweepRuns`. SkyCRM dials the borrower and connects the answer to any
+free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, tested in
+`scripts/predictive-dial.test.ts`:
+- Pacing: `round(free agents × predictivePacing(abandonRateTarget)) − calls still waiting for an
+  agent`, capped by calls-per-cycle and the company's free lines. Over the abandon target the
+  dialer stops overdialling (1 per free agent).
+- **Every number still goes through `prepareCall`** (`predictive: { queue }`): DNC, IST window,
+  channel reservation, DID, ledger row before the vendor is called. The ledger row has
+  `agent_id`/`agent_handle` NULL plus `predictive_queue` + `request_extension`; it is not
+  "superseded" by the requesting agent's other calls.
+- Webhooks: `ledgerForWebhook` matches callid → **open predictive call to that borrower's number**
+  (`pickPredictiveLedger`) → open call on the extension. Only a `connected` event names the agent
+  (`predictiveAgentFromEvent`) — a ringing event's extension may be our own request — and only an
+  agent of the call's company. The run's leg gets `agentHandle` from the answer event.
+- A vendor-routed leg that ends "completed" without ever reaching an agent is **abandoned**
+  (`engine.applyLegEvent`); that feeds `liveAbandonRate`.
+- The simulator implements the same flow (stand-in queue `SIM_QUEUE`), so Productive Dial in
+  development is now borrower-first too.
+
+⚠️ UNCONFIRMED against a real SkyCRM account: whether the Answered event carries the extension
+that took the call (not the request's), what the first ringing event carries, and whether an
+abandoned borrower's CDR says ANSWERED. Check the ledger's `vendor_events` on the first real run.
+Known gaps: an agent writing a disposition is "free" to SkyCRM's queue and can be handed the next
+call (pause during wrap-up isn't wired); queue membership lives in process memory, so a restart
+mid-run leaves agents logged in (harmless — nothing dials into that queue until the next run);
+two runs sharing an extension would log each other out.
 
 ### Dial-mode UI naming — a deliberate rename, internal values unchanged
 

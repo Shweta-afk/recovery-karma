@@ -18,6 +18,7 @@ import type {
   TelephonyEvent,
   TelephonyEventListener,
   TerminalCallState,
+  PredictiveCallRequest,
 } from "./types";
 
 export interface SimProvider extends TelephonyProvider {
@@ -55,6 +56,8 @@ interface Scheduled {
   at: number;
   providerCallId: string;
   event: TelephonyEvent;
+  /** Predictive: the borrower answers now; pick a free extension in this queue at that moment. */
+  routeTo?: string;
 }
 
 export function createSimProvider(opts?: { seed?: number }): SimProvider {
@@ -64,7 +67,44 @@ export function createSimProvider(opts?: { seed?: number }): SimProvider {
   let scheduled: Scheduled[] = [];
   const listeners = new Set<TelephonyEventListener>();
 
-  const emit = (event: TelephonyEvent) => listeners.forEach((l) => l(event));
+  // Predictive: queue → extensions logged in; extension → the call it is on.
+  const queues = new Map<string, Set<string>>();
+  const busy = new Map<string, string>();
+  const releaseCall = (providerCallId: string) => {
+    for (const [ext, id] of busy) if (id === providerCallId) busy.delete(ext);
+  };
+
+  const emit = (event: TelephonyEvent) => {
+    if (event.type === "hangup") releaseCall(event.providerCallId);
+    listeners.forEach((l) => l(event));
+  };
+
+  /** The borrower picked up: connect a free queued extension like the vendor's ACD would, or,
+   *  with nobody free, end the call (the dialer counts that as an abandon). */
+  const route = (s: Scheduled) => {
+    const free = [...(queues.get(s.routeTo as string) ?? [])].find((ext) => !busy.has(ext));
+    const id = s.providerCallId;
+    if (!free) {
+      emit({
+        type: "hangup",
+        providerCallId: id,
+        at: s.at,
+        result: "completed",
+        durationSeconds: 0,
+      });
+      return;
+    }
+    busy.set(free, id);
+    emit({ type: "answer", providerCallId: id, at: s.at, agentHandle: free });
+    const endAt = s.at + MIN_TALK + Math.floor(rng() * (MAX_TALK - MIN_TALK));
+    schedule(endAt, id, {
+      type: "hangup",
+      providerCallId: id,
+      at: endAt,
+      result: "completed",
+      durationSeconds: Math.round((endAt - s.at) / 1000),
+    });
+  };
 
   const schedule = (at: number, providerCallId: string, event: TelephonyEvent) => {
     scheduled.push({ at, providerCallId, event });
@@ -80,6 +120,41 @@ export function createSimProvider(opts?: { seed?: number }): SimProvider {
 
   return {
     name: "sim",
+
+    predictive: {
+      async loginQueue(extension: string, queue: string): Promise<void> {
+        if (!queues.has(queue)) queues.set(queue, new Set());
+        queues.get(queue)!.add(extension);
+      },
+      async logoutQueue(extension: string, queue: string): Promise<void> {
+        queues.get(queue)?.delete(extension);
+      },
+      async startCall(req: PredictiveCallRequest): Promise<StartCallResult> {
+        const providerCallId = req.requestId || `sim-pcall-${++callSeq}`;
+        const ringAt = Date.now() + RING_DELAY;
+        schedule(ringAt, providerCallId, { type: "ring", providerCallId, at: ringAt });
+        if (rng() >= answerProbability(req.hints)) {
+          const endAt = ringAt + RING_TIMEOUT;
+          schedule(endAt, providerCallId, {
+            type: "hangup",
+            providerCallId,
+            at: endAt,
+            result: rng() < 0.25 ? "busy" : "no_answer",
+            durationSeconds: 0,
+          });
+          return { providerCallId };
+        }
+        const answerAt = ringAt + 1500 + Math.floor(rng() * 2000);
+        // Placeholder event; flushDue swaps it for an answer or an abandon via route().
+        scheduled.push({
+          at: answerAt,
+          providerCallId,
+          routeTo: req.queue,
+          event: { type: "answer", providerCallId, at: answerAt },
+        });
+        return { providerCallId };
+      },
+    },
 
     async startCall(req: StartCallRequest): Promise<StartCallResult> {
       const providerCallId = `sim-call-${++callSeq}`;
@@ -202,7 +277,7 @@ export function createSimProvider(opts?: { seed?: number }): SimProvider {
       const due = scheduled.filter((s) => s.at <= now).sort((a, b) => a.at - b.at);
       if (!due.length) return 0;
       scheduled = scheduled.filter((s) => s.at > now);
-      due.forEach((s) => emit(s.event));
+      due.forEach((s) => (s.routeTo ? route(s) : emit(s.event)));
       return due.length;
     },
 
@@ -214,6 +289,8 @@ export function createSimProvider(opts?: { seed?: number }): SimProvider {
     reset(): void {
       scheduled = [];
       listeners.clear();
+      queues.clear();
+      busy.clear();
       callSeq = 0;
       smsSeq = 0;
     },

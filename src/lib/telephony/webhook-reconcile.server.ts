@@ -12,6 +12,7 @@ import {
   updateLedger,
 } from "./guard.server";
 import { copyRingTimeToCallLogs, copyTalkTimeToCallLogs } from "./talk-time";
+import { predictiveAgentFromEvent } from "./predictive-rules";
 import type { CallStatusEvent } from "./types";
 
 /** Swap a vendor-keyed webhook event onto our providerCallId and keep the ledger current.
@@ -23,6 +24,7 @@ export async function reconcileWithLedger(
   let ledger = await ledgerForWebhook({
     vendorCallId: status.vendorCallId,
     agentHandle: status.agentHandle,
+    remotePhone: status.remotePhone,
   }).catch(() => null);
 
   if (!ledger && status.direction === "inbound" && status.vendorCallId) {
@@ -56,7 +58,18 @@ export async function reconcileWithLedger(
     const prior = ledger.vendor_events ? `${ledger.vendor_events} > ` : "";
     patch.vendor_events = `${prior}${status.vendorStatus}`.slice(-500);
   }
-  if (ledger.direction === "inbound" && !ledger.agent_id && status.agentHandle) {
+  // Predictive: the vendor picked the agent; its answer event is the first to say which.
+  const predictiveAgent = ledger.predictive_queue
+    ? predictiveAgentFromEvent({
+        status: status.status,
+        agentHandle: status.agentHandle,
+        alreadyAssigned: !!ledger.agent_handle,
+      })
+    : null;
+  if (
+    (ledger.direction === "inbound" && !ledger.agent_id && status.agentHandle) ||
+    predictiveAgent
+  ) {
     // Recorded from the dialled number while still in the queue; now an extension has it.
     const { data: agent } = (await (getSupabaseAdmin() as any)
       .from("agents")
@@ -80,8 +93,14 @@ export async function reconcileWithLedger(
     status.durationSeconds,
   );
   await copyRingTimeToCallLogs(getSupabaseAdmin(), ours, { ...ledger, ...patch } as never);
+  // A predictive call's ringing event may carry the extension WE put in the request; only the
+  // answer names who took it, so don't hand the run an agent before that — nor one from another
+  // company (a queue set up wrongly in SkyCRM).
+  const agentHandle = ledger.predictive_queue
+    ? ((patch.agent_handle as string | undefined) ?? ledger.agent_handle ?? undefined)
+    : status.agentHandle;
   return {
-    status: { ...status, providerCallId: ours, customIdentifier: ours },
+    status: { ...status, agentHandle, providerCallId: ours, customIdentifier: ours },
     ownerClientId: ledger.client_id,
   };
 }

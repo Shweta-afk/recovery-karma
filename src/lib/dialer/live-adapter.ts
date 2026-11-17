@@ -37,7 +37,15 @@ function fmtDuration(rec: CallRecord, now: number): string {
 
 /** One engine call leg → one LiveCallsPanel row. */
 export function toLiveEntry(rec: CallRecord, now = Date.now()): LiveCallEntry {
-  const agent = rec.participant === "ai" ? "AI Bot" : rec.participant === "ivr" ? "IVR" : "Agent";
+  // Predictive (vendor-routed) calls: the vendor picked the agent; show which extension took it.
+  const agent =
+    rec.participant === "ai"
+      ? "AI Bot"
+      : rec.participant === "ivr"
+        ? "IVR"
+        : rec.agentHandle
+          ? `Agent · ${rec.agentHandle}`
+          : "Agent";
   return {
     id: rec.id,
     agent,
