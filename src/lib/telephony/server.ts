@@ -98,6 +98,7 @@ const owners = g.__recoveryaiTelephony.owners;
 const runTargets = g.__recoveryaiTelephony.runTargets;
 const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
 const predictiveSessions = g.__recoveryaiTelephony.predictiveSessions;
+const pendingPredictiveLogouts = new Set<string>();
 
 interface PredictiveSession {
   clientId: string;
@@ -133,8 +134,20 @@ function sweepRuns(now = Date.now()): void {
       runTouchedAt.delete(id);
       loggedLegs.delete(id);
       runTargets.delete(id);
-      void endPredictiveSession(id);
+      // Not endPredictiveSession() here: sweepRuns is reachable from ingestCallStatusEvent, a
+      // plain export that ships in the browser bundle, and anything it references (the provider,
+      // SkyCRM's API code) would ship with it. Server-function handlers drain this set instead.
+      if (predictiveSessions.has(id)) pendingPredictiveLogouts.add(id);
     }
+  }
+}
+
+/** Log out the queue sessions of runs evicted by sweepRuns. Call only from server-function
+ *  handlers (stripped from the client bundle), never from a plain export. */
+function drainPredictiveLogouts(): void {
+  for (const id of pendingPredictiveLogouts) {
+    pendingPredictiveLogouts.delete(id);
+    void endPredictiveSession(id);
   }
 }
 
@@ -789,6 +802,7 @@ export const startDialerRun = createServerFn({ method: "POST" })
         throw new Error(res.blocked);
       }
       sweepRuns();
+      drainPredictiveLogouts();
       saveRun(res.run);
       return res.run;
     }
@@ -819,6 +833,7 @@ export const startDialerRun = createServerFn({ method: "POST" })
       console.warn(`[dialer] ${unassigned} target(s) not dialed — no free agent leg available`);
     }
     sweepRuns();
+    drainPredictiveLogouts();
     saveRun(run);
     return run;
   });
