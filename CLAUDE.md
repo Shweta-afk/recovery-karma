@@ -453,6 +453,19 @@ instruction not to omit them again. Do not wire them up against Exotel; that wal
 inside the provider, no conference API) is exactly why they were removed once already. Wire
 them only once a real vendor with call-control support is chosen and integrated.
 
+### Listen / Whisper / Barge (`call_monitor_api`) — status 2026-11-17
+
+Testers: no error, phone silent. Two changes: (1) the listener is now sent as `monitor_extention`
+and the agent as `user_extention` (spec §14 keys hang-up by `monitor_extention`);
+`SKYCRM_MONITOR_FIELDS=original` on Railway restores the old order. (2) Live Calls reports what
+reached the manager: no ring within 15 s → toast; 8 s after connecting, the browser phone's
+WebRTC stats (`audioStats`, verdict in `telephony/monitor-audio.ts`) say **no-media** (no RTP —
+our gateway/TURN path) or **silence** (RTP but no energy — SkyCRM connected the manager but did
+not join them to the agent's call) or **sound**. After the swap the manager's phone rings but is
+silent; the spy call's media comes from the same SkyCRM host as normal calls (which have audio),
+so the gateway is the less likely cause. If the check says "silence", ask SkyCRM (their spec says
+monitoring works "extension to extension" — maybe not on extension→PSTN calls).
+
 ### The dialer's architectural ceiling — and SkyCRM predictive dialling (2026-11-17)
 
 Click-to-call (`dialing_phone`, and what Exotel/KooKoo/Tata offered) **rings the agent first**,
@@ -462,8 +475,8 @@ line per free agent. That is still how Progressive Dial, single calls and Manual
 **"Productive Dial" (internally `dialerMode: "predictive"`) now uses SkyCRM's own predictive dial
 (API spec v1.2 §24)** when the provider offers one (`TelephonyProvider.predictive`) and the
 company has a **predictive queue** (superadmin → company → Calling card,
-`telephony_settings.predictive_queue`; `migrations/20261117_predictive_dialing.sql`, NOT applied
-as of 2026-11-17). Without a queue — or before the migration — it falls back to click-to-call.
+`telephony_settings.predictive_queue`; `migrations/20261117_predictive_dialing.sql`, applied live
+2026-11-17; no company has a queue yet — SkyCRM must tell us our queue number). Without a queue — or before the migration — it falls back to click-to-call.
 Flow (`predictiveDial()`): `login_in_queue1` once per agent on the run → `predictive_call`
 (`extension`, `prefix`, `queue`, `mobile_no`, form-encoded) per borrower → `logout_queue1` when the
 run stops or is evicted by `sweepRuns`. SkyCRM dials the borrower and connects the answer to any

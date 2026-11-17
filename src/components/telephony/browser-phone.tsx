@@ -38,6 +38,10 @@ export const HANG_UP_EVENT = "samvadx:hang-up";
 /** Fired when SkyCRM rings this browser phone (any inbound call) — Live Calls uses it to tell a
  *  manager whether their Listen/Whisper/Barge request actually reached their phone. */
 export const PHONE_RINGING_EVENT = "samvadx:phone-ringing";
+/** Live Calls → this phone: the next ring is a Listen/Whisper/Barge call; measure its audio. */
+export const MONITOR_STARTED_EVENT = "samvadx:monitor-started";
+/** This phone → Live Calls: what arrived on that call, `detail` = { packets, bytes, energy }. */
+export const MONITOR_AUDIO_EVENT = "samvadx:monitor-audio";
 /** Fired by this phone when a call it had answered ends (either side hung up, or its own End
  *  button). call-session.tsx then ends the app's call and asks SkyCRM to drop the borrower. */
 export const PHONE_CALL_ENDED_EVENT = "samvadx:phone-call-ended";
@@ -211,6 +215,30 @@ function RegisteredPhone({
 
   // SkyCRM's ring for a call this agent just placed: pick up without asking.
   const call = wp.call;
+
+  // Listen/Whisper/Barge audio check: 8 s after the monitor call connects, report what arrived.
+  const monitorAt = useRef(0);
+  useEffect(() => {
+    const onMonitor = () => {
+      monitorAt.current = Date.now();
+    };
+    window.addEventListener(MONITOR_STARTED_EVENT, onMonitor);
+    return () => window.removeEventListener(MONITOR_STARTED_EVENT, onMonitor);
+  }, []);
+  useEffect(() => {
+    if (call?.state !== "connected" || Date.now() - monitorAt.current > AUTO_ANSWER_WINDOW_MS) {
+      return;
+    }
+    monitorAt.current = 0;
+    const t = setTimeout(() => {
+      void wp.audioStats().then((stats) => {
+        console.info("[monitor] audio check", stats);
+        window.dispatchEvent(new CustomEvent(MONITOR_AUDIO_EVENT, { detail: stats }));
+      });
+    }, 8_000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call?.id, call?.state]);
   useEffect(() => {
     if (call?.direction === "inbound" && call.state === "ringing") {
       window.dispatchEvent(new CustomEvent(PHONE_RINGING_EVENT));
