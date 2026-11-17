@@ -22,8 +22,17 @@ ALTER FUNCTION public.next_agent_code(text) SET search_path = public, pg_temp;
 ALTER FUNCTION public.telephony_reserve_channel(uuid, integer, integer, integer, uuid, text, text, text, text, text)
   SET search_path = public, pg_temp;
 
-ALTER FUNCTION public.extra_named(public.debtors) SET search_path = public, pg_temp;
-ALTER FUNCTION public.extra_head(public.debtors) SET search_path = public, pg_temp;
+-- extra_named/extra_head became stored columns on 2026-10-13 (20261013_debtor_list_speed.sql),
+-- which drops these functions; skip them when they are gone.
+DO $do$
+BEGIN
+  IF to_regprocedure('public.extra_named(public.debtors)') IS NOT NULL THEN
+    ALTER FUNCTION public.extra_named(public.debtors) SET search_path = public, pg_temp;
+  END IF;
+  IF to_regprocedure('public.extra_head(public.debtors)') IS NOT NULL THEN
+    ALTER FUNCTION public.extra_head(public.debtors) SET search_path = public, pg_temp;
+  END IF;
+END $do$;
 ALTER FUNCTION public.agent_book_totals(uuid[]) SET search_path = public, pg_temp;
 ALTER FUNCTION public.portfolio_debtor_aggregates() SET search_path = public, pg_temp;
 ALTER FUNCTION public.portfolio_debtor_aggregates_for(uuid[]) SET search_path = public, pg_temp;

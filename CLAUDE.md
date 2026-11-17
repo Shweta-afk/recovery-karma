@@ -140,7 +140,10 @@ columns `extra_named` (address/city/…/language, pos, Principal) and — Call Q
 (`migrations/20260923_debtors_extra_preview.sql`, `src/lib/debtor-extra.ts`). Screens that show
 every bank-file column read the full bag themselves (`useFullExtra`, `fetchPortfolioFullExtra`).
 Never write a cached row's `extra` back to the database; the client falls back to plain `extra`
-if the functions are missing.
+if the functions are missing. `migrations/20261013_debtor_list_speed.sql` turns them into stored
+columns kept by a trigger; as of 2026-11-17 only its part 1 (RLS initplan) is live — live still has
+the two functions and no columns. Its part 2 rewrites every debtor row: apply off-hours, staged
+via `scripts/debug/20261013-apply-debtor-list-speed.sql`. `debtor_list` works either way.
 
 **Debtors page and Call Queue are paged by the database (2026-10-13).** They never hold the
 whole book: `debtor-page-store.ts` calls the SQL function `debtor_list(p jsonb)`
@@ -959,8 +962,8 @@ Admin → Users, not counted against agent/manager seats.
   200 MB, so neither bucket ever existed: from 2026-11-15 (when SkyCRM's download started
   working) every recording sweep died creating the bucket, and no archive copy was ever saved.
 - ⚠️ Until 2026-11-12 SkyCRM's `download_audio` answered 500 (`host='disk'`); as of 2026-11-16 no
-  recording had been stored (bucket bug above), so `call_logs.recording_url` was NULL everywhere. The portal's player and
-  AI work once the importer starts storing files.
+  recording had been stored (bucket bug above), so `call_logs.recording_url` was NULL everywhere.
+  **Working as of 2026-11-17**: 711 call logs carry a stored recording, newest that day.
 
 ## Superadmin portal (platform owner) — rebuilt 2026-10-09
 

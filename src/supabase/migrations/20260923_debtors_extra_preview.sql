@@ -24,35 +24,47 @@
 -- scripts/check-rls-safety.mjs guards. Purely additive: `extra` itself is unchanged, and the
 -- client falls back to selecting `extra` if these functions are missing.
 
+-- Superseded 2026-10-13 by stored columns of the same names (20261013_debtor_list_speed.sql).
+-- Postgres refuses these functions once debtors has columns extra_named/extra_head, so on a
+-- replay they are created only while the columns don't exist yet.
+DO $do$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'debtors'
+                    AND column_name IN ('extra_named', 'extra_head')) THEN
+    EXECUTE $sql$
 CREATE OR REPLACE FUNCTION public.extra_named(d public.debtors)
 RETURNS jsonb
 LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
-AS $$
+AS $f$
   SELECT coalesce(
     (SELECT jsonb_object_agg(e.key, e.value)
        FROM jsonb_each(CASE WHEN jsonb_typeof(d.extra) = 'object' THEN d.extra ELSE '{}'::jsonb END) AS e
       WHERE e.key = ANY (ARRAY['address', 'city', 'state', 'dob', 'employer', 'income', 'language',
                                'pos', 'Principal'])),
     '{}'::jsonb)
-$$;
-
+$f$;
+    $sql$;
+    EXECUTE $sql$
 CREATE OR REPLACE FUNCTION public.extra_head(d public.debtors)
 RETURNS jsonb
 LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
-AS $$
+AS $f$
   SELECT coalesce(
     (SELECT jsonb_object_agg(e.key, e.value)
        FROM jsonb_each(CASE WHEN jsonb_typeof(d.extra) = 'object' THEN d.extra ELSE '{}'::jsonb END)
             WITH ORDINALITY AS e(key, value, n)
       WHERE e.n <= 25),
     '{}'::jsonb)
-$$;
-
-GRANT EXECUTE ON FUNCTION public.extra_named(public.debtors) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.extra_head(public.debtors) TO authenticated;
+$f$;
+    $sql$;
+    GRANT EXECUTE ON FUNCTION public.extra_named(public.debtors) TO authenticated;
+    GRANT EXECUTE ON FUNCTION public.extra_head(public.debtors) TO authenticated;
+  END IF;
+END $do$;
 
 NOTIFY pgrst, 'reload schema';
