@@ -22,7 +22,14 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { getAccessToken } from "@/lib/access-token";
-import { DIAL_STARTED_EVENT, HANG_UP_EVENT } from "@/components/telephony/browser-phone";
+import {
+  DIAL_STARTED_EVENT,
+  HANG_UP_EVENT,
+  PHONE_RINGING_EVENT,
+} from "@/components/telephony/browser-phone";
+
+/** How long to wait for SkyCRM to ring the manager after Listen/Whisper/Barge. */
+const RING_WAIT_MS = 15_000;
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { DIAL_MODE_META, type DialMode } from "@/lib/call-queue/types";
@@ -151,6 +158,7 @@ function CallControls({ call }: { call: LiveCall }) {
         data: { accessToken: await getAccessToken(), liveCallId: call.id, mode },
       });
       setActive(mode);
+      watchForRing(r.myExtension);
       toast.success(
         `${mode === "listen" ? "Listening to" : mode === "whisper" ? "Whispering to" : "Joined"} ${r.agentName}'s call — your phone connects in a moment`,
         {
@@ -162,6 +170,30 @@ function CallControls({ call }: { call: LiveCall }) {
     } finally {
       setBusy(null);
     }
+  };
+
+  // SkyCRM answers "success" whether or not it joined anyone, so the only proof is our own phone
+  // ringing. No ring within RING_WAIT_MS = the request reached nobody (2026-11-17: testers heard
+  // silence with no error at all).
+  const watchForRing = (myExtension: string) => {
+    let rang = false;
+    const onRing = () => {
+      rang = true;
+    };
+    window.addEventListener(PHONE_RINGING_EVENT, onRing);
+    setTimeout(() => {
+      window.removeEventListener(PHONE_RINGING_EVENT, onRing);
+      if (rang) return;
+      setActive(null);
+      toast.error(
+        `SkyCRM didn't ring your phone (ext ${myExtension}), so you can't hear the call`,
+        {
+          description:
+            "Check the phone icon shows Ready (registered), then try again. If it keeps happening, the request isn't reaching your extension — tell SamvadX support.",
+          duration: 12_000,
+        },
+      );
+    }, RING_WAIT_MS);
   };
 
   const stop = () => {

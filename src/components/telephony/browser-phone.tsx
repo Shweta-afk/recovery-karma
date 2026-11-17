@@ -35,6 +35,9 @@ export const DIAL_STARTED_EVENT = "samvadx:dial-started";
 /** Fired by use-single-call.ts when the agent ends a call anywhere in the app (End Call, Cancel,
  *  the floating bar). The browser phone drops its own leg too. */
 export const HANG_UP_EVENT = "samvadx:hang-up";
+/** Fired when SkyCRM rings this browser phone (any inbound call) — Live Calls uses it to tell a
+ *  manager whether their Listen/Whisper/Barge request actually reached their phone. */
+export const PHONE_RINGING_EVENT = "samvadx:phone-ringing";
 /** Fired by this phone when a call it had answered ends (either side hung up, or its own End
  *  button). call-session.tsx then ends the app's call and asks SkyCRM to drop the borrower. */
 export const PHONE_CALL_ENDED_EVENT = "samvadx:phone-call-ended";
@@ -209,6 +212,9 @@ function RegisteredPhone({
   // SkyCRM's ring for a call this agent just placed: pick up without asking.
   const call = wp.call;
   useEffect(() => {
+    if (call?.direction === "inbound" && call.state === "ringing") {
+      window.dispatchEvent(new CustomEvent(PHONE_RINGING_EVENT));
+    }
     if (
       call?.direction === "inbound" &&
       call.state === "ringing" &&

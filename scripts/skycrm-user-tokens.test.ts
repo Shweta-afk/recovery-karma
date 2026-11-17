@@ -129,7 +129,7 @@ describe("disposition_api", () => {
 });
 
 describe("call_monitor_api", () => {
-  test("rings the supervisor's extension onto the agent's call, as form data", async () => {
+  test("rings the supervisor (monitor_extention) onto the agent's call, as form data", async () => {
     let body = "";
     let token: Record<string, unknown> = {};
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -141,8 +141,27 @@ describe("call_monitor_api", () => {
     await startCallMonitor("whisper", "8611", "8602");
     const form = new URLSearchParams(body);
     expect(form.get("Mode")).toBe("whisper");
+    // monitor_extention = the listener (supervisor), user_extention = the agent (2026-11-17).
+    expect(form.get("user_extention")).toBe("8602");
+    expect(form.get("monitor_extention")).toBe("8611");
+    expect(token).toMatchObject({ extension: "8611", username: "8611" });
+  });
+
+  test("SKYCRM_MONITOR_FIELDS=original restores the old field order", async () => {
+    let body = "";
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      body = String(init?.body);
+      return new Response('{"status": 200}');
+    }) as typeof fetch;
+    creds = { username: "8611", password: "pw@1" };
+    process.env.SKYCRM_MONITOR_FIELDS = "original";
+    try {
+      await startCallMonitor("listen", "8611", "8602");
+    } finally {
+      delete process.env.SKYCRM_MONITOR_FIELDS;
+    }
+    const form = new URLSearchParams(body);
     expect(form.get("user_extention")).toBe("8611");
     expect(form.get("monitor_extention")).toBe("8602");
-    expect(token).toMatchObject({ extension: "8611", username: "8611" });
   });
 });
