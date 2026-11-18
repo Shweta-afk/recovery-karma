@@ -407,6 +407,15 @@ rang" toast) while it carried on, and `answered_at` was never set. `liveStatusFo
 treats an unknown one as ringing (logged as `unknown live call status`) — only a recognised end
 word or the CDR ends a call.
 
+**Productive Dial and the browser phone (2026-11-18).** A dialer run (`use-dialer-run.ts`, server
+mode) announces itself with `samvadx:dialer-run` `{active}` (`DIALER_RUN_EVENT` in
+`browser-phone.tsx`), first thing inside the Start click: the phone unlocks its `<audio>` then and
+auto-answers every SkyCRM ring until the run stops (stop, run ended on a tick, unmount, failed
+start). Before this, run legs never fired the single-call `dial-started` event, so rings weren't
+picked up by themselves and the far end played silently (testers: "can't hear the debtor").
+Only the browser that started the run is told — a manager running lines for other agents' phones
+does not auto-answer on their browsers.
+
 ### Phone numbers (DIDs) and shared lines (2026-10-26, branch `skycrm-calling`, NOT live)
 
 The vendor supplies ~200 DIDs and a trunk of ~60 channels for every company.

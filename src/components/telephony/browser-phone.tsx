@@ -45,6 +45,10 @@ export const MONITOR_AUDIO_EVENT = "samvadx:monitor-audio";
 /** Fired by this phone when a call it had answered ends (either side hung up, or its own End
  *  button). call-session.tsx then ends the app's call and asks SkyCRM to drop the borrower. */
 export const PHONE_CALL_ENDED_EVENT = "samvadx:phone-call-ended";
+/** Fired by use-dialer-run.ts when this agent starts (`detail.active` true) or stops a Productive
+ *  Dial run. While one runs, SkyCRM rings this phone for each line the run opens, with no click
+ *  in between, so the phone answers every ring by itself. */
+export const DIALER_RUN_EVENT = "samvadx:dialer-run";
 /** How long after clicking Call a ring from SkyCRM counts as that call's agent leg. */
 const AUTO_ANSWER_WINDOW_MS = 60_000;
 
@@ -213,6 +217,19 @@ function RegisteredPhone({
     return () => window.removeEventListener(DIAL_STARTED_EVENT, onDial);
   }, [unlockAudio]);
 
+  // Productive Dial: until 2026-11-18 its lines never told this phone a dial had started, so
+  // SkyCRM's ring wasn't picked up by itself and the <audio> was never unlocked by a click —
+  // calls connected but the agent heard nothing from the borrower.
+  const runActive = useRef(false);
+  useEffect(() => {
+    const onRun = (e: Event) => {
+      runActive.current = !!(e as CustomEvent<{ active?: boolean }>).detail?.active;
+      if (runActive.current) unlockAudio(); // still inside the agent's click on Start
+    };
+    window.addEventListener(DIALER_RUN_EVENT, onRun);
+    return () => window.removeEventListener(DIALER_RUN_EVENT, onRun);
+  }, [unlockAudio]);
+
   // SkyCRM's ring for a call this agent just placed: pick up without asking.
   const call = wp.call;
 
@@ -246,7 +263,7 @@ function RegisteredPhone({
     if (
       call?.direction === "inbound" &&
       call.state === "ringing" &&
-      Date.now() - lastDialAt.current < AUTO_ANSWER_WINDOW_MS
+      (runActive.current || Date.now() - lastDialAt.current < AUTO_ANSWER_WINDOW_MS)
     ) {
       lastDialAt.current = 0;
       void wp.answer();
