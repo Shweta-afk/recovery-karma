@@ -415,6 +415,10 @@ start). Before this, run legs never fired the single-call `dial-started` event, 
 picked up by themselves and the far end played silently (testers: "can't hear the debtor").
 Only the browser that started the run is told — a manager running lines for other agents' phones
 does not auto-answer on their browsers.
+The line that connects opens its own call screen (`joinLiveLeg` in `dashboard.call-queue.tsx`,
+agent's own queue only, one line at a time): `startCall(..., { instant: true })` + the leg's
+`providerCallId`, so End and the disposition reach that call. Live Calls' **Take** joins the
+line too; until 2026-11-18 it called `startCall` without `instant`, i.e. dialled the borrower again.
 
 ### Phone numbers (DIDs) and shared lines (2026-10-26, branch `skycrm-calling`, NOT live)
 
