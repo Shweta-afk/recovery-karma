@@ -26,8 +26,12 @@ import {
 /* eslint-disable @typescript-eslint/no-explicit-any -- new columns aren't in the generated types yet */
 const db = () => getSupabaseAdmin() as any;
 
-const SWEEP_EVERY_MS = 5 * 60_000;
-const PER_SWEEP = 25;
+// 2026-11-18: was 25 every 5 min (300/hour) while busy hours ran 250–430 calls, so a call from
+// early in a busy hour waited up to 4 hours behind newer ones. 100 every 2 min = 3,000/hour; most
+// rows are unanswered calls (one CDR lookup per sweep, no download). `state.running` stops a slow
+// sweep from overlapping the next tick.
+const SWEEP_EVERY_MS = 2 * 60_000;
+const PER_SWEEP = 100;
 const BACKLOG_DAYS = 30;
 
 interface TodoRow {

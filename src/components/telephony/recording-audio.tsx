@@ -4,18 +4,18 @@
 // call (recording-actions.server.ts). Fetching on click, not on render, keeps a long Activity
 // History page from asking the server for a link per row.
 import { useState } from "react";
-import { Download, Loader2, PlayCircle } from "lucide-react";
+import { Download, ExternalLink, Loader2, PlayCircle } from "lucide-react";
 import { isStoredRecording } from "@/lib/telephony/recording-marker";
 
-async function signedLink(recording: string): Promise<string> {
+async function signedLink(recording: string): Promise<{ url: string; downloadUrl: string | null }> {
   const [{ getRecordingPlayUrl }, { getAccessToken }] = await Promise.all([
     import("@/lib/recording-actions.server"),
     import("@/lib/access-token"),
   ]);
-  const { url } = await getRecordingPlayUrl({
+  const { url, downloadUrl } = await getRecordingPlayUrl({
     data: { accessToken: await getAccessToken(), recording },
   });
-  return url;
+  return { url, downloadUrl };
 }
 
 export function RecordingAudio({
@@ -31,6 +31,7 @@ export function RecordingAudio({
 }) {
   const stored = isStoredRecording(url);
   const [src, setSrc] = useState<string | null>(stored ? null : url);
+  const [downloadSrc, setDownloadSrc] = useState<string | null>(null);
   const [open, setOpen] = useState(!compact);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +42,9 @@ export function RecordingAudio({
     setLoading(true);
     setError(null);
     try {
-      setSrc(await signedLink(url));
+      const links = await signedLink(url);
+      setSrc(links.url);
+      setDownloadSrc(links.downloadUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Recording not available right now");
     } finally {
@@ -94,15 +97,26 @@ export function RecordingAudio({
         className={compact ? "mt-1 h-8 w-64 max-w-full" : "h-9 w-full"}
       />
       {showOpenLink && (
-        <a
-          href={src}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
-        >
-          <Download className="h-3 w-3" />
-          Open recording
-        </a>
+        <div className="flex flex-wrap items-center gap-3">
+          {downloadSrc && (
+            <a
+              href={downloadSrc}
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary hover:underline"
+            >
+              <Download className="h-3 w-3" />
+              Download recording
+            </a>
+          )}
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open in new tab
+          </a>
+        </div>
       )}
     </div>
   );
