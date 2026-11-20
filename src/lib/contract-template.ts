@@ -29,7 +29,6 @@ export interface TemplateValues {
   companySignatoryDesignation?: string;
   supplierLegalName: string;
   /** SamvadX's own company, from Superadmin → Invoices → SamvadX details (billing_profile). */
-  supplierShortName?: string;
   supplierCin?: string;
   supplierPan?: string;
   supplierGstin?: string | null;
@@ -61,11 +60,10 @@ export const PLACEHOLDERS: { key: string; meaning: string }[] = [
   { key: "company_signatory_name", meaning: "Who signs for the company" },
   { key: "company_signatory_designation", meaning: "The signatory's designation" },
   { key: "supplier_legal_name", meaning: "Your company's legal name (Invoices → SamvadX details)" },
-  {
-    key: "supplier_short_name",
-    meaning: "Your company's short name used through the agreement, e.g. Axiotta",
-  },
-  { key: "supplier_short_name_caps", meaning: "The same short name in CAPITALS" },
+  // Kept so older templates still fill, but the business has no short name (user, 2026-11-20):
+  // these print the full legal name, exactly like supplier_legal_name.
+  { key: "supplier_short_name", meaning: "Same as the legal name (there is no short name)" },
+  { key: "supplier_short_name_caps", meaning: "Same as the legal name, in CAPITALS" },
   { key: "supplier_legal_name_caps", meaning: "Your company's legal name in CAPITALS" },
   { key: "company_legal_name_caps", meaning: "The company's legal name in CAPITALS" },
   { key: "supplier_cin", meaning: "Your company's CIN" },
@@ -121,10 +119,9 @@ export function entityPhrase(p: {
   const pan = p.pan?.trim().toUpperCase();
   const gstin = p.gstin?.trim() || p.gstinUnregistered || "Unregistered";
   if (cin) {
-    const kind = /^[A-Z]{3}-\d{4}$/.test(cin)
-      ? "a limited liability partnership"
-      : "a company incorporated in India";
-    return `${kind} (CIN / LLPIN: ${cin}; PAN: ${pan || "—"}; GSTIN: ${gstin})`;
+    const llp = /^[A-Z]{3}-\d{4}$/.test(cin);
+    const kind = llp ? "a limited liability partnership" : "a company incorporated in India";
+    return `${kind} (${llp ? "LLPIN" : "CIN"}: ${cin}; PAN: ${pan || "—"}; GSTIN: ${gstin})`;
   }
   const kind = (pan && PAN_HOLDER[pan[3]]) || "a business registered in India";
   const panLabel = pan?.[3] === "P" ? "Proprietor PAN" : "PAN";
@@ -161,14 +158,13 @@ export function templateValueMap(v: TemplateValues): Record<string, string> {
     company_phone: v.companyPhone || "—",
     company_signatory_name: v.companySignatoryName || "—",
     company_signatory_designation: v.companySignatoryDesignation || "—",
-    supplier_legal_name: v.supplierLegalName || "SamvadX",
-    supplier_legal_name_caps: (v.supplierLegalName || "SamvadX").toUpperCase(),
-    supplier_short_name: v.supplierShortName || v.supplierLegalName || "SamvadX",
-    supplier_short_name_caps: (
-      v.supplierShortName ||
-      v.supplierLegalName ||
-      "SamvadX"
-    ).toUpperCase(),
+    // SamvadX is the product, never the contracting party: with no legal name saved, leave a
+    // blank to fill rather than print the brand as if it were a company.
+    supplier_legal_name: v.supplierLegalName || "____________________",
+    supplier_legal_name_caps: (v.supplierLegalName || "____________________").toUpperCase(),
+    // No short name: the agreement only ever uses the full legal name (user, 2026-11-20).
+    supplier_short_name: v.supplierLegalName || "____________________",
+    supplier_short_name_caps: (v.supplierLegalName || "____________________").toUpperCase(),
     supplier_cin: v.supplierCin || "—",
     supplier_entity: entityPhrase({
       cin: v.supplierCin,

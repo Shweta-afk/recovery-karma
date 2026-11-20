@@ -992,6 +992,8 @@ async function templateValuesFor(
     legal_name: string;
     payment_terms_days: number | null;
     address: string | null;
+    /** The registered office on the CIN. `address` is the office invoices are sent from. */
+    registered_address?: string | null;
     cin?: string | null;
     pan?: string | null;
     gstin?: string | null;
@@ -1012,11 +1014,11 @@ async function templateValuesFor(
     companySignatoryName: details.signatoryName,
     companySignatoryDesignation: details.signatoryDesignation,
     supplierLegalName: profile?.legal_name ?? "",
-    supplierShortName: profile?.short_name ?? "",
     supplierCin: profile?.cin ?? "",
     supplierPan: profile?.pan ?? "",
     supplierGstin: profile?.gstin ?? null,
-    supplierAddress: profile?.address ?? "",
+    // The agreement says "having its registered office at", so it must be the registered office.
+    supplierAddress: profile?.registered_address?.trim() || profile?.address || "",
     supplierSignatoryName: profile?.signatory_name ?? "",
     supplierSignatoryDesignation: profile?.signatory_designation ?? "",
     signedBy: signing?.by,
@@ -1238,7 +1240,6 @@ export const getMasterAgreement = createServerFn({ method: "POST" })
     const p = (profile ?? {}) as Record<string, string | null>;
     const supplierMissing = [
       ["legal_name", "Legal name"],
-      ["short_name", "Short name"],
       ["cin", "CIN"],
       ["address", "Registered address"],
       ["signatory_name", "Authorised signatory"],
