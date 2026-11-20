@@ -32,6 +32,8 @@ import {
 import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
 import { DailyUsageChart } from "@/components/superadmin/daily-usage-chart";
 import { InfoTip, PageGuide } from "@/components/superadmin/help";
+import { SeverityIcon, useHealthReport } from "@/components/superadmin/health-shared";
+import { overallHealth } from "@/lib/health-checks";
 import {
   contactRate,
   type AttentionItem,
@@ -85,6 +87,8 @@ function SuperadminOverviewPage() {
       </div>
 
       <PageGuide page="overview" />
+
+      <HealthBanner />
 
       {!report ? (
         <div className="flex items-center gap-2 py-8 text-xs text-muted-foreground">
@@ -404,5 +408,28 @@ function TopCompanies({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Today's health check at a glance; the full list is on Superadmin → Health Check. */
+function HealthBanner() {
+  const { report } = useHealthReport();
+  if (!report) {
+    return null;
+  }
+  const o = overallHealth(report.results);
+  const problems = report.results.filter((r) => r.severity !== "ok");
+  return (
+    <Link
+      to="/superadmin/health"
+      className="flex items-center gap-3 rounded-lg border border-border px-4 py-3 text-sm hover:bg-muted/40"
+    >
+      <SeverityIcon s={o.severity} className="h-5 w-5 shrink-0" />
+      <span className="flex-1">
+        <span className="font-medium">Health check today: </span>
+        {o.severity === "ok" ? "all checks passed." : problems.map((r) => r.title).join(" · ")}
+      </span>
+      <span className="text-xs text-primary">Open →</span>
+    </Link>
   );
 }

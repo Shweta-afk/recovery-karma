@@ -370,6 +370,15 @@ export const PAGE_GUIDES = {
       "Downloads are recorded in Superadmin Activity.",
     ],
   },
+  health: {
+    title: "Health Check",
+    points: [
+      "Runs automatic checks across every company for problems SamvadX has had before — wrong recordings, calls cut off on screen, phones going offline, Insights failing or charged below cost, data crossing between companies.",
+      "Red = serious, act today. Amber = watch it. Green = fine.",
+      "Each check says what it means and what to do. Open it to see which company or extension.",
+      "Check it every morning for yesterday, and during the day for today so far.",
+    ],
+  },
   activity: {
     title: "Superadmin Activity",
     points: [

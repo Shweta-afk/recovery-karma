@@ -1073,6 +1073,16 @@ the data is cross-company and only the service role may read it.
   filing), payments received and unpaid invoices. Says so instead of failing if `invoices` is
   missing.
 
+**Health Check (`/superadmin/health`, 2026-11-20)** — the daily check for bugs we have already
+had once: wrong recording on a call, calls ended on screen while the agent talked, stuck-open
+calls, extensions with no end records, phones going offline, failed-call share, calls with no
+SkyCRM id, talk time not copied, data crossing between companies, Insights errors / ProfileX
+wallet empty / stuck lookups / lookups charged below ProfileX's cost or ₹0. SQL only counts
+(`platform_health_checks(since, until)`, `migrations/20261120_platform_health_checks.sql`, live,
+service_role only); thresholds and wording are pure in `src/lib/health-checks.ts` (tested in
+`scripts/health-checks.test.ts`); server `health-checks.server.ts`; Overview shows a one-line
+banner. **When you fix a new class of bug, add its symptom here** so it can't hide for days again.
+
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90
 days, this month, last month). The range is shared across superadmin pages and remembered per
