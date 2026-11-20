@@ -1012,10 +1012,11 @@ async function templateValuesFor(
     companySignatoryName: details.signatoryName,
     companySignatoryDesignation: details.signatoryDesignation,
     supplierLegalName: profile?.legal_name ?? "",
-    supplierShortName: profile?.short_name ?? "",
     supplierCin: profile?.cin ?? "",
     supplierPan: profile?.pan ?? "",
     supplierGstin: profile?.gstin ?? null,
+    // `address` (Ghatkopar) IS the registered office (user, 2026-11-20). `registered_address`
+    // holds a different address and must not be printed as the registered office.
     supplierAddress: profile?.address ?? "",
     supplierSignatoryName: profile?.signatory_name ?? "",
     supplierSignatoryDesignation: profile?.signatory_designation ?? "",
@@ -1238,7 +1239,6 @@ export const getMasterAgreement = createServerFn({ method: "POST" })
     const p = (profile ?? {}) as Record<string, string | null>;
     const supplierMissing = [
       ["legal_name", "Legal name"],
-      ["short_name", "Short name"],
       ["cin", "CIN"],
       ["address", "Registered address"],
       ["signatory_name", "Authorised signatory"],

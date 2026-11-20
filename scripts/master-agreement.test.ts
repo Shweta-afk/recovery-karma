@@ -19,7 +19,6 @@ const base = {
   companySignatoryName: "Asha Rao",
   companySignatoryDesignation: "Director",
   supplierLegalName: "Newco Communications Private Limited",
-  supplierShortName: "Newco",
   supplierCin: "U12345MH2026PTC000001",
   supplierAddress: "Mumbai",
   supplierSignatoryName: "V. Manere",
@@ -44,7 +43,7 @@ describe("master agreement", () => {
     expect(DEFAULT_MASTER_AGREEMENT_BODY).not.toMatch(/axiotta/i);
     const text = fillTemplate(DEFAULT_MASTER_AGREEMENT_BODY, values).text;
     expect(text).toContain("Newco Communications Private Limited");
-    expect(text).toContain("NEWCO WILL NOT HELP CLIENT");
+    expect(text).toContain("NEWCO COMMUNICATIONS PRIVATE LIMITED WILL NOT HELP CLIENT");
     expect(text).toContain("Acme Recoveries Private Limited");
     expect(text).not.toContain("{{");
   });
@@ -57,9 +56,33 @@ describe("entityPhrase — how each party is described", () => {
   });
   test("a CIN means a company; an LLPIN an LLP", () => {
     expect(entityPhrase({ cin: "U12345MH2026PTC000001", pan: "AAPCU0939F" })).toMatch(
-      /^a company incorporated in India \(CIN \/ LLPIN: U12345MH2026PTC000001/,
+      /^a company incorporated in India \(CIN: U12345MH2026PTC000001/,
     );
-    expect(entityPhrase({ cin: "AAB-1234", pan: "AAPFU0939F" })).toMatch(/^a limited liability/);
+    expect(entityPhrase({ cin: "AAB-1234", pan: "AAPFU0939F" })).toMatch(
+      /^a limited liability partnership \(LLPIN: AAB-1234/,
+    );
+  });
+  test("with no legal name saved, the brand is never printed as the contracting party", () => {
+    const v = templateValueMap({
+      companyName: "X",
+      effectiveDate: "1 Jan 2027",
+      today: "1 Jan 2027",
+      prices: { setupLines: [], monthlyLines: [], perSeatFee: 0 },
+      agentSeatLimit: null,
+      managerSeatLimit: null,
+      insightsPrices: [],
+      paymentTermsDays: 10,
+    } as unknown as Parameters<typeof templateValueMap>[0]);
+    expect(v.supplier_legal_name).not.toBe("SamvadX");
+    expect(v.supplier_short_name).not.toBe("SamvadX");
+  });
+  test("our company is only ever called by its full legal name (user, 2026-11-20)", () => {
+    const { text } = fillTemplate(DEFAULT_MASTER_AGREEMENT_BODY, values);
+    expect(DEFAULT_MASTER_AGREEMENT_BODY).not.toContain("supplier_short_name");
+    expect(text).not.toContain("Service Provider");
+    expect(text).not.toMatch(/hereinafter referred to as[^.]{0,20}Newco/);
+    // Every mention of the company is the whole name, never a shortened "Newco".
+    expect(text.replace(/Newco Communications Private Limited/gi, "")).not.toMatch(/Newco/i);
   });
   test("a firm's PAN without a CIN reads as a partnership", () => {
     expect(entityPhrase({ pan: "ABLFA5633P", gstin: "27ABLFA5633P1ZV" })).toBe(
