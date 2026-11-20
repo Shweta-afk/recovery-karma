@@ -335,7 +335,7 @@ function SuperadminInvoicesPage() {
                     <Input
                       value={profile.legalName}
                       onChange={(e) => set("legalName", e.target.value)}
-                      placeholder="Samvadx AI Technologies"
+                      placeholder="Axiotta Communications Private Limited"
                       className="h-8 text-xs"
                     />
                   </Field>
@@ -379,14 +379,6 @@ function SuperadminInvoicesPage() {
                       value={profile.cin ?? ""}
                       onChange={(e) => set("cin", e.target.value.toUpperCase())}
                       className="h-8 font-mono text-xs"
-                    />
-                  </Field>
-                  <Field label="Short name used in the agreement">
-                    <Input
-                      value={profile.shortName ?? ""}
-                      onChange={(e) => set("shortName", e.target.value)}
-                      placeholder="e.g. Axiotta"
-                      className="h-8 text-xs"
                     />
                   </Field>
                   <Field label="Authorised signatory (agreement + invoices)">
