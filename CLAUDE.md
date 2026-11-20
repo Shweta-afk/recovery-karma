@@ -441,8 +441,8 @@ Who decides what (user, 2026-11-20):
   uses manual numbers); a call with no account behind it is always manual.
 - Server: `src/lib/calling-numbers.server.ts`; picking in `guard.server.ts` `chooseDid` (from
   `prepareCall`, which now requires `kind`). Migration
-  `20261120_calling_numbers_prefix_manual_portfolio.sql` (NOT applied as of 2026-11-20; code falls
-  back without it — no prefixes, nothing manual). `telephony_dids.portfolio_id` is superseded by
+  `20261120_calling_numbers_prefix_manual_portfolio.sql` (applied live 2026-11-20; code still
+  falls back without it — no prefixes, nothing manual). `telephony_dids.portfolio_id` is superseded by
   `portfolio_dids` (carried over by the migration; no longer read when picking).
 - An outbound CDR's `dst` is prefix + number; `parseStatusWebhook` keeps the last 10 digits.
 
@@ -484,8 +484,8 @@ line per free agent. That is still how Progressive Dial, single calls and Manual
 **"Productive Dial" (internally `dialerMode: "predictive"`) now uses SkyCRM's own predictive dial
 (API spec v1.2 §24)** when the provider offers one (`TelephonyProvider.predictive`) and the
 company has a **predictive queue** (superadmin → company → Calling card,
-`telephony_settings.predictive_queue`; `migrations/20261117_predictive_dialing.sql`, NOT applied
-as of 2026-11-17). Without a queue — or before the migration — it falls back to click-to-call.
+`telephony_settings.predictive_queue`; `migrations/20261117_predictive_dialing.sql`, live —
+found applied 2026-11-20). Without a queue — or before the migration — it falls back to click-to-call.
 Flow (`predictiveDial()`): `login_in_queue1` once per agent on the run → `predictive_call`
 (`extension`, `prefix`, `queue`, `mobile_no`, form-encoded) per borrower → `logout_queue1` when the
 run stops or is evicted by `sweepRuns`. SkyCRM dials the borrower and connects the answer to any
