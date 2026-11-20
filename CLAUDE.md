@@ -466,6 +466,12 @@ instruction not to omit them again. Do not wire them up against Exotel; that wal
 inside the provider, no conference API) is exactly why they were removed once already. Wire
 them only once a real vendor with call-control support is chosen and integrated.
 
+**Early "no answer" on a live call (2026-11-20).** SkyCRM sometimes sends a NO ANSWER end record
+seconds into a call that carries on (Babu Gurava Vaidya, ext 8616: ended at 13 s on screen, then a
+5-minute conversation with no End button). While the browser phone is still connected
+(`isPhoneInCall`, `telephony/phone-status.ts`), `use-single-call.ts` keeps the call screen open;
+the phone's own end closes it. The ledger still records SkyCRM's "no answer" and 0 talk time.
+
 ### Listen / Whisper / Barge (`call_monitor_api`) — status 2026-11-17
 
 Testers: no error, phone silent. Two changes: (1) the listener is now sent as `monitor_extention`

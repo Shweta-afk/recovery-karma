@@ -43,3 +43,17 @@ export function waitForPhone(ms: number): Promise<boolean> {
     listeners.add(check);
   });
 }
+
+/** Whether the browser phone is in a connected call right now (2026-11-20). SkyCRM sometimes sends
+ *  a "no answer" end-of-call record seconds into a call that then carries on (Babu Gurava Vaidya,
+ *  ext 8616, 20 Nov: "no answer" at 13 s, then a 5-minute conversation). The call screen closed
+ *  and the agent had no End button while still talking. While this phone is still connected, the
+ *  call is not over, whatever the server says; the phone's own end closes the screen
+ *  (PHONE_CALL_ENDED_EVENT in call-session.tsx). */
+let inCall = false;
+export function setPhoneInCall(next: boolean): void {
+  inCall = next;
+}
+export function isPhoneInCall(): boolean {
+  return inCall;
+}

@@ -20,7 +20,11 @@ import { useWebphone } from "@/lib/dialer/use-webphone";
 import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
 import { getMyWebphoneLogin, logMissedInbound } from "@/lib/telephony-actions.server";
 import { useNavigate } from "@tanstack/react-router";
-import { PHONE_REREGISTER_EVENT, setPhoneState } from "@/lib/telephony/phone-status";
+import {
+  PHONE_REREGISTER_EVENT,
+  setPhoneInCall,
+  setPhoneState,
+} from "@/lib/telephony/phone-status";
 import { startAnswerDetector } from "@/lib/telephony/answer-detector";
 import { useCallSession } from "@/lib/call-session";
 import {
@@ -285,6 +289,7 @@ function RegisteredPhone({
   // And the other way: once a call this phone answered is over, tell the app.
   const wasConnected = useRef(false);
   useEffect(() => {
+    setPhoneInCall(call?.state === "connected");
     if (call?.state === "connected") {
       wasConnected.current = true;
       return;
