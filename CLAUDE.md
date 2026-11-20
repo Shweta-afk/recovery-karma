@@ -1015,6 +1015,10 @@ Admin → Users, not counted against agent/manager seats.
   ledger for calls not yet copied: `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that
   figure is ringing, not talk). Connected = ledger `completed`, else the disposition (`isAnswered`);
   the SQL summary and JS reports must stay in step. Contact Group stays disposition-based.
+- **Recording retention (user, 2026-11-20): SamvadX keeps its copy 120 days** (`RECORDING_RETENTION_DAYS`,
+  `recording-file.ts`). `purgeOldRecordings` (recordings.server.ts, every 6 h from the import timer)
+  deletes the Storage file and sets the ledger row `recording_status='expired'`. SkyCRM keeps its
+  own original under its own terms; only answered calls are copied, and only since 2026-11-16.
 - **Storage buckets must ask for ≤ 50 MB** (`scripts/storage-buckets.test.ts`): Supabase refuses a
   bucket above the project's upload limit. `call-recordings` asked 100 MB and `saved-archives`
   200 MB, so neither bucket ever existed: from 2026-11-15 (when SkyCRM's download started

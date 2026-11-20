@@ -172,3 +172,17 @@ export function retryDelayMs(attempts: number): number {
 
 /** Per-file attempts before giving up (vendor-wide outages don't count — see the importer). */
 export const MAX_RECORDING_ATTEMPTS = 8;
+
+/** SamvadX keeps its own copy of a recording this long, then deletes it (user, 2026-11-20:
+ *  "3 or 4 months" — 4 chosen). SkyCRM keeps its own original under its own terms. */
+export const RECORDING_RETENTION_DAYS = 120;
+
+/** Calls that started before this instant have their stored recording deleted. */
+export function recordingRetentionCutoff(nowMs: number, days = RECORDING_RETENTION_DAYS): Date {
+  return new Date(nowMs - days * 86_400_000);
+}
+
+/** The Storage path kept in recording_error when a recording was marked as another call's. */
+export function keptObjectPath(note: string | null | undefined): string | null {
+  return note?.match(/Stored file kept at: (\S+)/)?.[1] ?? null;
+}

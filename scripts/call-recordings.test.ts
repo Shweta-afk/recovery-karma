@@ -151,3 +151,26 @@ describe("recordingDownloadName", () => {
     expect(recordingDownloadName(null, "12", null)).toBe("call-unknown-time.wav");
   });
 });
+
+import {
+  RECORDING_RETENTION_DAYS as RETENTION,
+  keptObjectPath,
+  recordingRetentionCutoff,
+} from "../src/lib/telephony/recording-file";
+
+describe("recording retention (2026-11-20)", () => {
+  test("SamvadX keeps its copy 4 months", () => {
+    expect(RETENTION).toBe(120);
+    const now = Date.parse("2026-11-20T00:00:00Z");
+    expect(recordingRetentionCutoff(now).toISOString()).toBe("2026-07-23T00:00:00.000Z");
+  });
+  test("finds the kept file of a recording marked as another call's", () => {
+    expect(
+      keptObjectPath(
+        "Recording belongs to another call (late end record matched to the wrong call; fixed 2026-11-20). Stored file kept at: abc/2026/11/20/1795.wav",
+      ),
+    ).toBe("abc/2026/11/20/1795.wav");
+    expect(keptObjectPath("not answered (NO ANSWER)")).toBeNull();
+    expect(keptObjectPath(null)).toBeNull();
+  });
+});
