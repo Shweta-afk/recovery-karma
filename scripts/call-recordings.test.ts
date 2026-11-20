@@ -137,3 +137,17 @@ describe("helpers", () => {
     expect(retryDelayMs(100)).toBe(6 * 3600_000);
   });
 });
+
+describe("recordingDownloadName", () => {
+  test("IST date/time, last 4 digits, extension from the content type", async () => {
+    const { recordingDownloadName } = await import("../src/lib/telephony/recording-marker");
+    // 2026-11-17 18:40 UTC = 2026-11-18 00:10 IST (the day turns over in IST, not UTC).
+    expect(recordingDownloadName("2026-11-17T18:40:00Z", "+91 98765 43210", "audio/wav")).toBe(
+      "call-2026-11-18_0010-3210.wav",
+    );
+    expect(recordingDownloadName("2026-11-17T06:05:00Z", null, "audio/mpeg")).toBe(
+      "call-2026-11-17_1135.mp3",
+    );
+    expect(recordingDownloadName(null, "12", null)).toBe("call-unknown-time.wav");
+  });
+});

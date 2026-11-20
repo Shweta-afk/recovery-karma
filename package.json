@@ -104,7 +104,6 @@
     "baseline-browser-mapping": "^2.11.25",
     "postcss-selector-parser": "^6.1.5",
     "esbuild": "^0.28.2",
-    "brace-expansion": "^5.0.12",
     "seroval": "^1.6.11",
     "source-map-js": "^1.2.2",
     "uuid": "^11.1.1"

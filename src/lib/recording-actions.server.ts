@@ -9,7 +9,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import { z, tokenSchema } from "./schemas";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
-import { CALL_RECORDINGS_BUCKET, parseRecordingMarker } from "./telephony/recording-marker";
+import {
+  CALL_RECORDINGS_BUCKET,
+  parseRecordingMarker,
+  recordingDownloadName,
+} from "./telephony/recording-marker";
 
 const SIGNED_URL_SECONDS = 3600;
 
@@ -20,7 +24,7 @@ const SIGNED_URL_SECONDS = 3600;
 async function authorisedRecording(
   accessToken: string,
   marker: string,
-): Promise<{ object: string; contentType: string | null; clientId: string }> {
+): Promise<{ object: string; contentType: string | null; clientId: string; fileName: string }> {
   const caller = await verifyCaller(accessToken);
   if (!caller) throw new Error("Not authenticated");
   const ledgerId = parseRecordingMarker(marker);
@@ -28,12 +32,17 @@ async function authorisedRecording(
 
   const { data: row } = await (getSupabaseAdmin() as any)
     .from("telephony_calls")
-    .select("client_id, recording_object, recording_content_type")
+    .select("client_id, recording_object, recording_content_type, started_at, remote_phone")
     .eq("id", ledgerId)
     .maybeSingle();
   if (!row?.recording_object || row.client_id !== caller.clientId) {
     throw new Error("Recording not found");
   }
+  const fileName = recordingDownloadName(
+    row.started_at as string | null,
+    row.remote_phone as string | null,
+    row.recording_content_type as string | null,
+  );
 
   // A call auditor reviews every call of their company, and RLS shows them none. The company
   // check above is the whole rule for them.
@@ -42,6 +51,7 @@ async function authorisedRecording(
       object: row.recording_object as string,
       contentType: (row.recording_content_type as string | null) ?? null,
       clientId: caller.clientId,
+      fileName,
     };
   }
 
@@ -63,6 +73,7 @@ async function authorisedRecording(
     object: row.recording_object as string,
     contentType: (row.recording_content_type as string | null) ?? null,
     clientId: caller.clientId,
+    fileName,
   };
 }
 
@@ -76,5 +87,10 @@ export const getRecordingPlayUrl = createServerFn({ method: "POST" })
       .storage.from(CALL_RECORDINGS_BUCKET)
       .createSignedUrl(rec.object, SIGNED_URL_SECONDS);
     if (error || !signed?.signedUrl) throw new Error("Recording not available right now");
-    return { url: signed.signedUrl };
+    // A second link that makes the browser SAVE the file (Content-Disposition: attachment) under a
+    // readable name, instead of opening a player tab.
+    const { data: dl } = await getSupabaseAdmin()
+      .storage.from(CALL_RECORDINGS_BUCKET)
+      .createSignedUrl(rec.object, SIGNED_URL_SECONDS, { download: rec.fileName });
+    return { url: signed.signedUrl, downloadUrl: dl?.signedUrl ?? null, fileName: rec.fileName };
   });
