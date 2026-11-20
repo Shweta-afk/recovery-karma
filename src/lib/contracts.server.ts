@@ -992,8 +992,6 @@ async function templateValuesFor(
     legal_name: string;
     payment_terms_days: number | null;
     address: string | null;
-    /** The registered office on the CIN. `address` is the office invoices are sent from. */
-    registered_address?: string | null;
     cin?: string | null;
     pan?: string | null;
     gstin?: string | null;
@@ -1017,8 +1015,9 @@ async function templateValuesFor(
     supplierCin: profile?.cin ?? "",
     supplierPan: profile?.pan ?? "",
     supplierGstin: profile?.gstin ?? null,
-    // The agreement says "having its registered office at", so it must be the registered office.
-    supplierAddress: profile?.registered_address?.trim() || profile?.address || "",
+    // `address` (Ghatkopar) IS the registered office (user, 2026-11-20). `registered_address`
+    // holds a different address and must not be printed as the registered office.
+    supplierAddress: profile?.address ?? "",
     supplierSignatoryName: profile?.signatory_name ?? "",
     supplierSignatoryDesignation: profile?.signatory_designation ?? "",
     signedBy: signing?.by,
