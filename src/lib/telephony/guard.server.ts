@@ -617,6 +617,8 @@ export async function ledgerForWebhook(args: {
   vendorCallId?: string;
   agentHandle?: string;
   remotePhone?: string;
+  /** An inbound event never belongs to one of our outbound calls by number alone. */
+  direction?: "inbound" | "outbound";
 }): Promise<LedgerRow | null> {
   const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
   if (args.vendorCallId) {
@@ -647,7 +649,7 @@ export async function ledgerForWebhook(args: {
     const hit = error ? null : pickPredictiveLedger((data ?? []) as LedgerRow[], args.remotePhone);
     if (hit) return hit;
   }
-  if (args.agentHandle && last10.length === 10) {
+  if (args.agentHandle && last10.length === 10 && args.direction !== "inbound") {
     // This extension's own call to this number that never got a callid (2026-11-20). SkyCRM's
     // end record often arrives after the agent has ended that call and dialled the next one; it
     // belongs to the earlier call, ended or not.
@@ -656,6 +658,7 @@ export async function ledgerForWebhook(args: {
         .from("telephony_calls")
         .select(cols)
         .eq("agent_handle", args.agentHandle)
+        .eq("direction", "outbound")
         .is("vendor_callid", null)
         .gt("started_at", since)
         .like("remote_phone", `%${last10}`)
