@@ -75,8 +75,23 @@ export function InvoiceDocument({
   const billOfSupply = isBillOfSupply(invoice);
   const chargedOn = invoice.lines.find((l) => l.chargedOn)?.chargedOn;
   const cancelled = invoice.status === "cancelled";
+  // Printed on the company letterhead only when the invoice was ISSUED with it on (the setting
+  // is snapshotted into `supplier`), so older invoices never borrow a later company's letterhead.
+  const lh = s.letterhead === true;
   return (
-    <div className="relative mx-auto w-full max-w-[800px] bg-white p-8 print:max-w-none print:p-0 text-[12px] leading-relaxed text-neutral-900">
+    <div className="relative mx-auto w-full max-w-[800px] overflow-hidden bg-white p-8 print:max-w-none print:p-0 text-[12px] leading-relaxed text-neutral-900">
+      {lh && (
+        <>
+          <div className="absolute inset-x-0 top-0 h-2 bg-[#0B33D9] print:fixed" />
+          {/* Faint SamvadX "X" behind the content, as on the letterhead. */}
+          <img
+            src="/letterhead/samvadx-x.png"
+            alt=""
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-1/2 w-[55%] -translate-x-1/2 -translate-y-1/2 opacity-[0.07]"
+          />
+        </>
+      )}
       {cancelled && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <span className="rotate-[-20deg] rounded border-4 border-red-500/60 px-6 py-2 text-5xl font-bold text-red-500/60">
@@ -85,10 +100,20 @@ export function InvoiceDocument({
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-6 border-b border-neutral-300 pb-4">
+      {lh && (
+        <div className="relative mb-4 flex justify-end pt-2">
+          <img
+            src="/letterhead/samvadx-logo-tagline.png"
+            alt="SamvadX — Innovation by AI, connectivity by design"
+            className="h-16 w-auto"
+          />
+        </div>
+      )}
+
+      <div className="relative flex items-start justify-between gap-6 border-b border-neutral-300 pb-4">
         <div>
           {/* Same file as the login screen's logo (public/logo.png, 500×125). */}
-          <img src="/logo.png" alt="SamvadX" className="mb-3 h-9 w-auto" />
+          {!lh && <img src="/logo.png" alt="SamvadX" className="mb-3 h-9 w-auto" />}
           <h1 className="text-xl font-bold tracking-tight">
             {credit ? "CREDIT NOTE" : billOfSupply ? "BILL OF SUPPLY" : "TAX INVOICE"}
           </h1>
@@ -125,7 +150,7 @@ export function InvoiceDocument({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-6 border-b border-neutral-300 py-4">
+      <div className="relative grid grid-cols-2 gap-6 border-b border-neutral-300 py-4">
         <Party title="Supplier" p={s} noGstin="Not registered under GST" showPan />
         <Party title="Bill to" p={invoice.recipient} noGstin="Unregistered" />
       </div>
@@ -147,7 +172,7 @@ export function InvoiceDocument({
         )}
       </p>
 
-      <table className="w-full border-collapse">
+      <table className="relative w-full border-collapse">
         <thead>
           <tr className="border-y border-neutral-300 text-left text-[10px] uppercase tracking-wide text-neutral-500">
             <th className="py-2 pr-2 font-semibold">#</th>
@@ -231,7 +256,7 @@ export function InvoiceDocument({
           <div className="mt-10">
             {s.signatoryName && <p className="font-semibold">{s.signatoryName}</p>}
             <p className="text-neutral-500">
-              {s.signatoryDesignation
+              {s.signatoryDesignation && !/authori[sz]ed\s+signatory/i.test(s.signatoryDesignation)
                 ? `${s.signatoryDesignation} · Authorised signatory`
                 : "Authorised signatory"}
             </p>
@@ -250,9 +275,43 @@ export function InvoiceDocument({
         </div>
       )}
 
-      <p className="mt-4 text-center text-[10px] text-neutral-400">
+      <p className="relative mt-4 text-center text-[10px] text-neutral-400">
         This is a computer-generated {credit ? "credit note" : "invoice"}.
       </p>
+
+      {lh && <LetterheadFooter s={s} />}
+    </div>
+  );
+}
+
+/** The letterhead's footer: company name (English + local script), registered office, office,
+ *  and website / email / CIN / GSTIN — all from the invoice's own supplier snapshot. */
+function LetterheadFooter({ s }: { s: InvoiceParty }) {
+  const site = s.website?.replace(/^https?:\/\//, "");
+  return (
+    <div className="relative mt-6 border-t-2 border-[#0B33D9] pt-3 text-[10px] leading-snug text-neutral-700">
+      <p className="text-[13px] font-bold text-[#0B1F4D]">{s.legalName}</p>
+      {s.legalNameLocal && <p className="font-semibold text-[#0B33D9]">{s.legalNameLocal}</p>}
+      <div className="mt-2 grid grid-cols-3 gap-4">
+        <div>
+          {s.registeredAddress && (
+            <>
+              <p className="font-semibold text-[#0B1F4D]">Registered Office</p>
+              <p>{s.registeredAddress.replace(/\s*\n\s*/g, " ")}</p>
+            </>
+          )}
+        </div>
+        <div>
+          <p className="font-semibold text-[#0B1F4D]">Office</p>
+          <p>{s.address.replace(/\s*\n\s*/g, " ")}</p>
+        </div>
+        <div className="text-right">
+          {site && <p className="font-semibold text-[#0B1F4D]">{site}</p>}
+          {s.email && <p>{s.email}</p>}
+          {s.cin && <p>CIN: {s.cin}</p>}
+          {s.gstin && <p>GSTIN: {s.gstin}</p>}
+        </div>
+      </div>
     </div>
   );
 }

@@ -25,6 +25,7 @@ export async function reconcileWithLedger(
     vendorCallId: status.vendorCallId,
     agentHandle: status.agentHandle,
     remotePhone: status.remotePhone,
+    direction: status.direction,
   }).catch(() => null);
 
   if (!ledger && status.direction === "inbound" && status.vendorCallId) {

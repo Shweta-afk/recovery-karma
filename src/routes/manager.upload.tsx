@@ -972,20 +972,23 @@ function PortfolioUploadPage() {
                     className={cn(step !== "settings" && "opacity-70 pointer-events-none")}
                   >
                     <PortfolioSettingsStep settings={settings} onChange={setSettings} />
-                    <div className="mt-5 space-y-2 border-t border-border pt-4">
-                      <p className="text-sm font-medium">Calling numbers</p>
-                      <p className="text-xs text-muted-foreground">
-                        The numbers borrowers see when this portfolio is called from the Call Queue
-                        (click-to-call, Progressive and Productive Dial). Calls rotate across the
-                        ones you choose. You can change them later from the portfolio page.
-                      </p>
-                      <PortfolioNumbersPicker
-                        data={numberChoices.data}
-                        error={numberChoices.error}
-                        value={numberIds}
-                        onChange={setNumberIds}
-                      />
-                    </div>
+                    {numberChoices.data?.companyHasNumbers && (
+                      <div className="mt-5 space-y-2 border-t border-border pt-4">
+                        <p className="text-sm font-medium">Calling numbers</p>
+                        <p className="text-xs text-muted-foreground">
+                          The numbers borrowers see when this portfolio is called from the Call
+                          Queue (click-to-call, Progressive and Productive Dial). Calls rotate
+                          across the ones you choose. You can change them later from the portfolio
+                          page.
+                        </p>
+                        <PortfolioNumbersPicker
+                          data={numberChoices.data}
+                          error={numberChoices.error}
+                          value={numberIds}
+                          onChange={setNumberIds}
+                        />
+                      </div>
+                    )}
                   </fieldset>
                   {step === "settings" && (
                     <Button className="mt-5 w-full" onClick={() => setStep("assign")}>

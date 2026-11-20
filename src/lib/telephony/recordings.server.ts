@@ -16,7 +16,10 @@ import { downloadRecordingRaw, fetchCdrReport, type SkyCrmCdrRow } from "./skycr
 import {
   CALL_RECORDINGS_BUCKET,
   MAX_RECORDING_ATTEMPTS,
+  RECORDING_RETENTION_DAYS,
   extractRecording,
+  keptObjectPath,
+  recordingRetentionCutoff,
   recordingMarker,
   recordingObjectPath,
   retryDelayMs,
@@ -26,8 +29,12 @@ import {
 /* eslint-disable @typescript-eslint/no-explicit-any -- new columns aren't in the generated types yet */
 const db = () => getSupabaseAdmin() as any;
 
-const SWEEP_EVERY_MS = 5 * 60_000;
-const PER_SWEEP = 25;
+// 2026-11-18: was 25 every 5 min (300/hour) while busy hours ran 250–430 calls, so a call from
+// early in a busy hour waited up to 4 hours behind newer ones. 100 every 2 min = 3,000/hour; most
+// rows are unanswered calls (one CDR lookup per sweep, no download). `state.running` stops a slow
+// sweep from overlapping the next tick.
+const SWEEP_EVERY_MS = 2 * 60_000;
+const PER_SWEEP = 100;
 const BACKLOG_DAYS = 30;
 
 interface TodoRow {
@@ -52,7 +59,11 @@ export interface SweepResult {
 const g = globalThis as unknown as {
   __samvadxRecordings?: { timer?: ReturnType<typeof setInterval>; running?: boolean };
 };
-const state = (g.__samvadxRecordings ??= {});
+const state = (g.__samvadxRecordings ??= {}) as {
+  timer?: ReturnType<typeof setInterval>;
+  running?: boolean;
+  lastPurge?: number;
+};
 
 function enabled(): boolean {
   return process.env.TELEPHONY_PROVIDER === "skycrm" && !!process.env.SKYCRM_SECRET;
@@ -64,6 +75,11 @@ export function startRecordingImports(): void {
   const tick = () => {
     if (!enabled()) return;
     void importRecordings().catch((err) => console.warn("[recordings] sweep failed:", err));
+    // Retention: at most every 6 hours, delete our copies older than RECORDING_RETENTION_DAYS.
+    if (!state.lastPurge || Date.now() - state.lastPurge > 6 * 3600_000) {
+      state.lastPurge = Date.now();
+      void purgeOldRecordings().catch((err) => console.warn("[recordings] purge failed:", err));
+    }
   };
   setTimeout(tick, 60_000);
   state.timer = setInterval(tick, SWEEP_EVERY_MS);
@@ -242,4 +258,57 @@ export async function importRecordings(limit = PER_SWEEP): Promise<SweepResult> 
   } finally {
     state.running = false;
   }
+}
+
+/**
+ * Delete SamvadX's own copies of recordings older than RECORDING_RETENTION_DAYS (2026-11-20).
+ * The ledger row stays (status 'expired') so reports still know a recording existed; playback,
+ * AI and the feedback file then say there is no recording. Files of recordings marked as another
+ * call's ('mismatched', path kept in recording_error) are deleted on the same schedule.
+ */
+export async function purgeOldRecordings(batch = 500): Promise<{ deleted: number }> {
+  const cutoff = recordingRetentionCutoff(Date.now()).toISOString();
+  const note = `Deleted after ${RECORDING_RETENTION_DAYS} days (SamvadX keeps its copy ${RECORDING_RETENTION_DAYS} days).`;
+  let deleted = 0;
+  for (let round = 0; round < 20; round++) {
+    const { data, error } = await db()
+      .from("telephony_calls")
+      .select("id, recording_status, recording_object, recording_error")
+      .in("recording_status", ["stored", "mismatched"])
+      .lt("started_at", cutoff)
+      .limit(batch);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as {
+      id: string;
+      recording_status: string;
+      recording_object: string | null;
+      recording_error: string | null;
+    }[];
+    if (!rows.length) break;
+    const paths = rows
+      .map((r) => r.recording_object ?? keptObjectPath(r.recording_error))
+      .filter((p): p is string => !!p);
+    if (paths.length) {
+      const { error: rmErr } = await getSupabaseAdmin()
+        .storage.from(CALL_RECORDINGS_BUCKET)
+        .remove(paths);
+      // Leave the rows as they are if Storage refused, so the next run tries again.
+      if (rmErr) throw new Error(`storage remove: ${rmErr.message}`);
+    }
+    const { error: upErr } = await db()
+      .from("telephony_calls")
+      .update({ recording_status: "expired", recording_object: null, recording_error: note })
+      .in(
+        "id",
+        rows.map((r) => r.id),
+      );
+    if (upErr) throw new Error(upErr.message);
+    deleted += rows.length;
+    if (rows.length < batch) break;
+  }
+  if (deleted)
+    console.log(
+      `[recordings] retention: deleted ${deleted} recordings older than ${RECORDING_RETENTION_DAYS} days`,
+    );
+  return { deleted };
 }

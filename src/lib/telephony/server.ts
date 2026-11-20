@@ -99,8 +99,7 @@ const owners = g.__recoveryaiTelephony.owners;
 const runTargets = g.__recoveryaiTelephony.runTargets;
 const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
 const predictiveSessions = g.__recoveryaiTelephony.predictiveSessions;
-/** Sessions of runs sweepRuns evicted, waiting for a server function to log their agents out. */
-const evictedSessions: PredictiveSession[] = [];
+const pendingPredictiveLogouts = new Set<string>();
 
 interface PredictiveSession {
   clientId: string;
@@ -136,14 +135,20 @@ function sweepRuns(now = Date.now()): void {
       runTouchedAt.delete(id);
       loggedLegs.delete(id);
       runTargets.delete(id);
-      // Only noted here: sweepRuns is reachable from ingestCallStatusEvent, which ships in the
-      // browser bundle, so it must not touch the provider. Handlers log these agents out.
-      const session = predictiveSessions.get(id);
-      if (session) {
-        predictiveSessions.delete(id);
-        evictedSessions.push(session);
-      }
+      // Not endPredictiveSession() here: sweepRuns is reachable from ingestCallStatusEvent, a
+      // plain export that ships in the browser bundle, and anything it references (the provider,
+      // SkyCRM's API code) would ship with it. Server-function handlers drain this set instead.
+      if (predictiveSessions.has(id)) pendingPredictiveLogouts.add(id);
     }
+  }
+}
+
+/** Log out the queue sessions of runs evicted by sweepRuns. Call only from server-function
+ *  handlers (stripped from the client bundle), never from a plain export. */
+function drainPredictiveLogouts(): void {
+  for (const id of pendingPredictiveLogouts) {
+    pendingPredictiveLogouts.delete(id);
+    void endPredictiveSession(id);
   }
 }
 
@@ -587,11 +592,6 @@ async function endPredictiveSession(runId: string): Promise<void> {
   await logoutSession(session);
 }
 
-/** Log out the agents of runs sweepRuns evicted. Called from the dialer server functions. */
-async function logoutEvictedSessions(): Promise<void> {
-  for (const session of evictedSessions.splice(0)) await logoutSession(session);
-}
-
 async function logoutSession(session: PredictiveSession): Promise<void> {
   const pd = getTelephonyProvider().predictive;
   if (!pd) return;
@@ -768,7 +768,6 @@ export const startDialerRun = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
-    void logoutEvictedSessions();
     enforceRateLimit(`dialer-run:${caller.authUserId}`, 10, 60_000);
     await assertMayDial(caller);
     if (typeof data.runId !== "string" || !data.runId) throw new Error("Missing runId");
@@ -811,6 +810,7 @@ export const startDialerRun = createServerFn({ method: "POST" })
         throw new Error(res.blocked);
       }
       sweepRuns();
+      drainPredictiveLogouts();
       saveRun(res.run);
       return res.run;
     }
@@ -841,6 +841,7 @@ export const startDialerRun = createServerFn({ method: "POST" })
       console.warn(`[dialer] ${unassigned} target(s) not dialed — no free agent leg available`);
     }
     sweepRuns();
+    drainPredictiveLogouts();
     saveRun(run);
     return run;
   });
@@ -858,7 +859,6 @@ export const tickDialerRun = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
-    void logoutEvictedSessions();
     if (!owns(caller, `run:${data.runId}`)) return null;
 
     ensureSubscribed();
@@ -920,7 +920,6 @@ export const stopDialerRun = createServerFn({ method: "POST" })
   .inputValidator((d: { accessToken: string; runId: string }) => d)
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
-    void logoutEvictedSessions();
     if (!owns(caller, `run:${data.runId}`)) return null;
     const run = runs.get(data.runId);
     if (!run) return null;

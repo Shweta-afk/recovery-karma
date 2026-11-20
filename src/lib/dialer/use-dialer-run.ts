@@ -15,9 +15,15 @@ import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provide
 import type { CallRecord, TelephonyEvent } from "@/lib/telephony/types";
 import { toLiveEntries } from "./live-adapter";
 import { getAccessToken } from "@/lib/access-token";
+import { waitForPhone } from "@/lib/telephony/phone-status";
 import type { LiveCallEntry } from "@/routes/dashboard.call-queue";
 
 const TICK_MS = 1500;
+
+/** Same name as DIALER_RUN_EVENT in browser-phone.tsx (not imported: that is a component file). */
+const DIALER_RUN_EVENT = "samvadx:dialer-run";
+const announceRun = (active: boolean) =>
+  window.dispatchEvent(new CustomEvent(DIALER_RUN_EVENT, { detail: { active } }));
 
 export interface StartArgs {
   settings: PortfolioSettings;
@@ -115,20 +121,31 @@ export function useDialerRun(): UseDialerRun {
       callerIdRef.current = callerId;
 
       if (mode === "server") {
+        // Tell the browser phone first, while still inside the agent's click on Start: it then
+        // answers SkyCRM's rings for this run by itself and may play their audio.
+        announceRun(true);
+        // SkyCRM refuses to ring a phone that isn't connected (SX-3106), e.g. right after a reload.
+        await waitForPhone(8000);
         // Real-provider path — background dialing runs server-side. Dynamically imported so
         // vendor/server code never ships in the eager client bundle.
         const srv = await import("@/lib/telephony/server");
-        const started = await srv.startDialerRun({
-          data: {
-            accessToken: await getAccessToken(),
-            runId,
-            settings,
-            targets,
-            agentsAvailable: lines,
-            agentNumbers,
-            callerId,
-          },
-        });
+        let started: Awaited<ReturnType<typeof srv.startDialerRun>>;
+        try {
+          started = await srv.startDialerRun({
+            data: {
+              accessToken: await getAccessToken(),
+              runId,
+              settings,
+              targets,
+              agentsAvailable: lines,
+              agentNumbers,
+              callerId,
+            },
+          });
+        } catch (err) {
+          announceRun(false);
+          throw err;
+        }
         if (started) runRef.current = started;
         render();
         timerRef.current = setInterval(async () => {
@@ -143,6 +160,7 @@ export function useDialerRun(): UseDialerRun {
             },
           });
           if (ticked) runRef.current = ticked;
+          if (ticked && !ticked.running) announceRun(false);
           render();
         }, TICK_MS);
         return;
@@ -180,6 +198,7 @@ export function useDialerRun(): UseDialerRun {
   const stop = useCallback(async () => {
     clearTimer();
     if (modeRef.current === "server") {
+      announceRun(false);
       const srv = await import("@/lib/telephony/server");
       const stopped = await srv.stopDialerRun({
         data: { accessToken: await getAccessToken(), runId: runIdRef.current },
@@ -218,6 +237,7 @@ export function useDialerRun(): UseDialerRun {
     () => () => {
       clearTimer();
       teardownSim();
+      if (modeRef.current === "server") announceRun(false);
     },
     [],
   );

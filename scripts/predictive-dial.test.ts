@@ -516,8 +516,12 @@ describe("caller-number prefix (2026-11-20)", () => {
 describe("browser bundle guard", () => {
   test("sweepRuns (reachable from ingestCallStatusEvent) never touches the provider", async () => {
     const src = await Bun.file("src/lib/telephony/server.ts").text();
-    const body = src.slice(src.indexOf("function sweepRuns"), src.indexOf("/** Apply a provider event"));
+    const body = src.slice(
+      src.indexOf("function sweepRuns"),
+      src.indexOf("/** Log out the queue sessions"),
+    );
     expect(body.length).toBeGreaterThan(100);
-    expect(body).not.toMatch(/getTelephonyProvider|endPredictiveSession|logoutSession|prov\./);
+    const code = body.replace(/\/\/.*$/gm, "");
+    expect(code).not.toMatch(/getTelephonyProvider|endPredictiveSession|logoutSession|prov\./);
   });
 });

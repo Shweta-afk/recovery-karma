@@ -665,13 +665,19 @@ export function startCallMonitor(
   supervisorExtension: string,
   agentExtension: string,
 ): Promise<SkyCrmResponse> {
+  // Which field is the listener is not stated in the spec. Until 2026-11-17 we sent the
+  // supervisor as user_extention: testers clicked Listen/Whisper, got "success", heard nothing.
+  // §14 call_monitor_hangup_api takes only monitor_extention, i.e. the monitoring session is
+  // keyed by the LISTENER's extension — so monitor_extention = supervisor, user_extention = the
+  // agent being monitored. SKYCRM_MONITOR_FIELDS=original restores the old order (Railway env).
+  const original = (process.env.SKYCRM_MONITOR_FIELDS ?? "").trim().toLowerCase() === "original";
   return post(
     "call_monitor_api",
     {
       Mode: mode,
       mode,
-      user_extention: supervisorExtension,
-      monitor_extention: agentExtension,
+      user_extention: original ? supervisorExtension : agentExtension,
+      monitor_extention: original ? agentExtension : supervisorExtension,
     },
     supervisorExtension,
   );

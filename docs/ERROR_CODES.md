@@ -89,10 +89,11 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 | SX-3104 | The call could not be placed.             | SkyCRM returned status ≥ 300; their message is in the log.                                                |
 | SX-3105 | SMS is not available yet.                 | SkyCRM has no SMS endpoint.                                                                               |
 | SX-3106 | Your phone (extension …) isn't connected. | SkyCRM's `dial_response` says the agent's extension is Unavailable (softphone not registered / VPN down). |
-| SX-3201 | Could not transcribe this recording.      | Groq Whisper returned an error. `call-sentiment-actions.server.ts`                                        |
+| SX-3201 | Could not transcribe this recording.      | Groq Whisper returned an error (status + body in the log; 400 was every WAV sent as .mp3 until 2026-11-20). `call-sentiment-actions.server.ts`                                        |
 | SX-3202 | Could not analyse this call.              | Gemini returned an error.                                                                                 |
 | SX-3203 | Could not analyse this call.              | Gemini returned an empty answer.                                                                          |
 | SX-3204 | Call analysis is busy right now.          | Gemini kept failing (rate limit) after all retries.                                                       |
+| SX-3205 | AI transcription isn't set up yet.        | `GROQ_API_KEY` is not set on Railway. `call-sentiment-actions.server.ts`                                    |
 
 ### Invoices, billing, contracts (4xxx)
 

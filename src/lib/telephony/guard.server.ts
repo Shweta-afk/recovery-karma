@@ -6,6 +6,7 @@ import {
   STALE_CALL_MINUTES,
   channelLimitMessage,
   evaluateCall,
+  differentNumber,
   normalisePhone,
   type TelephonySettingsRow,
 } from "./guard-rules";
@@ -658,6 +659,8 @@ export async function ledgerForWebhook(args: {
   vendorCallId?: string;
   agentHandle?: string;
   remotePhone?: string;
+  /** An inbound event never belongs to one of our outbound calls by number alone. */
+  direction?: "inbound" | "outbound";
 }): Promise<LedgerRow | null> {
   const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
   if (args.vendorCallId) {
@@ -688,6 +691,25 @@ export async function ledgerForWebhook(args: {
     const hit = error ? null : pickPredictiveLedger((data ?? []) as LedgerRow[], args.remotePhone);
     if (hit) return hit;
   }
+  if (args.agentHandle && last10.length === 10 && args.direction !== "inbound") {
+    // This extension's own call to this number that never got a callid (2026-11-20). SkyCRM's
+    // end record often arrives after the agent has ended that call and dialled the next one; it
+    // belongs to the earlier call, ended or not.
+    const hit = await readLedger<LedgerRow | null>((cols) =>
+      db()
+        .from("telephony_calls")
+        .select(cols)
+        .eq("agent_handle", args.agentHandle)
+        .eq("direction", "outbound")
+        .is("vendor_callid", null)
+        .gt("started_at", since)
+        .like("remote_phone", `%${last10}`)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    );
+    if (hit) return hit;
+  }
   if (args.agentHandle) {
     const hit = await readLedger<LedgerRow | null>((cols) =>
       db()
@@ -700,7 +722,11 @@ export async function ledgerForWebhook(args: {
         .limit(1)
         .maybeSingle(),
     );
-    if (hit) return hit;
+    // "The open call on this extension" only when the event is about the same number. A late end
+    // record for the agent's previous call used to land on the call in progress and end it on
+    // screen (Babu Gurava Vaidya, ext 8616, 20 Nov: the 14:28 call's NO ANSWER ended the 14:30
+    // call 13 s in, and it took that call's callid and recording).
+    if (hit && !differentNumber(hit.remote_phone, last10)) return hit;
   }
   return null;
 }

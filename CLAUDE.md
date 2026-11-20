@@ -408,10 +408,23 @@ rang" toast) while it carried on, and `answered_at` was never set. `liveStatusFo
 treats an unknown one as ringing (logged as `unknown live call status`) — only a recognised end
 word or the CDR ends a call.
 
+**Productive Dial and the browser phone (2026-11-18).** A dialer run (`use-dialer-run.ts`, server
+mode) announces itself with `samvadx:dialer-run` `{active}` (`DIALER_RUN_EVENT` in
+`browser-phone.tsx`), first thing inside the Start click: the phone unlocks its `<audio>` then and
+auto-answers every SkyCRM ring until the run stops (stop, run ended on a tick, unmount, failed
+start). Before this, run legs never fired the single-call `dial-started` event, so rings weren't
+picked up by themselves and the far end played silently (testers: "can't hear the debtor").
+Only the browser that started the run is told — a manager running lines for other agents' phones
+does not auto-answer on their browsers.
+The line that connects opens its own call screen (`joinLiveLeg` in `dashboard.call-queue.tsx`,
+agent's own queue only, one line at a time): `startCall(..., { instant: true })` + the leg's
+`providerCallId`, so End and the disposition reach that call. Live Calls' **Take** joins the
+line too; until 2026-11-18 it called `startCall` without `instant`, i.e. dialled the borrower again.
+
 ### Calling numbers: prefixes, Manual Dial numbers, portfolio numbers (2026-11-20)
 
 **SkyCRM shows the borrower the number whose PREFIX is sent with the call** (`prefix` on
-`dialing_phone` / `predictive_call` / `hangup_phone`). SkyCRM's list (email, 2026-11-20): 46 DIDs
+`dialing_phone` / `predictive_call` / `hangup_phone`). SkyCRM's list (email, 2026-11-20): 50 DIDs
 `00917969263701…3866`, prefix = last 4 digits (3701 → 079 6926 3701), and queues 3101–3110 (one
 per company, `telephony_settings.predictive_queue`; any number works with any queue). Until this,
 every call sent the agent's extension as the prefix, so each agent always showed one number —
@@ -475,6 +488,32 @@ instruction not to omit them again. Do not wire them up against Exotel; that wal
 inside the provider, no conference API) is exactly why they were removed once already. Wire
 them only once a real vendor with call-control support is chosen and integrated.
 
+**Late end records landed on the wrong call (found 2026-11-20).** SkyCRM's end record (CDR) often
+arrives after the agent has ended that call and dialled the next. If the ended call never got a
+callid, `ledgerForWebhook` fell back to "the open call on this extension" and applied the OLD
+call's NO ANSWER, callid and recording to the call in progress: the screen ended it mid-
+conversation (Babu Gurava Vaidya, ext 8616, 20 Nov 14:30, ended at 13 s, talked 5 min). About
+0.5–1.3% of calls per day since 12 Nov carry another call's recording (the number in
+`recording_path` ≠ `remote_phone`). Now: a CDR naming a number first matches this extension's own
+callid-less call to THAT number, and the open-call fallback is skipped when the numbers differ
+(`differentNumber`, guard-rules.ts, tested in telephony-check.ts). Rows matched wrongly before the
+fix are not corrected. Also, while the browser phone is still connected (`isPhoneInCall`,
+`telephony/phone-status.ts`), `use-single-call.ts` keeps the call screen open whatever the server
+says; the phone's own end closes it.
+
+### Listen / Whisper / Barge (`call_monitor_api`) — status 2026-11-17
+
+Testers: no error, phone silent. Two changes: (1) the listener is now sent as `monitor_extention`
+and the agent as `user_extention` (spec §14 keys hang-up by `monitor_extention`);
+`SKYCRM_MONITOR_FIELDS=original` on Railway restores the old order. (2) Live Calls reports what
+reached the manager: no ring within 15 s → toast; 8 s after connecting, the browser phone's
+WebRTC stats (`audioStats`, verdict in `telephony/monitor-audio.ts`) say **no-media** (no RTP —
+our gateway/TURN path) or **silence** (RTP but no energy — SkyCRM connected the manager but did
+not join them to the agent's call) or **sound**. After the swap the manager's phone rings but is
+silent; the spy call's media comes from the same SkyCRM host as normal calls (which have audio),
+so the gateway is the less likely cause. If the check says "silence", ask SkyCRM (their spec says
+monitoring works "extension to extension" — maybe not on extension→PSTN calls).
+
 ### The dialer's architectural ceiling — and SkyCRM predictive dialling (2026-11-17)
 
 Click-to-call (`dialing_phone`, and what Exotel/KooKoo/Tata offered) **rings the agent first**,
@@ -484,8 +523,8 @@ line per free agent. That is still how Progressive Dial, single calls and Manual
 **"Productive Dial" (internally `dialerMode: "predictive"`) now uses SkyCRM's own predictive dial
 (API spec v1.2 §24)** when the provider offers one (`TelephonyProvider.predictive`) and the
 company has a **predictive queue** (superadmin → company → Calling card,
-`telephony_settings.predictive_queue`; `migrations/20261117_predictive_dialing.sql`, live —
-found applied 2026-11-20). Without a queue — or before the migration — it falls back to click-to-call.
+`telephony_settings.predictive_queue`; `migrations/20261117_predictive_dialing.sql`, applied live
+2026-11-17; no company has a queue yet — SkyCRM's queues are 3101–3110, not yet assigned). Without a queue — or before the migration — it falls back to click-to-call.
 Flow (`predictiveDial()`): `login_in_queue1` once per agent on the run → `predictive_call`
 (`extension`, `prefix`, `queue`, `mobile_no`, form-encoded) per borrower → `logout_queue1` when the
 run stops or is evicted by `sweepRuns`. SkyCRM dials the borrower and connects the answer to any
@@ -998,6 +1037,10 @@ Admin → Users, not counted against agent/manager seats.
   ledger for calls not yet copied: `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that
   figure is ringing, not talk). Connected = ledger `completed`, else the disposition (`isAnswered`);
   the SQL summary and JS reports must stay in step. Contact Group stays disposition-based.
+- **Recording retention (user, 2026-11-20): SamvadX keeps its copy 120 days** (`RECORDING_RETENTION_DAYS`,
+  `recording-file.ts`). `purgeOldRecordings` (recordings.server.ts, every 6 h from the import timer)
+  deletes the Storage file and sets the ledger row `recording_status='expired'`. SkyCRM keeps its
+  own original under its own terms; only answered calls are copied, and only since 2026-11-16.
 - **Storage buckets must ask for ≤ 50 MB** (`scripts/storage-buckets.test.ts`): Supabase refuses a
   bucket above the project's upload limit. `call-recordings` asked 100 MB and `saved-archives`
   200 MB, so neither bucket ever existed: from 2026-11-15 (when SkyCRM's download started
@@ -1056,6 +1099,16 @@ the data is cross-company and only the service role may read it.
   filing), payments received and unpaid invoices. Says so instead of failing if `invoices` is
   missing.
 
+**Health Check (`/superadmin/health`, 2026-11-20)** — the daily check for bugs we have already
+had once: wrong recording on a call, calls ended on screen while the agent talked, stuck-open
+calls, extensions with no end records, phones going offline, failed-call share, calls with no
+SkyCRM id, talk time not copied, data crossing between companies, Insights errors / ProfileX
+wallet empty / stuck lookups / lookups charged below ProfileX's cost or ₹0. SQL only counts
+(`platform_health_checks(since, until)`, `migrations/20261120_platform_health_checks.sql`, live,
+service_role only); thresholds and wording are pure in `src/lib/health-checks.ts` (tested in
+`scripts/health-checks.test.ts`); server `health-checks.server.ts`; Overview shows a one-line
+banner. **When you fix a new class of bug, add its symptom here** so it can't hide for days again.
+
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90
 days, this month, last month). The range is shared across superadmin pages and remembered per
@@ -1086,6 +1139,14 @@ billing ↔ contracts don't import each other). Rules: `invoice-math.ts` (pure, 
   `gstBreakdown(..., supplierRegistered=false)` charges no GST, the document prints "BILL OF
   SUPPLY" with no tax rows, and credit notes follow. Saving a GSTIN switches new invoices back to
   Tax Invoices; issued ones keep their snapshot. Invoices print the signatory name/designation.
+- **Supplier is now Axiotta Communications Private Limited (user, 2026-11-20)**, GSTIN
+  27ABHCA1346E1ZY, CIN U62013MR2026PTC482338, prefix `SX` (new series from SX/2627/0001; the old
+  proprietorship's SAT series is kept for its own invoices and credit notes). Invoice and
+  credit-note counters are per prefix + FY (`invoice_counters.fy` = "SX:2026-27",
+  `migrations/20261120_invoice_series_and_letterhead.sql`, live). Invoices print on the company
+  letterhead (blue bar, `public/letterhead/` logo + X watermark, footer with registered office,
+  office, website, CIN, GSTIN) only when `billing_profile.letterhead` was on when issued — the
+  fields are snapshotted into `supplier`, so SAT invoices keep the old look.
 - **Price list per company** (`client_price_lists`, company Billing tab): setup lines, monthly
   lines, per-agent-seat price, payment terms (NULL = supplier default). Invoices open prefilled
   from it. Insights prices stay in `profilex_settings.rate_card` — one place each.

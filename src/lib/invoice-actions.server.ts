@@ -101,6 +101,12 @@ export interface BillingProfile extends InvoiceParty {
   shortName: string | null;
   signatoryName: string | null;
   signatoryDesignation: string | null;
+  /** Letterhead (2026-11-20): printed at the top/bottom of invoices when `letterhead` is on.
+   *  Snapshotted with the rest of the supplier, so older invoices keep their own look. */
+  registeredAddress: string | null;
+  legalNameLocal: string | null;
+  website: string | null;
+  letterhead: boolean;
   invoicePrefix: string;
   sacInsights: string | null;
   sacSetup: string | null;
@@ -131,6 +137,11 @@ export async function loadBillingProfile(): Promise<BillingProfile> {
     shortName: data?.short_name ?? null,
     signatoryName: data?.signatory_name ?? null,
     signatoryDesignation: data?.signatory_designation ?? null,
+    registeredAddress:
+      (data as { registered_address?: string | null } | null)?.registered_address ?? null,
+    legalNameLocal: (data as { legal_name_local?: string | null } | null)?.legal_name_local ?? null,
+    website: (data as { website?: string | null } | null)?.website ?? null,
+    letterhead: (data as { letterhead?: boolean | null } | null)?.letterhead === true,
     invoicePrefix: data?.invoice_prefix ?? "SX",
     sacInsights: data?.sac_insights ?? null,
     sacSetup: data?.sac_setup ?? null,
@@ -166,6 +177,10 @@ export const saveBillingProfile = createServerFn({ method: "POST" })
         shortName: optText(60),
         signatoryName: optText(120),
         signatoryDesignation: optText(120),
+        registeredAddress: optText(500),
+        legalNameLocal: optText(200),
+        website: optText(120),
+        letterhead: z.boolean().default(false),
         invoicePrefix: z.string().trim().toUpperCase().regex(INVOICE_PREFIX_RE),
         sacInsights: optText(10),
         sacSetup: optText(10),
@@ -200,7 +215,13 @@ export const saveBillingProfile = createServerFn({ method: "POST" })
         sac_insights: data.sacInsights ?? null,
         sac_setup: data.sacSetup ?? null,
         // Not in the generated types until they're regenerated after the billing migration.
-        ...({ sac_monthly: data.sacMonthly ?? null } as unknown as Record<string, never>),
+        ...({
+          sac_monthly: data.sacMonthly ?? null,
+          registered_address: data.registeredAddress ?? null,
+          legal_name_local: data.legalNameLocal ?? null,
+          website: data.website ?? null,
+          letterhead: data.letterhead,
+        } as unknown as Record<string, never>),
         payment_terms_days: data.paymentTermsDays,
         updated_at: new Date().toISOString(),
         updated_by: caller.superadminId,

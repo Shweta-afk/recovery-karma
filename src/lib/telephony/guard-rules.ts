@@ -124,3 +124,10 @@ export function channelAllocationError(
     ? `That would allocate ${total} channels in total; the trunk has ${GLOBAL_CHANNEL_LIMIT}. Other companies already hold ${otherCompaniesTotal}.`
     : null;
 }
+
+/** True when a webhook event names a number (10 digits) and the ledger row is a call to a
+ *  different one, so the event must not be applied to that row (2026-11-20). */
+export function differentNumber(rowPhone: string | null | undefined, eventLast10: string): boolean {
+  if (eventLast10.length !== 10 || !rowPhone) return false;
+  return normalisePhone(rowPhone) !== eventLast10;
+}

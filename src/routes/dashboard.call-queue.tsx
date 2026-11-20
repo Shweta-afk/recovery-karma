@@ -961,6 +961,39 @@ export function CallQueueContent({
     dialTargetRows.find((d) => d.id === id) ??
     ptpList.rows.find((d) => d.id === id);
 
+  // A dialer line that is already live: open its call screen (account, notes, disposition) and
+  // join it — never dial the borrower again. Its provider id lets End and the disposition reach
+  // that same call.
+  const joinLiveLeg = (lc: LiveCallEntry): boolean => {
+    const debtor = findQueueDebtor(lc.loanId);
+    if (!debtor) return false;
+    startCall(debtor, {
+      instant: true,
+      dialMode: activeDialMode ? dialModeFromDialerMode(activeDialMode) : "multi_line",
+    });
+    setActiveCall((c) => (c ? { ...c, providerCallId: lc.providerCallId } : c));
+    return true;
+  };
+
+  // Productive Dial (2026-11-18): many lines ring at once; the one that connects must come up on
+  // the agent's screen by itself. Until now it only showed as a row in the Live Calls box, and
+  // its "Take" button dialled the borrower a second time. Only on the agent's own queue (a
+  // manager watching a team's lines isn't the one on the call), one line at a time.
+  const joinedLegs = useRef(new Set<string>());
+  useEffect(() => {
+    if (!dialer.running) {
+      joinedLegs.current.clear();
+      return;
+    }
+    if (!isSelf || activeDialMode === "productive") return;
+    if (activeCall && activeCall.phase !== "ended") return;
+    const lc = dialer.legs.find((l) => l.status === "connected" && !joinedLegs.current.has(l.id));
+    if (!lc) return;
+    joinedLegs.current.add(lc.id);
+    if (joinLiveLeg(lc)) toast.success(`Connected to ${lc.debtor}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialer.running, dialer.legs, activeCall?.phase, isSelf, activeDialMode]);
+
   // Every raw CSV column the upload didn't map to a named field — debtorFromRow() carries the
   // bag on `_uploadedExtra`. Rendered as extra columns after Reason so scrolling the
   // (non-sticky) middle of the row surfaces most of the uploaded file. Accumulated across the
@@ -2282,13 +2315,11 @@ export function CallQueueContent({
             setActiveDialMode(null);
           }}
           onTake={(lc) => {
-            const debtor = findQueueDebtor(lc.loanId) ?? queueRows[0];
-            // Taking a leg off the running dialer — attribute it to whichever board produced
-            // it, not to "single". activeDialMode is the INTERNAL enum, whose two values read
-            // backwards; dialModeFromDialerMode is the one place that is untangled.
-            startCall(debtor, {
-              dialMode: activeDialMode ? dialModeFromDialerMode(activeDialMode) : "single",
-            });
+            // Join the live line (attributed to the board that produced it — activeDialMode is
+            // the INTERNAL enum; dialModeFromDialerMode untangles it). Never redial: the
+            // borrower is already on it.
+            joinedLegs.current.add(lc.id);
+            if (!joinLiveLeg(lc)) toast.error(`Couldn't open ${lc.debtor}'s account`);
           }}
           onTransfer={(lc) => {
             // Transferring a live leg is a provider-side operation this app cannot perform —

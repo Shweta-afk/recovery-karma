@@ -22,7 +22,18 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { getAccessToken } from "@/lib/access-token";
-import { DIAL_STARTED_EVENT, HANG_UP_EVENT } from "@/components/telephony/browser-phone";
+import {
+  DIAL_STARTED_EVENT,
+  HANG_UP_EVENT,
+  MONITOR_AUDIO_EVENT,
+  MONITOR_STARTED_EVENT,
+  PHONE_RINGING_EVENT,
+} from "@/components/telephony/browser-phone";
+
+import { monitorAudioVerdict } from "@/lib/telephony/monitor-audio";
+
+/** How long to wait for SkyCRM to ring the manager after Listen/Whisper/Barge. */
+const RING_WAIT_MS = 15_000;
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { DIAL_MODE_META, type DialMode } from "@/lib/call-queue/types";
@@ -144,6 +155,8 @@ function CallControls({ call }: { call: LiveCall }) {
     // Before the request: marks the ring SkyCRM is about to send as ours (auto-answer) and lets
     // audio play — this click is the user gesture browsers require.
     window.dispatchEvent(new CustomEvent(DIAL_STARTED_EVENT));
+    window.dispatchEvent(new CustomEvent(MONITOR_STARTED_EVENT));
+    watchAudio();
     setBusy(mode);
     try {
       const { monitorLiveCall } = await import("@/lib/telephony-actions.server");
@@ -151,6 +164,7 @@ function CallControls({ call }: { call: LiveCall }) {
         data: { accessToken: await getAccessToken(), liveCallId: call.id, mode },
       });
       setActive(mode);
+      watchForRing(r.myExtension);
       toast.success(
         `${mode === "listen" ? "Listening to" : mode === "whisper" ? "Whispering to" : "Joined"} ${r.agentName}'s call — your phone connects in a moment`,
         {
@@ -162,6 +176,66 @@ function CallControls({ call }: { call: LiveCall }) {
     } finally {
       setBusy(null);
     }
+  };
+
+  // SkyCRM answers "success" whether or not it joined anyone, so the only proof is our own phone
+  // ringing. No ring within RING_WAIT_MS = the request reached nobody (2026-11-17: testers heard
+  // silence with no error at all).
+  const watchForRing = (myExtension: string) => {
+    let rang = false;
+    const onRing = () => {
+      rang = true;
+    };
+    window.addEventListener(PHONE_RINGING_EVENT, onRing);
+    setTimeout(() => {
+      window.removeEventListener(PHONE_RINGING_EVENT, onRing);
+      if (rang) return;
+      setActive(null);
+      toast.error(
+        `SkyCRM didn't ring your phone (ext ${myExtension}), so you can't hear the call`,
+        {
+          description:
+            "Check the phone icon shows Ready (registered), then try again. If it keeps happening, the request isn't reaching your extension — tell SamvadX support.",
+          duration: 12_000,
+        },
+      );
+    }, RING_WAIT_MS);
+  };
+
+  // Says what reached the manager's phone, so "rings but silent" can be pinned on one side:
+  // no packets = the media path (our gateway / TURN relay); packets but no energy = SkyCRM
+  // connected the manager but sends silence (not joined to the agent's call).
+  const watchAudio = () => {
+    const onAudio = (e: Event) => {
+      window.removeEventListener(MONITOR_AUDIO_EVENT, onAudio);
+      const s = (e as CustomEvent).detail as {
+        packets: number;
+        bytes: number;
+        energy: number | null;
+      } | null;
+      const verdict = monitorAudioVerdict(s);
+      const numbers = s
+        ? `${s.packets} audio packets, sound energy ${s.energy === null ? "n/a" : s.energy.toFixed(4)}`
+        : "no call statistics";
+      if (verdict === "sound")
+        toast.success("Audio check: sound is arriving", { description: numbers });
+      else
+        toast.warning(
+          verdict === "no-media"
+            ? "Audio check: no audio is reaching your phone"
+            : "Audio check: SkyCRM is sending silence",
+          {
+            description: `${numbers}. ${
+              verdict === "no-media"
+                ? "The call connected but no sound packets arrive — a network path problem on our side."
+                : "Your phone is connected, but SkyCRM has not joined you to the agent's call."
+            } Screenshot this for SamvadX support.`,
+            duration: 20_000,
+          },
+        );
+    };
+    window.addEventListener(MONITOR_AUDIO_EVENT, onAudio);
+    setTimeout(() => window.removeEventListener(MONITOR_AUDIO_EVENT, onAudio), 90_000);
   };
 
   const stop = () => {

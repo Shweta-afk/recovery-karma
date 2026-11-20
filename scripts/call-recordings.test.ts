@@ -137,3 +137,40 @@ describe("helpers", () => {
     expect(retryDelayMs(100)).toBe(6 * 3600_000);
   });
 });
+
+describe("recordingDownloadName", () => {
+  test("IST date/time, last 4 digits, extension from the content type", async () => {
+    const { recordingDownloadName } = await import("../src/lib/telephony/recording-marker");
+    // 2026-11-17 18:40 UTC = 2026-11-18 00:10 IST (the day turns over in IST, not UTC).
+    expect(recordingDownloadName("2026-11-17T18:40:00Z", "+91 98765 43210", "audio/wav")).toBe(
+      "call-2026-11-18_0010-3210.wav",
+    );
+    expect(recordingDownloadName("2026-11-17T06:05:00Z", null, "audio/mpeg")).toBe(
+      "call-2026-11-17_1135.mp3",
+    );
+    expect(recordingDownloadName(null, "12", null)).toBe("call-unknown-time.wav");
+  });
+});
+
+import {
+  RECORDING_RETENTION_DAYS as RETENTION,
+  keptObjectPath,
+  recordingRetentionCutoff,
+} from "../src/lib/telephony/recording-file";
+
+describe("recording retention (2026-11-20)", () => {
+  test("SamvadX keeps its copy 4 months", () => {
+    expect(RETENTION).toBe(120);
+    const now = Date.parse("2026-11-20T00:00:00Z");
+    expect(recordingRetentionCutoff(now).toISOString()).toBe("2026-07-23T00:00:00.000Z");
+  });
+  test("finds the kept file of a recording marked as another call's", () => {
+    expect(
+      keptObjectPath(
+        "Recording belongs to another call (late end record matched to the wrong call; fixed 2026-11-20). Stored file kept at: abc/2026/11/20/1795.wav",
+      ),
+    ).toBe("abc/2026/11/20/1795.wav");
+    expect(keptObjectPath("not answered (NO ANSWER)")).toBeNull();
+    expect(keptObjectPath(null)).toBeNull();
+  });
+});

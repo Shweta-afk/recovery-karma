@@ -32,6 +32,8 @@ export interface UseWebphone {
   hangup: () => Promise<void>;
   endByAgent: () => Promise<void>;
   setMuted: (muted: boolean) => void;
+  /** Far-end audio arriving on the current call (see SipWebphone.audioStats). */
+  audioStats: () => Promise<{ packets: number; bytes: number; energy: number | null } | null>;
 }
 
 /** `config` comes from the server: the signed-in user's own extension (getMyWebphoneLogin). */
@@ -121,6 +123,14 @@ export function useWebphone(config: WebphoneConfig | null): UseWebphone {
     phoneRef.current?.setMuted(muted);
   }, []);
 
+  const audioStats = useCallback(async () => {
+    try {
+      return (await phoneRef.current?.audioStats()) ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Tear down on unmount so the WebSocket/registration don't leak across navigations.
   useEffect(() => {
     return () => {
@@ -144,5 +154,6 @@ export function useWebphone(config: WebphoneConfig | null): UseWebphone {
     hangup,
     endByAgent,
     setMuted,
+    audioStats,
   };
 }

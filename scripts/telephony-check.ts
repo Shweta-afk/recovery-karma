@@ -19,6 +19,7 @@ import { legToCallLog, collectLoggableLegs } from "@/lib/dialer/leg-disposition"
 import {
   channelAllocationError,
   channelLimitMessage,
+  differentNumber,
   evaluateCall,
   istMinutes,
   normalisePhone,
@@ -517,6 +518,11 @@ async function simManualCall() {
   ok("manual call always answers", types.includes("answer"));
   ok("manual call does not auto-hangup", !types.includes("hangup"));
 }
+
+// A late end record for the agent's previous call must not land on the call in progress.
+ok("event for another number is not this call's", differentNumber("+919876500700", "9560926289"));
+ok("same number matches", !differentNumber("09560926289", "9560926289"));
+ok("event without a number still matches", !differentNumber("+919876500700", ""));
 
 await simE2E();
 await simManualCall();

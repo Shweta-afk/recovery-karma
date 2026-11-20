@@ -30,6 +30,7 @@ import {
   ListChecks,
   Star,
   FileSpreadsheet,
+  Stethoscope,
 } from "lucide-react";
 import {
   Sidebar,
@@ -107,6 +108,7 @@ const auditorItems = [
 const superadminItems = [
   { title: "Overview", url: "/superadmin", icon: LayoutDashboard },
   { title: "Companies", url: "/superadmin/companies", icon: Building2 },
+  { title: "Health Check", url: "/superadmin/health", icon: Stethoscope },
   { title: "Numbers & Lines", url: "/superadmin/numbers", icon: PhoneCall },
   { title: "Insights Wallet", url: "/superadmin/wallet", icon: Wallet },
   { title: "Insights Activity", url: "/superadmin/insights", icon: Sparkles },

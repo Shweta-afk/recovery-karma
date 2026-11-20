@@ -338,6 +338,35 @@ export class SipWebphone {
     });
   }
 
+  /** What is arriving on the current call's far-end audio: RTP packets/bytes and the summed
+   *  audio energy (≈0 = silence). null when there is no call or the browser gives no stats. Used to
+   *  tell "nothing reaches us" (network / media path) from "SkyCRM sends silence" (2026-11-17,
+   *  Listen/Whisper rang the manager but nobody heard anything). */
+  async audioStats(): Promise<{ packets: number; bytes: number; energy: number | null } | null> {
+    const pc = this.peerConnection();
+    if (!pc) return null;
+    const report = await pc.getStats();
+    let found: { packets: number; bytes: number; energy: number | null } | null = null;
+    report.forEach((r) => {
+      const s = r as RTCStats & {
+        kind?: string;
+        packetsReceived?: number;
+        bytesReceived?: number;
+        totalAudioEnergy?: number;
+      };
+      if (s.type !== "inbound-rtp" || s.kind !== "audio") return;
+      found = {
+        packets: (found?.packets ?? 0) + (s.packetsReceived ?? 0),
+        bytes: (found?.bytes ?? 0) + (s.bytesReceived ?? 0),
+        energy:
+          s.totalAudioEnergy === undefined
+            ? (found?.energy ?? null)
+            : (found?.energy ?? 0) + s.totalAudioEnergy,
+      };
+    });
+    return found;
+  }
+
   private peerConnection(): RTCPeerConnection | null {
     return this.session ? this.peerConnectionOf(this.session) : null;
   }

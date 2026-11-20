@@ -20,6 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { getAccessToken } from "@/lib/access-token";
 import {
   getCompanyCallingNumbers,
+  getMyManualNumbers,
   getPortfolioNumbers,
   setManualNumbers,
   setPortfolioNumbers,
@@ -46,6 +47,34 @@ function NumberMeta({ n }: { n: CallingNumber }) {
       {!n.hasPrefix && " · not set up yet"}
     </span>
   );
+}
+
+// ─── Who sees any of this ──────────────────────────────────────────────────────────
+// Only companies that hold numbers of their own (user, 2026-11-20: Axiotta tests it first; the
+// rest get it when a superadmin gives them numbers). Everyone else sees nothing new.
+
+let hasNumbersPromise: Promise<boolean> | null = null;
+
+/** True once we know the signed-in user's company holds calling numbers. Asked once per page load. */
+export function useCompanyHasNumbers(): boolean {
+  const [has, setHas] = useState(false);
+  useEffect(() => {
+    hasNumbersPromise ??= (async () => {
+      try {
+        const r = await getMyManualNumbers({ data: { accessToken: await getAccessToken() } });
+        return r.companyHasNumbers;
+      } catch {
+        hasNumbersPromise = null;
+        return false;
+      }
+    })();
+    let live = true;
+    void hasNumbersPromise.then((v) => live && setHas(v));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return has;
 }
 
 // ─── Admin ──────────────────────────────────────────────────────────────────────
@@ -96,6 +125,8 @@ export function CompanyCallingNumbersCard() {
   };
 
   const manualCount = data?.numbers.filter((n) => n.manual).length ?? 0;
+  // A company without numbers of its own sees nothing (nothing to choose).
+  if (!error && (!data || data.numbers.length === 0)) return null;
 
   return (
     <Card>
@@ -302,6 +333,7 @@ export function PortfolioNumbersButton({
   portfolioName: string;
 }) {
   const [open, setOpen] = useState(false);
+  const hasNumbers = useCompanyHasNumbers();
   const { data, error, reload } = usePortfolioNumbers(portfolioId, open);
   const [value, setValue] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -327,6 +359,7 @@ export function PortfolioNumbersButton({
     }
   };
 
+  if (!hasNumbers) return null;
   return (
     <>
       <Button

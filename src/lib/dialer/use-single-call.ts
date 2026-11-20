@@ -12,7 +12,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
-import { requestPhoneReconnect, waitForPhone } from "@/lib/telephony/phone-status";
+import { isPhoneInCall, requestPhoneReconnect, waitForPhone } from "@/lib/telephony/phone-status";
 import { getAccessToken } from "@/lib/access-token";
 import { applyEvent, isTerminal } from "@/lib/telephony/call-machine";
 import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provider";
@@ -289,6 +289,25 @@ export function useSingleCall(
               if (latestServerCallId !== result.providerCallId) return;
               sawStatus = true;
               if (status.status === "connected") sawConnected = true;
+              // The server says the call ended, but the agent's browser phone is still connected:
+              // SkyCRM sent an early end record for a call that is still going (phone-status.ts).
+              // Keep the call screen open with its End button; the phone's own hang-up ends it.
+              if (status.status !== "ringing" && status.status !== "connected" && isPhoneInCall()) {
+                console.warn(
+                  `[single-call] server says "${status.status}" but the browser phone is still in the call — keeping it open`,
+                );
+                setActiveCall((c) =>
+                  c && (!c.providerCallId || c.providerCallId === result.providerCallId)
+                    ? {
+                        ...c,
+                        phase: c.phase === "ended" ? "ended" : "connected",
+                        providerCallId: result.providerCallId,
+                      }
+                    : c,
+                );
+                reset();
+                return;
+              }
               const phase = toCallPhase(callStateFor(status.status));
               setActiveCall((c) =>
                 c && (!c.providerCallId || c.providerCallId === result.providerCallId)

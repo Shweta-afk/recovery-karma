@@ -61,6 +61,10 @@ const EMPTY_PROFILE: BillingProfile = {
   shortName: "",
   signatoryName: "",
   signatoryDesignation: "",
+  registeredAddress: "",
+  legalNameLocal: "",
+  website: "",
+  letterhead: false,
   invoicePrefix: "SX",
   sacInsights: "",
   sacSetup: "",
@@ -157,6 +161,10 @@ function SuperadminInvoicesPage() {
           shortName: profile.shortName || null,
           signatoryName: profile.signatoryName || null,
           signatoryDesignation: profile.signatoryDesignation || null,
+          registeredAddress: profile.registeredAddress || null,
+          legalNameLocal: profile.legalNameLocal || null,
+          website: profile.website || null,
+          letterhead: profile.letterhead,
           invoicePrefix: profile.invoicePrefix,
           sacInsights: profile.sacInsights || null,
           sacSetup: profile.sacSetup || null,
@@ -410,13 +418,52 @@ function SuperadminInvoicesPage() {
                       className="h-8 text-xs"
                     />
                   </Field>
-                  <Field label="Registered address" className="sm:col-span-2 lg:col-span-3">
+                  <Field
+                    label="Address printed as the supplier's"
+                    className="sm:col-span-2 lg:col-span-3"
+                  >
                     <Textarea
                       value={profile.address}
                       onChange={(e) => set("address", e.target.value)}
                       rows={2}
                       className="text-xs"
                     />
+                  </Field>
+                  <Field
+                    label="Registered office (letterhead footer)"
+                    className="sm:col-span-2 lg:col-span-3"
+                  >
+                    <Textarea
+                      value={profile.registeredAddress ?? ""}
+                      onChange={(e) => set("registeredAddress", e.target.value)}
+                      rows={2}
+                      className="text-xs"
+                    />
+                  </Field>
+                  <Field label="Name in Hindi/Marathi (letterhead)">
+                    <Input
+                      value={profile.legalNameLocal ?? ""}
+                      onChange={(e) => set("legalNameLocal", e.target.value)}
+                      className="h-8 text-xs"
+                    />
+                  </Field>
+                  <Field label="Website (letterhead)">
+                    <Input
+                      value={profile.website ?? ""}
+                      onChange={(e) => set("website", e.target.value)}
+                      placeholder="www.samvadx.com"
+                      className="h-8 text-xs"
+                    />
+                  </Field>
+                  <Field label="Print invoices on the letterhead">
+                    <label className="flex h-8 items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={profile.letterhead}
+                        onChange={(e) => set("letterhead", e.target.checked)}
+                      />
+                      Blue bar, logo, watermark and company footer
+                    </label>
                   </Field>
                   <Field label="Bank name">
                     <Input

@@ -20,7 +20,11 @@ import { useWebphone } from "@/lib/dialer/use-webphone";
 import type { WebphoneConfig } from "@/lib/telephony/webrtc/config";
 import { getMyWebphoneLogin, logMissedInbound } from "@/lib/telephony-actions.server";
 import { useNavigate } from "@tanstack/react-router";
-import { PHONE_REREGISTER_EVENT, setPhoneState } from "@/lib/telephony/phone-status";
+import {
+  PHONE_REREGISTER_EVENT,
+  setPhoneInCall,
+  setPhoneState,
+} from "@/lib/telephony/phone-status";
 import { startAnswerDetector } from "@/lib/telephony/answer-detector";
 import { useCallSession } from "@/lib/call-session";
 import {
@@ -35,9 +39,20 @@ export const DIAL_STARTED_EVENT = "samvadx:dial-started";
 /** Fired by use-single-call.ts when the agent ends a call anywhere in the app (End Call, Cancel,
  *  the floating bar). The browser phone drops its own leg too. */
 export const HANG_UP_EVENT = "samvadx:hang-up";
+/** Fired when SkyCRM rings this browser phone (any inbound call) — Live Calls uses it to tell a
+ *  manager whether their Listen/Whisper/Barge request actually reached their phone. */
+export const PHONE_RINGING_EVENT = "samvadx:phone-ringing";
+/** Live Calls → this phone: the next ring is a Listen/Whisper/Barge call; measure its audio. */
+export const MONITOR_STARTED_EVENT = "samvadx:monitor-started";
+/** This phone → Live Calls: what arrived on that call, `detail` = { packets, bytes, energy }. */
+export const MONITOR_AUDIO_EVENT = "samvadx:monitor-audio";
 /** Fired by this phone when a call it had answered ends (either side hung up, or its own End
  *  button). call-session.tsx then ends the app's call and asks SkyCRM to drop the borrower. */
 export const PHONE_CALL_ENDED_EVENT = "samvadx:phone-call-ended";
+/** Fired by use-dialer-run.ts when this agent starts (`detail.active` true) or stops a Productive
+ *  Dial run. While one runs, SkyCRM rings this phone for each line the run opens, with no click
+ *  in between, so the phone answers every ring by itself. */
+export const DIALER_RUN_EVENT = "samvadx:dialer-run";
 /** How long after clicking Call a ring from SkyCRM counts as that call's agent leg. */
 const AUTO_ANSWER_WINDOW_MS = 60_000;
 
@@ -206,13 +221,53 @@ function RegisteredPhone({
     return () => window.removeEventListener(DIAL_STARTED_EVENT, onDial);
   }, [unlockAudio]);
 
+  // Productive Dial: until 2026-11-18 its lines never told this phone a dial had started, so
+  // SkyCRM's ring wasn't picked up by itself and the <audio> was never unlocked by a click —
+  // calls connected but the agent heard nothing from the borrower.
+  const runActive = useRef(false);
+  useEffect(() => {
+    const onRun = (e: Event) => {
+      runActive.current = !!(e as CustomEvent<{ active?: boolean }>).detail?.active;
+      if (runActive.current) unlockAudio(); // still inside the agent's click on Start
+    };
+    window.addEventListener(DIALER_RUN_EVENT, onRun);
+    return () => window.removeEventListener(DIALER_RUN_EVENT, onRun);
+  }, [unlockAudio]);
+
   // SkyCRM's ring for a call this agent just placed: pick up without asking.
   const call = wp.call;
+
+  // Listen/Whisper/Barge audio check: 8 s after the monitor call connects, report what arrived.
+  const monitorAt = useRef(0);
   useEffect(() => {
+    const onMonitor = () => {
+      monitorAt.current = Date.now();
+    };
+    window.addEventListener(MONITOR_STARTED_EVENT, onMonitor);
+    return () => window.removeEventListener(MONITOR_STARTED_EVENT, onMonitor);
+  }, []);
+  useEffect(() => {
+    if (call?.state !== "connected" || Date.now() - monitorAt.current > AUTO_ANSWER_WINDOW_MS) {
+      return;
+    }
+    monitorAt.current = 0;
+    const t = setTimeout(() => {
+      void wp.audioStats().then((stats) => {
+        console.info("[monitor] audio check", stats);
+        window.dispatchEvent(new CustomEvent(MONITOR_AUDIO_EVENT, { detail: stats }));
+      });
+    }, 8_000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call?.id, call?.state]);
+  useEffect(() => {
+    if (call?.direction === "inbound" && call.state === "ringing") {
+      window.dispatchEvent(new CustomEvent(PHONE_RINGING_EVENT));
+    }
     if (
       call?.direction === "inbound" &&
       call.state === "ringing" &&
-      Date.now() - lastDialAt.current < AUTO_ANSWER_WINDOW_MS
+      (runActive.current || Date.now() - lastDialAt.current < AUTO_ANSWER_WINDOW_MS)
     ) {
       lastDialAt.current = 0;
       void wp.answer();
@@ -234,6 +289,7 @@ function RegisteredPhone({
   // And the other way: once a call this phone answered is over, tell the app.
   const wasConnected = useRef(false);
   useEffect(() => {
+    setPhoneInCall(call?.state === "connected");
     if (call?.state === "connected") {
       wasConnected.current = true;
       return;
