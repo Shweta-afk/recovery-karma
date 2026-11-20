@@ -10,6 +10,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { PortfolioSettings, CallMode } from "@/lib/portfolio-store";
+import { MAX_LINES_PER_AGENT, linesPerAgent } from "@/lib/telephony/predictive-rules";
 
 // Shared by the upload wizard (step 4) and the Edit Portfolio dialog — same settings,
 // same shape, edited before or after the portfolio exists.
@@ -96,6 +97,24 @@ export function PortfolioSettingsStep({
             className="h-9"
           />
         </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs">
+          Productive Dial — borrowers rung at once per agent: {linesPerAgent(settings)}
+        </Label>
+        <Input
+          type="range"
+          min={1}
+          max={MAX_LINES_PER_AGENT}
+          value={linesPerAgent(settings)}
+          onChange={(e) => set("linesPerAgent", +e.target.value)}
+          className="h-9"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          SkyCRM rings this many borrowers for each free agent and connects whoever answers first.
+          More lines keep agents busier, but more borrowers pick up to find nobody free.
+        </p>
       </div>
 
       <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">

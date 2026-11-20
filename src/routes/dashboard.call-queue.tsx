@@ -1389,7 +1389,8 @@ export function CallQueueContent({
                   setActiveDialMode("predictive");
                   try {
                     await dialer.start({
-                      settings: dialerSettings,
+                      // This button is Productive Dial whatever mode the portfolio was saved with.
+                      settings: { ...dialerSettings, dialerMode: "predictive" },
                       targets: target.map((d) => ({
                         id: d.id,
                         name: d.name,

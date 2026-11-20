@@ -9,7 +9,6 @@
 //   3. logout_queue1(extension, queue) once per agent when the run stops or is evicted
 // The agent is unknown until the vendor's Answered event names the extension.
 
-import { predictivePacing } from "@/lib/dialer/engine";
 import { isTerminal } from "./call-machine";
 import { normalisePhone } from "./guard-rules";
 import type { CallRecord } from "./types";
@@ -75,27 +74,36 @@ export function pendingLegs(legs: CallRecord[]): number {
   ).length;
 }
 
+export const DEFAULT_LINES_PER_AGENT = 5;
+export const MAX_LINES_PER_AGENT = 10;
+
+/** Borrowers Productive Dial rings at once for each free agent — set per portfolio by its manager
+ *  or an admin (PortfolioSettings.linesPerAgent, user 2026-11-20: default 5). Portfolios saved
+ *  before the setting existed get the default; anything outside 1–10 is clamped (the value comes
+ *  from the browser). */
+export function linesPerAgent(settings: { linesPerAgent?: number } | null | undefined): number {
+  const n = Math.round(Number(settings?.linesPerAgent ?? DEFAULT_LINES_PER_AGENT));
+  if (!Number.isFinite(n)) return DEFAULT_LINES_PER_AGENT;
+  return Math.max(1, Math.min(MAX_LINES_PER_AGENT, n));
+}
+
 /**
  * How many new borrowers to dial this tick.
- *   target = round(free agents × pacing) − calls still waiting for an agent (pendingLegs)
- * capped by the portfolio's calls-per-cycle, the company's free lines and what is left to dial.
- * Pacing comes from abandonRateTarget (predictivePacing). Once the run's live abandon rate is over
- * that target the dialer stops overdialling (pacing 1) until it drops back — the abandon target
- * is the borrower-protection knob, so it must actually hold the dialer back.
+ *   target = free agents × lines per agent − calls still waiting for an agent (pendingLegs)
+ * capped by the portfolio's calls-per-cycle (how fast lines open, per tick), the company's free
+ * lines and what is left to dial. So with 5 lines per agent and one free agent, five borrowers
+ * ring at once; as each one ends, another is dialled.
  */
 export function predictiveBatchSize(args: {
   freeAgents: number;
   pending: number;
-  abandonRateTarget: number;
-  liveAbandonRate: number;
+  linesPerAgent: number;
   callsPerCycle: number;
   lines: number;
   remaining: number;
 }): number {
   if (args.freeAgents <= 0) return 0;
-  const pacing =
-    args.liveAbandonRate > args.abandonRateTarget ? 1 : predictivePacing(args.abandonRateTarget);
-  const target = Math.round(args.freeAgents * pacing) - args.pending;
+  const target = args.freeAgents * args.linesPerAgent - args.pending;
   return Math.max(0, Math.min(target, args.callsPerCycle, args.lines, args.remaining));
 }
 

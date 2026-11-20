@@ -9,6 +9,7 @@ import type { CallRecord, TelephonyEvent } from "../src/lib/telephony/types";
 import {
   SIM_QUEUE,
   freeAgentHandles,
+  linesPerAgent,
   parsePredictiveQueue,
   pendingLegs,
   pickPredictiveLedger,
@@ -95,40 +96,46 @@ describe("predictive queue setting", () => {
   });
 });
 
-describe("pacing", () => {
+describe("pacing: lines per agent (user, 2026-11-20)", () => {
   const args = {
-    freeAgents: 2,
+    freeAgents: 1,
     pending: 0,
-    abandonRateTarget: 3,
-    liveAbandonRate: 0,
+    linesPerAgent: 5,
     callsPerCycle: 10,
     lines: 20,
     remaining: 100,
   };
 
-  test("overdials free agents × pacing (3% target → 1.6×)", () => {
-    expect(predictiveBatchSize(args)).toBe(3); // round(2 × 1.6)
-    expect(predictiveBatchSize({ ...args, freeAgents: 5 })).toBe(8);
+  test("one free agent with 5 lines → five borrowers ring at once", () => {
+    expect(predictiveBatchSize(args)).toBe(5);
+    expect(predictiveBatchSize({ ...args, freeAgents: 3 })).toBe(10); // 15, capped by cycle
+    expect(predictiveBatchSize({ ...args, freeAgents: 3, callsPerCycle: 20 })).toBe(15);
+    expect(predictiveBatchSize({ ...args, linesPerAgent: 2 })).toBe(2);
   });
 
-  test("calls still waiting for an agent count against the target", () => {
-    expect(predictiveBatchSize({ ...args, pending: 2 })).toBe(1);
+  test("calls still ringing count against it: a line ends → the next one is dialled", () => {
     expect(predictiveBatchSize({ ...args, pending: 5 })).toBe(0);
+    expect(predictiveBatchSize({ ...args, pending: 4 })).toBe(1);
   });
 
   test("no free agent → nothing dialled", () => {
     expect(predictiveBatchSize({ ...args, freeAgents: 0 })).toBe(0);
   });
 
-  test("capped by lines, calls per cycle and what is left", () => {
+  test("capped by the company's free lines, calls per cycle and what is left", () => {
     expect(predictiveBatchSize({ ...args, freeAgents: 10, lines: 4 })).toBe(4);
-    expect(predictiveBatchSize({ ...args, freeAgents: 10, callsPerCycle: 2 })).toBe(2);
+    expect(predictiveBatchSize({ ...args, callsPerCycle: 2 })).toBe(2);
     expect(predictiveBatchSize({ ...args, remaining: 1 })).toBe(1);
     expect(predictiveBatchSize({ ...args, lines: 0 })).toBe(0);
   });
 
-  test("over the abandon target → stop overdialling (one call per free agent)", () => {
-    expect(predictiveBatchSize({ ...args, freeAgents: 5, liveAbandonRate: 4 })).toBe(5);
+  test("the setting: default 5 for old portfolios, clamped to 1–10", () => {
+    expect(linesPerAgent({})).toBe(5);
+    expect(linesPerAgent(null)).toBe(5);
+    expect(linesPerAgent({ linesPerAgent: 3 })).toBe(3);
+    expect(linesPerAgent({ linesPerAgent: 0 })).toBe(1);
+    expect(linesPerAgent({ linesPerAgent: 500 })).toBe(10);
+    expect(linesPerAgent({ linesPerAgent: Number.NaN })).toBe(5);
   });
 
   test("free agents = not on a connected predictive leg", () => {
@@ -342,8 +349,7 @@ describe("simulator runs the same borrower-first flow", () => {
       const n = predictiveBatchSize({
         freeAgents: free.length,
         pending: pendingLegs(run.legs),
-        abandonRateTarget: settings.abandonRateTarget,
-        liveAbandonRate: run.stats.liveAbandonRate,
+        linesPerAgent: 3,
         callsPerCycle: settings.callsPerCycle,
         lines: 10,
         remaining: remaining.length,

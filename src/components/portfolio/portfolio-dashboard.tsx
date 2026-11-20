@@ -78,6 +78,7 @@ import { getPortfolioRecovered, getPayments } from "@/lib/payments-store";
 import { errorText } from "@/lib/app-error";
 import { PurgeRequestButton } from "@/components/data-purge/purge-request-button";
 import { PortfolioNumbersButton } from "@/components/telephony/calling-numbers";
+import { DialLinesButton } from "@/components/portfolio/dial-lines-button";
 import { ReopenPortfolioButton } from "@/components/portfolio/reopen-portfolio-button";
 
 export interface Portfolio {
@@ -1186,6 +1187,9 @@ export function PortfolioDetail({
               closedAt={raw?.closedAt}
               replacedByName={replacedByName}
             />
+            {p.status !== "closed" && (
+              <DialLinesButton portfolioId={p.id} settings={raw?.settings} />
+            )}
             <PortfolioNumbersButton portfolioId={p.id} portfolioName={p.name} />
             <PurgeRequestButton portfolioId={p.id} portfolioName={p.name} />
             {onUploadPaid && (

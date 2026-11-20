@@ -524,15 +524,23 @@ line per free agent. That is still how Progressive Dial, single calls and Manual
 (API spec v1.2 §24)** when the provider offers one (`TelephonyProvider.predictive`) and the
 company has a **predictive queue** (superadmin → company → Calling card,
 `telephony_settings.predictive_queue`; `migrations/20261117_predictive_dialing.sql`, applied live
-2026-11-17; no company has a queue yet — SkyCRM's queues are 3101–3110, not yet assigned). Without a queue — or before the migration — it falls back to click-to-call.
+2026-11-17; Axiotta has queue 3101 since 2026-11-20, no other company has one). Without a queue — or before the migration — it falls back to click-to-call.
 Flow (`predictiveDial()`): `login_in_queue1` once per agent on the run → `predictive_call`
 (`extension`, `prefix`, `queue`, `mobile_no`, form-encoded) per borrower → `logout_queue1` when the
 run stops or is evicted by `sweepRuns`. SkyCRM dials the borrower and connects the answer to any
 free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, tested in
 `scripts/predictive-dial.test.ts`:
-- Pacing: `round(free agents × predictivePacing(abandonRateTarget)) − calls still waiting for an
-  agent`, capped by calls-per-cycle and the company's free lines. Over the abandon target the
-  dialer stops overdialling (1 per free agent).
+- **Lines per agent (user, 2026-11-20): `PortfolioSettings.linesPerAgent`, default 5, 1–10.**
+  Set by the portfolio's manager (upload step 4 / Edit Portfolio) or an admin (the "N lines /
+  agent" button on the portfolio header, `dial-lines-button.tsx`). Pacing:
+  `free agents × linesPerAgent − calls still waiting for an agent`, capped by calls-per-cycle
+  (how many open per 1.5 s tick), the company's free lines and what is left (`predictiveBatchSize`).
+  Read it through `linesPerAgent()` — portfolios saved earlier have no value (default 5) and the
+  browser sends it, so the server clamps. The abandon-rate throttle was removed with this: the
+  manager's number is what dials. The click-to-call fallback (no queue) still can't overdial.
+- The agent's Productive Dial button always runs `dialerMode: "predictive"`, whatever mode the
+  portfolio was saved with.
+- **Axiotta's queue is 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
 - **Every number still goes through `prepareCall`** (`predictive: { queue }`): DNC, IST window,
   channel reservation, DID, ledger row before the vendor is called. The ledger row has
   `agent_id`/`agent_handle` NULL plus `predictive_queue` + `request_extension`; it is not

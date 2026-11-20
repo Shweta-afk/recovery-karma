@@ -41,6 +41,7 @@ import {
 import { evaluateCall, normalisePhone } from "./guard-rules";
 import {
   freeAgentHandles,
+  linesPerAgent,
   pendingLegs,
   predictiveBatchSize,
   predictiveMode,
@@ -649,8 +650,7 @@ async function predictiveDial(
   const n = predictiveBatchSize({
     freeAgents: free.length,
     pending: pendingLegs(run.legs),
-    abandonRateTarget: run.settings.abandonRateTarget,
-    liveAbandonRate: run.stats.liveAbandonRate,
+    linesPerAgent: linesPerAgent(run.settings),
     callsPerCycle: run.settings.callsPerCycle,
     lines,
     remaining: remaining.length,

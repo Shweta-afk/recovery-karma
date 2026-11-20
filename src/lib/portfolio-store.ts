@@ -89,6 +89,9 @@ export interface PortfolioSettings {
   ptpFollowupHours: number;
   callbackBufferMins: number;
   abandonRateTarget: number;
+  /** Productive Dial: borrowers rung at once per free agent (1–10). Missing on portfolios saved
+   *  before 2026-11-20 — read it through linesPerAgent() (predictive-rules.ts), default 5. */
+  linesPerAgent?: number;
 }
 
 export const DEFAULT_PORTFOLIO_SETTINGS: PortfolioSettings = {
@@ -105,6 +108,7 @@ export const DEFAULT_PORTFOLIO_SETTINGS: PortfolioSettings = {
   ptpFollowupHours: 24,
   callbackBufferMins: 10,
   abandonRateTarget: 3,
+  linesPerAgent: 5,
 };
 
 /** A manager-set collection goal for one agent on one portfolio — distinct from the agent's
