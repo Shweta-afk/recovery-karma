@@ -466,11 +466,18 @@ instruction not to omit them again. Do not wire them up against Exotel; that wal
 inside the provider, no conference API) is exactly why they were removed once already. Wire
 them only once a real vendor with call-control support is chosen and integrated.
 
-**Early "no answer" on a live call (2026-11-20).** SkyCRM sometimes sends a NO ANSWER end record
-seconds into a call that carries on (Babu Gurava Vaidya, ext 8616: ended at 13 s on screen, then a
-5-minute conversation with no End button). While the browser phone is still connected
-(`isPhoneInCall`, `telephony/phone-status.ts`), `use-single-call.ts` keeps the call screen open;
-the phone's own end closes it. The ledger still records SkyCRM's "no answer" and 0 talk time.
+**Late end records landed on the wrong call (found 2026-11-20).** SkyCRM's end record (CDR) often
+arrives after the agent has ended that call and dialled the next. If the ended call never got a
+callid, `ledgerForWebhook` fell back to "the open call on this extension" and applied the OLD
+call's NO ANSWER, callid and recording to the call in progress: the screen ended it mid-
+conversation (Babu Gurava Vaidya, ext 8616, 20 Nov 14:30, ended at 13 s, talked 5 min). About
+0.5–1.3% of calls per day since 12 Nov carry another call's recording (the number in
+`recording_path` ≠ `remote_phone`). Now: a CDR naming a number first matches this extension's own
+callid-less call to THAT number, and the open-call fallback is skipped when the numbers differ
+(`differentNumber`, guard-rules.ts, tested in telephony-check.ts). Rows matched wrongly before the
+fix are not corrected. Also, while the browser phone is still connected (`isPhoneInCall`,
+`telephony/phone-status.ts`), `use-single-call.ts` keeps the call screen open whatever the server
+says; the phone's own end closes it.
 
 ### Listen / Whisper / Barge (`call_monitor_api`) — status 2026-11-17
 
