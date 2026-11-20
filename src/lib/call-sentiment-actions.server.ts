@@ -9,6 +9,7 @@ import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import { fetchPublicBlob } from "./safe-fetch.server";
 import { CALL_RECORDINGS_BUCKET, parseRecordingMarker } from "./telephony/recording-marker";
 import { appError } from "./app-error";
+import { audioFileName, transcribeErrorMessage } from "./transcribe-upload";
 
 const SENTIMENT_LABELS = ["happy", "neutral", "frustrated", "rude"] as const;
 type SentimentLabel = (typeof SENTIMENT_LABELS)[number];
@@ -37,9 +38,16 @@ Respond with ONLY valid JSON, no other text, in this exact shape:
   "reasoning": "<one or two sentence explanation, citing specific phrases from the transcript>"
 }`;
 
-async function transcribeWithGroq(audioBlob: Blob): Promise<string> {
+async function transcribeWithGroq(audioBlob: Blob, url?: string | null): Promise<string> {
+  if (!process.env.GROQ_API_KEY) {
+    throw appError(
+      "SX-3205",
+      "AI transcription isn't set up yet on the server. Contact SamvadX support.",
+      "GROQ_API_KEY missing",
+    );
+  }
   const form = new FormData();
-  form.append("file", audioBlob, "recording.mp3");
+  form.append("file", audioBlob, audioFileName(audioBlob.type, url));
   form.append("model", "whisper-large-v3");
   form.append("response_format", "verbose_json");
 
@@ -49,7 +57,7 @@ async function transcribeWithGroq(audioBlob: Blob): Promise<string> {
     body: form,
   });
   if (!res.ok)
-    throw appError("SX-3201", "Could not transcribe this recording. Please try again.", {
+    throw appError("SX-3201", transcribeErrorMessage(res.status), {
       status: res.status,
       body: (await res.text()).slice(0, 300),
     });
@@ -169,7 +177,7 @@ export const analyzeCallSentiment = createServerFn({ method: "POST" })
       audioBlob = await fetchPublicBlob(log.recording_url);
     }
 
-    const transcript = await transcribeWithGroq(audioBlob);
+    const transcript = await transcribeWithGroq(audioBlob, log.recording_url);
     const sentiment = await analyzeWithGemini(transcript);
 
     const { error: updateErr } = await admin
