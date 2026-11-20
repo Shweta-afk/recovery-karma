@@ -256,7 +256,7 @@ export function InvoiceDocument({
           <div className="mt-10">
             {s.signatoryName && <p className="font-semibold">{s.signatoryName}</p>}
             <p className="text-neutral-500">
-              {s.signatoryDesignation
+              {s.signatoryDesignation && !/authori[sz]ed\s+signatory/i.test(s.signatoryDesignation)
                 ? `${s.signatoryDesignation} · Authorised signatory`
                 : "Authorised signatory"}
             </p>
