@@ -61,25 +61,43 @@ export function istDayStart(now: Date): Date {
   return new Date(local.getTime() - IST);
 }
 
+/** Which kind of call is asking for a number. "manual" = the Manual Dial dock; "queue" = any call
+ *  on a portfolio's account from the Call Queue (click-to-call, Progressive, Productive Dial). */
+export type CallKind = "manual" | "queue";
+
+export type NumberRefusal =
+  | "no_manual_numbers"
+  | "no_portfolio"
+  | "no_portfolio_numbers"
+  | "no_prefix"
+  | "all_numbers_at_cap"
+  | "all_numbers_resting";
+
 export type DidPick =
-  | { ok: true; did: DidRow; reason: "same_as_last_time" | "least_used" }
+  | { ok: true; did: DidRow; reason: "requested" | "least_used" }
   | { ok: true; did: null; reason: "company_has_no_numbers" }
-  | { ok: false; reason: "all_numbers_at_cap" | "all_numbers_resting" };
+  | { ok: false; reason: NumberRefusal };
 
 /**
- * The number an outbound call goes out on.
- *  - Only the company's own outbound-capable numbers, not resting.
- *  - A portfolio with numbers of its own uses only those; others use the unscoped ones.
- *  - The number this borrower was last called from, if it is still usable — so they recognise it.
- *  - Otherwise the least-used number today (ties: list order), under its daily cap.
- * A company with no numbers at all gets `did: null` — the vendor's default caller ID applies.
+ * The number an outbound call goes out on (user, 2026-11-20).
+ *  - Only the company's own outbound-capable numbers. A company with none at all gets
+ *    `did: null` — the vendor's default caller ID, as before numbers existed.
+ *  - Manual Dial uses only the numbers the admin marked Manual. Call Queue calls use only the
+ *    numbers the manager picked for that portfolio, and never a Manual one. Nothing picked →
+ *    refused, so a portfolio never dials on a number nobody chose.
+ *  - With SkyCRM a number must have its prefix: the prefix is what makes the borrower see it.
+ *  - Rotates: the least-used allowed number today, under its daily cap and not resting. A
+ *    Manual Dial caller may ask for one of the manual numbers; anything else is ignored.
  */
-export function pickDid(args: {
-  dids: DidRow[];
+export function pickCallerNumber(args: {
+  dids: Array<DidRow & { prefix?: string | null; manual?: boolean }>;
   clientId: string;
+  kind: CallKind;
   portfolioId?: string | null;
-  /** The number this borrower was last called from by this company. */
-  lastDidId?: string | null;
+  /** Number ids the manager picked for `portfolioId` (portfolio_dids). */
+  portfolioNumberIds?: ReadonlySet<string>;
+  requestedId?: string | null;
+  requirePrefix: boolean;
   usedToday: Map<string, number>;
   defaultDailyCap: number;
   now: Date;
@@ -89,28 +107,84 @@ export function pickDid(args: {
   );
   if (!owned.length) return { ok: true, did: null, reason: "company_has_no_numbers" };
 
-  const forPortfolio = args.portfolioId
-    ? owned.filter((d) => d.portfolio_id === args.portfolioId)
-    : [];
-  const scoped = forPortfolio.length ? forPortfolio : owned.filter((d) => !d.portfolio_id);
-  const awake = scoped.filter((d) => !d.resting_until || new Date(d.resting_until) <= args.now);
+  let allowed: typeof owned;
+  if (args.kind === "manual") {
+    allowed = owned.filter((d) => d.manual);
+    if (!allowed.length) return { ok: false, reason: "no_manual_numbers" };
+  } else {
+    if (!args.portfolioId) return { ok: false, reason: "no_portfolio" };
+    const chosen = args.portfolioNumberIds ?? new Set<string>();
+    allowed = owned.filter((d) => !d.manual && chosen.has(d.id));
+    if (!allowed.length) return { ok: false, reason: "no_portfolio_numbers" };
+  }
+  if (args.requirePrefix) {
+    allowed = allowed.filter((d) => !!d.prefix);
+    if (!allowed.length) return { ok: false, reason: "no_prefix" };
+  }
+  const awake = allowed.filter((d) => !d.resting_until || new Date(d.resting_until) <= args.now);
   if (!awake.length) return { ok: false, reason: "all_numbers_resting" };
 
   const used = (d: DidRow) => args.usedToday.get(d.id) ?? 0;
   const underCap = awake.filter((d) => used(d) < (d.daily_cap ?? args.defaultDailyCap));
   if (!underCap.length) return { ok: false, reason: "all_numbers_at_cap" };
 
-  const last = args.lastDidId ? underCap.find((d) => d.id === args.lastDidId) : undefined;
-  if (last) return { ok: true, did: last, reason: "same_as_last_time" };
-
-  const best = underCap.reduce((a, b) => (used(b) < used(a) ? b : a));
+  if (args.kind === "manual" && args.requestedId) {
+    const asked = underCap.find((d) => d.id === args.requestedId);
+    if (asked) return { ok: true, did: asked, reason: "requested" };
+  }
+  // Ties go to the lowest number, so a fresh day starts at the top of the list and walks down.
+  const best = [...underCap]
+    .sort((a, b) => a.number.localeCompare(b.number))
+    .reduce((a, b) => (used(b) < used(a) ? b : a));
   return { ok: true, did: best, reason: "least_used" };
 }
 
-export function didPickMessage(reason: "all_numbers_at_cap" | "all_numbers_resting"): string {
-  return reason === "all_numbers_at_cap"
-    ? "Every calling number for your company has reached today's limit. Ask your platform admin for more numbers."
-    : "Every calling number for your company is resting. Ask your platform admin.";
+/** Numbers a manager may put on a portfolio: the company's outbound-capable ones that the admin
+ *  hasn't kept for Manual Dial. */
+export function portfolioNumberChoices<T extends DidRow & { manual?: boolean }>(dids: T[]): T[] {
+  return dids.filter((d) => d.status === "assigned" && d.use !== "inbound" && !d.manual);
+}
+
+export function didPickMessage(reason: NumberRefusal): string {
+  switch (reason) {
+    case "no_manual_numbers":
+      return "No numbers are set for Manual Dial yet. Ask your admin to choose them in Settings → Calling numbers.";
+    case "no_portfolio":
+      return "This account isn't in a portfolio, so it has no calling numbers. Use Manual Dial instead.";
+    case "no_portfolio_numbers":
+      return "This portfolio has no calling numbers chosen yet. Ask your manager to choose them on the portfolio page.";
+    case "no_prefix":
+      return "The calling numbers for this call aren't fully set up yet. Contact SamvadX support.";
+    case "all_numbers_at_cap":
+      return "Every calling number for this call has reached today's limit. Ask your admin for more numbers.";
+    case "all_numbers_resting":
+      return "Every calling number for this call is resting. Ask your admin.";
+  }
+}
+
+/** One number + prefix per pair in a pasted list (SkyCRM sends them as "DID / Prefix" columns:
+ *  "00917969263701  3701", one per line or alternating lines). A 3–6 digit token is the prefix of
+ *  the number just before it. `bad` holds tokens that are neither. */
+export function parseNumbersWithPrefixes(text: string): {
+  rows: Array<{ number: string; prefix: string | null }>;
+  bad: string[];
+} {
+  const tokens = text
+    .split(/[\s,;|]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((t) => !/^(did|prefix|queue|number)s?$/i.test(t));
+  const rows: Array<{ number: string; prefix: string | null }> = [];
+  const bad: string[] = [];
+  for (const t of tokens) {
+    if (/^\+?\d{10,15}$/.test(t)) {
+      const number = normaliseDid(t);
+      if (!rows.some((r) => r.number === number)) rows.push({ number, prefix: null });
+    } else if (/^\d{3,6}$/.test(t) && rows.length && rows[rows.length - 1].prefix === null) {
+      rows[rows.length - 1].prefix = t;
+    } else bad.push(t);
+  }
+  return { rows, bad };
 }
 
 /** A sudden drop in pick-ups usually means a number has been marked as spam. */

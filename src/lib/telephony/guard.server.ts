@@ -15,7 +15,14 @@ import {
   type CompanyShare,
   type TrunkSettings,
 } from "./channel-plan";
-import { didPickMessage, istDayStart, normaliseDid, pickDid, type DidRow } from "./did-rules";
+import {
+  didPickMessage,
+  istDayStart,
+  normaliseDid,
+  pickCallerNumber,
+  type CallKind,
+  type DidRow,
+} from "./did-rules";
 import { pickPredictiveLedger } from "./predictive-rules";
 
 export interface DialAgent {
@@ -218,21 +225,40 @@ export async function channelsFor(
 
 // ─── Caller number (DID) per call ──────────────────────────────────────────────
 
-/** The company's numbers, or [] when the inventory table doesn't exist yet. */
-export async function loadCompanyDids(clientId: string): Promise<DidRow[]> {
-  const { data, error } = await db()
-    .from("telephony_dids")
-    .select(
-      "id, number, status, use, client_id, portfolio_id, vendor_queue, daily_cap, resting_until, cooling_until",
-    )
-    .eq("client_id", clientId)
-    .eq("status", "assigned");
+export type CompanyDid = DidRow & { prefix: string | null; manual: boolean };
+
+/** The company's numbers, or [] when the inventory table doesn't exist yet. Before
+ *  20261120_calling_numbers_prefix_manual_portfolio.sql: no prefix, nothing marked manual. */
+export async function loadCompanyDids(clientId: string): Promise<CompanyDid[]> {
+  const base =
+    "id, number, status, use, client_id, portfolio_id, vendor_queue, daily_cap, resting_until, cooling_until";
+  const read = (cols: string) =>
+    db().from("telephony_dids").select(cols).eq("client_id", clientId).eq("status", "assigned");
+  let { data, error } = await read(`${base}, prefix, manual`);
+  if (error && isMissingObject(error)) ({ data, error } = await read(base));
   if (error) {
     if (!isMissingObject(error))
       throw new Error("Could not load your company's calling numbers — call not placed.");
     return [];
   }
-  return (data ?? []) as DidRow[];
+  return ((data ?? []) as Array<DidRow & { prefix?: string | null; manual?: boolean }>).map(
+    (d) => ({ ...d, prefix: d.prefix ?? null, manual: !!d.manual }),
+  );
+}
+
+/** The numbers a manager picked for a portfolio (portfolio_dids); empty when none or the table is
+ *  missing. */
+export async function portfolioNumberIds(portfolioId: string): Promise<Set<string>> {
+  const { data, error } = await db()
+    .from("portfolio_dids")
+    .select("did_id")
+    .eq("portfolio_id", portfolioId);
+  if (error) {
+    if (!isMissingObject(error))
+      throw new Error("Could not load this portfolio's calling numbers — call not placed.");
+    return new Set();
+  }
+  return new Set(((data ?? []) as Array<{ did_id: string }>).map((r) => r.did_id));
 }
 
 export interface DidUsage {
@@ -276,65 +302,48 @@ async function callsTodayByDid(dids: DidRow[]): Promise<Map<string, number>> {
   }
 }
 
-/** The number this company last called `phone` from. */
-async function lastDidFor(clientId: string, phone: string): Promise<string | null> {
-  const last10 = normalisePhone(phone);
-  if (last10.length !== 10) return null;
-  const { data } = await db()
-    .from("telephony_calls")
-    .select("did_id")
-    .eq("client_id", clientId)
-    .eq("direction", "outbound")
-    .not("did_id", "is", null)
-    .like("remote_phone", `%${last10}`)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return (data as { did_id: string } | null)?.did_id ?? null;
-}
+export type ChosenDid = { id: string; number: string; prefix: string | null } | null;
 
-export type ChosenDid = { id: string; number: string } | null;
-
-/** Which number this call goes out on. `requested` (a manual dial's picker) is honoured only if it
- *  is one of the company's own usable numbers. Throws the agent-facing reason when every number
- *  is at its cap or resting. */
+/** Which number this call goes out on (pickCallerNumber in did-rules.ts): Manual Dial → the
+ *  admin's manual numbers, queue calls → the portfolio's chosen numbers, rotating. `requested` (the
+ *  Manual Dial picker) is honoured only if it is one of the manual numbers. Throws the
+ *  agent-facing reason when the call may not go out. */
 export async function chooseDid(args: {
   clientId: string;
-  debtorPhone: string;
+  kind: CallKind;
   portfolioId?: string | null;
   requested?: string;
+  requirePrefix: boolean;
   defaultDailyCap: number;
 }): Promise<ChosenDid> {
   const dids = await loadCompanyDids(args.clientId);
   if (!dids.length) return null;
-  const [usedToday, lastDidId] = await Promise.all([
+  const [usedToday, chosen] = await Promise.all([
     callsTodayByDid(dids),
-    lastDidFor(args.clientId, args.debtorPhone),
+    args.kind === "queue" && args.portfolioId
+      ? portfolioNumberIds(args.portfolioId)
+      : Promise.resolve(new Set<string>()),
   ]);
-  const common = {
+  const wanted = args.requested ? normaliseDid(args.requested) : "";
+  const pick = pickCallerNumber({
+    dids,
     clientId: args.clientId,
+    kind: args.kind,
     portfolioId: args.portfolioId,
+    portfolioNumberIds: chosen,
+    requestedId: wanted ? (dids.find((d) => d.number === wanted)?.id ?? null) : null,
+    requirePrefix: args.requirePrefix,
     usedToday,
     defaultDailyCap: args.defaultDailyCap,
     now: new Date(),
-  };
-  const wanted = args.requested ? normaliseDid(args.requested) : "";
-  const requestedDid = wanted ? dids.find((d) => d.number === wanted) : undefined;
-  if (requestedDid) {
-    const r = pickDid({
-      ...common,
-      dids: [requestedDid],
-      portfolioId: requestedDid.portfolio_id,
-      lastDidId: requestedDid.id,
-    });
-    if (r.ok && r.did) return { id: r.did.id, number: r.did.number };
-  }
-  const pick = pickDid({ ...common, dids, lastDidId });
+  });
   if (!pick.ok) {
     await recordRefusal(args.clientId, "no_number");
     throw new Error(didPickMessage(pick.reason));
   }
-  return pick.did ? { id: pick.did.id, number: pick.did.number } : null;
+  if (!pick.did) return null;
+  const did = pick.did as CompanyDid;
+  return { id: did.id, number: did.number, prefix: did.prefix };
 }
 
 // At most one refusal row per company and reason per minute: the dialer asks again every few
@@ -413,13 +422,21 @@ export async function prepareCall(args: {
   debtorId?: string | null;
   /** Numbers kept for one portfolio are only used for its borrowers. */
   portfolioId?: string | null;
-  /** A caller ID picked in the browser (manual dial); used only if it's one of the company's. */
+  /** A caller ID picked in the browser (Manual Dial); used only if it's one of the manual numbers. */
   requestedCallerId?: string;
+  /** Manual Dial or a Call Queue call — decides which of the company's numbers it may use. */
+  kind: CallKind;
   /** Vendor-routed predictive call into this queue. `agent` is only whose extension goes in the
    *  request: the ledger row gets no agent until the vendor's answer names one, and the agent's
    *  other open calls are left alone (they aren't on this call). */
   predictive?: { queue: string };
-}): Promise<{ ledgerId: string; agentHandle: string; callerId?: string }> {
+}): Promise<{
+  ledgerId: string;
+  agentHandle: string;
+  callerId?: string;
+  /** The chosen number's prefix — sent to SkyCRM so the borrower sees that number. */
+  callerPrefix?: string;
+}> {
   const settings =
     args.settings === undefined ? await loadTelephonySettings(args.clientId) : args.settings;
   const onDoNotCall = args.skipDoNotCall
@@ -454,9 +471,10 @@ export async function prepareCall(args: {
   const trunk = await loadTrunk();
   const did = await chooseDid({
     clientId: args.clientId,
-    debtorPhone: args.debtorPhone,
+    kind: args.kind,
     portfolioId: args.portfolioId,
     requested: args.requestedCallerId,
+    requirePrefix: args.provider === "skycrm",
     defaultDailyCap: trunk.defaultDidDailyCap,
   });
 
@@ -502,7 +520,12 @@ export async function prepareCall(args: {
     console.warn(
       `[telephony-guard] channel reservation failed (sim, continuing): ${error.message}`,
     );
-    return { ledgerId: "", agentHandle, callerId: did?.number };
+    return {
+      ledgerId: "",
+      agentHandle,
+      callerId: did?.number,
+      callerPrefix: did?.prefix ?? undefined,
+    };
   }
   const ledgerId = data as string;
   if (args.predictive) {
@@ -520,10 +543,15 @@ export async function prepareCall(args: {
       await updateLedger(ledgerId, { ended_at: new Date().toISOString(), status: "failed" });
       if (args.provider !== "sim")
         throw new Error("Predictive calling isn't set up in the database yet — call not placed.");
-      return { ledgerId: "", agentHandle, callerId: did?.number };
+      return {
+        ledgerId: "",
+        agentHandle,
+        callerId: did?.number,
+        callerPrefix: did?.prefix ?? undefined,
+      };
     }
   }
-  return { ledgerId, agentHandle, callerId: did?.number };
+  return { ledgerId, agentHandle, callerId: did?.number, callerPrefix: did?.prefix ?? undefined };
 }
 
 export interface LedgerRow {
@@ -543,6 +571,8 @@ export interface LedgerRow {
   vendor_events?: string | null;
   /** Talk time on a completed call, ringing time otherwise — see talk-time.ts. */
   duration_seconds?: number | null;
+  /** The caller number the call went out on (telephony_dids), if the company has numbers. */
+  did_id?: string | null;
   /** Set on a vendor-routed predictive call: the queue it went into (20261117). */
   predictive_queue?: string | null;
   /** Predictive: the extension sent in the request — what hangup uses before an agent has it. */
@@ -550,7 +580,7 @@ export interface LedgerRow {
 }
 
 const LEDGER_BASE_COLS =
-  "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, started_at, answered_at, ended_at, vendor_events, duration_seconds";
+  "id, client_id, agent_id, provider_call_id, direction, agent_handle, remote_phone, vendor_callid, status, started_at, answered_at, ended_at, vendor_events, duration_seconds, did_id";
 const LEDGER_COLS = `${LEDGER_BASE_COLS}, predictive_queue, request_extension`;
 
 /** Run a ledger read with the predictive columns, or without them before 20261117 is applied. */
@@ -562,6 +592,18 @@ async function readLedger<T>(
   let { data, error } = await query(LEDGER_COLS);
   if (error && isMissingObject(error)) ({ data, error } = await query(LEDGER_BASE_COLS));
   return error ? null : data;
+}
+
+/** The prefix of a caller number, for a hangup that must name the call as SkyCRM dialled it. */
+export async function didPrefix(didId: string | null | undefined): Promise<string | null> {
+  if (!didId) return null;
+  const { data, error } = await db()
+    .from("telephony_dids")
+    .select("prefix")
+    .eq("id", didId)
+    .maybeSingle();
+  if (error) return null;
+  return (data as { prefix: string | null } | null)?.prefix ?? null;
 }
 
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {

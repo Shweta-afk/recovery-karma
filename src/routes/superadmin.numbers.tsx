@@ -33,7 +33,6 @@ import { downloadXlsx } from "@/lib/xlsx-export";
 import { todayIstKey } from "@/lib/date-filter";
 import {
   addNumbers,
-  getCompanyPortfoliosForNumbers,
   getNumberHistory,
   getNumbersOverview,
   saveTrunkSettings,
@@ -530,7 +529,9 @@ function NumbersCard({
                       "Label",
                       "Status",
                       "Company",
-                      "Portfolio",
+                      "Prefix",
+                      "Manual Dial",
+                      "Portfolios using it",
                       "Used for",
                       "Vendor queue",
                       "Calls per day limit",
@@ -545,7 +546,9 @@ function NumbersCard({
                       n.label ?? "",
                       statusText(n),
                       n.clientName ?? "",
-                      n.portfolioName ?? "",
+                      n.prefix ?? "",
+                      n.manual ? "Yes" : "",
+                      n.portfolios,
                       n.use,
                       n.vendorQueue ?? "",
                       n.dailyCap ?? data.trunk.defaultDidDailyCap,
@@ -755,6 +758,15 @@ function NumbersCard({
                   </td>
                   <td className="py-2 pr-3">
                     <span className="font-mono">{n.number}</span>
+                    <div className="text-[11px] text-muted-foreground">
+                      {n.prefix ? (
+                        <>prefix {n.prefix}</>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-400">
+                          no prefix — can't be used on SkyCRM
+                        </span>
+                      )}
+                    </div>
                     {n.label && (
                       <span className="ml-2 text-xs text-muted-foreground">{n.label}</span>
                     )}
@@ -769,9 +781,11 @@ function NumbersCard({
                   </td>
                   <td className="py-2 pr-3">
                     {n.clientName ?? <span className="text-muted-foreground">—</span>}
-                    {n.portfolioName && (
+                    {n.clientId && (n.manual || n.portfolios > 0) && (
                       <div className="text-[11px] text-muted-foreground">
-                        only {n.portfolioName}
+                        {n.manual
+                          ? "Manual Dial"
+                          : `${n.portfolios} portfolio${n.portfolios === 1 ? "" : "s"}`}
                       </div>
                     )}
                   </td>
@@ -852,8 +866,12 @@ function AddNumbersDialog({
         data: { accessToken: await getAccessToken(), text, label: label.trim() || null },
       });
       toast.success(
-        `Added ${r.added}${r.alreadyThere ? ` · ${r.alreadyThere} already in the list` : ""}${r.unreadable.length ? ` · couldn't read ${r.unreadable.length}` : ""}`,
+        `Added ${r.added}${r.alreadyThere ? ` · ${r.alreadyThere} already in the list` : ""}${r.prefixed ? ` · prefix set on ${r.prefixed}` : ""}${r.unreadable.length ? ` · couldn't read ${r.unreadable.length}` : ""}`,
       );
+      if (r.withoutPrefix)
+        toast.warning(
+          `${r.withoutPrefix} number${r.withoutPrefix === 1 ? " has" : "s have"} no prefix — SkyCRM can't call from ${r.withoutPrefix === 1 ? "it" : "them"} until one is set (Edit).`,
+        );
       if (r.unreadable.length) toast.warning(`Not numbers: ${r.unreadable.slice(0, 8).join(", ")}`);
       setText("");
       setLabel("");
@@ -873,14 +891,16 @@ function AddNumbersDialog({
         </DialogHeader>
         <div className="space-y-3">
           <p className="text-xs text-muted-foreground">
-            Paste the numbers from the vendor — one per line, or separated by commas. 0, 91 and +91
-            in front are fine. New numbers start as free; give them to companies afterwards.
+            Paste the vendor's list of numbers with their prefixes — "number prefix" per line, or
+            the two columns copied from their email. A 3–6 digit value after a number is its prefix:
+            SkyCRM dials with it to show that number. 0, 91 and +91 in front are fine. New numbers
+            start as free; give them to companies afterwards.
           </p>
           <Textarea
             rows={8}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={"07971367665\n07971367666"}
+            placeholder={"00917969263701  3701\n00917969263703  3703"}
             className="font-mono text-xs"
           />
           <Input
@@ -914,18 +934,15 @@ function EditNumbersDialog({
     vendorQueue?: string | null;
     dailyCap?: number | null;
     label?: string | null;
-    portfolioId?: string | null;
+    prefix?: string | null;
   }) => Promise<void>;
 }) {
   const one = rows.length === 1 ? rows[0] : null;
-  const owners = [...new Set(rows.map((r) => r.clientId))];
-  const owner = owners.length === 1 ? owners[0] : null;
   const [use, setUse] = useState<string>("keep");
   const [queue, setQueue] = useState("");
   const [cap, setCap] = useState("");
   const [label, setLabel] = useState("");
-  const [portfolio, setPortfolio] = useState("keep");
-  const [portfolios, setPortfolios] = useState<Array<{ id: string; lender_name: string }>>([]);
+  const [prefix, setPrefix] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -933,21 +950,7 @@ function EditNumbersDialog({
     setQueue(one?.vendorQueue ?? "");
     setCap(one?.dailyCap ? String(one.dailyCap) : "");
     setLabel(one?.label ?? "");
-    setPortfolio("keep");
-    setPortfolios([]);
-    if (owner) {
-      void (async () => {
-        try {
-          setPortfolios(
-            await getCompanyPortfoliosForNumbers({
-              data: { accessToken: await getAccessToken(), clientId: owner },
-            }),
-          );
-        } catch {
-          // The portfolio picker just stays empty.
-        }
-      })();
-    }
+    setPrefix(one?.prefix ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -957,7 +960,7 @@ function EditNumbersDialog({
     if (one || queue.trim()) change.vendorQueue = queue.trim() || null;
     if (one || cap.trim()) change.dailyCap = cap.trim() ? Number(cap) : null;
     if (one || label.trim()) change.label = label.trim() || null;
-    if (portfolio !== "keep") change.portfolioId = portfolio === "none" ? null : portfolio;
+    if (one) change.prefix = prefix.trim() || null;
     void onSave(change);
   };
 
@@ -1012,25 +1015,24 @@ function EditNumbersDialog({
               className="h-8 text-xs"
             />
           </div>
-          <div className="space-y-1">
-            <p className="text-muted-foreground">
-              Only for one portfolio (a lender wanting its own numbers)
-            </p>
-            <Select value={portfolio} onValueChange={setPortfolio} disabled={!owner}>
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue placeholder={owner ? "Keep as is" : "Pick numbers of one company"} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="keep">Keep as is</SelectItem>
-                <SelectItem value="none">Any of the company's portfolios</SelectItem>
-                {portfolios.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.lender_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {one && (
+            <div className="space-y-1">
+              <p className="text-muted-foreground">
+                Prefix (from SkyCRM's list — what makes the borrower see this number)
+              </p>
+              <Input
+                value={prefix}
+                onChange={(e) => setPrefix(e.target.value)}
+                placeholder="e.g. 3701"
+                inputMode="numeric"
+                className="h-8 text-xs"
+              />
+            </div>
+          )}
+          <p className="text-muted-foreground">
+            Which numbers are for Manual Dial and which each portfolio calls from is chosen by the
+            company itself (admin: Settings → Calling numbers; manager: the portfolio page).
+          </p>
           <Button size="sm" onClick={submit}>
             Save
           </Button>

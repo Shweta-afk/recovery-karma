@@ -302,7 +302,8 @@ export const skycrmProvider: TelephonyProvider = {
       {
         phone_number: skycrmNumber(req.debtorNumber),
         extension,
-        prefix: dialPrefix(extension),
+        // The chosen number's prefix decides which number the borrower sees (2026-11-20).
+        prefix: req.callerPrefix ?? dialPrefix(extension),
         per_id: perId,
         ...(SKYCRM_CALLER_ID_FIELD && req.callerId
           ? { [SKYCRM_CALLER_ID_FIELD]: req.callerId }
@@ -331,7 +332,7 @@ export const skycrmProvider: TelephonyProvider = {
           {
             phone_number: skycrmNumber(phone),
             extension,
-            prefix: dialPrefix(extension),
+            prefix: ctx?.prefix ?? dialPrefix(extension),
             per_id: providerCallId,
           },
           extension,
@@ -361,7 +362,7 @@ export const skycrmProvider: TelephonyProvider = {
         "predictive_call",
         {
           extension: req.extension,
-          prefix: dialPrefix(req.extension),
+          prefix: req.callerPrefix ?? dialPrefix(req.extension),
           queue: req.queue,
           mobile_no: skycrmNumber(req.debtorNumber),
           ...(SKYCRM_CALLER_ID_FIELD && req.callerId
@@ -417,10 +418,10 @@ export const skycrmProvider: TelephonyProvider = {
       if (!agentHandle)
         agentHandle = looksLikeExtension(dst) ? dst : looksLikeExtension(src) ? src : undefined;
       if (!remotePhone) remotePhone = agentHandle === dst ? src : dst;
-      // An outbound CDR's dst is prefix + number ("8601" + "9876543210"); keep just the number.
-      const prefix = agentHandle ? dialPrefix(agentHandle) : "";
-      if (prefix && remotePhone?.startsWith(prefix) && remotePhone.length - prefix.length >= 10) {
-        remotePhone = remotePhone.slice(prefix.length);
+      // An outbound CDR's dst is prefix + number ("8601" or a caller-number prefix like "3701",
+      // then "9876543210"); keep just the number. Indian numbers are 10 digits.
+      if (remotePhone && /^\d{13,16}$/.test(remotePhone) && direction === "outbound") {
+        remotePhone = remotePhone.slice(-10);
       }
     } else {
       status = liveStatusFor(pick("status"));

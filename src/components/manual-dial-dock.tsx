@@ -37,7 +37,9 @@ import { useAuth } from "@/lib/auth";
 import { useCallSession } from "@/lib/call-session";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
 import { useStorageSync } from "@/lib/storage-sync";
-import { TELEPHONY_CALLER_IDS } from "@/lib/telephony/caller-ids";
+import { getMyManualNumbers } from "@/lib/calling-numbers.server";
+import { getAccessToken } from "@/lib/access-token";
+import { formatNumber } from "@/components/telephony/calling-numbers";
 import {
   phoneKey,
   resolvePhone,
@@ -82,7 +84,27 @@ export function ManualDialDock() {
   const [loanId, setLoanId] = useState("");
   const [number, setNumber] = useState("");
   const [name, setName] = useState("");
-  const [callerId, setCallerId] = useState<string>(TELEPHONY_CALLER_IDS[0] ?? "");
+  // The numbers the admin kept for Manual Dial (Settings → Calling numbers). "auto" = let the
+  // server rotate across them. null = not loaded / the company has no numbers of its own.
+  const [manualNumbers, setManualNumbers] = useState<{
+    companyHasNumbers: boolean;
+    numbers: Array<{ number: string; label: string | null }>;
+  } | null>(null);
+  const [callerId, setCallerId] = useState<string>("auto");
+
+  useEffect(() => {
+    if (!open) return;
+    void (async () => {
+      try {
+        setManualNumbers(
+          await getMyManualNumbers({ data: { accessToken: await getAccessToken() } }),
+        );
+      } catch {
+        setManualNumbers(null);
+      }
+    })();
+  }, [open]);
+  const noManualNumbers = !!manualNumbers?.companyHasNumbers && manualNumbers.numbers.length === 0;
 
   const pathname = useRouterState({ select: (st) => st.location.pathname });
   const navigate = useNavigate();
@@ -186,7 +208,10 @@ export function ManualDialDock() {
       held: false,
       elapsed: 0,
     });
-    singleCall.dial(debtor, { callerId: callerId || undefined });
+    singleCall.dial(debtor, {
+      callerId: callerId === "auto" ? undefined : callerId,
+      manual: true,
+    });
     if (account && onAgentSide && !pathname.startsWith("/dashboard/call-queue")) {
       void navigate({ to: "/dashboard/call-queue" });
     }
@@ -349,25 +374,34 @@ export function ManualDialDock() {
             </div>
           )}
 
-          <div>
-            <label className="text-[10px] font-medium text-muted-foreground">Caller ID</label>
-            <Select value={callerId} onValueChange={setCallerId}>
-              <SelectTrigger className="h-8 text-sm">
-                <SelectValue placeholder="Caller ID" />
-              </SelectTrigger>
-              <SelectContent>
-                {TELEPHONY_CALLER_IDS.map((did) => (
-                  <SelectItem key={did} value={did}>
-                    {did}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {manualNumbers?.companyHasNumbers && manualNumbers.numbers.length > 0 && (
+            <div>
+              <label className="text-[10px] font-medium text-muted-foreground">Call from</label>
+              <Select value={callerId} onValueChange={setCallerId}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue placeholder="Any Manual Dial number" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Any (rotates)</SelectItem>
+                  {manualNumbers.numbers.map((n) => (
+                    <SelectItem key={n.number} value={n.number}>
+                      {formatNumber(n.number)}
+                      {n.label ? ` · ${n.label}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {noManualNumbers && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              No numbers are set for Manual Dial yet. Ask your admin (Settings → Calling numbers).
+            </p>
+          )}
 
           <Button
             className="h-8 w-full gap-1.5 text-sm"
-            disabled={!number.trim()}
+            disabled={!number.trim() || noManualNumbers}
             onClick={() => void dial()}
           >
             <Phone className="h-3.5 w-3.5" />

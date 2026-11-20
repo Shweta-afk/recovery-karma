@@ -16,6 +16,9 @@ export interface StartCallRequest {
   /** Caller ID shown to the debtor. Must be a DID assigned to the account — a personal
    * number here is rejected. Omit to fall back to the account's pilot number. */
   callerId?: string;
+  /** SkyCRM: the prefix of the chosen caller number (prefix 3701 → the borrower sees …3701).
+   *  Omitted when the company has no numbers; the agent's extension is sent as before. */
+  callerPrefix?: string;
   /** Our internal call_logs row id, so the webhook can report status against it */
   callLogId: string;
   /** Our telephony_calls ledger row id, unique per call. Providers that get no call id back at
@@ -87,6 +90,8 @@ export interface HangupContext {
   agentHandle?: string | null;
   remotePhone?: string | null;
   direction?: CallDirection;
+  /** The caller-number prefix the call was placed with, if any. */
+  prefix?: string | null;
 }
 
 // ─── Domain model: call lifecycle, participants, channels ─────────────────────
@@ -188,6 +193,8 @@ export interface PredictiveCallRequest {
   /** Our telephony_calls ledger row id; returned as providerCallId (the vendor returns no id). */
   requestId: string;
   callerId?: string;
+  /** See StartCallRequest.callerPrefix. */
+  callerPrefix?: string;
   hints?: StartCallRequest["hints"];
 }
 

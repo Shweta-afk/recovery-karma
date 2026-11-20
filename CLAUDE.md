@@ -363,8 +363,9 @@ code — always go through this.
   on this extension" (`webhook-reconcile.server.ts`).
 - **`ingestCallStatusEvent` in `telephony/server.ts` must stay free of provider/DB imports.**
   `server.ts` is imported by browser code, and anything an exported plain function references
-  ships in the client bundle. This leaked SkyCRM's JWT code once during development; check with
-  `grep -rl dialing_phone .output/public` after a build.
+  ships in the client bundle. This leaked SkyCRM's JWT code once during development, and again
+  on 2026-11-17 via `sweepRuns` → queue logout (fixed 2026-11-20; `sweepRuns` now only queues
+  evicted sessions, a test pins it). Check with `grep -rl dialing_phone .output/public` after a build.
 - **One server instance only** (`railway.json` pins `numReplicas: 1`). Dialer runs, the dial rate
   limiter and the call-status cache live in process memory (`telephony/server.ts`,
   `rate-limit.server.ts`); a second replica would split them silently. Move them to the database
@@ -407,30 +408,51 @@ rang" toast) while it carried on, and `answered_at` was never set. `liveStatusFo
 treats an unknown one as ringing (logged as `unknown live call status`) — only a recognised end
 word or the CDR ends a call.
 
-### Phone numbers (DIDs) and shared lines (2026-10-26, branch `skycrm-calling`, NOT live)
+### Calling numbers: prefixes, Manual Dial numbers, portfolio numbers (2026-11-20)
 
-The vendor supplies ~200 DIDs and a trunk of ~60 channels for every company.
-`migrations/20261026_telephony_dids_channels.sql` is **not applied anywhere** as of 2026-10-26;
-the code falls back to the old behaviour without it (v1 reservation, no numbers, no guarantees).
-Rules are pure and tested (`scripts/telephony-numbers.test.ts`); the SQL was checked on PGlite.
+**SkyCRM shows the borrower the number whose PREFIX is sent with the call** (`prefix` on
+`dialing_phone` / `predictive_call` / `hangup_phone`). SkyCRM's list (email, 2026-11-20): 46 DIDs
+`00917969263701…3866`, prefix = last 4 digits (3701 → 079 6926 3701), and queues 3101–3110 (one
+per company, `telephony_settings.predictive_queue`; any number works with any queue). Until this,
+every call sent the agent's extension as the prefix, so each agent always showed one number —
+borrowers in escalations tied those numbers to us. That is why numbers now rotate.
 
-- **One owner per number** (`telephony_dids`, server-only). The DIALLED number decides an inbound
-  call's company (`recordInbound` in `webhook-reconcile.server.ts`); the extension says who
-  answered. A number taken back rests `did_cooling_days` (default 60) before anyone else gets it,
-  so the old company's borrowers never reach a new one. History: `telephony_did_assignments`.
-- **Which number a call goes out on**: `pickDid` (`did-rules.ts`), called from `prepareCall`:
-  same number this borrower was last called from, else the least used today; never another
-  company's, never inbound-only, under each number's daily cap (IST day), not resting; a
-  portfolio with numbers of its own uses only those. A company with no numbers → vendor default.
-- **Lines**: `channel_reserved` (guaranteed) + `channel_limit` (most at once) per company, and
-  `telephony_platform.inbound_reserve` kept for incoming. `channelHeadroom` (`channel-plan.ts`)
-  and `telephony_reserve_channel_v2` are the same rule — change them together.
-- ⚠️ **SkyCRM per-call caller ID is UNCONFIRMED.** The chosen DID is sent only when
-  `SKYCRM_CALLER_ID_FIELD` names the form field. The webhook's dialled-number field is also a
-  guess (`did`/`dnid`/… in `parseStatusWebhook`) — check against a real inbound event.
-- Screens: Superadmin → **Numbers & Lines** (`superadmin.numbers.tsx`), company page → **Calling**
-  tab, and a **Missed calls** card on agent/manager home (`listMissedCalls`; an entry clears once
-  anyone calls that number back). "Assigned agent rings first" on inbound needs the vendor's ACD.
+Who decides what (user, 2026-11-20):
+- **Superadmin** → Numbers & Lines: paste numbers WITH prefixes (`parseNumbersWithPrefixes` reads
+  SkyCRM's two-column list), give each company its numbers. Prefix editable per number; unique.
+  A number with no prefix can't be used on SkyCRM. Taking a number back clears its Manual Dial
+  flag and its portfolio lists.
+- **Company admin** → Settings → **Calling numbers** (`CompanyCallingNumbersCard`): marks numbers
+  for **Manual Dial** (`telephony_dids.manual`). Manual Dial uses ONLY those; they are never used
+  for queue calls (marking one manual removes it from portfolio lists).
+- **Manager** → on upload (step 4) and the portfolio header's **Calling numbers** button: picks
+  which of the other numbers the portfolio calls from (`portfolio_dids`, server-only; owner =
+  `manager_id` or the team's manager, or any admin). Used by EVERY Call Queue call on its
+  accounts: click-to-call, Progressive and Productive Dial.
+- **Blocked until chosen**: a portfolio with no numbers can't dial ("no_portfolio_numbers"); Manual
+  Dial with no manual numbers can't either. A company holding NO numbers at all keeps the old
+  behaviour (extension as prefix, vendor default) — that is what every company runs on until
+  numbers are handed out.
+- **Always rotates** (user): least-used allowed number today, ties to the lowest number
+  (`pickCallerNumber`, `did-rules.ts`, tested in `scripts/telephony-numbers.test.ts`). The old
+  "same number as this borrower's last call" rule was dropped. Manual Dial may pick one of its
+  manual numbers or "Any (rotates)"; queue calls ignore a browser-sent caller ID.
+- `startCall` takes `manual: true` from the Manual Dial dock (so a loan-ID-bound manual call still
+  uses manual numbers); a call with no account behind it is always manual.
+- Server: `src/lib/calling-numbers.server.ts`; picking in `guard.server.ts` `chooseDid` (from
+  `prepareCall`, which now requires `kind`). Migration
+  `20261120_calling_numbers_prefix_manual_portfolio.sql` (NOT applied as of 2026-11-20; code falls
+  back without it — no prefixes, nothing manual). `telephony_dids.portfolio_id` is superseded by
+  `portfolio_dids` (carried over by the migration; no longer read when picking).
+- An outbound CDR's `dst` is prefix + number; `parseStatusWebhook` keeps the last 10 digits.
+
+Older rules from 2026-10-26 still hold: one owner per number, the DIALLED number decides an
+inbound call's company (`recordInbound`), a number taken back rests `did_cooling_days` (history:
+`telephony_did_assignments`), daily caps per IST day, `channel_reserved` + `channel_limit` per
+company and `telephony_platform.inbound_reserve` (`channelHeadroom` and
+`telephony_reserve_channel_v2` are the same rule — change them together). The webhook's
+dialled-number field is still a guess (`did`/`dnid`/… in `parseStatusWebhook`). Screens:
+Superadmin → **Numbers & Lines**, company page → **Calling** tab, **Missed calls** card.
 
 **Tata SmartFlo was evaluated, went live briefly, then was fully removed on 2026-08-06** ("nothing we did was working and aligning with our goals" — user's call). If you see "Tata" or "SmartFlo" referenced anywhere outside this note, it's stale.
 

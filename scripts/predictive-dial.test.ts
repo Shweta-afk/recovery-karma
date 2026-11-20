@@ -435,3 +435,89 @@ describe("SkyCRM predictive API (§24)", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("caller-number prefix (2026-11-20)", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  function capture() {
+    const seen: Array<{ path: string; body: Record<string, string> }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      seen.push({
+        path: String(url).replace("https://sky.test/", ""),
+        body: Object.fromEntries((init?.body as URLSearchParams).entries()),
+      });
+      return new Response('{"status":200}');
+    }) as typeof fetch;
+    return seen;
+  }
+
+  test("click-to-call, predictive and hangup send the chosen number's prefix", async () => {
+    const { skycrmProvider } =
+      await import("../src/lib/telephony/skycrm-provider.ts?predictive-dial");
+    const seen = capture();
+    await skycrmProvider.startCall({
+      agentNumber: "8480",
+      debtorNumber: "9876543210",
+      callLogId: "c1",
+      requestId: "l1",
+      callerPrefix: "3701",
+    });
+    await skycrmProvider.predictive!.startCall({
+      extension: "8480",
+      queue: "3101",
+      debtorNumber: "9876543210",
+      requestId: "l2",
+      callerPrefix: "3703",
+    });
+    await skycrmProvider.hangup("l1", {
+      agentHandle: "8480",
+      remotePhone: "9876543210",
+      prefix: "3701",
+    });
+    expect(seen.find((s) => s.path === "dialing_phone")?.body.prefix).toBe("3701");
+    expect(seen.find((s) => s.path === "predictive_call")?.body.prefix).toBe("3703");
+    expect(seen.find((s) => s.path === "hangup_phone")?.body.prefix).toBe("3701");
+  });
+
+  test("no number chosen (company has none) → the extension, as before", async () => {
+    const { skycrmProvider } =
+      await import("../src/lib/telephony/skycrm-provider.ts?predictive-dial");
+    const seen = capture();
+    await skycrmProvider.startCall({
+      agentNumber: "8480",
+      debtorNumber: "9876543210",
+      callLogId: "c1",
+      requestId: "l1",
+    });
+    expect(seen.find((s) => s.path === "dialing_phone")?.body.prefix).toBe("8480");
+  });
+
+  test("an outbound CDR's prefix + number keeps only the borrower's number", async () => {
+    const { skycrmProvider } =
+      await import("../src/lib/telephony/skycrm-provider.ts?predictive-dial");
+    for (const dst of ["37019876543210", "84809876543210"]) {
+      const e = skycrmProvider.parseStatusWebhook({
+        callid: "1.2",
+        src: "8480",
+        dst,
+        disposition: "ANSWERED",
+        billsec: "30",
+        direction: "Outbound",
+      });
+      expect(e.remotePhone).toBe("9876543210");
+      expect(e.agentHandle).toBe("8480");
+    }
+  });
+});
+
+describe("browser bundle guard", () => {
+  test("sweepRuns (reachable from ingestCallStatusEvent) never touches the provider", async () => {
+    const src = await Bun.file("src/lib/telephony/server.ts").text();
+    const body = src.slice(src.indexOf("function sweepRuns"), src.indexOf("/** Apply a provider event"));
+    expect(body.length).toBeGreaterThan(100);
+    expect(body).not.toMatch(/getTelephonyProvider|endPredictiveSession|logoutSession|prov\./);
+  });
+});

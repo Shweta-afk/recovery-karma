@@ -13,7 +13,10 @@ import {
   istDayStart,
   normaliseDid,
   parseDidList,
-  pickDid,
+  pickCallerNumber,
+  didPickMessage,
+  parseNumbersWithPrefixes,
+  portfolioNumberChoices,
   type DidRow,
 } from "../src/lib/telephony/did-rules";
 import { groupMissedCalls } from "../src/lib/telephony/missed-calls";
@@ -131,9 +134,10 @@ describe("numbers", () => {
   });
 });
 
-describe("picking the caller number", () => {
+describe("picking the caller number (user, 2026-11-20)", () => {
   const now = new Date("2026-10-26T06:00:00Z");
-  const did = (id: string, patch: Partial<DidRow> = {}): DidRow => ({
+  type Did = DidRow & { prefix: string | null; manual: boolean };
+  const did = (id: string, patch: Partial<Did> = {}): Did => ({
     id,
     number: `90000000${id.padStart(2, "0")}`.slice(-10),
     status: "assigned",
@@ -144,85 +148,182 @@ describe("picking the caller number", () => {
     daily_cap: null,
     resting_until: null,
     cooling_until: null,
+    prefix: `37${id.padStart(2, "0")}`,
+    manual: false,
     ...patch,
   });
-  const base = { clientId: "a", usedToday: new Map<string, number>(), defaultDailyCap: 150, now };
+  const base = {
+    clientId: "a",
+    usedToday: new Map<string, number>(),
+    defaultDailyCap: 150,
+    now,
+    requirePrefix: true,
+  };
+  const queue = (ids: string[], portfolioId: string | null = "p1") => ({
+    kind: "queue" as const,
+    portfolioId,
+    portfolioNumberIds: new Set(ids),
+  });
 
-  test("a company without numbers uses the vendor default", () => {
-    expect(pickDid({ ...base, dids: [did("1", { client_id: "b" })] })).toEqual({
-      ok: true,
-      did: null,
-      reason: "company_has_no_numbers",
+  test("a company without numbers uses the vendor default, for every kind of call", () => {
+    const dids = [did("1", { client_id: "b" })];
+    for (const kind of [{ kind: "manual" as const }, queue([])])
+      expect(pickCallerNumber({ ...base, ...kind, dids })).toEqual({
+        ok: true,
+        did: null,
+        reason: "company_has_no_numbers",
+      });
+  });
+
+  test("Manual Dial uses only the admin's manual numbers", () => {
+    const dids = [did("1"), did("2", { manual: true }), did("3", { manual: true })];
+    const r = pickCallerNumber({ ...base, kind: "manual", dids });
+    expect(r.ok && r.did?.id).toBe("2");
+    expect(pickCallerNumber({ ...base, kind: "manual", dids: [did("1")] })).toEqual({
+      ok: false,
+      reason: "no_manual_numbers",
     });
   });
 
+  test("Manual Dial may ask for one of its numbers, never a portfolio number", () => {
+    const dids = [did("1"), did("2", { manual: true }), did("3", { manual: true })];
+    const asked = pickCallerNumber({ ...base, kind: "manual", dids, requestedId: "3" });
+    expect(asked).toMatchObject({ ok: true, reason: "requested" });
+    expect(asked.ok && asked.did?.id).toBe("3");
+    const notManual = pickCallerNumber({ ...base, kind: "manual", dids, requestedId: "1" });
+    expect(notManual.ok && notManual.did?.id).toBe("2");
+  });
+
+  test("queue calls use only the portfolio's chosen numbers, never a manual one", () => {
+    const dids = [did("1"), did("2"), did("3", { manual: true })];
+    const r = pickCallerNumber({ ...base, ...queue(["2", "3"]), dids });
+    expect(r.ok && r.did?.id).toBe("2");
+    // A manual number on the list (shouldn't happen — marking it manual removes it) is skipped.
+    expect(pickCallerNumber({ ...base, ...queue(["3"]), dids })).toEqual({
+      ok: false,
+      reason: "no_portfolio_numbers",
+    });
+  });
+
+  test("a portfolio with nothing chosen can't call; an account with no portfolio can't either", () => {
+    const dids = [did("1")];
+    expect(pickCallerNumber({ ...base, ...queue([]), dids })).toEqual({
+      ok: false,
+      reason: "no_portfolio_numbers",
+    });
+    expect(pickCallerNumber({ ...base, ...queue(["1"], null), dids })).toEqual({
+      ok: false,
+      reason: "no_portfolio",
+    });
+  });
+
+  test("always rotates: the least used today, ties to the lowest number", () => {
+    const dids = [did("3"), did("1"), did("2")];
+    const fresh = pickCallerNumber({ ...base, ...queue(["1", "2", "3"]), dids });
+    expect(fresh.ok && fresh.did?.id).toBe("1");
+    const usedToday = new Map([
+      ["1", 4],
+      ["2", 3],
+      ["3", 3],
+    ]);
+    const r = pickCallerNumber({ ...base, ...queue(["1", "2", "3"]), dids, usedToday });
+    expect(r.ok && r.did?.id).toBe("2");
+  });
+
+  test("walks through every number as calls are placed", () => {
+    const dids = [did("1"), did("2"), did("3")];
+    const usedToday = new Map<string, number>();
+    const seen: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const r = pickCallerNumber({ ...base, ...queue(["1", "2", "3"]), dids, usedToday });
+      const id = (r.ok && r.did?.id) as string;
+      seen.push(id);
+      usedToday.set(id, (usedToday.get(id) ?? 0) + 1);
+    }
+    expect(seen).toEqual(["1", "2", "3", "1", "2", "3"]);
+  });
+
+  test("SkyCRM needs a prefix; the simulator doesn't", () => {
+    const dids = [did("1", { prefix: null }), did("2")];
+    const r = pickCallerNumber({ ...base, ...queue(["1", "2"]), dids });
+    expect(r.ok && r.did?.id).toBe("2");
+    expect(pickCallerNumber({ ...base, ...queue(["1"]), dids })).toEqual({
+      ok: false,
+      reason: "no_prefix",
+    });
+    const sim = pickCallerNumber({ ...base, ...queue(["1"]), dids, requirePrefix: false });
+    expect(sim.ok && sim.did?.id).toBe("1");
+  });
+
   test("never another company's number, never an inbound-only one", () => {
-    const r = pickDid({
+    const dids = [did("1", { client_id: "b" }), did("2", { use: "inbound" }), did("3")];
+    const r = pickCallerNumber({ ...base, ...queue(["1", "2", "3"]), dids });
+    expect(r.ok && r.did?.id).toBe("3");
+  });
+
+  test("at its cap or resting → another number; all of them → refused", () => {
+    const dids = [did("1", { daily_cap: 5 }), did("2", { resting_until: "2026-10-27T00:00:00Z" })];
+    const usedToday = new Map([["1", 5]]);
+    expect(pickCallerNumber({ ...base, ...queue(["1"]), dids, usedToday })).toEqual({
+      ok: false,
+      reason: "all_numbers_at_cap",
+    });
+    expect(pickCallerNumber({ ...base, ...queue(["2"]), dids })).toEqual({
+      ok: false,
+      reason: "all_numbers_resting",
+    });
+    const r = pickCallerNumber({
       ...base,
-      dids: [did("1", { client_id: "b" }), did("2", { use: "inbound" }), did("3")],
+      ...queue(["1", "2", "3"]),
+      dids: [...dids, did("3")],
+      usedToday,
     });
     expect(r.ok && r.did?.id).toBe("3");
   });
 
-  test("same number as last time for this borrower", () => {
-    const usedToday = new Map([
-      ["1", 0],
-      ["2", 40],
-    ]);
-    const r = pickDid({ ...base, usedToday, lastDidId: "2", dids: [did("1"), did("2")] });
-    expect(r).toMatchObject({ ok: true, reason: "same_as_last_time" });
-    expect(r.ok && r.did?.id).toBe("2");
+  test("every refusal has a message for the agent", () => {
+    for (const reason of [
+      "no_manual_numbers",
+      "no_portfolio",
+      "no_portfolio_numbers",
+      "no_prefix",
+      "all_numbers_at_cap",
+      "all_numbers_resting",
+    ] as const)
+      expect(didPickMessage(reason).length).toBeGreaterThan(20);
   });
 
-  test("otherwise the least used today", () => {
-    const usedToday = new Map([
-      ["1", 30],
-      ["2", 10],
-      ["3", 20],
-    ]);
-    const r = pickDid({ ...base, usedToday, dids: [did("1"), did("2"), did("3")] });
-    expect(r.ok && r.did?.id).toBe("2");
+  test("portfolios may choose the company's numbers except Manual Dial ones", () => {
+    const dids = [did("1"), did("2", { manual: true }), did("3", { use: "inbound" })];
+    expect(portfolioNumberChoices(dids).map((d) => d.id)).toEqual(["1"]);
   });
+});
 
-  test("last number at its cap → another one", () => {
-    const usedToday = new Map([
-      ["1", 0],
-      ["2", 5],
-    ]);
-    const r = pickDid({
-      ...base,
-      usedToday,
-      lastDidId: "2",
-      dids: [did("1"), did("2", { daily_cap: 5 })],
+describe("pasting numbers with their prefixes", () => {
+  test("SkyCRM's email: DID and prefix on alternating lines, with headings", () => {
+    const text = "DID\nPrefix\n00917969263701\n3701\n00917969263703\n3703\n";
+    expect(parseNumbersWithPrefixes(text)).toEqual({
+      rows: [
+        { number: "7969263701", prefix: "3701" },
+        { number: "7969263703", prefix: "3703" },
+      ],
+      bad: [],
     });
-    expect(r.ok && r.did?.id).toBe("1");
   });
 
-  test("all at cap, or all resting, refuses", () => {
-    const usedToday = new Map([["1", 150]]);
-    expect(pickDid({ ...base, usedToday, dids: [did("1")] })).toEqual({
-      ok: false,
-      reason: "all_numbers_at_cap",
-    });
-    expect(
-      pickDid({ ...base, dids: [did("1", { resting_until: "2026-10-27T00:00:00Z" })] }),
-    ).toEqual({
-      ok: false,
-      reason: "all_numbers_resting",
-    });
-    expect(
-      pickDid({ ...base, dids: [did("1", { resting_until: "2026-10-25T00:00:00Z" })] }).ok,
-    ).toBe(true);
+  test("two columns, tabs or spaces; a number without a prefix is kept without one", () => {
+    const r = parseNumbersWithPrefixes("00917969263701\t3701\n07969263705 3705\n+917969263706");
+    expect(r.rows).toEqual([
+      { number: "7969263701", prefix: "3701" },
+      { number: "7969263705", prefix: "3705" },
+      { number: "7969263706", prefix: null },
+    ]);
   });
 
-  test("a portfolio with its own numbers uses only those; others use the shared ones", () => {
-    const dids = [did("1", { portfolio_id: "p1" }), did("2")];
-    const r1 = pickDid({ ...base, dids, portfolioId: "p1" });
-    const r2 = pickDid({ ...base, dids, portfolioId: "p2" });
-    const r3 = pickDid({ ...base, dids });
-    expect(r1.ok && r1.did?.id).toBe("1");
-    expect(r2.ok && r2.did?.id).toBe("2");
-    expect(r3.ok && r3.did?.id).toBe("2");
+  test("anything else is reported, not guessed", () => {
+    const r = parseNumbersWithPrefixes("3701 00917969263701 abc 12");
+    expect(r.rows).toEqual([{ number: "7969263701", prefix: null }]);
+    expect(r.bad).toEqual(["3701", "abc", "12"]);
   });
 });
 

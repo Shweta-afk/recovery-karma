@@ -28,6 +28,7 @@ import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-dispositi
 import {
   doNotCallSet,
   assertMayDial,
+  didPrefix,
   ledgerByProviderCallId,
   loadTelephonySettings,
   prepareCall,
@@ -98,6 +99,8 @@ const owners = g.__recoveryaiTelephony.owners;
 const runTargets = g.__recoveryaiTelephony.runTargets;
 const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
 const predictiveSessions = g.__recoveryaiTelephony.predictiveSessions;
+/** Sessions of runs sweepRuns evicted, waiting for a server function to log their agents out. */
+const evictedSessions: PredictiveSession[] = [];
 
 interface PredictiveSession {
   clientId: string;
@@ -133,7 +136,13 @@ function sweepRuns(now = Date.now()): void {
       runTouchedAt.delete(id);
       loggedLegs.delete(id);
       runTargets.delete(id);
-      void endPredictiveSession(id);
+      // Only noted here: sweepRuns is reachable from ingestCallStatusEvent, which ships in the
+      // browser bundle, so it must not touch the provider. Handlers log these agents out.
+      const session = predictiveSessions.get(id);
+      if (session) {
+        predictiveSessions.delete(id);
+        evictedSessions.push(session);
+      }
     }
   }
 }
@@ -238,6 +247,7 @@ async function providerHangup(providerCallId: string): Promise<void> {
   await getTelephonyProvider().hangup(providerCallId, {
     // A predictive call nobody has taken yet: the extension that was in the request.
     agentHandle: ledger?.agent_handle ?? ledger?.request_extension,
+    prefix: await didPrefix(ledger?.did_id).catch(() => null),
     remotePhone: ledger?.remote_phone,
     direction: ledger?.direction,
   });
@@ -495,13 +505,14 @@ async function dial(
         settings,
         debtorId: leg.debtorId,
         portfolioId: t?.portfolioId,
-        requestedCallerId: callerId,
+        kind: "queue",
       });
       ledgerId = prepared.ledgerId;
       const { providerCallId } = await prov.startCall({
         agentNumber: prepared.agentHandle,
         debtorNumber: leg.phone,
-        callerId: prepared.callerId ?? callerId,
+        callerId: prepared.callerId,
+        callerPrefix: prepared.callerPrefix,
         callLogId: leg.id,
         requestId: ledgerId || undefined,
         hints: {
@@ -573,6 +584,15 @@ async function endPredictiveSession(runId: string): Promise<void> {
   const session = predictiveSessions.get(runId);
   if (!session) return;
   predictiveSessions.delete(runId);
+  await logoutSession(session);
+}
+
+/** Log out the agents of runs sweepRuns evicted. Called from the dialer server functions. */
+async function logoutEvictedSessions(): Promise<void> {
+  for (const session of evictedSessions.splice(0)) await logoutSession(session);
+}
+
+async function logoutSession(session: PredictiveSession): Promise<void> {
   const pd = getTelephonyProvider().predictive;
   if (!pd) return;
   for (const h of session.loggedIn) {
@@ -663,7 +683,7 @@ async function predictiveDial(
         settings,
         debtorId: leg.debtorId,
         portfolioId: t?.portfolioId,
-        requestedCallerId: callerId,
+        kind: "queue",
         predictive: { queue: session.queue },
       });
       ledgerId = prepared.ledgerId;
@@ -672,7 +692,8 @@ async function predictiveDial(
         queue: session.queue,
         debtorNumber: leg.phone,
         requestId: ledgerId,
-        callerId: prepared.callerId ?? callerId,
+        callerId: prepared.callerId,
+        callerPrefix: prepared.callerPrefix,
         hints: { aiScore: t?.aiScore, bestContactTime: t?.bestContactTime },
       });
       rememberOwner(session.clientId, providerCallId, leg.id);
@@ -747,6 +768,7 @@ export const startDialerRun = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
+    void logoutEvictedSessions();
     enforceRateLimit(`dialer-run:${caller.authUserId}`, 10, 60_000);
     await assertMayDial(caller);
     if (typeof data.runId !== "string" || !data.runId) throw new Error("Missing runId");
@@ -836,6 +858,7 @@ export const tickDialerRun = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
+    void logoutEvictedSessions();
     if (!owns(caller, `run:${data.runId}`)) return null;
 
     ensureSubscribed();
@@ -897,6 +920,7 @@ export const stopDialerRun = createServerFn({ method: "POST" })
   .inputValidator((d: { accessToken: string; runId: string }) => d)
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
+    void logoutEvictedSessions();
     if (!owns(caller, `run:${data.runId}`)) return null;
     const run = runs.get(data.runId);
     if (!run) return null;
@@ -977,6 +1001,9 @@ export const startCall = createServerFn({ method: "POST" })
       callerId?: string;
       aiScore?: number;
       ivr?: boolean;
+      /** Placed from the Manual Dial dock: goes out on the admin's Manual Dial numbers, even when
+       *  a loan ID ties it to an account. Otherwise an account's call uses its portfolio's numbers. */
+      manual?: boolean;
     }) => d,
   )
   .handler(async ({ data }) => {
@@ -993,7 +1020,9 @@ export const startCall = createServerFn({ method: "POST" })
     const prov = getTelephonyProvider();
     const requestedCallerId = typeof data.callerId === "string" ? data.callerId : undefined;
     const debtor = await debtorForCall(caller.clientId, data.callLogId);
-    const { ledgerId, agentHandle, callerId } = await prepareCall({
+    // A call with no account behind it can only be a Manual Dial call.
+    const kind = data.manual === true || !debtor ? "manual" : "queue";
+    const { ledgerId, agentHandle, callerId, callerPrefix } = await prepareCall({
       clientId: caller.clientId,
       provider: prov.name,
       agent: agent ?? { id: "", phone: agentNumber, extension: null },
@@ -1001,7 +1030,9 @@ export const startCall = createServerFn({ method: "POST" })
       refId: data.callLogId,
       debtorId: debtor?.id,
       portfolioId: debtor?.portfolio_id,
-      requestedCallerId,
+      // Only Manual Dial lets the caller pick a number; queue calls rotate.
+      requestedCallerId: kind === "manual" ? requestedCallerId : undefined,
+      kind,
     });
 
     ensureSubscribed();
@@ -1010,7 +1041,8 @@ export const startCall = createServerFn({ method: "POST" })
       ({ providerCallId } = await prov.startCall({
         agentNumber: agentHandle,
         debtorNumber,
-        callerId: callerId ?? requestedCallerId,
+        callerId,
+        callerPrefix,
         callLogId: data.callLogId,
         requestId: ledgerId || undefined,
         hints: { aiScore: data.aiScore, ivr: data.ivr },

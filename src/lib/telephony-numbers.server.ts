@@ -14,7 +14,7 @@ import {
   didHealth,
   isAssignable,
   istDayStart,
-  parseDidList,
+  parseNumbersWithPrefixes,
   type DidHealth,
   type DidRow,
   type DidStatus,
@@ -31,8 +31,17 @@ async function requireSuperadmin(accessToken: string) {
   return caller;
 }
 
-const DID_COLS =
+const DID_BASE_COLS =
   "id, number, label, status, use, client_id, portfolio_id, vendor_queue, daily_cap, resting_until, cooling_until, assigned_at, notes";
+/** With the prefix + Manual Dial flag (20261120_calling_numbers_prefix_manual_portfolio.sql). */
+const DID_COLS = `${DID_BASE_COLS}, prefix, manual`;
+
+/** Read numbers with the new columns, or without them before the migration is applied. */
+async function readDids(build: (cols: string) => PromiseLike<{ data: unknown; error: any }>) {
+  const first = await build(DID_COLS);
+  if (first.error && /prefix|manual/.test(first.error.message ?? "")) return build(DID_BASE_COLS);
+  return first;
+}
 
 function missing(error: { code?: string; message?: string } | null): boolean {
   return (
@@ -57,8 +66,12 @@ export interface NumberRow {
   use: DidUse;
   clientId: string | null;
   clientName: string | null;
-  portfolioId: string | null;
-  portfolioName: string | null;
+  /** What SkyCRM dials with to show this number (3701 → …3701). Null = can't be used on SkyCRM. */
+  prefix: string | null;
+  /** The company's admin kept it for Manual Dial. */
+  manual: boolean;
+  /** How many of the company's portfolios call from it (portfolio_dids). */
+  portfolios: number;
   vendorQueue: string | null;
   dailyCap: number | null;
   restingUntil: string | null;
@@ -115,7 +128,7 @@ export const getNumbersOverview = createServerFn({ method: "POST" })
     const [trunk, state, didsRes, clientsRes, refusals] = await Promise.all([
       loadTrunk(),
       loadChannelState(),
-      db().from("telephony_dids").select(DID_COLS).order("number"),
+      readDids((cols) => db().from("telephony_dids").select(cols).order("number")),
       db().from("clients").select("id, company_name, status").order("company_name"),
       db().rpc("telephony_refusal_counts", { p_since: istDayStart(now).toISOString() }),
     ]);
@@ -128,7 +141,13 @@ export const getNumbersOverview = createServerFn({ method: "POST" })
       throw new Error(`Could not load numbers (${didsRes.error.message})`);
 
     const dids = (didsRes.data ?? []) as Array<
-      DidRow & { label: string | null; assigned_at: string | null; notes: string | null }
+      DidRow & {
+        label: string | null;
+        assigned_at: string | null;
+        notes: string | null;
+        prefix?: string | null;
+        manual?: boolean;
+      }
     >;
     const usage = ready
       ? await didUsage(
@@ -137,15 +156,11 @@ export const getNumbersOverview = createServerFn({ method: "POST" })
         )
       : new Map();
 
-    const portfolioIds = [...new Set(dids.map((d) => d.portfolio_id).filter(Boolean))] as string[];
-    const portfolioNames = new Map<string, string>();
-    if (portfolioIds.length) {
-      const { data: ps } = await db()
-        .from("portfolios")
-        .select("id, lender_name")
-        .in("id", portfolioIds);
-      for (const p of (ps ?? []) as Array<{ id: string; lender_name: string }>)
-        portfolioNames.set(p.id, p.lender_name);
+    const portfolioCount = new Map<string, number>();
+    {
+      const { data: links } = await db().from("portfolio_dids").select("did_id");
+      for (const l of (links ?? []) as Array<{ did_id: string }>)
+        portfolioCount.set(l.did_id, (portfolioCount.get(l.did_id) ?? 0) + 1);
     }
 
     // A number's pick-up rate is judged against its own company's average.
@@ -171,8 +186,9 @@ export const getNumbersOverview = createServerFn({ method: "POST" })
         use: d.use,
         clientId: d.client_id,
         clientName: d.client_id ? (nameOf.get(d.client_id) ?? null) : null,
-        portfolioId: d.portfolio_id,
-        portfolioName: d.portfolio_id ? (portfolioNames.get(d.portfolio_id) ?? null) : null,
+        prefix: d.prefix ?? null,
+        manual: !!d.manual,
+        portfolios: portfolioCount.get(d.id) ?? 0,
         vendorQueue: d.vendor_queue,
         dailyCap: d.daily_cap,
         restingUntil: d.resting_until,
@@ -229,22 +245,6 @@ export const getNumbersOverview = createServerFn({ method: "POST" })
         .filter((c) => c.status !== "rejected")
         .map((c) => ({ id: c.id, name: c.name })),
     };
-  });
-
-/** A company's portfolios, for tying a number to one lender. */
-export const getCompanyPortfoliosForNumbers = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) =>
-    z.object({ accessToken: tokenSchema, clientId: idSchema }).parse(d),
-  )
-  .handler(async ({ data }) => {
-    await requireSuperadmin(data.accessToken);
-    const { data: rows, error } = await db()
-      .from("portfolios")
-      .select("id, lender_name, product_type")
-      .eq("client_id", data.clientId)
-      .order("lender_name");
-    if (error) throw new Error(`Could not load portfolios (${error.message})`);
-    return (rows ?? []) as Array<{ id: string; lender_name: string; product_type: string | null }>;
   });
 
 // ─── Trunk ─────────────────────────────────────────────────────────────────────
@@ -309,34 +309,79 @@ export const addNumbers = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const caller = await requireSuperadmin(data.accessToken);
-    const { numbers, bad } = parseDidList(data.text);
+    const { rows: parsed, bad } = parseNumbersWithPrefixes(data.text);
+    const numbers = parsed.map((r) => r.number);
+    const prefixOf = new Map(parsed.map((r) => [r.number, r.prefix]));
     if (!numbers.length)
       throw new Error(
         bad.length
           ? `No phone numbers found (couldn't read: ${bad.slice(0, 5).join(", ")})`
           : "Paste at least one number.",
       );
+    const withPrefix = parsed.some((r) => r.prefix);
     const { data: existing, error: readErr } = await db()
       .from("telephony_dids")
-      .select("number")
+      .select(withPrefix ? "id, number, prefix" : "id, number")
       .in("number", numbers);
-    if (readErr) throw new Error(missing(readErr) ? NOT_APPLIED : readErr.message);
-    const have = new Set(((existing ?? []) as Array<{ number: string }>).map((r) => r.number));
+    if (readErr) {
+      if (withPrefix && /prefix/.test(readErr.message ?? ""))
+        throw new Error(
+          "Prefixes need migrations/20261120_calling_numbers_prefix_manual_portfolio.sql applied first.",
+        );
+      throw new Error(missing(readErr) ? NOT_APPLIED : readErr.message);
+    }
+    const existingRows = (existing ?? []) as Array<{
+      id: string;
+      number: string;
+      prefix?: string | null;
+    }>;
+    const have = new Set(existingRows.map((r) => r.number));
     const fresh = numbers.filter((n) => !have.has(n));
+    // A number already in the list without a prefix gets the one pasted with it now.
+    let prefixed = 0;
+    for (const r of existingRows) {
+      const p = prefixOf.get(r.number);
+      if (!p || r.prefix) continue;
+      const { error } = await db()
+        .from("telephony_dids")
+        .update({ prefix: p, updated_at: new Date().toISOString() })
+        .eq("id", r.id);
+      if (error) throw new Error(prefixError(error.message, p));
+      prefixed++;
+    }
     if (fresh.length) {
       const { error } = await db()
         .from("telephony_dids")
-        .insert(fresh.map((number) => ({ number, label: data.label || null })));
-      if (error) throw new Error(`Could not add numbers (${error.message})`);
+        .insert(
+          fresh.map((number) => ({
+            number,
+            label: data.label || null,
+            ...(withPrefix ? { prefix: prefixOf.get(number) ?? null } : {}),
+          })),
+        );
+      if (error) throw new Error(prefixError(`Could not add numbers (${error.message})`, ""));
       await logSuperadminActivity({
         superadminId: caller.superadminId,
         action: "telephony_numbers_added",
         summary: `Added ${fresh.length} phone number${fresh.length === 1 ? "" : "s"}${data.label ? ` (${data.label})` : ""}`,
-        detail: { numbers: fresh },
+        detail: { numbers: fresh.map((n) => ({ number: n, prefix: prefixOf.get(n) ?? null })) },
       });
     }
-    return { added: fresh.length, alreadyThere: numbers.length - fresh.length, unreadable: bad };
+    return {
+      added: fresh.length,
+      alreadyThere: numbers.length - fresh.length,
+      prefixed,
+      withoutPrefix: parsed.filter((r) => !r.prefix).length,
+      unreadable: bad,
+    };
   });
+
+/** A duplicate prefix (unique index) explained; anything else passed through. */
+function prefixError(message: string, prefix: string): string {
+  return /telephony_dids_prefix_unique/.test(message)
+    ? `Prefix ${prefix || ""} is already used by another number.`.replace("  ", " ")
+    : message;
+}
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("assign"), clientId: idSchema }),
@@ -352,7 +397,13 @@ const actionSchema = z.discriminatedUnion("action", [
     vendorQueue: z.string().trim().max(50).nullable().optional(),
     dailyCap: z.number().int().min(1).max(10000).nullable().optional(),
     label: z.string().trim().max(60).nullable().optional(),
-    portfolioId: idSchema.nullable().optional(),
+    /** One number at a time: prefixes are unique. */
+    prefix: z
+      .string()
+      .trim()
+      .regex(/^\d{3,6}$/, "A prefix is 3–6 digits")
+      .nullable()
+      .optional(),
   }),
 ]);
 
@@ -370,10 +421,9 @@ export const updateNumbers = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const caller = await requireSuperadmin(data.accessToken);
-    const { data: rowsData, error } = await db()
-      .from("telephony_dids")
-      .select(DID_COLS)
-      .in("id", data.ids);
+    const { data: rowsData, error } = await readDids((cols) =>
+      db().from("telephony_dids").select(cols).in("id", data.ids),
+    );
     if (error) throw new Error(missing(error) ? NOT_APPLIED : error.message);
     const rows = (rowsData ?? []) as DidRow[];
     const now = new Date();
@@ -458,21 +508,10 @@ export const updateNumbers = createServerFn({ method: "POST" })
         if (change.vendorQueue !== undefined) patch.vendor_queue = change.vendorQueue || null;
         if (change.dailyCap !== undefined) patch.daily_cap = change.dailyCap;
         if (change.label !== undefined) patch.label = change.label || null;
-        if (change.portfolioId !== undefined) {
-          if (change.portfolioId) {
-            const owners = new Set(rows.map((r) => r.client_id));
-            const { data: p } = await db()
-              .from("portfolios")
-              .select("client_id")
-              .eq("id", change.portfolioId)
-              .maybeSingle();
-            if (!p || owners.size !== 1 || !owners.has((p as { client_id: string }).client_id)) {
-              throw new Error(
-                "A number can only be kept for a portfolio of the company that holds it.",
-              );
-            }
-          }
-          patch.portfolio_id = change.portfolioId;
+        if (change.prefix !== undefined) {
+          if (rows.length !== 1 && change.prefix)
+            throw new Error("Set a prefix one number at a time.");
+          patch.prefix = change.prefix || null;
         }
         summary = `Changed ${targets.length} number${targets.length === 1 ? "" : "s"}: ${Object.keys(patch).join(", ")}`;
         break;
@@ -486,7 +525,24 @@ export const updateNumbers = createServerFn({ method: "POST" })
       .from("telephony_dids")
       .update({ ...patch, updated_at: nowIso })
       .in("id", ids);
-    if (upErr) throw new Error(`Could not update numbers (${upErr.message})`);
+    if (upErr)
+      throw new Error(
+        prefixError(`Could not update numbers (${upErr.message})`, String(patch.prefix ?? "")),
+      );
+
+    // A number leaving its company (or moving to another) takes none of the old company's choices
+    // with it: not its Manual Dial flag, not its place on their portfolios.
+    if (["assign", "release", "block", "retire"].includes(change.action)) {
+      const { error: flagErr } = await db()
+        .from("telephony_dids")
+        .update({ manual: false })
+        .in("id", ids);
+      if (flagErr && !/manual/.test(flagErr.message ?? ""))
+        console.warn(`[numbers] manual flag not cleared: ${flagErr.message}`);
+      const { error: linkErr } = await db().from("portfolio_dids").delete().in("did_id", ids);
+      if (linkErr && !missing(linkErr))
+        console.warn(`[numbers] portfolio lists not cleared: ${linkErr.message}`);
+    }
 
     if (change.action === "assign") {
       await db()

@@ -68,8 +68,11 @@ function callStateFor(status: CallStatus): CallState {
 export interface DialOptions {
   /** Override the agent leg (the number the provider rings first). Defaults to the signed-in agent. */
   agentPhone?: string;
-  /** DID shown to the debtor as caller ID. Must be a DID/ExoPhone on the account. */
+  /** DID shown to the debtor as caller ID. Only honoured for Manual Dial, and only if it is one of
+   *  the company's Manual Dial numbers; other calls rotate over their portfolio's numbers. */
   callerId?: string;
+  /** Placed from the Manual Dial dock (uses the Manual Dial numbers even with a loan ID). */
+  manual?: boolean;
 }
 
 export interface UseSingleCall {
@@ -203,6 +206,7 @@ export function useSingleCall(
                     agentNumber: phoneToUse,
                     debtorNumber: debtor.phone,
                     callerId: opts?.callerId,
+                    manual: opts?.manual,
                     aiScore: debtor.aiScore,
                   },
                 }),

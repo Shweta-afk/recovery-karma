@@ -85,6 +85,11 @@ import {
 } from "@/lib/csv-fields";
 import { useAuth } from "@/lib/auth";
 import { errorText } from "@/lib/app-error";
+import {
+  PortfolioNumbersPicker,
+  savePortfolioNumbers,
+  usePortfolioNumbers,
+} from "@/components/telephony/calling-numbers";
 
 export const Route = createFileRoute("/manager/upload")({
   head: () => ({ meta: [{ title: "Portfolio Upload · SamvadX" }] }),
@@ -235,6 +240,9 @@ function PortfolioUploadPage() {
 
   // Agent allocation (step 5) — agentId -> debtor IDs
   const [allocation, setAllocation] = useState<Record<string, string[]>>({});
+  // Which company numbers this portfolio's Call Queue calls go out on (saved after upload).
+  const numberChoices = usePortfolioNumbers(null);
+  const [numberIds, setNumberIds] = useState<string[]>([]);
 
   // Upload progress
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -447,6 +455,20 @@ function PortfolioUploadPage() {
         portfolio,
         managerAgents.length > 0 ? allocation : {},
       );
+      // The portfolio exists now; its calling numbers can be saved. A failure here leaves the
+      // upload in place — the manager can choose them from the portfolio page.
+      if (numberChoices.data?.companyHasNumbers && numberIds.length) {
+        await savePortfolioNumbers(portfolio.id, numberIds).catch((e) =>
+          toast.error(errorText(e, "Portfolio uploaded, but its calling numbers weren't saved"), {
+            description: "Choose them from the portfolio page → Calling numbers.",
+          }),
+        );
+      } else if (numberChoices.data?.companyHasNumbers) {
+        toast.warning("No calling numbers chosen", {
+          description:
+            "This portfolio's Call Queue calls won't go out until you choose them (portfolio page → Calling numbers).",
+        });
+      }
       // Learn this bank's mapping so future uploads auto-apply it
       await saveTemplate(lenderName, rawHeaders, mapping);
 
@@ -483,6 +505,7 @@ function PortfolioUploadPage() {
     setTemplateApplied(false);
     setSettings(DEFAULT_PORTFOLIO_SETTINGS);
     setAllocation({});
+    setNumberIds([]);
     setUploadProgress(0);
   };
 
@@ -949,6 +972,20 @@ function PortfolioUploadPage() {
                     className={cn(step !== "settings" && "opacity-70 pointer-events-none")}
                   >
                     <PortfolioSettingsStep settings={settings} onChange={setSettings} />
+                    <div className="mt-5 space-y-2 border-t border-border pt-4">
+                      <p className="text-sm font-medium">Calling numbers</p>
+                      <p className="text-xs text-muted-foreground">
+                        The numbers borrowers see when this portfolio is called from the Call Queue
+                        (click-to-call, Progressive and Productive Dial). Calls rotate across the
+                        ones you choose. You can change them later from the portfolio page.
+                      </p>
+                      <PortfolioNumbersPicker
+                        data={numberChoices.data}
+                        error={numberChoices.error}
+                        value={numberIds}
+                        onChange={setNumberIds}
+                      />
+                    </div>
                   </fieldset>
                   {step === "settings" && (
                     <Button className="mt-5 w-full" onClick={() => setStep("assign")}>

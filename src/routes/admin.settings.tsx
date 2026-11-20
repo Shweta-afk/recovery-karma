@@ -13,6 +13,7 @@ import { getMyClient, updateCompanyName } from "@/lib/client-store";
 import { ProfilexSettingsCard } from "@/components/profilex/profilex-settings-card";
 import { CompanyWalletCard, ManagerWalletsCard } from "@/components/profilex/wallets-card";
 import { CompanyDetailsCard } from "@/components/company-details-card";
+import { CompanyCallingNumbersCard } from "@/components/telephony/calling-numbers";
 import { errorText } from "@/lib/app-error";
 import { CallingHoursCard, DoNotCallCard } from "@/components/telephony/do-not-call-card";
 
@@ -123,6 +124,8 @@ function AdminSettingsPage() {
 
       {/* Required: every admin page shows a red banner until this is complete (admin.tsx). */}
       <CompanyDetailsCard />
+
+      <CompanyCallingNumbersCard />
 
       <SectionCard
         icon={Building2}
