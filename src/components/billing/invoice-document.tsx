@@ -288,6 +288,12 @@ export function InvoiceDocument({
  *  and website / email / CIN / GSTIN — all from the invoice's own supplier snapshot. */
 function LetterheadFooter({ s }: { s: InvoiceParty }) {
   const site = s.website?.replace(/^https?:\/\//, "");
+  const oneLine = (a: string) => a.replace(/\s*\n\s*/g, " ").trim();
+  // When the registered office IS the office (Axiotta's Ghatkopar address, user 2026-11-20),
+  // print it once, as the registered office, instead of the same address twice.
+  const sameOffice =
+    !!s.registeredAddress &&
+    oneLine(s.registeredAddress).toLowerCase() === oneLine(s.address).toLowerCase();
   return (
     <div className="relative mt-6 border-t-2 border-[#0B33D9] pt-3 text-[10px] leading-snug text-neutral-700">
       <p className="text-[13px] font-bold text-[#0B1F4D]">{s.legalName}</p>
@@ -297,13 +303,17 @@ function LetterheadFooter({ s }: { s: InvoiceParty }) {
           {s.registeredAddress && (
             <>
               <p className="font-semibold text-[#0B1F4D]">Registered Office</p>
-              <p>{s.registeredAddress.replace(/\s*\n\s*/g, " ")}</p>
+              <p>{oneLine(s.registeredAddress)}</p>
             </>
           )}
         </div>
         <div>
-          <p className="font-semibold text-[#0B1F4D]">Office</p>
-          <p>{s.address.replace(/\s*\n\s*/g, " ")}</p>
+          {!sameOffice && (
+            <>
+              <p className="font-semibold text-[#0B1F4D]">Office</p>
+              <p>{oneLine(s.address)}</p>
+            </>
+          )}
         </div>
         <div className="text-right">
           {site && <p className="font-semibold text-[#0B1F4D]">{site}</p>}

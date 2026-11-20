@@ -1015,8 +1015,7 @@ async function templateValuesFor(
     supplierCin: profile?.cin ?? "",
     supplierPan: profile?.pan ?? "",
     supplierGstin: profile?.gstin ?? null,
-    // `address` (Ghatkopar) IS the registered office (user, 2026-11-20). `registered_address`
-    // holds a different address and must not be printed as the registered office.
+    // `address` (Ghatkopar) IS the registered office (user, 2026-11-20).
     supplierAddress: profile?.address ?? "",
     supplierSignatoryName: profile?.signatory_name ?? "",
     supplierSignatoryDesignation: profile?.signatory_designation ?? "",
