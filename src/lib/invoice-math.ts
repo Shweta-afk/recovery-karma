@@ -256,6 +256,12 @@ export interface InvoiceParty {
   /** Supplier only — printed in the signature block (snapshotted with the rest). */
   signatoryName?: string | null;
   signatoryDesignation?: string | null;
+  /** Supplier letterhead (2026-11-20) — only invoices issued with `letterhead` on print it. */
+  cin?: string | null;
+  registeredAddress?: string | null;
+  legalNameLocal?: string | null;
+  website?: string | null;
+  letterhead?: boolean;
 }
 
 /** An invoice from a supplier with no GSTIN is a Bill of Supply, with no GST on it. */

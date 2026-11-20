@@ -1103,6 +1103,14 @@ billing ↔ contracts don't import each other). Rules: `invoice-math.ts` (pure, 
   `gstBreakdown(..., supplierRegistered=false)` charges no GST, the document prints "BILL OF
   SUPPLY" with no tax rows, and credit notes follow. Saving a GSTIN switches new invoices back to
   Tax Invoices; issued ones keep their snapshot. Invoices print the signatory name/designation.
+- **Supplier is now Axiotta Communications Private Limited (user, 2026-11-20)**, GSTIN
+  27ABHCA1346E1ZY, CIN U62013MR2026PTC482338, prefix `SX` (new series from SX/2627/0001; the old
+  proprietorship's SAT series is kept for its own invoices and credit notes). Invoice and
+  credit-note counters are per prefix + FY (`invoice_counters.fy` = "SX:2026-27",
+  `migrations/20261120_invoice_series_and_letterhead.sql`, live). Invoices print on the company
+  letterhead (blue bar, `public/letterhead/` logo + X watermark, footer with registered office,
+  office, website, CIN, GSTIN) only when `billing_profile.letterhead` was on when issued — the
+  fields are snapshotted into `supplier`, so SAT invoices keep the old look.
 - **Price list per company** (`client_price_lists`, company Billing tab): setup lines, monthly
   lines, per-agent-seat price, payment terms (NULL = supplier default). Invoices open prefilled
   from it. Insights prices stay in `profilex_settings.rate_card` — one place each.
