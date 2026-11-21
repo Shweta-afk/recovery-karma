@@ -28,6 +28,7 @@ import {
   SILENT_PREDICTIVE_SECONDS,
   pickPredictiveLedger,
   sortOpenPredictive,
+  stuckConnectedRows,
   type OpenPredictiveRow,
 } from "./predictive-rules";
 
@@ -620,11 +621,20 @@ export async function didPrefix(didId: string | null | undefined): Promise<strin
 export async function openPredictiveCalls(
   clientId: string,
   handles: string[],
-): Promise<{ ok: boolean; waiting: number; busy: string[]; silentRefIds: string[] }> {
+  idle?: { handle: string | null; phoneIdleSeconds: number | null | undefined },
+): Promise<{
+  ok: boolean;
+  waiting: number;
+  busy: string[];
+  silentRefIds: string[];
+  endedConnectedRefIds: string[];
+}> {
   const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
   const { data, error } = await db()
     .from("telephony_calls")
-    .select("id, ref_id, request_extension, agent_handle, vendor_callid, vendor_events, started_at")
+    .select(
+      "id, ref_id, request_extension, agent_handle, vendor_callid, vendor_events, started_at, answered_at",
+    )
     .eq("client_id", clientId)
     .not("predictive_queue", "is", null)
     .is("ended_at", null)
@@ -632,9 +642,25 @@ export async function openPredictiveCalls(
     .limit(500);
   if (error) {
     console.warn(`[telephony-guard] open predictive read failed: ${error.message}`);
-    return { ok: false, waiting: 0, busy: [], silentRefIds: [] };
+    return { ok: false, waiting: 0, busy: [], silentRefIds: [], endedConnectedRefIds: [] };
   }
-  const rows = (data ?? []) as (OpenPredictiveRow & { ref_id: string | null })[];
+  const all = (data ?? []) as (OpenPredictiveRow & { ref_id: string | null })[];
+  const stuck = stuckConnectedRows(all, idle?.handle, idle?.phoneIdleSeconds, Date.now());
+  if (stuck.length) {
+    const { error: stuckErr } = await db()
+      .from("telephony_calls")
+      .update({ status: "completed", ended_at: new Date().toISOString() })
+      .in(
+        "id",
+        stuck.map((r) => r.id),
+      )
+      .is("ended_at", null);
+    if (stuckErr) console.warn(`[telephony-guard] closing stuck calls failed: ${stuckErr.message}`);
+    else
+      console.warn(`[telephony-guard] closed ${stuck.length} connected calls with an idle phone`);
+  }
+  const stuckIds = new Set(stuck.map((r) => r.id));
+  const rows = all.filter((r) => !stuckIds.has(r.id));
   const { silent, waiting, busy } = sortOpenPredictive(rows, handles, Date.now());
   if (silent.length) {
     const { error: closeErr } = await db()
@@ -658,6 +684,7 @@ export async function openPredictiveCalls(
     waiting,
     busy,
     silentRefIds: silent.map((r) => r.ref_id ?? "").filter(Boolean),
+    endedConnectedRefIds: stuck.map((r) => r.ref_id ?? "").filter(Boolean),
   };
 }
 

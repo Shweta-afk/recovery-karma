@@ -631,6 +631,8 @@ async function predictiveDial(
   session: PredictiveSession,
   callerId: string | undefined,
   agents: DialAgent[],
+  /** From the caller's own browser: seconds its phone has been out of a call (null = no phone). */
+  idle?: { agentId: string | null; phoneIdleSeconds?: number | null },
 ): Promise<{ run: DialerRun; blocked?: string }> {
   const prov = getTelephonyProvider();
   const pd = prov.predictive;
@@ -655,23 +657,30 @@ async function predictiveDial(
   // Pace from the ledger, across every run on these agents — not this run's legs alone
   // (2026-11-21: five runs on one extension opened ~25 lines). Calls the vendor never
   // acknowledged are closed there and ended here.
-  const open = await openPredictiveCalls(session.clientId, inQueue);
-  if (open.silentRefIds.length) {
-    const silent = new Set(open.silentRefIds);
+  // The caller's own extension: only their own browser can say their phone is idle.
+  const me = idle?.agentId ? agents.find((a) => a.id === idle.agentId) : undefined;
+  const open = await openPredictiveCalls(session.clientId, inQueue, {
+    handle: me ? agentHandleFor(prov.name, me) : null,
+    phoneIdleSeconds: idle?.phoneIdleSeconds,
+  });
+  const endLegs = (refIds: string[], result: "no_answer" | "completed") => {
+    const ids = new Set(refIds);
     for (const leg of run.legs) {
-      if (!silent.has(leg.id) || isTerminal(leg.state)) continue;
+      if (!ids.has(leg.id) || isTerminal(leg.state)) continue;
       run = engine.applyLegEvent(
         leg.providerCallId ? run : engine.bindProviderCall(run, leg.id, leg.id),
         {
           type: "hangup",
           providerCallId: leg.providerCallId ?? leg.id,
           at: Date.now(),
-          result: "no_answer",
+          result,
           durationSeconds: 0,
         },
       );
     }
-  }
+  };
+  if (open.silentRefIds.length) endLegs(open.silentRefIds, "no_answer");
+  if (open.endedConnectedRefIds.length) endLegs(open.endedConnectedRefIds, "completed");
   const busy = new Set(open.busy);
   const free = freeAgentHandles(inQueue, run.legs).filter((h) => !busy.has(h));
   const dialed = new Set(run.legs.map((l) => l.debtorId));
@@ -861,7 +870,9 @@ export const startDialerRun = createServerFn({ method: "POST" })
         calls: 0,
       };
       predictiveSessions.set(data.runId, session);
-      const res = await predictiveDial(base, targets, data.runId, session, data.callerId, agents);
+      const res = await predictiveDial(base, targets, data.runId, session, data.callerId, agents, {
+        agentId: caller.agentId,
+      });
       if (res.blocked && !res.run.legs.length) {
         await endPredictiveSession(data.runId);
         throw new Error(res.blocked);
@@ -912,6 +923,8 @@ export const tickDialerRun = createServerFn({ method: "POST" })
       targets?: DialTarget[];
       agentNumbers?: string[];
       callerId?: string;
+      /** Seconds the caller's browser phone has been out of a call; absent without one. */
+      phoneIdleSeconds?: number | null;
     }) => d,
   )
   .handler(async ({ data }) => {
@@ -940,8 +953,12 @@ export const tickDialerRun = createServerFn({ method: "POST" })
         const session = predictiveSessions.get(data.runId);
         let batch: DialTarget[];
         if (session) {
-          run = (await predictiveDial(run, targets, data.runId, session, data.callerId, agents))
-            .run;
+          run = (
+            await predictiveDial(run, targets, data.runId, session, data.callerId, agents, {
+              agentId: caller.agentId,
+              phoneIdleSeconds: data.phoneIdleSeconds,
+            })
+          ).run;
           batch = [];
         } else if (run.settings.dialerMode === "productive") {
           batch = engine.planProductiveBatch(targets, run.legs);

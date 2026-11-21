@@ -121,6 +121,7 @@ export interface OpenPredictiveRow {
   vendor_callid: string | null;
   vendor_events: string | null;
   started_at: string;
+  answered_at?: string | null;
 }
 
 /**
@@ -154,6 +155,33 @@ export function sortOpenPredictive<T extends OpenPredictiveRow>(
     if (r.request_extension && mine.has(r.request_extension)) waiting++;
   }
   return { silent, waiting, busy: [...busy] };
+}
+
+/** How long the agent's browser phone must have been idle, and how long ago the answer must
+ *  have been, before a predictive call still marked "connected" to them is taken as over. */
+export const STUCK_CONNECTED_IDLE_SECONDS = 20;
+export const STUCK_CONNECTED_MIN_AGE_SECONDS = 30;
+
+/**
+ * Predictive calls still "connected" to an agent whose own browser phone has been idle for a
+ * while. SkyCRM does not always send the end of such a call (2026-11-21: a borrower answered
+ * while ext 8603 was on another call; no end record ever came), and an open connected call
+ * keeps the agent "busy" so nobody else is dialled for up to 2 h. Only the agent's own phone can
+ * say it is idle, so this applies to the calling agent's handle only.
+ */
+export function stuckConnectedRows<T extends OpenPredictiveRow>(
+  rows: T[],
+  handle: string | null | undefined,
+  phoneIdleSeconds: number | null | undefined,
+  nowMs: number,
+): T[] {
+  if (!handle || phoneIdleSeconds == null || phoneIdleSeconds < STUCK_CONNECTED_IDLE_SECONDS)
+    return [];
+  return rows.filter((r) => {
+    if (r.agent_handle !== handle) return false;
+    const since = Date.parse(r.answered_at ?? r.started_at);
+    return (nowMs - since) / 1000 >= STUCK_CONNECTED_MIN_AGE_SECONDS;
+  });
 }
 
 /** Other predictive runs of this company that share an agent with a run being started. The new

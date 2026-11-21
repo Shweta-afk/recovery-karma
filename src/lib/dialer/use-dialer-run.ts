@@ -15,7 +15,7 @@ import { createSimProvider, type SimProvider } from "@/lib/telephony/sim-provide
 import type { CallRecord, TelephonyEvent } from "@/lib/telephony/types";
 import { toLiveEntries } from "./live-adapter";
 import { getAccessToken } from "@/lib/access-token";
-import { waitForPhone } from "@/lib/telephony/phone-status";
+import { phoneIdleSeconds, waitForPhone } from "@/lib/telephony/phone-status";
 import type { LiveCallEntry } from "@/routes/dashboard.call-queue";
 
 const TICK_MS = 1500;
@@ -170,6 +170,7 @@ export function useDialerRun(): UseDialerRun {
                 targets,
                 agentNumbers,
                 callerId,
+                phoneIdleSeconds: phoneIdleSeconds(),
               },
             });
             if (runIdRef.current !== runId) return;

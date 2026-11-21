@@ -225,9 +225,12 @@ function RegisteredPhone({
   // SkyCRM's ring wasn't picked up by itself and the <audio> was never unlocked by a click —
   // calls connected but the agent heard nothing from the borrower.
   const runActive = useRef(false);
+  // Same flag for rendering: during Productive Dial a ring is a borrower who already picked up.
+  const [runOn, setRunOn] = useState(false);
   useEffect(() => {
     const onRun = (e: Event) => {
       runActive.current = !!(e as CustomEvent<{ active?: boolean }>).detail?.active;
+      setRunOn(runActive.current);
       if (runActive.current) unlockAudio(); // still inside the agent's click on Start
     };
     window.addEventListener(DIALER_RUN_EVENT, onRun);
@@ -448,7 +451,21 @@ function RegisteredPhone({
         </Button>
       )}
 
-      {ringing && (
+      {ringing && runOn && (
+        // Productive Dial: SkyCRM only rings this phone once a borrower has answered, and the
+        // phone answers by itself — so no Answer/Decline, just say who it is (2026-11-21).
+        <div className="w-80 rounded-lg border-2 border-success bg-card p-3 shadow-xl animate-in slide-in-from-bottom-4">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <PhoneIncoming className="h-4 w-4 animate-pulse text-success" /> A borrower picked up
+          </p>
+          <p className="mt-1 text-sm text-foreground">
+            {caller.match?.debtor.name ?? caller.phone ?? call?.remote}
+          </p>
+          <p className="text-xs text-muted-foreground">Connecting you now — start speaking.</p>
+        </div>
+      )}
+
+      {ringing && !runOn && (
         <div className="w-80 rounded-lg border-2 border-primary bg-card p-3 shadow-xl animate-in slide-in-from-bottom-4">
           <p className="flex items-center gap-2 text-sm font-semibold">
             <PhoneIncoming className="h-4 w-4 animate-pulse text-primary" /> Incoming call

@@ -19,6 +19,7 @@ import {
   requestExtension,
   runsSharingAgents,
   sortOpenPredictive,
+  stuckConnectedRows,
   SILENT_PREDICTIVE_SECONDS,
 } from "../src/lib/telephony/predictive-rules";
 
@@ -217,6 +218,27 @@ describe("one agent, one set of lines across runs (2026-11-21)", () => {
     );
     expect(out.busy).toEqual(["8603"]);
     expect(out.waiting).toBe(0);
+  });
+
+  test("a connected call SkyCRM never ended stops blocking an idle agent", () => {
+    const answered = new Date(now - 40_000).toISOString();
+    const rows = [
+      row({ id: "stuck", agent_handle: "8603", vendor_callid: "x", answered_at: answered }),
+      row({
+        id: "fresh",
+        agent_handle: "8603",
+        vendor_callid: "y",
+        answered_at: new Date(now - 5_000).toISOString(),
+      }),
+      row({ id: "other", agent_handle: "8604", vendor_callid: "z", answered_at: answered }),
+    ];
+    // phone idle long enough: only the agent's own call answered ≥ 30 s ago
+    expect(stuckConnectedRows(rows, "8603", 25, now).map((r) => r.id)).toEqual(["stuck"]);
+    // phone in a call, or barely idle, or no phone on the page: nothing is closed
+    expect(stuckConnectedRows(rows, "8603", 0, now)).toEqual([]);
+    expect(stuckConnectedRows(rows, "8603", 10, now)).toEqual([]);
+    expect(stuckConnectedRows(rows, "8603", null, now)).toEqual([]);
+    expect(stuckConnectedRows(rows, null, 60, now)).toEqual([]);
   });
 
   test("a new run replaces older runs sharing an agent in the same company", () => {

@@ -51,9 +51,20 @@ export function waitForPhone(ms: number): Promise<boolean> {
  *  call is not over, whatever the server says; the phone's own end closes the screen
  *  (PHONE_CALL_ENDED_EVENT in call-session.tsx). */
 let inCall = false;
+let idleSince = Date.now();
 export function setPhoneInCall(next: boolean): void {
+  if (inCall && !next) idleSince = Date.now();
   inCall = next;
 }
 export function isPhoneInCall(): boolean {
   return inCall;
+}
+
+/** Seconds the browser phone has been out of a call, or null when there is no ready phone on
+ *  this page (then nothing can be said about it). Productive Dial sends this so a call SkyCRM
+ *  never ends doesn't keep the agent "busy" (2026-11-21). */
+export function phoneIdleSeconds(): number | null {
+  if (state !== "ready") return null;
+  if (inCall) return 0;
+  return Math.floor((Date.now() - idleSince) / 1000);
 }

@@ -560,12 +560,9 @@ export function CallQueueContent({
     toast.success(
       `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
     );
-    // AI reaches a live debtor and hands over: auto-connect if the agent is free,
-    // otherwise raise a Take / Forward notification. (Kept as a demo flourish.)
-    setTimeout(() => {
-      const transferDebtor = target[Math.min(5, target.length - 1)];
-      if (transferDebtor) handleAiTransfer(transferDebtor, "AI Bot");
-    }, 6000);
+    // No demo "AI Bot transfer" here any more (removed 2026-11-21): 6 s after Start it opened a
+    // fake call screen for a borrower from the list, and while that screen was open the real
+    // answered call's screen couldn't open (joinLiveLeg waits for a free screen).
   }
 
   // Ordered list dialed by the current Productive run, captured at start so the board can show
@@ -737,17 +734,6 @@ export function CallQueueContent({
 
   // AI has a live debtor to hand over. If the agent is free, connect them straight away.
   // If they're already on a connected call, surface a Take / Forward notification instead.
-  const handleAiTransfer = (debtor: QueueDebtor, from: string) => {
-    const current = activeCallRef.current;
-    const busy = !!current && current.phase === "connected";
-    if (busy) {
-      setIncomingTransfer({ debtor, from });
-    } else {
-      startCall(debtor, { instant: true });
-      toast.success(`${from} connected ${debtor.name} to you`);
-    }
-  };
-
   // Take the transferred call — replaces whatever the agent is on (mock behaviour)
   const takeTransfer = () => {
     if (!incomingTransfer) return;
