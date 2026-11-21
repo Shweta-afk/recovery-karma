@@ -107,6 +107,70 @@ export function predictiveBatchSize(args: {
   return Math.max(0, Math.min(target, args.callsPerCycle, args.lines, args.remaining));
 }
 
+/** A predictive call the vendor never acknowledged (no callid, no event) after this long is taken
+ *  as never dialled and closed, so it stops holding a line and the agent's pacing (2026-11-21:
+ *  19 such calls held Axiotta's lines for up to 2 h and every dial got "lines busy"). */
+export const SILENT_PREDICTIVE_SECONDS = 120;
+
+export interface OpenPredictiveRow {
+  id: string;
+  request_extension: string | null;
+  agent_handle: string | null;
+  vendor_callid: string | null;
+  vendor_events: string | null;
+  started_at: string;
+}
+
+/**
+ * The company's open predictive ledger rows, read for one batch. Pacing must count calls across
+ * EVERY run on these agents, not just this run's legs: on 2026-11-21 one agent pressed Start five
+ * times in 24 s, each run paced itself to 5 and ext 8603 had ~25 lines open.
+ *   silent  — rows to close (never acknowledged by the vendor, older than SILENT_PREDICTIVE_SECONDS)
+ *   waiting — rows requested for these agents still waiting for someone to take them
+ *   busy    — these agents already on a predictive call (the answer named them)
+ */
+export function sortOpenPredictive<T extends OpenPredictiveRow>(
+  rows: T[],
+  handles: string[],
+  nowMs: number,
+): { silent: T[]; waiting: number; busy: string[] } {
+  const mine = new Set(handles);
+  const silent: T[] = [];
+  const busy = new Set<string>();
+  let waiting = 0;
+  for (const r of rows) {
+    const ageS = (nowMs - Date.parse(r.started_at)) / 1000;
+    const heard = !!r.vendor_callid || !!(r.vendor_events ?? "").trim();
+    if (!heard && ageS > SILENT_PREDICTIVE_SECONDS) {
+      silent.push(r);
+      continue;
+    }
+    if (r.agent_handle) {
+      if (mine.has(r.agent_handle)) busy.add(r.agent_handle);
+      continue;
+    }
+    if (r.request_extension && mine.has(r.request_extension)) waiting++;
+  }
+  return { silent, waiting, busy: [...busy] };
+}
+
+/** Other predictive runs of this company that share an agent with a run being started. The new
+ *  run replaces them, so one agent never has two runs dialling for them at once. */
+export function runsSharingAgents(
+  sessions: { runId: string; clientId: string; handles: string[] }[],
+  args: { runId: string; clientId: string; handles: string[] },
+): string[] {
+  const want = new Set(args.handles);
+  return sessions
+    .filter(
+      (s) =>
+        s.runId !== args.runId &&
+        s.clientId === args.clientId &&
+        s.handles.some((h) => want.has(h)),
+    )
+    .map((s) => s.runId);
+}
+
 /** Which agent's extension goes in predictive_call's `extension` field. The vendor connects the
  *  answer to any free extension in the queue, so this only spreads requests (and the token's
  *  extension) across the run's agents; free agents first, round robin by call number. */

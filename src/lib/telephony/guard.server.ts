@@ -24,7 +24,12 @@ import {
   type CallKind,
   type DidRow,
 } from "./did-rules";
-import { pickPredictiveLedger } from "./predictive-rules";
+import {
+  SILENT_PREDICTIVE_SECONDS,
+  pickPredictiveLedger,
+  sortOpenPredictive,
+  type OpenPredictiveRow,
+} from "./predictive-rules";
 
 export interface DialAgent {
   id: string;
@@ -605,6 +610,55 @@ export async function didPrefix(didId: string | null | undefined): Promise<strin
     .maybeSingle();
   if (error) return null;
   return (data as { prefix: string | null } | null)?.prefix ?? null;
+}
+
+/**
+ * Open predictive calls of a company, for pacing across runs (sortOpenPredictive). Closes the ones
+ * the vendor never acknowledged. `ok: false` when the read failed — the caller then falls back to
+ * its own run's legs.
+ */
+export async function openPredictiveCalls(
+  clientId: string,
+  handles: string[],
+): Promise<{ ok: boolean; waiting: number; busy: string[]; silentRefIds: string[] }> {
+  const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
+  const { data, error } = await db()
+    .from("telephony_calls")
+    .select("id, ref_id, request_extension, agent_handle, vendor_callid, vendor_events, started_at")
+    .eq("client_id", clientId)
+    .not("predictive_queue", "is", null)
+    .is("ended_at", null)
+    .gt("started_at", since)
+    .limit(500);
+  if (error) {
+    console.warn(`[telephony-guard] open predictive read failed: ${error.message}`);
+    return { ok: false, waiting: 0, busy: [], silentRefIds: [] };
+  }
+  const rows = (data ?? []) as (OpenPredictiveRow & { ref_id: string | null })[];
+  const { silent, waiting, busy } = sortOpenPredictive(rows, handles, Date.now());
+  if (silent.length) {
+    const { error: closeErr } = await db()
+      .from("telephony_calls")
+      .update({
+        status: "failed",
+        ended_at: new Date().toISOString(),
+        vendor_events: `no reply from the calling service within ${SILENT_PREDICTIVE_SECONDS} s`,
+      })
+      .in(
+        "id",
+        silent.map((r) => r.id),
+      )
+      .is("ended_at", null);
+    if (closeErr)
+      console.warn(`[telephony-guard] closing silent calls failed: ${closeErr.message}`);
+    else console.warn(`[telephony-guard] closed ${silent.length} unacknowledged predictive calls`);
+  }
+  return {
+    ok: true,
+    waiting,
+    busy,
+    silentRefIds: silent.map((r) => r.ref_id ?? "").filter(Boolean),
+  };
 }
 
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {

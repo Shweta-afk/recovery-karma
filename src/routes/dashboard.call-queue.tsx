@@ -21,6 +21,7 @@ import {
   Filter,
   FileDown,
   ListOrdered,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -499,6 +500,74 @@ export function CallQueueContent({
   // (ProductiveDialBoard). Both share the same useDialerRun instance/legs — this only tracks
   // which button started the current run so the right board renders.
   const [activeDialMode, setActiveDialMode] = useState<"predictive" | "productive" | null>(null);
+  // Which dial button is still getting ready (loading the queue, waiting for the phone, placing
+  // the first calls — 10+ s). Shown as a spinner; a click meanwhile only says "please wait".
+  // The ref answers at once, before React re-renders (2026-11-21: repeated clicks started five
+  // Productive Dial runs on one agent).
+  const [dialStarting, setDialStarting] = useState<"predictive" | "progressive" | null>(null);
+  const dialStartingRef = useRef<"predictive" | "progressive" | null>(null);
+  const beginDialStart = (which: "predictive" | "progressive"): boolean => {
+    if (dialStartingRef.current) {
+      toast.info("Please wait — the dialer is starting…");
+      return false;
+    }
+    dialStartingRef.current = which;
+    setDialStarting(which);
+    return true;
+  };
+  const endDialStart = () => {
+    dialStartingRef.current = null;
+    setDialStarting(null);
+  };
+
+  // Productive Dial's start (dialerMode "predictive" internally). Runs under beginDialStart, so
+  // the button shows "Starting…" until the first calls are placed.
+  async function startProductiveDial() {
+    // 4b — dial the currently filtered queue, not the whole book. Fetched now,
+    // in full, since only one page is held for display.
+    const target = await fetchQueueTargets();
+    setDialTargetRows(target);
+    const activeFilter = FILTERS.find((f) => f.key === queueFilter);
+    // The agent pool is the concurrency ceiling: click-to-call rings an agent
+    // first, so a line cannot be opened without one free to take it.
+    const agentNumbers = await fetchDialerAgentNumbers();
+    if (!agentNumbers.length) {
+      toast.error(
+        "No agents with a phone number configured — set one in Admin → Users before dialing.",
+      );
+      return;
+    }
+    setActiveDialMode("predictive");
+    try {
+      await dialer.start({
+        // This button is Productive Dial whatever mode the portfolio was saved with.
+        settings: { ...dialerSettings, dialerMode: "predictive" },
+        targets: target.map((d) => ({
+          id: d.id,
+          name: d.name,
+          phone: d.phone,
+          portfolioId: d.portfolioId,
+          aiScore: d.aiScore,
+        })),
+        agentNumbers,
+        callerId: manualDialCallerId,
+      });
+    } catch (e) {
+      setActiveDialMode(null);
+      toast.error(errorText(e, "Failed to start the dialer"));
+      return;
+    }
+    toast.success(
+      `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
+    );
+    // AI reaches a live debtor and hands over: auto-connect if the agent is free,
+    // otherwise raise a Take / Forward notification. (Kept as a demo flourish.)
+    setTimeout(() => {
+      const transferDebtor = target[Math.min(5, target.length - 1)];
+      if (transferDebtor) handleAiTransfer(transferDebtor, "AI Bot");
+    }, 6000);
+  }
+
   // Ordered list dialed by the current Productive run, captured at start so the board can show
   // fixed list-position progress (done / current / upcoming) rather than just the live legs.
   const [productiveTargets, setProductiveTargets] = useState<DialTarget[]>([]);
@@ -1366,55 +1435,23 @@ export function CallQueueContent({
               <Button
                 size="sm"
                 disabled={(dialer.running && activeDialMode !== "predictive") || progressive.active}
+                aria-busy={dialStarting === "predictive"}
                 onClick={async () => {
+                  if (dialStartingRef.current) {
+                    beginDialStart("predictive"); // only shows "please wait"
+                    return;
+                  }
                   if (dialer.running) {
                     dialer.stop();
                     setActiveDialMode(null);
                     return;
                   }
-                  // 4b — dial the currently filtered queue, not the whole book. Fetched now,
-                  // in full, since only one page is held for display.
-                  const target = await fetchQueueTargets();
-                  setDialTargetRows(target);
-                  const activeFilter = FILTERS.find((f) => f.key === queueFilter);
-                  // The agent pool is the concurrency ceiling: click-to-call rings an agent
-                  // first, so a line cannot be opened without one free to take it.
-                  const agentNumbers = await fetchDialerAgentNumbers();
-                  if (!agentNumbers.length) {
-                    toast.error(
-                      "No agents with a phone number configured — set one in Admin → Users before dialing.",
-                    );
-                    return;
-                  }
-                  setActiveDialMode("predictive");
+                  if (!beginDialStart("predictive")) return;
                   try {
-                    await dialer.start({
-                      // This button is Productive Dial whatever mode the portfolio was saved with.
-                      settings: { ...dialerSettings, dialerMode: "predictive" },
-                      targets: target.map((d) => ({
-                        id: d.id,
-                        name: d.name,
-                        phone: d.phone,
-                        portfolioId: d.portfolioId,
-                        aiScore: d.aiScore,
-                      })),
-                      agentNumbers,
-                      callerId: manualDialCallerId,
-                    });
-                  } catch (e) {
-                    setActiveDialMode(null);
-                    toast.error(errorText(e, "Failed to start the dialer"));
-                    return;
+                    await startProductiveDial();
+                  } finally {
+                    endDialStart();
                   }
-                  toast.success(
-                    `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
-                  );
-                  // AI reaches a live debtor and hands over: auto-connect if the agent is free,
-                  // otherwise raise a Take / Forward notification. (Kept as a demo flourish.)
-                  setTimeout(() => {
-                    const transferDebtor = target[Math.min(5, target.length - 1)];
-                    if (transferDebtor) handleAiTransfer(transferDebtor, "AI Bot");
-                  }, 6000);
                 }}
                 className={cn(
                   "gap-1.5 text-sm",
@@ -1423,7 +1460,12 @@ export function CallQueueContent({
                     : "bg-success text-success-foreground hover:bg-success/90",
                 )}
               >
-                {dialer.running && activeDialMode === "predictive" ? (
+                {dialStarting === "predictive" ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Starting…
+                  </>
+                ) : dialer.running && activeDialMode === "predictive" ? (
                   <>
                     <Square className="h-3.5 w-3.5" />
                     Stop Dialer
@@ -1445,60 +1487,75 @@ export function CallQueueContent({
                 variant="outline"
                 disabled={dialer.running || !isSelf}
                 title={isSelf ? undefined : "Progressive Dial works on your own queue"}
+                aria-busy={dialStarting === "progressive"}
                 onClick={async () => {
+                  if (dialStartingRef.current) {
+                    beginDialStart("progressive"); // only shows "please wait"
+                    return;
+                  }
                   if (progressive.active) {
                     progressive.stop();
                     return;
                   }
-                  let target: QueueDebtor[];
-                  let blocked: Set<string>;
+                  if (!beginDialStart("progressive")) return;
                   try {
-                    target = await fetchQueueTargets();
-                    // In batches: the check takes at most 2,000 numbers a request, and a full
-                    // queue can hold 6,000+ (it failed with SX-9000 for those agents, 2026-11-12).
-                    const keys = [
-                      ...new Set(
-                        target
-                          .map((d) => (d.phone ?? "").replace(/\D/g, "").slice(-10))
-                          .filter((p) => p.length === 10),
-                      ),
-                    ];
-                    blocked = new Set<string>();
-                    for (let i = 0; i < keys.length; i += 1000) {
-                      const hits = await checkDoNotCall({
-                        data: {
-                          accessToken: await getProgressiveToken(),
-                          phones: keys.slice(i, i + 1000),
-                        },
-                      });
-                      for (const h of hits) blocked.add(h);
+                    let target: QueueDebtor[];
+                    let blocked: Set<string>;
+                    try {
+                      target = await fetchQueueTargets();
+                      // In batches: the check takes at most 2,000 numbers a request, and a full
+                      // queue can hold 6,000+ (it failed with SX-9000 for those agents, 2026-11-12).
+                      const keys = [
+                        ...new Set(
+                          target
+                            .map((d) => (d.phone ?? "").replace(/\D/g, "").slice(-10))
+                            .filter((p) => p.length === 10),
+                        ),
+                      ];
+                      blocked = new Set<string>();
+                      for (let i = 0; i < keys.length; i += 1000) {
+                        const hits = await checkDoNotCall({
+                          data: {
+                            accessToken: await getProgressiveToken(),
+                            phones: keys.slice(i, i + 1000),
+                          },
+                        });
+                        for (const h of hits) blocked.add(h);
+                      }
+                    } catch (e) {
+                      toast.error(errorText(e, "Could not start Progressive Dial"));
+                      return;
                     }
-                  } catch (e) {
-                    toast.error(errorText(e, "Could not start Progressive Dial"));
-                    return;
-                  }
-                  const plan = progressive.start(target, {
-                    todayKey: todayIstKey(),
-                    doNotCall: blocked,
-                  });
-                  const activeFilter = FILTERS.find((f) => f.key === queueFilter);
-                  const left = [
-                    plan.skippedCalledToday && `${plan.skippedCalledToday} already called today`,
-                    plan.skippedDoNotCall && `${plan.skippedDoNotCall} on do-not-call`,
-                  ].filter(Boolean);
-                  if (!plan.ids.length) {
-                    toast.error(
-                      `No one to call in ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "this queue"}${left.length ? ` (${left.join(", ")})` : ""}`,
+                    const plan = progressive.start(target, {
+                      todayKey: todayIstKey(),
+                      doNotCall: blocked,
+                    });
+                    const activeFilter = FILTERS.find((f) => f.key === queueFilter);
+                    const left = [
+                      plan.skippedCalledToday && `${plan.skippedCalledToday} already called today`,
+                      plan.skippedDoNotCall && `${plan.skippedDoNotCall} on do-not-call`,
+                    ].filter(Boolean);
+                    if (!plan.ids.length) {
+                      toast.error(
+                        `No one to call in ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "this queue"}${left.length ? ` (${left.join(", ")})` : ""}`,
+                      );
+                      return;
+                    }
+                    toast.success(
+                      `Progressive Dial: ${plan.ids.length} borrower${plan.ids.length === 1 ? "" : "s"}, one at a time${left.length ? ` — left out ${left.join(", ")}` : ""}`,
                     );
-                    return;
+                  } finally {
+                    endDialStart();
                   }
-                  toast.success(
-                    `Progressive Dial: ${plan.ids.length} borrower${plan.ids.length === 1 ? "" : "s"}, one at a time${left.length ? ` — left out ${left.join(", ")}` : ""}`,
-                  );
                 }}
                 className="gap-1.5 text-sm"
               >
-                {progressive.active ? (
+                {dialStarting === "progressive" ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Starting…
+                  </>
+                ) : progressive.active ? (
                   <>
                     <Square className="h-3.5 w-3.5" />
                     Stop Progressive

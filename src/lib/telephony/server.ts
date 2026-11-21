@@ -31,6 +31,7 @@ import {
   didPrefix,
   ledgerByProviderCallId,
   loadTelephonySettings,
+  openPredictiveCalls,
   prepareCall,
   channelsFor,
   recordRefusal,
@@ -46,6 +47,7 @@ import {
   predictiveBatchSize,
   predictiveMode,
   requestExtension,
+  runsSharingAgents,
 } from "./predictive-rules";
 
 // ─── Process-wide state + event fan-out ─────────────────────────────────────────
@@ -643,13 +645,34 @@ async function predictiveDial(
   if (!inQueue.length)
     return { run, blocked: "No agent with an extension could join the calling queue." };
 
-  const free = freeAgentHandles(inQueue, run.legs);
+  // Pace from the ledger, across every run on these agents — not this run's legs alone
+  // (2026-11-21: five runs on one extension opened ~25 lines). Calls the vendor never
+  // acknowledged are closed there and ended here.
+  const open = await openPredictiveCalls(session.clientId, inQueue);
+  if (open.silentRefIds.length) {
+    const silent = new Set(open.silentRefIds);
+    for (const leg of run.legs) {
+      if (!silent.has(leg.id) || isTerminal(leg.state)) continue;
+      run = engine.applyLegEvent(
+        leg.providerCallId ? run : engine.bindProviderCall(run, leg.id, leg.id),
+        {
+          type: "hangup",
+          providerCallId: leg.providerCallId ?? leg.id,
+          at: Date.now(),
+          result: "failed",
+          durationSeconds: 0,
+        },
+      );
+    }
+  }
+  const busy = new Set(open.busy);
+  const free = freeAgentHandles(inQueue, run.legs).filter((h) => !busy.has(h));
   const dialed = new Set(run.legs.map((l) => l.debtorId));
   const remaining = targets.filter((t) => !dialed.has(t.id));
   const { lines, atCompanyCeiling } = await channelsFor(session.clientId, settings);
   const n = predictiveBatchSize({
     freeAgents: free.length,
-    pending: pendingLegs(run.legs),
+    pending: open.ok ? Math.max(open.waiting, pendingLegs(run.legs)) : pendingLegs(run.legs),
     linesPerAgent: linesPerAgent(run.settings),
     callsPerCycle: run.settings.callsPerCycle,
     lines,
@@ -797,6 +820,33 @@ export const startDialerRun = createServerFn({ method: "POST" })
     });
     if (routing.mode === "vendor") {
       await endPredictiveSession(data.runId);
+      // One run per agent: a second Start on the same agents replaces the earlier run instead of
+      // dialling beside it (2026-11-21, five runs on ext 8603). Its open calls still count in the
+      // new run's pacing through the ledger.
+      const handles = agents
+        .map((a) => agentHandleFor(prov.name, a))
+        .filter((h): h is string => !!h);
+      const older = runsSharingAgents(
+        [...predictiveSessions].map(([runId, s]) => ({
+          runId,
+          clientId: s.clientId,
+          handles: [...s.loggedIn],
+        })),
+        { runId: data.runId, clientId: caller.clientId, handles },
+      );
+      for (const id of older) {
+        const other = runs.get(id);
+        const s = predictiveSessions.get(id);
+        predictiveSessions.delete(id);
+        // Agents the new run also has stay in the queue (it logs them in again); the rest leave.
+        const leaving = [...(s?.loggedIn ?? [])].filter((h) => !handles.includes(h));
+        if (s && leaving.length) await logoutSession({ ...s, loggedIn: new Set(leaving) });
+        if (other?.running) {
+          const stopped = engine.stopDialerRun(other);
+          await persistLoggableLegs(stopped);
+          saveRun(stopped);
+        }
+      }
       const session: PredictiveSession = {
         clientId: caller.clientId,
         queue: routing.queue,

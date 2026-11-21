@@ -63,6 +63,7 @@ export function useDialerRun(): UseDialerRun {
   const agentsRef = useRef(1);
   const agentNumbersRef = useRef<string[]>([]);
   const callerIdRef = useRef<string | undefined>(undefined);
+  const startingRef = useRef(false);
 
   const render = useCallback(() => forceRender((n) => n + 1), []);
   const clearTimer = () => {
@@ -99,7 +100,7 @@ export function useDialerRun(): UseDialerRun {
     [],
   );
 
-  const start = useCallback(
+  const startRun = useCallback(
     async ({
       settings,
       targets,
@@ -148,7 +149,13 @@ export function useDialerRun(): UseDialerRun {
         }
         if (started) runRef.current = started;
         render();
-        timerRef.current = setInterval(async () => {
+        const timer = setInterval(async () => {
+          // A newer run replaced this one: stop ticking, and never let this run's end switch
+          // off the browser phone's auto-answer for the newer run.
+          if (runIdRef.current !== runId) {
+            clearInterval(timer);
+            return;
+          }
           const ticked = await srv.tickDialerRun({
             data: {
               accessToken: await getAccessToken(),
@@ -159,10 +166,12 @@ export function useDialerRun(): UseDialerRun {
               callerId,
             },
           });
+          if (runIdRef.current !== runId) return;
           if (ticked) runRef.current = ticked;
           if (ticked && !ticked.running) announceRun(false);
           render();
         }, TICK_MS);
+        timerRef.current = timer;
         return;
       }
       const agentsAvailableLocal = lines;
@@ -193,6 +202,29 @@ export function useDialerRun(): UseDialerRun {
       }, TICK_MS);
     },
     [placeCalls, render],
+  );
+
+  const start = useCallback(
+    async ({
+      settings,
+      targets,
+      agentsAvailable,
+      agentNumbers = [],
+      callerId,
+      mode = "server",
+    }: StartArgs) => {
+      // Start can take 10+ s (waiting for the phone, then each call placed in turn). A second
+      // click meanwhile used to start a second run beside the first (2026-11-21: five runs on
+      // one agent, ~25 lines). Ignore clicks until this start has finished.
+      if (startingRef.current) return;
+      startingRef.current = true;
+      try {
+        await startRun({ settings, targets, agentsAvailable, agentNumbers, callerId, mode });
+      } finally {
+        startingRef.current = false;
+      }
+    },
+    [startRun],
   );
 
   const stop = useCallback(async () => {

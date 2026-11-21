@@ -551,6 +551,15 @@ free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, 
   manager's number is what dials. The click-to-call fallback (no queue) still can't overdial.
 - The agent's Productive Dial button always runs `dialerMode: "predictive"`, whatever mode the
   portfolio was saved with.
+- **Pacing counts the LEDGER, across every run on the agent (2026-11-21).** Before, each run
+  counted only its own legs and a second Start didn't stop the first: ext 8603 pressed Start 5×
+  in 24 s, ~25 lines opened, 19 were never acknowledged by SkyCRM and held every Axiotta line for
+  2 h ("lines busy" for everyone). Now `openPredictiveCalls` (guard.server.ts, rules
+  `sortOpenPredictive`) counts open predictive rows per extension and closes rows with no callid
+  and no event after `SILENT_PREDICTIVE_SECONDS` (120); a new run replaces older runs sharing an
+  agent (`runsSharingAgents`); `use-dialer-run.ts` ignores Start while one is starting.
+  Axiotta's `predictive_queue` was cleared (was 3101) the same day at the user's request —
+  Productive Dial falls back to click-to-call until it is set again.
 - **Axiotta's queue is 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
 - **Axiotta's numbers (2026-11-21): 30 Manual Dial, 20 Call Queue (on all 20 open portfolios).**
   First split 10/40; on 21 Nov by 13:30 IST 1,437 of ~1,530 calls were Manual Dial (dock), the 10
