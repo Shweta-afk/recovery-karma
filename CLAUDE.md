@@ -450,6 +450,13 @@ Who decides what (user, 2026-11-20):
   (`pickCallerNumber`, `did-rules.ts`, tested in `scripts/telephony-numbers.test.ts`). The old
   "same number as this borrower's last call" rule was dropped. Manual Dial may pick one of its
   manual numbers or "Any (rotates)"; queue calls ignore a browser-sent caller ID.
+- **The daily cap (150) is a WARNING, not a block (user, 2026-11-21).** A number the agent picks
+  on Manual Dial is used whatever its count; rotation (Manual "Any" and queue calls) prefers
+  numbers under their cap and, once all are over it, keeps calling on the least-used one —
+  `all_numbers_at_cap` is never returned now. Manual Dial's picker shows a dot per number
+  (`capLevel`: green < 120, yellow 120–149, red ≥ 150 of a 150 cap) with "N/150 today", and a red
+  note when a red number is chosen; counts reload every minute and after each call. Resting still
+  blocks.
 - `startCall` takes `manual: true` from the Manual Dial dock (so a loan-ID-bound manual call still
   uses manual numbers); a call with no account behind it is always manual.
 - Server: `src/lib/calling-numbers.server.ts`; picking in `guard.server.ts` `chooseDid` (from

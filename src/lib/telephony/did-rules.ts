@@ -133,18 +133,30 @@ export function pickCallerNumber(args: {
   if (!awake.length) return { ok: false, reason: "all_numbers_resting" };
 
   const used = (d: DidRow) => args.usedToday.get(d.id) ?? 0;
-  const underCap = awake.filter((d) => used(d) < (d.daily_cap ?? args.defaultDailyCap));
-  if (!underCap.length) return { ok: false, reason: "all_numbers_at_cap" };
-
+  // The daily cap is a WARNING, not a block (user, 2026-11-21): a number the agent picks on Manual
+  // Dial is used whatever its count (the picker shows a red dot at the cap), and rotation prefers
+  // numbers under their cap but keeps calling on the least-used one once all are over it.
   if (args.kind === "manual" && args.requestedId) {
-    const asked = underCap.find((d) => d.id === args.requestedId);
+    const asked = awake.find((d) => d.id === args.requestedId);
     if (asked) return { ok: true, did: asked, reason: "requested" };
   }
+  const underCap = awake.filter((d) => used(d) < (d.daily_cap ?? args.defaultDailyCap));
+  const pool = underCap.length ? underCap : awake;
   // Ties go to the lowest number, so a fresh day starts at the top of the list and walks down.
-  const best = [...underCap]
+  const best = [...pool]
     .sort((a, b) => a.number.localeCompare(b.number))
     .reduce((a, b) => (used(b) < used(a) ? b : a));
   return { ok: true, did: best, reason: "least_used" };
+}
+
+/** How close a number is to its daily cap, for the coloured dot on Manual Dial (user,
+ *  2026-11-21): green under 80% (120 of 150), yellow from 80%, red at or over the cap. */
+export type CapLevel = "green" | "yellow" | "red";
+export const CAP_WARN_SHARE = 0.8;
+export function capLevel(usedToday: number, cap: number): CapLevel {
+  if (usedToday >= cap) return "red";
+  if (usedToday >= Math.ceil(cap * CAP_WARN_SHARE)) return "yellow";
+  return "green";
 }
 
 /** Numbers a manager may put on a portfolio: the company's outbound-capable ones that the admin

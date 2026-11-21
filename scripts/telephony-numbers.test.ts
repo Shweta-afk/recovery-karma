@@ -13,6 +13,7 @@ import {
   istDayStart,
   normaliseDid,
   parseDidList,
+  capLevel,
   pickCallerNumber,
   didPickMessage,
   parseNumbersWithPrefixes,
@@ -261,17 +262,18 @@ describe("picking the caller number (user, 2026-11-20)", () => {
     expect(r.ok && r.did?.id).toBe("3");
   });
 
-  test("at its cap or resting → another number; all of them → refused", () => {
+  test("cap is a warning: rotation prefers numbers under it, then keeps calling (2026-11-21)", () => {
     const dids = [did("1", { daily_cap: 5 }), did("2", { resting_until: "2026-10-27T00:00:00Z" })];
     const usedToday = new Map([["1", 5]]);
-    expect(pickCallerNumber({ ...base, ...queue(["1"]), dids, usedToday })).toEqual({
-      ok: false,
-      reason: "all_numbers_at_cap",
-    });
+    // Every number over its cap → still calls, on the least-used one.
+    const over = pickCallerNumber({ ...base, ...queue(["1"]), dids, usedToday });
+    expect(over.ok && over.did?.id).toBe("1");
+    // Resting still blocks.
     expect(pickCallerNumber({ ...base, ...queue(["2"]), dids })).toEqual({
       ok: false,
       reason: "all_numbers_resting",
     });
+    // A number under its cap is preferred over one at it.
     const r = pickCallerNumber({
       ...base,
       ...queue(["1", "2", "3"]),
@@ -279,6 +281,28 @@ describe("picking the caller number (user, 2026-11-20)", () => {
       usedToday,
     });
     expect(r.ok && r.did?.id).toBe("3");
+  });
+
+  test("Manual Dial: a number the agent picks is used even at its cap", () => {
+    const dids = [did("1", { manual: true, daily_cap: 5 }), did("2", { manual: true })];
+    const r = pickCallerNumber({
+      ...base,
+      kind: "manual",
+      dids,
+      requestedId: "1",
+      usedToday: new Map([["1", 9]]),
+    });
+    expect(r).toMatchObject({ ok: true, reason: "requested" });
+    expect(r.ok && r.did?.id).toBe("1");
+  });
+
+  test("dot colours: green < 120, yellow 120–149, red ≥ 150", () => {
+    expect(capLevel(0, 150)).toBe("green");
+    expect(capLevel(119, 150)).toBe("green");
+    expect(capLevel(120, 150)).toBe("yellow");
+    expect(capLevel(149, 150)).toBe("yellow");
+    expect(capLevel(150, 150)).toBe("red");
+    expect(capLevel(200, 150)).toBe("red");
   });
 
   test("every refusal has a message for the agent", () => {

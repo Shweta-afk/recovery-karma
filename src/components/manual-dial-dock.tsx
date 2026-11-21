@@ -88,22 +88,38 @@ export function ManualDialDock() {
   // server rotate across them. null = not loaded / the company has no numbers of its own.
   const [manualNumbers, setManualNumbers] = useState<{
     companyHasNumbers: boolean;
-    numbers: Array<{ number: string; label: string | null }>;
+    numbers: Array<{
+      number: string;
+      label: string | null;
+      usedToday: number;
+      cap: number;
+      level: "green" | "yellow" | "red";
+    }>;
   } | null>(null);
   const [callerId, setCallerId] = useState<string>("auto");
 
+  // Flips when a call starts/ends, so the counts reload after each call.
+  const numbersReloadKey = activeCall ? 1 : 0;
+  // Re-read every minute while the dock is open (and after each call), so the
+  // green / yellow / red dots follow today's calls on each number.
   useEffect(() => {
     if (!open) return;
-    void (async () => {
+    let cancelled = false;
+    const load = async () => {
       try {
-        setManualNumbers(
-          await getMyManualNumbers({ data: { accessToken: await getAccessToken() } }),
-        );
+        const res = await getMyManualNumbers({ data: { accessToken: await getAccessToken() } });
+        if (!cancelled) setManualNumbers(res);
       } catch {
-        setManualNumbers(null);
+        if (!cancelled) setManualNumbers(null);
       }
-    })();
-  }, [open]);
+    };
+    void load();
+    const t = setInterval(() => void load(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [open, numbersReloadKey]);
   const noManualNumbers = !!manualNumbers?.companyHasNumbers && manualNumbers.numbers.length === 0;
 
   const pathname = useRouterState({ select: (st) => st.location.pathname });
@@ -385,14 +401,31 @@ export function ManualDialDock() {
                   <SelectItem value="auto">Any (rotates)</SelectItem>
                   {manualNumbers.numbers.map((n) => (
                     <SelectItem key={n.number} value={n.number}>
-                      {formatNumber(n.number)}
-                      {n.label ? ` · ${n.label}` : ""}
+                      <span className="flex items-center gap-2">
+                        <CapDot level={n.level} />
+                        <span>
+                          {formatNumber(n.number)}
+                          {n.label ? ` · ${n.label}` : ""}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {n.usedToday}/{n.cap} today
+                        </span>
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           )}
+          {(() => {
+            const picked = manualNumbers?.numbers.find((n) => n.number === callerId);
+            return picked && picked.level === "red" ? (
+              <p className="text-[11px] text-red-600 dark:text-red-400">
+                This number has already made {picked.usedToday} calls today (limit {picked.cap}).
+                Calls on it may be flagged as spam — pick a green one if you can.
+              </p>
+            ) : null;
+          })()}
           {noManualNumbers && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
               No numbers are set for Manual Dial yet. Ask your admin (Settings → Calling numbers).
@@ -460,4 +493,17 @@ function ManualRow({ d }: { d: DispositionRecord }) {
       {!mapped && <span className="mt-0.5 inline-block text-[10px] text-amber-500">Unmapped</span>}
     </div>
   );
+}
+
+/** Today's load on a calling number: green < 120, yellow 120–149, red ≥ 150 (of a 150 cap). */
+function CapDot({ level }: { level: "green" | "yellow" | "red" }) {
+  const cls =
+    level === "red" ? "bg-red-500" : level === "yellow" ? "bg-amber-400" : "bg-emerald-500";
+  const title =
+    level === "red"
+      ? "At or over today's limit"
+      : level === "yellow"
+        ? "Close to today's limit"
+        : "Plenty left today";
+  return <span title={title} className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} />;
 }

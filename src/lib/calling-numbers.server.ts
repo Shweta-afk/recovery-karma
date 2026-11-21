@@ -7,8 +7,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z, tokenSchema, idSchema } from "./schemas";
 import { getSupabaseAdmin, verifyCaller, type VerifiedCaller } from "./supabase-admin.server";
-import { didUsage, loadCompanyDids, type CompanyDid } from "./telephony/guard.server";
-import { portfolioNumberChoices } from "./telephony/did-rules";
+import { didUsage, loadCompanyDids, loadTrunk, type CompanyDid } from "./telephony/guard.server";
+import { capLevel, portfolioNumberChoices, type CapLevel } from "./telephony/did-rules";
 
 // telephony_dids / portfolio_dids aren't in database.types.ts.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -127,11 +127,26 @@ export const getMyManualNumbers = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const caller = await requireCaller(data.accessToken);
     const dids = await companyNumbers(caller.clientId);
+    const manual = dids.filter((d) => d.manual);
+    // Today's calls per number, so the picker can show green / yellow / red (2026-11-21). A
+    // failure leaves the counts out rather than hiding the numbers.
+    const [usage, trunk] = await Promise.all([
+      didUsage(manual.map((d) => d.id)).catch(() => new Map()),
+      loadTrunk().catch(() => ({ defaultDidDailyCap: 150 })),
+    ]);
     return {
       companyHasNumbers: dids.length > 0,
-      numbers: dids
-        .filter((d) => d.manual)
-        .map((d) => ({ number: d.number, label: (d as { label?: string | null }).label ?? null })),
+      numbers: manual.map((d) => {
+        const usedToday: number = usage.get(d.id)?.callsToday ?? 0;
+        const cap = d.daily_cap ?? trunk.defaultDidDailyCap;
+        return {
+          number: d.number,
+          label: (d as { label?: string | null }).label ?? null,
+          usedToday,
+          cap,
+          level: capLevel(usedToday, cap) as CapLevel,
+        };
+      }),
     };
   });
 
