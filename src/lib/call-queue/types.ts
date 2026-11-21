@@ -303,6 +303,9 @@ export interface LiveCallEntry {
   /** Provider's id for this leg, once startCall has resolved — needed to hang it up
    * individually (see hangupDialerLeg in telephony/server.ts). Absent while still queued. */
   providerCallId?: string;
+  /** Productive Dial through the calling service's own queue: the borrower is rung first and the
+   * agent's phone stays quiet until one answers. */
+  vendorRouted?: boolean;
 }
 
 // Agent availability — lives on the call queue since this is where the agent takes calls

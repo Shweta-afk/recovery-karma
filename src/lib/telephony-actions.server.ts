@@ -29,7 +29,13 @@ import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
 import { parsePredictiveQueue } from "./telephony/predictive-rules";
 import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.server";
-import { skycrmPassword, skycrmUserLevel, skycrmUsername } from "./telephony/skycrm-users";
+import {
+  extensionLoginMoves,
+  skycrmPassword,
+  skycrmUserLevel,
+  skycrmUsername,
+} from "./telephony/skycrm-users";
+import { forgetSkycrmCredentials } from "./telephony/skycrm-credentials.server";
 import { enforceRateLimit } from "./rate-limit.server";
 import {
   createSkycrmUser,
@@ -202,12 +208,59 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
  * since their API crashes on duplicates rather than answering cleanly. Username rules:
  * telephony/skycrm-users.ts. A failed attempt keeps the same username and password for the retry.
  */
+/** Move each company login named after an extension to whoever holds that extension now
+ *  (extensionLoginMoves). Best effort: a failure is logged, never thrown. */
+async function adoptExtensionLogins(clientId: string): Promise<number> {
+  const [logins, people] = await Promise.all([
+    db().from("skycrm_users").select("agent_id, username, client_id").eq("client_id", clientId),
+    db()
+      .from("agents")
+      .select("id, agent_extension, client_id, is_active")
+      .eq("client_id", clientId),
+  ]);
+  if (logins.error || people.error) return 0;
+  const moves = extensionLoginMoves(
+    ((logins.data ?? []) as Array<{ agent_id: string; username: string; client_id: string }>).map(
+      (l) => ({ agentId: l.agent_id, username: l.username, clientId: l.client_id }),
+    ),
+    (
+      (people.data ?? []) as Array<{
+        id: string;
+        agent_extension: string | null;
+        client_id: string;
+        is_active: boolean | null;
+      }>
+    ).map((a) => ({
+      id: a.id,
+      extension: a.agent_extension,
+      clientId: a.client_id,
+      isActive: a.is_active !== false,
+    })),
+  );
+  let moved = 0;
+  for (const m of moves) {
+    const { error } = await db()
+      .from("skycrm_users")
+      .update({ agent_id: m.toAgentId })
+      .eq("agent_id", m.fromAgentId)
+      .eq("username", m.username);
+    if (error) console.warn(`[skycrm-users] login ${m.username} not moved: ${error.message}`);
+    else {
+      moved++;
+      forgetSkycrmCredentials(m.username);
+    }
+  }
+  return moved;
+}
+
 export const createSkycrmUsers = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z.object({ accessToken: tokenSchema, clientId: idSchema }).parse(d),
   )
   .handler(async ({ data }) => {
     const caller = await requireSuperadmin(data.accessToken);
+    // An extension that changed hands keeps its SkyCRM login; don't try to create it twice.
+    await adoptExtensionLogins(data.clientId);
     const [{ data: people, error }, existing] = await Promise.all([
       db()
         .from("agents")
@@ -467,6 +520,8 @@ export const setAgentExtension = createServerFn({ method: "POST" })
       }
       throw new Error(`Could not set the extension (${error.message})`);
     }
+    // The extension's SkyCRM login (named after it) moves with it to the new holder.
+    if (data.extension) await adoptExtensionLogins(data.clientId);
 
     await logSuperadminActivity({
       superadminId: caller.superadminId,
@@ -1389,7 +1444,8 @@ export const controlMyCall = createServerFn({ method: "POST" })
     console.log(
       `[call-control] ext ${myExtension} ${data.action}${target && "extension" in target ? ` → ext ${target.extension}` : target ? " → a mobile number" : ""} (${direction}): ${ok ? "ok" : "refused"} ${vendorMessage}`,
     );
-    if (!ok) throw new Error(`SkyCRM did not do it: ${vendorMessage || "no reason given"}`);
+    if (!ok)
+      throw new Error(`The calling service did not do it: ${vendorMessage || "no reason given"}`);
     return { ok: true, targetLabel, vendorMessage };
   });
 

@@ -348,6 +348,11 @@ code — always go through this.
 
 ### SkyCRM (2026-09-26) — one account shared by every company
 
+**Companies never see the vendor's name** (user, 2026-11-21), like Insights never names ProfileX:
+company screens say "the calling service" / "the dialler". Only superadmin screens (Health Check,
+the company Telephony card, Numbers & Lines) name SkyCRM. `scripts/vendor-name-hidden.test.ts`
+fails if a route or component outside the superadmin ones mentions it outside comments.
+
 - **Every dial goes through `prepareCall` (`telephony/guard.server.ts`)**, with the rules in pure
   `guard-rules.ts` (tested in `scripts/telephony-check.ts`). It checks, in order: the company's
   `do_not_call` list, whether `telephony_settings` is enabled, the IST calling window (never wider
@@ -553,6 +558,18 @@ free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, 
   manager's number is what dials. The click-to-call fallback (no queue) still can't overdial.
 - The agent's Productive Dial button always runs `dialerMode: "predictive"`, whatever mode the
   portfolio was saved with.
+- **Pacing counts the LEDGER, across every run on the agent (2026-11-21).** Before, each run
+  counted only its own legs and a second Start didn't stop the first: ext 8603 pressed Start 5×
+  in 24 s, ~25 lines opened, 19 were never acknowledged by SkyCRM and held every Axiotta line for
+  2 h ("lines busy" for everyone). Now `openPredictiveCalls` (guard.server.ts, rules
+  `sortOpenPredictive`) counts open predictive rows per extension and closes rows with no callid
+  and no event after `SILENT_PREDICTIVE_SECONDS` (45) as `no_answer` — SkyCRM sends NO event for
+  an unanswered predictive call, only for a pickup (user, confirmed with SkyCRM, 2026-11-21).
+  Ticks are one at a time per run (`tickingRuns` + browser guard): overlapping ticks dialled one
+  borrower up to 6 times in seconds and wiped each other's legs. A new run replaces older runs sharing an
+  agent (`runsSharingAgents`); `use-dialer-run.ts` ignores Start while one is starting.
+  Axiotta's `predictive_queue` was cleared (was 3101) the same day at the user's request —
+  Productive Dial falls back to click-to-call until it is set again.
 - **Axiotta's queue is 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
 - **Axiotta's numbers (2026-11-21): 30 Manual Dial, 20 Call Queue (on all 20 open portfolios).**
   First split 10/40; on 21 Nov by 13:30 IST 1,437 of ~1,530 calls were Manual Dial (dock), the 10
@@ -885,7 +902,11 @@ calls `deactivateUser` (`user-admin-actions.server.ts`, rules in `user-deactivat
 inbound + predictive queues, `agent_extension` NULL), phone erased, `session_nonce` rotated, login
 **banned** in Supabase Auth. A manager who still owns open portfolios or teams must hand them to
 another active manager first (hand-over dialog). Name and email stay — history and the bank's
-Feedback File are keyed on them. `reactivateUser` unbans; the extension is NOT given back.
+Feedback File are keyed on them. `reactivateUser` unbans; the extension is NOT given back. The SkyCRM login named after an extension
+("8604", `skycrm_users`) stays with the old person until the extension is assigned again; then
+`adoptExtensionLogins` (telephony-actions.server.ts, rule `extensionLoginMoves` in skycrm-users.ts)
+moves it to the new holder — on `setAgentExtension` and before "Create SkyCRM users", which would
+otherwise try to create a duplicate name SkyCRM refuses. 8604 → Richa, 8608 → Nazjri (2026-11-21).
 **`verifyCaller` now refuses `is_active = false`** — before 2026-11-21 a deactivated person could
 still sign in and use every server action. On 2026-11-21 the 9 already-inactive users were given
 the same treatment by SQL (8604 freed, phones cleared, logins banned). Manishchand (inactive

@@ -17,6 +17,10 @@ import {
   predictiveBatchSize,
   predictiveMode,
   requestExtension,
+  runsSharingAgents,
+  sortOpenPredictive,
+  stuckConnectedRows,
+  SILENT_PREDICTIVE_SECONDS,
 } from "../src/lib/telephony/predictive-rules";
 
 process.env.SKYCRM_SECRET = "test-secret";
@@ -154,6 +158,99 @@ describe("pacing: lines per agent (user, 2026-11-20)", () => {
     expect(requestExtension(["8001", "8002"], ["8001", "8002", "8003"], 3)).toBe("8002");
     expect(requestExtension([], ["8003"], 7)).toBe("8003");
     expect(requestExtension([], [], 0)).toBeNull();
+  });
+});
+
+describe("one agent, one set of lines across runs (2026-11-21)", () => {
+  const now = Date.parse("2026-11-21T10:50:00Z");
+  const row = (over: Partial<Parameters<typeof sortOpenPredictive>[0][number]>) => ({
+    id: "r",
+    request_extension: "8603",
+    agent_handle: null,
+    vendor_callid: null,
+    vendor_events: null,
+    started_at: new Date(now - 10_000).toISOString(),
+    ...over,
+  });
+
+  test("five runs' calls on one extension all count as waiting", () => {
+    const rows = Array.from({ length: 25 }, (_, i) => row({ id: `r${i}` }));
+    const { waiting } = sortOpenPredictive(rows, ["8603"], now);
+    expect(waiting).toBe(25);
+    const n = predictiveBatchSize({
+      freeAgents: 1,
+      pending: waiting,
+      linesPerAgent: 5,
+      callsPerCycle: 10,
+      lines: 20,
+      remaining: 100,
+    });
+    expect(n).toBe(0);
+  });
+
+  test("calls the vendor never acknowledged are closed after the limit", () => {
+    // SkyCRM sends nothing for an unanswered predictive call (2026-11-21).
+    expect(SILENT_PREDICTIVE_SECONDS).toBe(45);
+    const old = new Date(now - (SILENT_PREDICTIVE_SECONDS + 1) * 1000).toISOString();
+    const out = sortOpenPredictive(
+      [
+        row({ id: "silent", started_at: old }),
+        row({ id: "young" }),
+        row({ id: "heard", started_at: old, vendor_callid: "abc" }),
+        row({ id: "event", started_at: old, vendor_events: "Ringing" }),
+      ],
+      ["8603"],
+      now,
+    );
+    expect(out.silent.map((r) => r.id)).toEqual(["silent"]);
+    expect(out.waiting).toBe(3);
+  });
+
+  test("an agent on a call is busy; other agents' calls don't count", () => {
+    const out = sortOpenPredictive(
+      [
+        row({ id: "a", agent_handle: "8603", vendor_callid: "x" }),
+        row({ id: "b", request_extension: "8604" }),
+        row({ id: "c", agent_handle: "8604", vendor_callid: "y" }),
+      ],
+      ["8603"],
+      now,
+    );
+    expect(out.busy).toEqual(["8603"]);
+    expect(out.waiting).toBe(0);
+  });
+
+  test("a connected call SkyCRM never ended stops blocking an idle agent", () => {
+    const answered = new Date(now - 40_000).toISOString();
+    const rows = [
+      row({ id: "stuck", agent_handle: "8603", vendor_callid: "x", answered_at: answered }),
+      row({
+        id: "fresh",
+        agent_handle: "8603",
+        vendor_callid: "y",
+        answered_at: new Date(now - 5_000).toISOString(),
+      }),
+      row({ id: "other", agent_handle: "8604", vendor_callid: "z", answered_at: answered }),
+    ];
+    // phone idle long enough: only the agent's own call answered ≥ 30 s ago
+    expect(stuckConnectedRows(rows, "8603", 25, now).map((r) => r.id)).toEqual(["stuck"]);
+    // phone in a call, or barely idle, or no phone on the page: nothing is closed
+    expect(stuckConnectedRows(rows, "8603", 0, now)).toEqual([]);
+    expect(stuckConnectedRows(rows, "8603", 10, now)).toEqual([]);
+    expect(stuckConnectedRows(rows, "8603", null, now)).toEqual([]);
+    expect(stuckConnectedRows(rows, null, 60, now)).toEqual([]);
+  });
+
+  test("a new run replaces older runs sharing an agent in the same company", () => {
+    const sessions = [
+      { runId: "old", clientId: "c1", handles: ["8603"] },
+      { runId: "other-agent", clientId: "c1", handles: ["8604"] },
+      { runId: "other-company", clientId: "c2", handles: ["8603"] },
+      { runId: "new", clientId: "c1", handles: ["8603"] },
+    ];
+    expect(
+      runsSharingAgents(sessions, { runId: "new", clientId: "c1", handles: ["8603"] }),
+    ).toEqual(["old"]);
   });
 });
 

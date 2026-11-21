@@ -168,7 +168,7 @@ function CallControls({ call }: { call: LiveCall }) {
       toast.success(
         `${mode === "listen" ? "Listening to" : mode === "whisper" ? "Whispering to" : "Joined"} ${r.agentName}'s call — your phone connects in a moment`,
         {
-          description: `Your ext ${r.myExtension} → ext ${r.agentExtension} · SkyCRM: ${r.vendorMessage || "no message"}`,
+          description: `Your ext ${r.myExtension} → ext ${r.agentExtension} · Calling service: ${r.vendorMessage || "no message"}`,
         },
       );
     } catch (e) {
@@ -192,7 +192,7 @@ function CallControls({ call }: { call: LiveCall }) {
       if (rang) return;
       setActive(null);
       toast.error(
-        `SkyCRM didn't ring your phone (ext ${myExtension}), so you can't hear the call`,
+        `The calling service didn't ring your phone (ext ${myExtension}), so you can't hear the call`,
         {
           description:
             "Check the phone icon shows Ready (registered), then try again. If it keeps happening, the request isn't reaching your extension — tell SamvadX support.",
@@ -223,12 +223,12 @@ function CallControls({ call }: { call: LiveCall }) {
         toast.warning(
           verdict === "no-media"
             ? "Audio check: no audio is reaching your phone"
-            : "Audio check: SkyCRM is sending silence",
+            : "Audio check: the call is sending silence",
           {
             description: `${numbers}. ${
               verdict === "no-media"
                 ? "The call connected but no sound packets arrive — a network path problem on our side."
-                : "Your phone is connected, but SkyCRM has not joined you to the agent's call."
+                : "Your phone is connected, but the calling service has not joined you to the agent's call."
             } Screenshot this for SamvadX support.`,
             duration: 20_000,
           },

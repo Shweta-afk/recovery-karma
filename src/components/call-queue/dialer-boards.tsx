@@ -123,6 +123,10 @@ function maskPhone(phone: string): string {
 
 export function DialingBoard({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
   const ringing = liveCalls.filter((c) => c.status === "ringing" && !c.incoming);
+  // Productive Dial through the calling service's queue: borrowers are rung first and the agent
+  // hears nothing until one picks up. Agents read the silence as a broken phone (2026-11-21), so
+  // this box says what is happening at every moment, not just who is ringing.
+  if (liveCalls.some((c) => c.vendorRouted)) return <ProductiveDialStatus liveCalls={liveCalls} />;
   if (!ringing.length) return null;
 
   return (
@@ -134,25 +138,85 @@ export function DialingBoard({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
         </span>
         <PhoneCall className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
       </div>
-      <div className="divide-y divide-border/60 max-h-48 overflow-y-auto">
-        {ringing.map((lc) => (
-          <div key={lc.id} className="flex items-center gap-2 px-3 py-1.5">
-            <span className="relative flex h-2 w-2 flex-shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-medium text-foreground truncate">{lc.debtor}</div>
-              <div className="font-mono text-[10px] text-muted-foreground">
-                {maskPhone(lc.phone)}
-              </div>
-            </div>
-            {lc.type === "ai" && (
-              <span className="text-[8px] font-bold text-violet-500 flex-shrink-0">AI</span>
-            )}
+      <RingingList calls={ringing} />
+    </div>
+  );
+}
+
+function RingingList({ calls }: { calls: LiveCallEntry[] }) {
+  return (
+    <div className="divide-y divide-border/60 max-h-48 overflow-y-auto">
+      {calls.map((lc) => (
+        <div key={lc.id} className="flex items-center gap-2 px-3 py-1.5">
+          <span className="relative flex h-2 w-2 flex-shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-medium text-foreground truncate">{lc.debtor}</div>
+            <div className="font-mono text-[10px] text-muted-foreground">{maskPhone(lc.phone)}</div>
+          </div>
+          {lc.type === "ai" && (
+            <span className="text-[8px] font-bold text-violet-500 flex-shrink-0">AI</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Productive Dial's box: what the agent should expect right now, how far the run has got, and
+ *  who is ringing (any one of them may be the next voice the agent hears). */
+function ProductiveDialStatus({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
+  const ringing = liveCalls.filter((c) => c.status === "ringing" && !c.incoming);
+  const onCall = liveCalls.find((c) => c.status === "connected" || c.status === "on_hold");
+  const pickedUp = liveCalls.filter(
+    (c) => c.status === "connected" || c.status === "on_hold" || c.status === "done",
+  ).length;
+  const noAnswer = liveCalls.filter((c) => c.status === "no_answer").length;
+
+  const headline = onCall
+    ? `On a call with ${onCall.debtor}`
+    : ringing.length
+      ? `Ringing ${ringing.length} borrower${ringing.length === 1 ? "" : "s"}`
+      : "Picking the next borrowers…";
+  const explain = onCall
+    ? "New borrowers are rung as soon as this call ends."
+    : ringing.length
+      ? "Your phone stays quiet while they ring. When one picks up you are connected straight away and their account opens. Phones nobody answers in 45 seconds are skipped."
+      : "The next borrowers in your queue will start ringing in a moment.";
+
+  return (
+    <div className="fixed bottom-4 left-4 z-40 w-72 rounded-xl border border-border bg-card shadow-2xl shadow-black/20 animate-in slide-in-from-bottom-4 duration-300 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 bg-success/10 border-b border-border">
+        <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse flex-shrink-0" />
+        <span className="text-xs font-semibold text-foreground flex-1">Productive Dial is on</span>
+        <PhoneCall className="h-3.5 w-3.5 text-success flex-shrink-0" />
+      </div>
+      <div className="px-3 py-2 border-b border-border">
+        <div className="text-sm font-semibold text-foreground">{headline}</div>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{explain}</p>
+      </div>
+      <div className="grid grid-cols-3 divide-x divide-border border-b border-border text-center">
+        {[
+          ["Dialled", liveCalls.length],
+          ["Picked up", pickedUp],
+          ["No answer", noAnswer],
+        ].map(([label, n]) => (
+          <div key={label as string} className="py-1.5">
+            <div className="text-sm font-semibold tabular-nums text-foreground">{n}</div>
+            <div className="text-[10px] text-muted-foreground">{label}</div>
           </div>
         ))}
       </div>
+      {ringing.length > 0 && (
+        <>
+          <div className="px-3 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Ringing now
+          </div>
+          <RingingList calls={ringing} />
+        </>
+      )}
     </div>
   );
 }

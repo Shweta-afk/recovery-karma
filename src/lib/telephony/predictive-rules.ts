@@ -107,6 +107,100 @@ export function predictiveBatchSize(args: {
   return Math.max(0, Math.min(target, args.callsPerCycle, args.lines, args.remaining));
 }
 
+/** SkyCRM sends NO event for a predictive call the borrower doesn't pick up — no ringing, no
+ *  end record; only an answer produces one (confirmed with SkyCRM, user 2026-11-21). So a
+ *  predictive call with no callid and no event after this long is recorded as no answer and
+ *  closed, freeing the agent's line for the next borrower. Before this, such calls held lines
+ *  for up to 2 h (every dial said "lines busy"), then 120 s (agents sat waiting). */
+export const SILENT_PREDICTIVE_SECONDS = 45;
+
+export interface OpenPredictiveRow {
+  id: string;
+  request_extension: string | null;
+  agent_handle: string | null;
+  vendor_callid: string | null;
+  vendor_events: string | null;
+  started_at: string;
+  answered_at?: string | null;
+}
+
+/**
+ * The company's open predictive ledger rows, read for one batch. Pacing must count calls across
+ * EVERY run on these agents, not just this run's legs: on 2026-11-21 one agent pressed Start five
+ * times in 24 s, each run paced itself to 5 and ext 8603 had ~25 lines open.
+ *   silent  — rows to close (never acknowledged by the vendor, older than SILENT_PREDICTIVE_SECONDS)
+ *   waiting — rows requested for these agents still waiting for someone to take them
+ *   busy    — these agents already on a predictive call (the answer named them)
+ */
+export function sortOpenPredictive<T extends OpenPredictiveRow>(
+  rows: T[],
+  handles: string[],
+  nowMs: number,
+): { silent: T[]; waiting: number; busy: string[] } {
+  const mine = new Set(handles);
+  const silent: T[] = [];
+  const busy = new Set<string>();
+  let waiting = 0;
+  for (const r of rows) {
+    const ageS = (nowMs - Date.parse(r.started_at)) / 1000;
+    const heard = !!r.vendor_callid || !!(r.vendor_events ?? "").trim();
+    if (!heard && ageS > SILENT_PREDICTIVE_SECONDS) {
+      silent.push(r);
+      continue;
+    }
+    if (r.agent_handle) {
+      if (mine.has(r.agent_handle)) busy.add(r.agent_handle);
+      continue;
+    }
+    if (r.request_extension && mine.has(r.request_extension)) waiting++;
+  }
+  return { silent, waiting, busy: [...busy] };
+}
+
+/** How long the agent's browser phone must have been idle, and how long ago the answer must
+ *  have been, before a predictive call still marked "connected" to them is taken as over. */
+export const STUCK_CONNECTED_IDLE_SECONDS = 20;
+export const STUCK_CONNECTED_MIN_AGE_SECONDS = 30;
+
+/**
+ * Predictive calls still "connected" to an agent whose own browser phone has been idle for a
+ * while. SkyCRM does not always send the end of such a call (2026-11-21: a borrower answered
+ * while ext 8603 was on another call; no end record ever came), and an open connected call
+ * keeps the agent "busy" so nobody else is dialled for up to 2 h. Only the agent's own phone can
+ * say it is idle, so this applies to the calling agent's handle only.
+ */
+export function stuckConnectedRows<T extends OpenPredictiveRow>(
+  rows: T[],
+  handle: string | null | undefined,
+  phoneIdleSeconds: number | null | undefined,
+  nowMs: number,
+): T[] {
+  if (!handle || phoneIdleSeconds == null || phoneIdleSeconds < STUCK_CONNECTED_IDLE_SECONDS)
+    return [];
+  return rows.filter((r) => {
+    if (r.agent_handle !== handle) return false;
+    const since = Date.parse(r.answered_at ?? r.started_at);
+    return (nowMs - since) / 1000 >= STUCK_CONNECTED_MIN_AGE_SECONDS;
+  });
+}
+
+/** Other predictive runs of this company that share an agent with a run being started. The new
+ *  run replaces them, so one agent never has two runs dialling for them at once. */
+export function runsSharingAgents(
+  sessions: { runId: string; clientId: string; handles: string[] }[],
+  args: { runId: string; clientId: string; handles: string[] },
+): string[] {
+  const want = new Set(args.handles);
+  return sessions
+    .filter(
+      (s) =>
+        s.runId !== args.runId &&
+        s.clientId === args.clientId &&
+        s.handles.some((h) => want.has(h)),
+    )
+    .map((s) => s.runId);
+}
+
 /** Which agent's extension goes in predictive_call's `extension` field. The vendor connects the
  *  answer to any free extension in the queue, so this only spreads requests (and the token's
  *  extension) across the run's agents; free agents first, round robin by call number. */

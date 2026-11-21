@@ -294,7 +294,7 @@ function TeamActivityPage() {
           <DateRangeFilter value={dateRange} onChange={setDateRange} />
           <span
             className="flex items-center gap-1.5 text-xs text-muted-foreground rounded-lg border border-border bg-card px-2.5 py-1.5"
-            title="Ringing comes from the call ledger: the whole call when the borrower never picked up. For answered calls it is not split from talk time yet — SkyCRM doesn't send the answer time."
+            title="Ringing comes from the call ledger: the whole call when the borrower never picked up. For answered calls it is not split from talk time yet — the calling service doesn't send the answer time."
           >
             <Info className="h-3.5 w-3.5 flex-shrink-0" />
             Ringing = unanswered calls only

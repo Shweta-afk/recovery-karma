@@ -41,3 +41,24 @@ export function skycrmPassword(): string {
   for (const b of bytes) out += alphabet[b % alphabet.length];
   return `${out}@1`;
 }
+
+/** SkyCRM logins that should follow their extension to its new holder (user, 2026-11-21). A login
+ *  named after an extension ("8604") belongs with whoever holds that extension now: SkyCRM refuses
+ *  a second user with the same name, so the new holder can't get one of their own. Moved only to
+ *  someone who has no SkyCRM login yet, and never across companies. */
+export function extensionLoginMoves(
+  logins: Array<{ agentId: string; username: string; clientId: string }>,
+  agents: Array<{ id: string; extension: string | null; clientId: string; isActive: boolean }>,
+): Array<{ username: string; fromAgentId: string; toAgentId: string }> {
+  const hasLogin = new Set(logins.map((l) => l.agentId));
+  const moves: Array<{ username: string; fromAgentId: string; toAgentId: string }> = [];
+  for (const l of logins) {
+    if (!/^\d{3,6}$/.test(l.username)) continue;
+    const holder = agents.find((a) => a.isActive && a.extension?.trim() === l.username);
+    if (!holder || holder.id === l.agentId || holder.clientId !== l.clientId) continue;
+    if (hasLogin.has(holder.id)) continue;
+    moves.push({ username: l.username, fromAgentId: l.agentId, toAgentId: holder.id });
+    hasLogin.add(holder.id);
+  }
+  return moves;
+}

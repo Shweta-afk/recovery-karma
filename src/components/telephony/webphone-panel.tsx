@@ -25,7 +25,7 @@ const REG_LABEL: Record<string, { text: string; className: string }> = {
 };
 
 const NO_LOGIN: Record<string, string> = {
-  provider: "Calling on the server is not SkyCRM (TELEPHONY_PROVIDER).",
+  provider: "Browser calling isn't switched on for this server yet.",
   not_enabled: "Calling is not enabled for your company (Superadmin → Calling tab).",
   no_extension: "You have no extension (Superadmin → company → Calling tab → Extensions).",
   not_configured:
