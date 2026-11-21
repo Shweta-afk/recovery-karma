@@ -36,6 +36,7 @@ const NOT_APPLIED =
 export interface CallingNumber {
   id: string;
   number: string;
+  /** Always null on company screens — see companyNumbers. */
   label: string | null;
   manual: boolean;
   /** False when SkyCRM can't show this number yet (no prefix entered). */
@@ -58,7 +59,7 @@ function toCallingNumber(d: CompanyDid, used: Map<string, number>, now: Date): C
   return {
     id: d.id,
     number: d.number,
-    label: (d as CompanyDid & { label?: string | null }).label ?? null,
+    label: null,
     manual: d.manual,
     hasPrefix: !!d.prefix,
     dailyCap: d.daily_cap,
@@ -67,22 +68,11 @@ function toCallingNumber(d: CompanyDid, used: Map<string, number>, now: Date): C
   };
 }
 
-/** Outbound-capable numbers the company holds, with labels. */
+/** Outbound-capable numbers the company holds. Never with the superadmin's label: that is
+ *  SamvadX's own note (it once said "SkyCRM …" on every number) and companies don't see it. */
 async function companyNumbers(clientId: string): Promise<CompanyDid[]> {
-  const dids = (await loadCompanyDids(clientId)).filter((d) => d.use !== "inbound");
-  if (!dids.length) return dids;
-  const { data } = await db()
-    .from("telephony_dids")
-    .select("id, label")
-    .in(
-      "id",
-      dids.map((d) => d.id),
-    );
-  const labels = new Map(
-    ((data ?? []) as Array<{ id: string; label: string | null }>).map((r) => [r.id, r.label]),
-  );
-  return dids
-    .map((d) => ({ ...d, label: labels.get(d.id) ?? null }))
+  return (await loadCompanyDids(clientId))
+    .filter((d) => d.use !== "inbound")
     .sort((a, b) => a.number.localeCompare(b.number));
 }
 
@@ -131,7 +121,7 @@ export const getMyManualNumbers = createServerFn({ method: "POST" })
       companyHasNumbers: dids.length > 0,
       numbers: dids
         .filter((d) => d.manual)
-        .map((d) => ({ number: d.number, label: (d as { label?: string | null }).label ?? null })),
+        .map((d) => ({ number: d.number, label: null as string | null })),
     };
   });
 

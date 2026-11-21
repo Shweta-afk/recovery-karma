@@ -45,4 +45,9 @@ describe("the calling vendor's name stays off company screens", () => {
     const src = code(readFileSync("src/lib/telephony-actions.server.ts", "utf8"));
     expect(src).not.toMatch(/new Error\(`SkyCRM/);
   });
+
+  test('company screens never get a number\'s superadmin label (it once read "SkyCRM …")', () => {
+    const src = code(readFileSync("src/lib/calling-numbers.server.ts", "utf8"));
+    expect(src).not.toMatch(/select\([^)]*label/);
+  });
 });
