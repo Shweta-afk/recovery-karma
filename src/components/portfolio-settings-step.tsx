@@ -112,8 +112,8 @@ export function PortfolioSettingsStep({
           className="h-9"
         />
         <p className="text-[11px] text-muted-foreground">
-          SkyCRM rings this many borrowers for each free agent and connects whoever answers first.
-          More lines keep agents busier, but more borrowers pick up to find nobody free.
+          The dialler rings this many borrowers for each free agent and connects whoever answers
+          first. More lines keep agents busier, but more borrowers pick up to find nobody free.
         </p>
       </div>
 

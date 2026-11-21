@@ -74,9 +74,9 @@ function loginKey(c: WebphoneConfig): string {
   ]);
 }
 
-/** "gateway" (our Kamailio, wss://…/ws) or "SkyCRM WebRTC" (wss://…/skycrm-ws), for the badge. */
+/** "gateway" (our Kamailio, wss://…/ws) or "direct" (wss://…/skycrm-ws, the vendor's own WebRTC — named neutrally: agents see it), for the badge. */
 function routeLabel(c: WebphoneConfig): string {
-  return /\/skycrm-ws\b/.test(c.wssUrl) ? "SkyCRM WebRTC" : "gateway";
+  return /\/skycrm-ws\b/.test(c.wssUrl) ? "direct" : "gateway";
 }
 
 export function BrowserPhone() {

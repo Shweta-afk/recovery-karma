@@ -348,6 +348,11 @@ code — always go through this.
 
 ### SkyCRM (2026-09-26) — one account shared by every company
 
+**Companies never see the vendor's name** (user, 2026-11-21), like Insights never names ProfileX:
+company screens say "the calling service" / "the dialler". Only superadmin screens (Health Check,
+the company Telephony card, Numbers & Lines) name SkyCRM. `scripts/vendor-name-hidden.test.ts`
+fails if a route or component outside the superadmin ones mentions it outside comments.
+
 - **Every dial goes through `prepareCall` (`telephony/guard.server.ts`)**, with the rules in pure
   `guard-rules.ts` (tested in `scripts/telephony-check.ts`). It checks, in order: the company's
   `do_not_call` list, whether `telephony_settings` is enabled, the IST calling window (never wider

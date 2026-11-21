@@ -1444,7 +1444,8 @@ export const controlMyCall = createServerFn({ method: "POST" })
     console.log(
       `[call-control] ext ${myExtension} ${data.action}${target && "extension" in target ? ` → ext ${target.extension}` : target ? " → a mobile number" : ""} (${direction}): ${ok ? "ok" : "refused"} ${vendorMessage}`,
     );
-    if (!ok) throw new Error(`SkyCRM did not do it: ${vendorMessage || "no reason given"}`);
+    if (!ok)
+      throw new Error(`The calling service did not do it: ${vendorMessage || "no reason given"}`);
     return { ok: true, targetLabel, vendorMessage };
   });
 
