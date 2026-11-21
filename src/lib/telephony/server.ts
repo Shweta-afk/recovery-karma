@@ -78,6 +78,10 @@ const g = globalThis as typeof globalThis & {
     runTouchedAt: Map<string, number>;
     /** run id → its vendor predictive session: the queue and which agents are logged into it. */
     predictiveSessions: Map<string, PredictiveSession>;
+    /** Runs a tick is dialling for right now. Ticks arrive every 1.5 s and a SkyCRM request takes
+     *  ~3 s, so two used to overlap: both saw the same next borrower and dialled them (one
+     *  number 6 times in seconds, 2026-11-21), and the later save wiped the earlier one's legs. */
+    tickingRuns: Set<string>;
   };
 };
 
@@ -90,18 +94,21 @@ g.__recoveryaiTelephony ??= {
   runTargets: new Map(),
   runTouchedAt: new Map(),
   predictiveSessions: new Map(),
+  tickingRuns: new Set(),
 };
 // A hot-reloaded module can inherit a global created before these fields existed.
 g.__recoveryaiTelephony.owners ??= new Map();
 g.__recoveryaiTelephony.runTargets ??= new Map();
 g.__recoveryaiTelephony.runTouchedAt ??= new Map();
 g.__recoveryaiTelephony.predictiveSessions ??= new Map();
+g.__recoveryaiTelephony.tickingRuns ??= new Set();
 
 const runs = g.__recoveryaiTelephony.runs;
 const owners = g.__recoveryaiTelephony.owners;
 const runTargets = g.__recoveryaiTelephony.runTargets;
 const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
 const predictiveSessions = g.__recoveryaiTelephony.predictiveSessions;
+const tickingRuns = g.__recoveryaiTelephony.tickingRuns;
 const pendingPredictiveLogouts = new Set<string>();
 
 interface PredictiveSession {
@@ -659,7 +666,7 @@ async function predictiveDial(
           type: "hangup",
           providerCallId: leg.providerCallId ?? leg.id,
           at: Date.now(),
-          result: "failed",
+          result: "no_answer",
           durationSeconds: 0,
         },
       );
@@ -916,54 +923,65 @@ export const tickDialerRun = createServerFn({ method: "POST" })
     let run = runs.get(data.runId);
     if (!run) return null;
 
-    // Continuous dialing: top up capacity with debtors not yet dialed.
-    if (run.running && data.targets?.length) {
-      const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
-        filter: true,
-      });
-      const targets = await resolveTargets(caller, data.runId, data.targets);
-      const agents = await dialAgentsFor(caller, agentNumbers);
-      // Productive needs the full leg history to decide "primary vs next alt number vs next
-      // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
-      // modes can, so it gets the whole target list every tick instead of `remaining`.
-      const session = predictiveSessions.get(data.runId);
-      let batch: DialTarget[];
-      if (session) {
-        run = (await predictiveDial(run, targets, data.runId, session, data.callerId, agents)).run;
-        batch = [];
-      } else if (run.settings.dialerMode === "productive") {
-        batch = engine.planProductiveBatch(targets, run.legs);
-      } else {
-        const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
-        const dialed = new Set(run.legs.map((l) => l.debtorId));
-        const remaining = targets.filter((t) => !dialed.has(t.id));
-        batch = engine.planDialBatch({
-          settings: run.settings,
-          queue: remaining,
-          agentsAvailable: Math.min(
-            data.agentsAvailable,
-            agentNumbers.length || data.agentsAvailable,
-          ),
-          inFlight,
+    // One tick per run at a time (tickingRuns): an overlapping tick only reports the run.
+    if (tickingRuns.has(data.runId)) return run;
+    tickingRuns.add(data.runId);
+    try {
+      // Continuous dialing: top up capacity with debtors not yet dialed.
+      if (run.running && data.targets?.length) {
+        const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
+          filter: true,
         });
+        const targets = await resolveTargets(caller, data.runId, data.targets);
+        const agents = await dialAgentsFor(caller, agentNumbers);
+        // Productive needs the full leg history to decide "primary vs next alt number vs next
+        // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
+        // modes can, so it gets the whole target list every tick instead of `remaining`.
+        const session = predictiveSessions.get(data.runId);
+        let batch: DialTarget[];
+        if (session) {
+          run = (await predictiveDial(run, targets, data.runId, session, data.callerId, agents))
+            .run;
+          batch = [];
+        } else if (run.settings.dialerMode === "productive") {
+          batch = engine.planProductiveBatch(targets, run.legs);
+        } else {
+          const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
+          const dialed = new Set(run.legs.map((l) => l.debtorId));
+          const remaining = targets.filter((t) => !dialed.has(t.id));
+          batch = engine.planDialBatch({
+            settings: run.settings,
+            queue: remaining,
+            agentsAvailable: Math.min(
+              data.agentsAvailable,
+              agentNumbers.length || data.agentsAvailable,
+            ),
+            inFlight,
+          });
+        }
+        if (batch.length) {
+          const res = await dial(
+            run,
+            batch,
+            data.runId,
+            agentNumbers,
+            caller.clientId,
+            data.callerId,
+            agents,
+          );
+          run = res.run;
+        }
       }
-      if (batch.length) {
-        const res = await dial(
-          run,
-          batch,
-          data.runId,
-          agentNumbers,
-          caller.clientId,
-          data.callerId,
-          agents,
-        );
-        run = res.run;
-      }
-    }
 
-    await persistLoggableLegs(run); // log any AI/IVR legs that just went terminal
-    saveRun(run);
-    return run;
+      // Stopped (or replaced by a newer run) while this tick was dialling: don't bring it back.
+      const latest = runs.get(data.runId);
+      if (latest && !latest.running && run.running) return latest;
+      await persistLoggableLegs(run); // log any AI/IVR legs that just went terminal
+      saveRun(run);
+      return run;
+    } finally {
+      tickingRuns.delete(data.runId);
+    }
   });
 
 export const stopDialerRun = createServerFn({ method: "POST" })

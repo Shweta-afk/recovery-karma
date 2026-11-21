@@ -556,7 +556,10 @@ free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, 
   in 24 s, ~25 lines opened, 19 were never acknowledged by SkyCRM and held every Axiotta line for
   2 h ("lines busy" for everyone). Now `openPredictiveCalls` (guard.server.ts, rules
   `sortOpenPredictive`) counts open predictive rows per extension and closes rows with no callid
-  and no event after `SILENT_PREDICTIVE_SECONDS` (120); a new run replaces older runs sharing an
+  and no event after `SILENT_PREDICTIVE_SECONDS` (45) as `no_answer` — SkyCRM sends NO event for
+  an unanswered predictive call, only for a pickup (user, confirmed with SkyCRM, 2026-11-21).
+  Ticks are one at a time per run (`tickingRuns` + browser guard): overlapping ticks dialled one
+  borrower up to 6 times in seconds and wiped each other's legs. A new run replaces older runs sharing an
   agent (`runsSharingAgents`); `use-dialer-run.ts` ignores Start while one is starting.
   Axiotta's `predictive_queue` was cleared (was 3101) the same day at the user's request —
   Productive Dial falls back to click-to-call until it is set again.

@@ -107,10 +107,12 @@ export function predictiveBatchSize(args: {
   return Math.max(0, Math.min(target, args.callsPerCycle, args.lines, args.remaining));
 }
 
-/** A predictive call the vendor never acknowledged (no callid, no event) after this long is taken
- *  as never dialled and closed, so it stops holding a line and the agent's pacing (2026-11-21:
- *  19 such calls held Axiotta's lines for up to 2 h and every dial got "lines busy"). */
-export const SILENT_PREDICTIVE_SECONDS = 120;
+/** SkyCRM sends NO event for a predictive call the borrower doesn't pick up — no ringing, no
+ *  end record; only an answer produces one (confirmed with SkyCRM, user 2026-11-21). So a
+ *  predictive call with no callid and no event after this long is recorded as no answer and
+ *  closed, freeing the agent's line for the next borrower. Before this, such calls held lines
+ *  for up to 2 h (every dial said "lines busy"), then 120 s (agents sat waiting). */
+export const SILENT_PREDICTIVE_SECONDS = 45;
 
 export interface OpenPredictiveRow {
   id: string;

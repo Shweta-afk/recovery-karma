@@ -640,9 +640,9 @@ export async function openPredictiveCalls(
     const { error: closeErr } = await db()
       .from("telephony_calls")
       .update({
-        status: "failed",
+        status: "no_answer",
         ended_at: new Date().toISOString(),
-        vendor_events: `no reply from the calling service within ${SILENT_PREDICTIVE_SECONDS} s`,
+        vendor_events: `no answer: no event within ${SILENT_PREDICTIVE_SECONDS} s`,
       })
       .in(
         "id",

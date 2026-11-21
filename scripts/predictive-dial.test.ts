@@ -188,6 +188,8 @@ describe("one agent, one set of lines across runs (2026-11-21)", () => {
   });
 
   test("calls the vendor never acknowledged are closed after the limit", () => {
+    // SkyCRM sends nothing for an unanswered predictive call (2026-11-21).
+    expect(SILENT_PREDICTIVE_SECONDS).toBe(45);
     const old = new Date(now - (SILENT_PREDICTIVE_SECONDS + 1) * 1000).toISOString();
     const out = sortOpenPredictive(
       [
