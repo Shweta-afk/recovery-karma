@@ -458,6 +458,12 @@ Who decides what (user, 2026-11-20):
   falls back without it — no prefixes, nothing manual). `telephony_dids.portfolio_id` is superseded by
   `portfolio_dids` (carried over by the migration; no longer read when picking).
 - An outbound CDR's `dst` is prefix + number; `parseStatusWebhook` keeps the last 10 digits.
+- **Confirmed by test call (user, 2026-11-21):** the number the borrower's phone shows matches
+  `telephony_calls.did_number`, so per-number stats are real. 50 numbers went live on Axiotta
+  2026-11-21 ~10:06 IST.
+- **"Picked up (7d)"** = outbound ledger rows with `status='completed'` (or `answered_at`). It used
+  `answered_at` alone, which SkyCRM never sends, so every number showed 0% until
+  `20261121_did_usage_answered_from_status.sql` (live).
 
 Older rules from 2026-10-26 still hold: one owner per number, the DIALLED number decides an
 inbound call's company (`recordInbound`), a number taken back rests `did_cooling_days` (history:
