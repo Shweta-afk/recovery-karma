@@ -541,6 +541,10 @@ free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, 
 - The agent's Productive Dial button always runs `dialerMode: "predictive"`, whatever mode the
   portfolio was saved with.
 - **Axiotta's queue is 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
+- **Axiotta's numbers (2026-11-21): 30 Manual Dial, 20 Call Queue (on all 20 open portfolios).**
+  First split 10/40; on 21 Nov by 13:30 IST 1,437 of ~1,530 calls were Manual Dial (dock), the 10
+  manual numbers were at ~144 of their 150/day cap, so 20 more were moved to Manual Dial. Watch
+  the cap: 150 × numbers per pool is that pool's daily ceiling.
 - **Every number still goes through `prepareCall`** (`predictive: { queue }`): DNC, IST window,
   channel reservation, DID, ledger row before the vendor is called. The ledger row has
   `agent_id`/`agent_handle` NULL plus `predictive_queue` + `request_extension`; it is not
@@ -1039,9 +1043,12 @@ Admin → Users, not counted against agent/manager seats.
   don't say who hung up, so SamvadX records it. An End press = agent (`providerHangup`,
   `markAgentEndedCall` for the browser phone's own button); a final `completed` event with no End
   press = customer. Older calls are blank unless the ledger still says `canceled`.
-- **DID Used** comes from `telephony_calls.did_number`, which is NULL on every call as of
-  2026-11-10 (`telephony_dids` is empty). SkyCRM can't fill it: `dialing_phone` takes no caller ID,
-  outbound events and CDRs carry none, and outbound recording names hold only extension + number. `call_audit_rows.duration_seconds` falls back to the
+- **DID Used** comes from `telephony_calls.did_number` — the number `chooseDid` picked, whose
+  prefix SkyCRM dialled with (confirmed 2026-11-21: recording names read `out-<ext>-<prefix><phone>`,
+  e.g. `out-8620-3743…` on a call recorded as …3743). Filled on every outbound call of a company
+  that holds numbers since the 2026-11-20 evening deploy; blank on inbound calls, earlier calls and
+  companies without numbers. Every report writes it via `formatDidUsed` (0 + 10 digits, the
+  company's own export format). `call_audit_rows.duration_seconds` falls back to the
   ledger for calls not yet copied: `telephony_calls.duration_seconds` for `status='completed'` only (on an unanswered call that
   figure is ringing, not talk). Connected = ledger `completed`, else the disposition (`isAnswered`);
   the SQL summary and JS reports must stay in step. Contact Group stays disposition-based.

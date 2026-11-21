@@ -377,3 +377,14 @@ describe("missed calls", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("DID Used in reports", () => {
+  test("written as the company's export writes it: 0 + 10 digits", async () => {
+    const { formatDidUsed } = await import("../src/lib/telephony/did-rules");
+    expect(formatDidUsed("7969263743")).toBe("07969263743");
+    expect(formatDidUsed("+917969263743")).toBe("07969263743");
+    expect(formatDidUsed("07969263743")).toBe("07969263743");
+    expect(formatDidUsed(null)).toBe("");
+    expect(formatDidUsed("")).toBe("");
+  });
+});

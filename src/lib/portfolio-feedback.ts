@@ -11,6 +11,7 @@
 // One column is our reading of the sample, since it left it blank:
 //   "Total AVERAGE Call BACK duration" = average length of calls that ended in a Call Back.
 import type { XlsxSheet } from "./xlsx-export";
+import { formatDidUsed } from "./telephony/did-rules";
 import {
   DISPOSITION_CODE,
   DISPOSITION_RANK,
@@ -465,7 +466,7 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
       d.dpd ?? "",
       d.status ?? "",
       contacted ? "Contact" : "No Contact",
-      attempts[attempts.length - 1]?.did_number ?? "",
+      formatDidUsed(attempts[attempts.length - 1]?.did_number),
     ]);
   }
 
@@ -585,7 +586,7 @@ function ccReportSheet(
         c.agent_code ?? "",
         c.agent_name,
         c.customer_phone ?? "",
-        c.did_number ?? "",
+        formatDidUsed(c.did_number),
         dialModeLabel(c.dial_mode),
         fmtSeconds(c.duration_seconds),
         isAnswered(c) ? "Answered" : "Not Answered",

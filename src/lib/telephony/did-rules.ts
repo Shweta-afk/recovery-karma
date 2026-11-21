@@ -25,6 +25,14 @@ export function normaliseDid(raw: string): string {
   return digits.length >= 10 ? digits.slice(-10) : "";
 }
 
+/** How a caller number is written in reports ("DID Used"), the way the company's own call export
+ *  writes it: 0 + the 10-digit number (07969263743). Blank when the call recorded none (inbound
+ *  calls, calls before 2026-11-21, companies without numbers). */
+export function formatDidUsed(n: string | null | undefined): string {
+  const d = normaliseDid(n ?? "");
+  return d ? `0${d}` : "";
+}
+
 /** Split a pasted block (new lines, commas, spaces between numbers) into normalised numbers.
  *  `bad` holds what couldn't be read as a number. */
 export function parseDidList(text: string): { numbers: string[]; bad: string[] } {

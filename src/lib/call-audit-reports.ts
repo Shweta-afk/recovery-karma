@@ -5,6 +5,7 @@
 // Blank means "not recorded", never zero. Some sample columns have no source today: Cause Code,
 // Drop Reason, Provider Cause and the Tea / Meeting / Mobile / Bio breaks.
 import type { XlsxCell, XlsxSheet } from "./xlsx-export";
+import { formatDidUsed } from "./telephony/did-rules";
 import {
   DISPOSITION_RANK,
   FATAL_ERRORS,
@@ -217,7 +218,7 @@ export function callLogSheet(
       num(c.ring_seconds),
       c.direction ?? "",
       c.recording_url ? callLink(origin, c) : "",
-      c.did_number ?? "",
+      formatDidUsed(c.did_number),
       answered ? "Answered" : "Not Answered",
       c.debtor_id ?? "",
       c.team_name ?? "",
@@ -276,7 +277,7 @@ export function callLogSheet(
       c.ledger_status ?? "",
       c.provider_call_id ?? "",
       c.vendor_callid ?? "",
-      c.did_number ?? "",
+      formatDidUsed(c.did_number),
       c.agent_handle ?? "",
       istDateTime(c.ledger_started_at),
       istDateTime(c.ledger_answered_at),
@@ -415,7 +416,7 @@ export function auditFeedbackSheet(
         c.agent_code ?? "",
         c.agent_name,
         dialModeLabel(c.dial_mode),
-        c.did_number ?? "",
+        formatDidUsed(c.did_number),
         fmtSeconds(c.duration_seconds),
         dispositionLabel(c.outcome),
         c.outcome_reason ?? "",
@@ -595,7 +596,7 @@ export function fatalLogSheet(rows: AuditCallRow[], origin: string): XlsxSheet {
         istDateTime(c.created_at),
         c.loan_reference ?? "",
         c.customer_name ?? "",
-        c.did_number ?? "",
+        formatDidUsed(c.did_number),
         (c.fatal_codes ?? []).map((f) => label.get(f) ?? f).join(", "),
         c.feedback_agent ?? "",
         c.agent_response ?? "",
@@ -633,7 +634,7 @@ export function aiVsAuditorSheet(rows: AuditCallRow[], origin: string): XlsxShee
         c.team_name ?? "",
         c.agent_name,
         c.loan_reference ?? "",
-        c.did_number ?? "",
+        formatDidUsed(c.did_number),
         c.ai_agent_tone ?? "",
         c.ai_debtor_tone ?? "",
         c.ai_sentiment ?? "",
