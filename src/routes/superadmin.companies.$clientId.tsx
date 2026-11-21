@@ -93,6 +93,8 @@ const SCOPE_LABEL: Record<string, string> = {
   master_topup: "Superadmin top-up",
   master_to_company: "Allocated to company",
   company_to_manager: "Allocated to manager",
+  company_to_master: "Taken back by SamvadX",
+  manager_to_company: "Taken back from manager",
   manager_charge: "Insights lookup spend",
   admin_charge: "Admin lookup spend",
 };

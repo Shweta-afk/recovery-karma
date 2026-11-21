@@ -150,12 +150,16 @@ export const getInsightsChargesReport = createServerFn({ method: "POST" })
     lq = isAdmin
       ? lq.in("scope", [
           "master_to_company",
+          "company_to_master",
           "company_to_manager",
+          "manager_to_company",
           "admin_charge",
           "company_refund",
           "manager_refund",
         ])
-      : lq.eq("manager_id", caller.agentId).in("scope", ["company_to_manager", "manager_refund"]);
+      : lq
+          .eq("manager_id", caller.agentId)
+          .in("scope", ["company_to_manager", "manager_to_company", "manager_refund"]);
     const { data: ledgerRows, error: ledgerErr } = await lq;
     if (ledgerErr) throw loadFailed(ledgerErr);
     const ledger: WalletMoveInput[] = ((ledgerRows ?? []) as Row[])

@@ -3,17 +3,28 @@
 // gated by their own balance, which only ever moves via a top-up here or a charge when they run
 // a lookup (see runProfilexTrace in profilex-actions.server.ts). Never auto-resets.
 import { useEffect, useState } from "react";
-import { Wallet, PlusCircle, Loader2 } from "lucide-react";
+import { Wallet, PlusCircle, MinusCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { supabase } from "@/lib/supabase";
 import {
   getManagerWallets,
   getCompanyWallet,
   allocateToManager,
+  takeBackFromManager,
   type ManagerWalletRow,
 } from "@/lib/profilex-actions.server";
 import { errorText } from "@/lib/app-error";
@@ -87,6 +98,9 @@ export function ManagerWalletsCard() {
   // Uncommitted top-up amounts, keyed by manager_id — cleared once a top-up is applied.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
+  // The take-back waiting for the admin to confirm.
+  const [takeBack, setTakeBack] = useState<{ row: ManagerWalletRow; amount: number } | null>(null);
+  const [takeBackNote, setTakeBackNote] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -149,8 +163,87 @@ export function ManagerWalletsCard() {
     }
   };
 
+  const askTakeBack = (row: ManagerWalletRow, all = false) => {
+    const amount = all ? row.balance : Number(drafts[row.manager_id]);
+    if (!(amount > 0)) {
+      toast.error("Enter a positive amount to take back");
+      return;
+    }
+    if (amount > row.balance + 1e-9) {
+      toast.error(`${row.name}'s wallet only has ₹${row.balance.toFixed(2)}`);
+      return;
+    }
+    setTakeBackNote(row.is_active ? "" : "Left the company");
+    setTakeBack({ row, amount: Math.round(amount * 100) / 100 });
+  };
+
+  const confirmTakeBack = async () => {
+    if (!takeBack) return;
+    const { row, amount } = takeBack;
+    setTakeBack(null);
+    setSavingId(row.manager_id);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      const res = await takeBackFromManager({
+        data: {
+          accessToken: session.access_token,
+          managerId: row.manager_id,
+          amount,
+          note: takeBackNote.trim() || undefined,
+        },
+      });
+      setRows((prev) =>
+        prev.map((r) =>
+          r.manager_id === row.manager_id
+            ? { ...r, balance: res.balance, updated_at: new Date().toISOString() }
+            : r,
+        ),
+      );
+      setCompanyBalance((prev) => (prev === null ? prev : prev + amount));
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[row.manager_id];
+        return next;
+      });
+      toast.success(`Took ₹${amount.toFixed(2)} back from ${row.name} into your Insights Budget`);
+    } catch (e) {
+      toast.error(errorText(e, "Could not take the money back"));
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   return (
     <Card>
+      <AlertDialog open={!!takeBack} onOpenChange={(open) => !open && setTakeBack(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Take ₹{takeBack?.amount.toFixed(2)} back from {takeBack?.row.name}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              It moves from their Insights wallet back into your company's Insights Budget. Their
+              wallet goes from ₹{takeBack?.row.balance.toFixed(2)} to ₹
+              {((takeBack?.row.balance ?? 0) - (takeBack?.amount ?? 0)).toFixed(2)}. You can give it
+              to them or another manager again later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            placeholder="Reason (optional), e.g. left the company"
+            value={takeBackNote}
+            maxLength={500}
+            onChange={(e) => setTakeBackNote(e.target.value)}
+            className="text-xs"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmTakeBack}>Take back</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <CardHeader className="border-b border-border pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Wallet className="h-4 w-4 text-primary" />
@@ -159,7 +252,8 @@ export function ManagerWalletsCard() {
         <p className="text-xs text-muted-foreground mt-0.5">
           Each manager spends Insights lookups from their own prepaid balance — top it up here,
           drawn from your Insights Budget above. It never resets automatically; once it hits ₹0 that
-          manager can't run more lookups until you add more.
+          manager can't run more lookups until you add more. If a manager leaves or has too much,
+          enter an amount and press Take back to return it to your budget.
         </p>
       </CardHeader>
       <CardContent className="pt-4">
@@ -182,10 +276,21 @@ export function ManagerWalletsCard() {
                   className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
                 >
                   <div className="min-w-0">
-                    <div className="text-xs font-medium text-foreground truncate">{row.name}</div>
+                    <div className="text-xs font-medium text-foreground truncate flex items-center gap-1.5">
+                      {row.name}
+                      {!row.is_active ? (
+                        <Badge variant="outline" className="text-[10px]">
+                          Deactivated
+                        </Badge>
+                      ) : row.role !== "manager" ? (
+                        <Badge variant="outline" className="text-[10px] capitalize">
+                          Now {row.role}
+                        </Badge>
+                      ) : null}
+                    </div>
                     <div className="text-[10px] text-muted-foreground truncate">{row.email}</div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
                     <span className="text-xs text-muted-foreground">
                       Balance ₹{row.balance.toFixed(2)}
                     </span>
@@ -197,7 +302,7 @@ export function ManagerWalletsCard() {
                         Empty
                       </Badge>
                     )}
-                    <span className="text-xs text-muted-foreground">+ ₹</span>
+                    <span className="text-xs text-muted-foreground">₹</span>
                     <Input
                       type="number"
                       min={0}
@@ -209,20 +314,43 @@ export function ManagerWalletsCard() {
                       }
                       className="w-24 h-8 text-xs text-right"
                     />
+                    {row.is_active && row.role === "manager" && (
+                      <Button
+                        size="sm"
+                        variant={canTopUp ? "default" : "outline"}
+                        className="h-8 gap-1 text-xs flex-shrink-0"
+                        disabled={!canTopUp || savingId === row.manager_id}
+                        onClick={() => handleTopUp(row)}
+                      >
+                        {savingId === row.manager_id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <PlusCircle className="h-3 w-3" />
+                        )}
+                        Top up
+                      </Button>
+                    )}
                     <Button
                       size="sm"
-                      variant={canTopUp ? "default" : "outline"}
+                      variant="outline"
                       className="h-8 gap-1 text-xs flex-shrink-0"
-                      disabled={!canTopUp || savingId === row.manager_id}
-                      onClick={() => handleTopUp(row)}
+                      disabled={!canTopUp || row.balance <= 0 || savingId === row.manager_id}
+                      onClick={() => askTakeBack(row)}
                     >
-                      {savingId === row.manager_id ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <PlusCircle className="h-3 w-3" />
-                      )}
-                      Top up
+                      <MinusCircle className="h-3 w-3" />
+                      Take back
                     </Button>
+                    {row.balance > 0 && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 text-xs flex-shrink-0"
+                        disabled={savingId === row.manager_id}
+                        onClick={() => askTakeBack(row, true)}
+                      >
+                        Take all
+                      </Button>
+                    )}
                   </div>
                 </div>
               );

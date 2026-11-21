@@ -19,6 +19,7 @@ import {
   limitSchema,
   offsetSchema,
   amountSchema,
+  noteSchema,
 } from "./schemas";
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
@@ -902,6 +903,9 @@ export interface ManagerWalletRow {
   email: string;
   balance: number;
   updated_at: string | null;
+  /** false = deactivated (left the company) — still listed while money sits in the wallet. */
+  is_active: boolean;
+  role: string;
 }
 
 /** Every manager in the admin's client, with their wallet balance (0 for one that's never been
@@ -922,9 +926,8 @@ export const getManagerWallets = createServerFn({ method: "POST" })
     const [{ data: managers, error: mErr }, { data: wallets, error: wErr }] = await Promise.all([
       admin
         .from("agents")
-        .select("id, name, email")
-        .eq("client_id", caller.clientId)
-        .eq("role", "manager"),
+        .select("id, name, email, role, is_active")
+        .eq("client_id", caller.clientId),
       admin
         .from("profilex_wallets")
         .select("manager_id, balance, updated_at")
@@ -937,17 +940,32 @@ export const getManagerWallets = createServerFn({ method: "POST" })
         (w) => [w.manager_id, w],
       ),
     );
+    // Active managers, plus anyone else still holding money (a manager who left, or was made
+    // an agent/admin) so it can be taken back.
     const rows: ManagerWalletRow[] = (
-      (managers ?? []) as { id: string; name: string; email: string }[]
+      (managers ?? []) as {
+        id: string;
+        name: string;
+        email: string;
+        role: string;
+        is_active: boolean;
+      }[]
     )
+      .filter(
+        (m) =>
+          (m.role === "manager" && m.is_active !== false) ||
+          Number(balanceByManager.get(m.id)?.balance ?? 0) > 0,
+      )
       .map((m) => ({
         manager_id: m.id,
         name: m.name,
         email: m.email,
         balance: Number(balanceByManager.get(m.id)?.balance ?? 0),
         updated_at: balanceByManager.get(m.id)?.updated_at ?? null,
+        is_active: m.is_active !== false,
+        role: m.role,
       }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => Number(a.is_active) - Number(b.is_active) || a.name.localeCompare(b.name));
     return { rows };
   });
 
@@ -1021,6 +1039,58 @@ export const allocateToManager = createServerFn({ method: "POST" })
         throw new Error("Your company's Insights budget doesn't have enough left for that top-up.");
       }
       throw appError("SX-1008", "Could not update the wallet.", error);
+    }
+    return { balance: Number(newBalance) };
+  });
+
+/** Takes money back from one manager's Insights wallet into this company's wallet — e.g. the
+ * manager left, or was given too much. The reverse of allocateToManager
+ * (migrations/20261121_wallet_take_back.sql). Never below ₹0; works for a deactivated person or
+ * one no longer a manager, as long as they hold a wallet in this company. Admin only. */
+export const takeBackFromManager = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        managerId: idSchema,
+        amount: amountSchema,
+        note: noteSchema.optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated");
+    if (caller.role !== "admin") throw new Error("Only admins can take money back from a wallet");
+    if (!(data.amount > 0)) throw new Error("Enter a positive amount to take back");
+
+    const admin = db();
+    // The wallet must belong to this admin's company — the RPC also checks client_id, so a
+    // tampered manager id from another company matches no row.
+    const { data: wallet, error: wErr } = await admin
+      .from("profilex_wallets")
+      .select("manager_id, client_id, balance")
+      .eq("manager_id", data.managerId)
+      .maybeSingle();
+    if (wErr) throw appError("SX-1021", "Could not load that wallet.", wErr);
+    if (!wallet || wallet.client_id !== caller.clientId) {
+      throw new Error("That person has no Insights wallet in your organisation");
+    }
+
+    const { data: newBalance, error } = await admin.rpc("profilex_manager_reclaim", {
+      p_client_id: caller.clientId,
+      p_manager_id: data.managerId,
+      p_amount: data.amount,
+      p_admin_id: caller.agentId,
+      p_note: data.note?.trim() || null,
+    });
+    if (error) {
+      if (/insufficient/i.test(error.message)) {
+        throw new Error(
+          `That wallet only has ₹${Number(wallet.balance).toFixed(2)} — you can't take back more than that.`,
+        );
+      }
+      throw appError("SX-1022", "Could not take the money back.", error);
     }
     return { balance: Number(newBalance) };
   });

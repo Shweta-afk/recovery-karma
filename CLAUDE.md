@@ -796,6 +796,15 @@ to bill manually — Axiotta ₹3,593.37 (₹100 deducted), Demo ₹1,672.52, Ku
 `debtor_traces` / `insights_manual_lookups` row does not call `holdInsightsSpend`. Reconciled live
 2026-10-29: every admin lookup since the fix has a matching `admin_charge` row.
 
+**Taking Insights money back (2026-11-21, user).** Money can move back UP the wallet chain:
+admin → Settings → Manager Wallets **Take back / Take all** (`takeBackFromManager`, RPC
+`profilex_manager_reclaim`, ledger `manager_to_company`) and Superadmin → Insights Wallet **Take
+back** (`takeBackFromCompany`, RPC `profilex_company_reclaim`, ledger `company_to_master`).
+Never below ₹0; a superadmin can take only what the company hasn't handed to managers. People
+who left / changed role stay listed on Manager Wallets while they hold money. Invoices for the
+original allocation are not touched (credit note by hand). Migration
+`20261121_wallet_take_back.sql` (applied live 2026-11-21).
+
 **SamvadX keeps its own copy of every company archive (2026-10-29;
 `migrations/20261029_saved_archive_files.sql` applied live 2026-10-29).** So a company that forgot to download
 an archive can be handed one. Private Storage bucket `saved-archives` (created on first use) +
