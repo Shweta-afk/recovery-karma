@@ -74,6 +74,11 @@ function tokenExpiryMs(accessToken: string): number {
   }
 }
 
+/** Drop cached sessions of one user, so a deactivation takes effect on their very next request. */
+export function forgetCaller(authUserId: string): void {
+  for (const [k, v] of callerCache) if (v.caller.authUserId === authUserId) callerCache.delete(k);
+}
+
 export async function verifyCaller(accessToken: string): Promise<VerifiedCaller | null> {
   const now = Date.now();
   const hit = callerCache.get(accessToken);
@@ -102,13 +107,15 @@ async function verifyCallerUncached(accessToken: string): Promise<VerifiedCaller
   // `never` and every column read below would otherwise be a type error.
   const { data, error } = (await admin
     .from("agents")
-    .select("id, client_id, role")
+    .select("id, client_id, role, is_active")
     .eq("auth_user_id", user.id)
     .single()) as {
-    data: { id: string; client_id: string; role: Role } | null;
+    data: { id: string; client_id: string; role: Role; is_active: boolean | null } | null;
     error: unknown;
   };
   if (error || !data?.client_id) return null;
+  // A deactivated user (Admin → Users) has no powers, even with a session that was still open.
+  if (data.is_active === false) return null;
   // An admin's password-only session (no emailed code yet) gets no admin powers here — same
   // rule auth_role() applies in the database. See login-otp.ts.
   if (roleNeedsEmailOtp(data.role) && !tokenHasEmailOtp(accessToken)) return null;

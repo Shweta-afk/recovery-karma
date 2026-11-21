@@ -52,6 +52,9 @@ import { supabase } from "@/lib/supabase";
 import { refreshRoster } from "@/lib/team-store";
 import type { Role } from "@/lib/auth";
 import { errorText } from "@/lib/app-error";
+import { getAccessToken } from "@/lib/access-token";
+import { deactivateUser, reactivateUser } from "@/lib/user-admin-actions.server";
+import { describeHoldings } from "@/lib/user-deactivation";
 
 export const Route = createFileRoute("/admin/users")({
   head: () => ({ meta: [{ title: "User Management · SamvadX Admin" }] }),
@@ -112,6 +115,12 @@ function AdminUsersPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [editAgent, setEditAgent] = useState<AgentRow | null>(null);
   const [resetAgent, setResetAgent] = useState<AgentRow | null>(null);
+  /** A manager being deactivated who still owns portfolios/teams: pick who takes them over. */
+  const [handover, setHandover] = useState<{
+    agent: AgentRow;
+    portfolios: number;
+    teams: number;
+  } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -175,30 +184,57 @@ function AdminUsersPage() {
    * operation that was actually wanted: the person stops appearing in the roster (and so in
    * assignment pickers, team lists and queues) while every record of what they did survives.
    */
-  const handleDeactivate = async (agent: AgentRow) => {
+  const handleDeactivate = async (agent: AgentRow, transferToId?: string) => {
     const next = !agent.is_active;
+    if (next) {
+      const r = await reactivateUser({
+        data: { accessToken: await getAccessToken(), agentId: agent.id },
+      });
+      if (!r.ok) return void toast.error(r.message);
+      setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, is_active: true } : a)));
+      toast.success(`${agent.name} reactivated`, {
+        description: "Their old extension isn't given back — ask SamvadX support for one.",
+      });
+      refreshRoster();
+      return;
+    }
     if (
-      next === false &&
+      !transferToId &&
       !confirm(
-        `Deactivate ${agent.name}?\n\nThey will no longer appear in team lists or assignment ` +
-          `pickers, and cannot be assigned new accounts. Their call history, payments and past ` +
-          `assignments are kept, and you can reactivate them here at any time.`,
+        `Deactivate ${agent.name}?\n\nThey are signed out and can't sign in, their calling ` +
+          `extension is freed for someone else, and their phone number is removed. Their calls, ` +
+          `dispositions, payments and recordings are kept. You can reactivate them here later.`,
       )
     )
       return;
-    const { error: err } = await supabase
-      .from("agents")
-      .update({ is_active: next })
-      .eq("id", agent.id);
-
-    if (err) {
-      toast.error(errorText(err, `Failed to ${next ? "reactivate" : "deactivate"}`));
-      return;
+    try {
+      const r = await deactivateUser({
+        data: { accessToken: await getAccessToken(), agentId: agent.id, transferToId },
+      });
+      if (!r.ok) {
+        if ("reason" in r && r.reason === "needs_transfer") {
+          setHandover({ agent, portfolios: r.openPortfolios ?? 0, teams: r.teams ?? 0 });
+          return;
+        }
+        toast.error(r.message);
+        return;
+      }
+      setHandover(null);
+      setAgents((prev) =>
+        prev.map((a) => (a.id === agent.id ? { ...a, is_active: false, agent_phone: null } : a)),
+      );
+      toast.success(`${agent.name} deactivated`, {
+        description: [
+          r.freedExtension ? `Extension ${r.freedExtension} is free again.` : "",
+          r.handedOverTo ? `Portfolios and teams now belong to ${r.handedOverTo}.` : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      });
+      refreshRoster();
+    } catch (e) {
+      toast.error(errorText(e, "Failed to deactivate"));
     }
-    // Kept in the list rather than filtered out — an admin has to be able to see and undo this.
-    setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, is_active: next } : a)));
-    toast.success(`${agent.name} ${next ? "reactivated" : "deactivated"}`);
-    refreshRoster();
   };
 
   return (
@@ -353,6 +389,18 @@ function AdminUsersPage() {
         <EditUserDialog agent={editAgent} onClose={() => setEditAgent(null)} onSaved={load} />
       )}
       {resetAgent && <ResetPasswordDialog agent={resetAgent} onClose={() => setResetAgent(null)} />}
+      {handover && (
+        <HandoverDialog
+          agent={handover.agent}
+          portfolios={handover.portfolios}
+          teams={handover.teams}
+          managers={agents.filter(
+            (a) => a.role === "manager" && a.is_active && a.id !== handover.agent.id,
+          )}
+          onClose={() => setHandover(null)}
+          onConfirm={(toId) => void handleDeactivate(handover.agent, toId)}
+        />
+      )}
     </div>
   );
 }
@@ -988,6 +1036,64 @@ function ResetPasswordDialog({ agent, onClose }: { agent: AgentRow; onClose: () 
             </DialogFooter>
           </>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Deactivating a manager who still owns portfolios or teams: they go to another manager first. */
+function HandoverDialog({
+  agent,
+  portfolios,
+  teams,
+  managers,
+  onClose,
+  onConfirm,
+}: {
+  agent: AgentRow;
+  portfolios: number;
+  teams: number;
+  managers: AgentRow[];
+  onClose: () => void;
+  onConfirm: (managerId: string) => void;
+}) {
+  const [to, setTo] = useState("");
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Hand over before deactivating {agent.name}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          {agent.name} still manages {describeHoldings(portfolios, teams)}. Choose who takes them
+          over. Their call history stays as it is.
+        </p>
+        {managers.length === 0 ? (
+          <p className="text-sm text-destructive">
+            There's no other active manager. Add or reactivate a manager first.
+          </p>
+        ) : (
+          <Select value={to} onValueChange={setTo}>
+            <SelectTrigger>
+              <SelectValue placeholder="Choose a manager" />
+            </SelectTrigger>
+            <SelectContent>
+              {managers.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={!to} onClick={() => onConfirm(to)}>
+            Hand over and deactivate
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -10,7 +10,11 @@
 import { z, tokenSchema, idSchema, shortText, emailSchema, grantableRoleSchema } from "./schemas";
 import { randomBytes } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
-import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
+import { forgetCaller, getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
+import { planDeactivation } from "./user-deactivation";
+import { getTelephonyProvider } from "./telephony";
+import { loadTelephonySettings } from "./telephony/guard.server";
+import { deregisterQueue } from "./telephony/skycrm-provider";
 import { enforceRateLimit } from "./rate-limit.server";
 import type { Role } from "./auth";
 import { appError } from "./app-error";
@@ -292,4 +296,177 @@ export const resetUserPassword = createServerFn({ method: "POST" })
       name: agent.name as string,
       email: agent.email as string,
     };
+  });
+
+// ─── Deactivate / reactivate (Admin → Users → Delete) ─────────────────────────────
+// "Erase the person, keep the work" (user, 2026-11-21) — rules in user-deactivation.ts.
+
+/** Ban length Supabase Auth takes for "until further notice" (100 years). */
+const BAN_FOREVER = "876000h";
+
+export const deactivateUser = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        agentId: idSchema,
+        /** Manager taking over the target's open portfolios and teams. */
+        transferToId: idSchema.optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller)
+      return { ok: false as const, message: "Your session has expired — sign in again." };
+    if (caller.role !== "admin")
+      return { ok: false as const, message: "Only admins can deactivate users." };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = getSupabaseAdmin() as any;
+
+    type Person = {
+      id: string;
+      name: string;
+      role: string;
+      is_active: boolean | null;
+      auth_user_id: string | null;
+      agent_extension: string | null;
+      client_id: string;
+    };
+    const cols = "id, name, role, is_active, auth_user_id, agent_extension, client_id";
+    const { data: target } = (await db
+      .from("agents")
+      .select(cols)
+      .eq("id", data.agentId)
+      .eq("client_id", caller.clientId)
+      .maybeSingle()) as { data: Person | null };
+    if (!target) return { ok: false as const, message: "User not found." };
+
+    const [portfolios, teams, transfer] = await Promise.all([
+      db
+        .from("portfolios")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", caller.clientId)
+        .eq("manager_id", target.id)
+        .is("closed_at", null)
+        .is("deleted_at", null),
+      db
+        .from("teams")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", caller.clientId)
+        .eq("manager_id", target.id),
+      data.transferToId
+        ? (db.from("agents").select(cols).eq("id", data.transferToId).maybeSingle() as Promise<{
+            data: Person | null;
+          }>)
+        : Promise.resolve({ data: null as Person | null }),
+    ]);
+    const to = transfer.data;
+    const plan = planDeactivation({
+      targetRole: target.role,
+      targetIsSelf: target.id === caller.agentId,
+      openPortfolios: portfolios.count ?? 0,
+      teams: teams.count ?? 0,
+      targetId: target.id,
+      transferTo: to
+        ? {
+            id: to.id,
+            role: to.role,
+            isActive: to.is_active !== false,
+            sameCompany: to.client_id === caller.clientId,
+          }
+        : null,
+    });
+    if (!plan.ok) return plan;
+
+    if (plan.transfer && to) {
+      const moved = await db
+        .from("portfolios")
+        .update({ manager_id: to.id })
+        .eq("client_id", caller.clientId)
+        .eq("manager_id", target.id)
+        .is("closed_at", null)
+        .is("deleted_at", null);
+      if (moved.error)
+        throw appError("SX-5220", "Could not hand over the portfolios.", moved.error);
+      const movedTeams = await db
+        .from("teams")
+        .update({ manager_id: to.id })
+        .eq("client_id", caller.clientId)
+        .eq("manager_id", target.id);
+      if (movedTeams.error)
+        throw appError("SX-5221", "Could not hand over the teams.", movedTeams.error);
+    }
+
+    // Free the extension: out of SkyCRM's queues first (best effort — a failure there must not
+    // keep the extension tied to someone who left), then off the person.
+    const ext = target.agent_extension?.trim() || null;
+    if (ext && getTelephonyProvider().name === "skycrm") {
+      const settings = await loadTelephonySettings(caller.clientId).catch(() => null);
+      const queues = [settings?.inbound_queue, settings?.predictive_queue].filter(
+        (q): q is string => !!q,
+      );
+      for (const q of queues) {
+        await deregisterQueue(ext, q).catch((err: unknown) =>
+          console.warn(`[deactivateUser] queue ${q} logout for ${ext} failed:`, err),
+        );
+      }
+    }
+
+    const { error: upErr } = await db
+      .from("agents")
+      .update({
+        is_active: false,
+        agent_extension: null,
+        agent_phone: null,
+        session_nonce: randomBytes(16).toString("hex"),
+      })
+      .eq("id", target.id)
+      .eq("client_id", caller.clientId);
+    if (upErr) throw appError("SX-5222", "Could not deactivate the user.", upErr);
+
+    if (target.auth_user_id) {
+      const { error: banErr } = await getSupabaseAdmin().auth.admin.updateUserById(
+        target.auth_user_id,
+        { ban_duration: BAN_FOREVER },
+      );
+      if (banErr) console.warn(`[deactivateUser] login not blocked for ${target.id}:`, banErr);
+      forgetCaller(target.auth_user_id);
+    }
+    return {
+      ok: true as const,
+      freedExtension: ext,
+      handedOverTo: plan.transfer && to ? to.name : null,
+    };
+  });
+
+export const reactivateUser = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, agentId: idSchema }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifyCaller(data.accessToken);
+    if (!caller)
+      return { ok: false as const, message: "Your session has expired — sign in again." };
+    if (caller.role !== "admin")
+      return { ok: false as const, message: "Only admins can reactivate users." };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = getSupabaseAdmin() as any;
+    const { data: target } = (await db
+      .from("agents")
+      .select("id, auth_user_id")
+      .eq("id", data.agentId)
+      .eq("client_id", caller.clientId)
+      .maybeSingle()) as { data: { id: string; auth_user_id: string | null } | null };
+    if (!target) return { ok: false as const, message: "User not found." };
+    const { error } = await db.from("agents").update({ is_active: true }).eq("id", target.id);
+    if (error) throw appError("SX-5223", "Could not reactivate the user.", error);
+    if (target.auth_user_id) {
+      await getSupabaseAdmin()
+        .auth.admin.updateUserById(target.auth_user_id, { ban_duration: "none" })
+        .catch((err) => console.warn(`[reactivateUser] login not unblocked:`, err));
+      forgetCaller(target.auth_user_id);
+    }
+    // The extension is not given back: it may belong to someone else by now.
+    return { ok: true as const };
   });

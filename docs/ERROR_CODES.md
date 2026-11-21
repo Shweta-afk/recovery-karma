@@ -166,6 +166,10 @@ All are database errors on the action named; the database message is in the log.
 | SX-5209 | Could not reset the password.      | Supabase Auth `updateUserById` failed.                                         |
 | SX-5210 | Could not create the login.        | Password reset for a user with no login: `createUser` failed.                  |
 | SX-5211 | Could not link the login.          | Writing `auth_user_id` to `agents` failed; the new login was rolled back.      |
+| SX-5220 | Could not hand over the portfolios. | Deactivating a manager: moving their open portfolios to the new manager failed. |
+| SX-5221 | Could not hand over the teams.     | Deactivating a manager: moving their teams to the new manager failed.          |
+| SX-5222 | Could not deactivate the user.     | Updating the `agents` row (inactive, extension and phone cleared) failed.      |
+| SX-5223 | Could not reactivate the user.     | Setting `agents.is_active` back to true failed.                                |
 | SX-5301 | Could not set your password.       | Sign-up: Supabase Auth `updateUserById` failed. `setup-actions.server.ts`      |
 | SX-5302 | Could not create the company.      | Sign-up: inserting into `clients` failed.                                      |
 | SX-5303 | Could not create your account.     | Sign-up: inserting the admin `agents` row failed; the company was rolled back. |
