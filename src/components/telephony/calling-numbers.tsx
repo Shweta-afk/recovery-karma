@@ -373,26 +373,38 @@ export function PortfolioNumbersButton({
         Calling numbers
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Calling numbers · {portfolioName}</DialogTitle>
+        {/* Capped to the screen: with many numbers the list scrolls inside the dialog, so the
+            title and Save stay reachable at any display size. */}
+        <DialogContent className="flex max-h-[90vh] w-[calc(100vw-2rem)] max-w-2xl flex-col">
+          <DialogHeader className="shrink-0 pr-6">
+            <DialogTitle className="break-words leading-snug">
+              Calling numbers · {portfolioName}
+            </DialogTitle>
             <DialogDescription>
               Every Call Queue call on this portfolio — click-to-call, Progressive and Productive
               Dial — goes out on one of these, rotating. Manual Dial uses its own numbers.
             </DialogDescription>
           </DialogHeader>
-          <PortfolioNumbersPicker
-            data={data}
-            error={error}
-            value={value}
-            onChange={setValue}
-            disabled={saving}
-          />
+          <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+            <PortfolioNumbersPicker
+              data={data}
+              error={error}
+              value={value}
+              onChange={setValue}
+              disabled={saving}
+            />
+          </div>
           {data?.companyHasNumbers && data.choices.length > 0 && (
-            <Button size="sm" className="gap-1" disabled={saving} onClick={() => void save()}>
-              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-              Save
-            </Button>
+            <div className="flex shrink-0 justify-end border-t border-border pt-3">
+              <Button size="sm" className="gap-1" disabled={saving} onClick={() => void save()}>
+                {saving ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Save className="h-3 w-3" />
+                )}
+                Save
+              </Button>
+            </div>
           )}
         </DialogContent>
       </Dialog>
