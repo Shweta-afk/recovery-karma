@@ -241,6 +241,22 @@ describe("one agent, one set of lines across runs (2026-11-21)", () => {
     expect(stuckConnectedRows(rows, null, 60, now)).toEqual([]);
   });
 
+  test("a borrower who picked up but has no agent yet is waiting in the queue", () => {
+    const out = sortOpenPredictive(
+      [
+        row({ id: "ringing" }), // SkyCRM sends nothing while it rings
+        row({ id: "waiting", vendor_callid: "c1", vendor_events: "Incomming Call" }),
+        row({ id: "taken", vendor_callid: "c2", vendor_events: "Answered", agent_handle: "8603" }),
+        row({ id: "other", request_extension: "8604", vendor_events: "Incomming Call" }),
+      ],
+      ["8603"],
+      now,
+    );
+    expect(out.queued.map((r) => r.id)).toEqual(["waiting"]);
+    expect(out.waiting).toBe(2); // ringing + waiting still hold this agent's lines
+    expect(out.busy).toEqual(["8603"]);
+  });
+
   test("a new run replaces older runs sharing an agent in the same company", () => {
     const sessions = [
       { runId: "old", clientId: "c1", handles: ["8603"] },

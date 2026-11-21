@@ -39,7 +39,7 @@ import {
   updateLedgerIfOpen,
   type DialAgent,
 } from "./guard.server";
-import { evaluateCall, normalisePhone } from "./guard-rules";
+import { evaluateCall, normalisePhone, STALE_CALL_MINUTES } from "./guard-rules";
 import {
   freeAgentHandles,
   linesPerAgent,
@@ -146,6 +146,10 @@ interface PredictiveSession {
   loggedIn: Set<string>;
   /** Calls placed so far — spreads the request extension round robin. */
   calls: number;
+  /** Teammates the agent added to take borrowers waiting in the queue ("Send to a teammate").
+   *  Kept apart from `loggedIn` so they never count as this run's agents (pacing, or a teammate's
+   *  own run replacing this one); logged out with the rest when the run ends. */
+  guests?: Set<string>;
 }
 
 // ─── Run retention ───────────────────────────────────────────────────────────────
@@ -635,7 +639,7 @@ async function endPredictiveSession(runId: string): Promise<void> {
 async function logoutSession(session: PredictiveSession): Promise<void> {
   const pd = getTelephonyProvider().predictive;
   if (!pd) return;
-  for (const h of session.loggedIn) {
+  for (const h of new Set([...session.loggedIn, ...(session.guests ?? [])])) {
     await pd
       .logoutQueue(h, session.queue)
       .catch((err: unknown) =>
@@ -711,6 +715,19 @@ async function predictiveDial(
   };
   if (open.silentRefIds.length) endLegs(open.silentRefIds, "no_answer");
   if (open.endedConnectedRefIds.length) endLegs(open.endedConnectedRefIds, "completed");
+  // Borrowers who picked up and wait in SkyCRM's queue: shown to the agent as "Waiting for you".
+  if (open.queuedRefIds.length) {
+    const queued = new Set(open.queuedRefIds);
+    const at = Date.now();
+    run = {
+      ...run,
+      legs: run.legs.map((l) =>
+        queued.has(l.id) && !l.waitingSince && !l.agentHandle && !isTerminal(l.state)
+          ? { ...l, waitingSince: at }
+          : l,
+      ),
+    };
+  }
   const busy = new Set(open.busy);
   const free = freeAgentHandles(inQueue, run.legs).filter((h) => !busy.has(h));
   const dialed = new Set(run.legs.map((l) => l.debtorId));
@@ -1060,6 +1077,107 @@ export const stopDialerRun = createServerFn({ method: "POST" })
     runTargets.delete(data.runId);
     saveRun(stopped);
     return stopped;
+  });
+
+// ─── Borrowers waiting in the queue: send them to a teammate (2026-11-21) ────────────────────
+// SkyCRM gives a borrower who picked up to the next free extension in the queue; it cannot be
+// told to give a particular borrower to a particular person. "Send to a teammate" therefore adds
+// the teammate's extension to this run's queue: SkyCRM then puts the longest-waiting borrower
+// through to them. Only the caller's own team (teams they are on, or manage).
+
+export interface QueueTeammate {
+  id: string;
+  name: string;
+  extension: string;
+  /** Latest presence from agent_status_log (available, break, …); null if never set. */
+  status: string | null;
+  /** On a call right now (an open ledger row on their extension). */
+  onCall: boolean;
+}
+
+async function teammatesOf(caller: VerifiedCaller): Promise<QueueTeammate[]> {
+  if (!caller.agentId) return [];
+  // Tables read here aren't all in the generated types' join shapes; plain reads only.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sb = getSupabaseAdmin() as any;
+  const [{ data: onTeams }, { data: managed }] = await Promise.all([
+    sb.from("team_agents").select("team_id").eq("agent_id", caller.agentId),
+    sb.from("teams").select("id").eq("manager_id", caller.agentId),
+  ]);
+  const teamIds = [
+    ...new Set([
+      ...((onTeams ?? []) as { team_id: string }[]).map((r) => r.team_id),
+      ...((managed ?? []) as { id: string }[]).map((r) => r.id),
+    ]),
+  ];
+  if (!teamIds.length) return [];
+  const { data: members } = await sb.from("team_agents").select("agent_id").in("team_id", teamIds);
+  const ids = [
+    ...new Set(((members ?? []) as { agent_id: string }[]).map((r) => r.agent_id)),
+  ].filter((id) => id !== caller.agentId);
+  if (!ids.length) return [];
+  const { data: agents } = await sb
+    .from("agents")
+    .select("id, name, agent_extension")
+    .eq("client_id", caller.clientId)
+    .eq("is_active", true)
+    .not("agent_extension", "is", null)
+    .in("id", ids);
+  const rows = (agents ?? []) as { id: string; name: string; agent_extension: string }[];
+  if (!rows.length) return [];
+  const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
+  const [{ data: statuses }, { data: open }] = await Promise.all([
+    sb
+      .from("agent_status_log")
+      .select("agent_id, status")
+      .in(
+        "agent_id",
+        rows.map((r) => r.id),
+      )
+      .is("ended_at", null),
+    sb
+      .from("telephony_calls")
+      .select("agent_handle")
+      .eq("client_id", caller.clientId)
+      .is("ended_at", null)
+      .gt("started_at", since)
+      .in(
+        "agent_handle",
+        rows.map((r) => r.agent_extension),
+      ),
+  ]);
+  const statusOf = new Map(
+    ((statuses ?? []) as { agent_id: string; status: string }[]).map((s) => [s.agent_id, s.status]),
+  );
+  const busy = new Set(((open ?? []) as { agent_handle: string }[]).map((r) => r.agent_handle));
+  return rows
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      extension: r.agent_extension,
+      status: statusOf.get(r.id) ?? null,
+      onCall: busy.has(r.agent_extension),
+    }))
+    .sort((a, b) => Number(a.onCall) - Number(b.onCall) || a.name.localeCompare(b.name));
+}
+
+export const listQueueTeammates = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string }) => d)
+  .handler(async ({ data }) => teammatesOf(await requireCaller(data.accessToken)));
+
+export const sendWaitingToTeammate = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; runId: string; agentId: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!owns(caller, `run:${data.runId}`)) throw new Error("This dialer run isn't yours.");
+    const session = predictiveSessions.get(data.runId);
+    const pd = getTelephonyProvider().predictive;
+    if (!session || !pd) throw new Error("Only works while Productive Dial is running.");
+    const mate = (await teammatesOf(caller)).find((t) => t.id === data.agentId);
+    if (!mate) throw new Error("That person isn't on your team or has no calling extension.");
+    await pd.loginQueue(mate.extension, session.queue);
+    (session.guests ??= new Set()).add(mate.extension);
+    return { name: mate.name, extension: mate.extension };
   });
 
 // Ends one connected/ringing leg without touching the rest of the run — stopDialerRun above

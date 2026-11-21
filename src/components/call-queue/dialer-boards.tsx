@@ -1,10 +1,12 @@
-import React, { useMemo, useRef, useEffect } from "react";
+import React, { useMemo, useRef, useEffect, useState } from "react";
 import { Phone, PhoneCall, BotMessageSquare, ChevronDown, ChevronUp, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatISTDate } from "@/lib/agent-time-stats";
 import type { CallMode } from "@/lib/portfolio-store";
 import type { DialTarget } from "@/lib/dialer/engine";
 import type { LiveCallEntry } from "@/lib/call-queue/types";
+import type { QueueTeammate } from "@/lib/telephony/server";
+import { Button } from "@/components/ui/button";
 
 // ─── Dialer mode status bar ─────────────────────────────────────────────────
 // Shared by the agent's own call queue and the manager's read-only Agent Live View
@@ -121,12 +123,28 @@ function maskPhone(phone: string): string {
   return `${"•".repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
 }
 
-export function DialingBoard({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
+/** What the agent can do about borrowers waiting in the calling service's queue. */
+export interface WaitingActions {
+  /** Ends the agent's current call so the next waiting borrower is put through (absent when the
+   *  agent isn't on a call — then the borrower is already on their way). */
+  onTakeNow?: () => void;
+  loadTeammates: () => Promise<QueueTeammate[]>;
+  sendToTeammate: (agentId: string) => Promise<void>;
+}
+
+export function DialingBoard({
+  liveCalls,
+  waiting,
+}: {
+  liveCalls: LiveCallEntry[];
+  waiting?: WaitingActions;
+}) {
   const ringing = liveCalls.filter((c) => c.status === "ringing" && !c.incoming);
   // Productive Dial through the calling service's queue: borrowers are rung first and the agent
   // hears nothing until one picks up. Agents read the silence as a broken phone (2026-11-21), so
   // this box says what is happening at every moment, not just who is ringing.
-  if (liveCalls.some((c) => c.vendorRouted)) return <ProductiveDialStatus liveCalls={liveCalls} />;
+  if (liveCalls.some((c) => c.vendorRouted))
+    return <ProductiveDialStatus liveCalls={liveCalls} actions={waiting} />;
   if (!ringing.length) return null;
 
   return (
@@ -167,8 +185,25 @@ function RingingList({ calls }: { calls: LiveCallEntry[] }) {
 
 /** Productive Dial's box: what the agent should expect right now, how far the run has got, and
  *  who is ringing (any one of them may be the next voice the agent hears). */
-function ProductiveDialStatus({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
-  const ringing = liveCalls.filter((c) => c.status === "ringing" && !c.incoming);
+function ProductiveDialStatus({
+  liveCalls,
+  actions,
+}: {
+  liveCalls: LiveCallEntry[];
+  actions?: WaitingActions;
+}) {
+  // Borrowers who picked up and wait for a free agent — kept on screen until someone takes them
+  // or they hang up (they used to flash past in a second, 2026-11-21).
+  const waitingNow = liveCalls
+    .filter((c) => c.status === "ringing" && c.waitingSince && !c.agentHandle)
+    .sort((a, b) => (a.waitingSince ?? 0) - (b.waitingSince ?? 0));
+  const ringing = liveCalls.filter((c) => c.status === "ringing" && !c.incoming && !c.waitingSince);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!waitingNow.length) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [waitingNow.length]);
   const onCall = liveCalls.find((c) => c.status === "connected" || c.status === "on_hold");
   const pickedUp = liveCalls.filter(
     (c) => c.status === "connected" || c.status === "on_hold" || c.status === "done",
@@ -176,7 +211,7 @@ function ProductiveDialStatus({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
   const noAnswer = liveCalls.filter((c) => c.status === "no_answer").length;
 
   const headline = onCall
-    ? `On a call with ${onCall.debtor}`
+    ? `On a call with ${onCall.debtor}${waitingNow.length ? ` · ${waitingNow.length} waiting` : ""}`
     : ringing.length
       ? `Ringing ${ringing.length} borrower${ringing.length === 1 ? "" : "s"}`
       : "Picking the next borrowers…";
@@ -209,6 +244,7 @@ function ProductiveDialStatus({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
           </div>
         ))}
       </div>
+      {waitingNow.length > 0 && <WaitingSection calls={waitingNow} actions={actions} />}
       {ringing.length > 0 && (
         <>
           <div className="px-3 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -216,6 +252,117 @@ function ProductiveDialStatus({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
           </div>
           <RingingList calls={ringing} />
         </>
+      )}
+    </div>
+  );
+}
+
+function waitedFor(since: number | undefined): string {
+  const s = Math.max(0, Math.floor((Date.now() - (since ?? Date.now())) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Borrowers on the line waiting for an agent, and what the agent can do about them. The calling
+ *  service hands out the longest-waiting borrower first; neither action can pick a particular one. */
+function WaitingSection({ calls, actions }: { calls: LiveCallEntry[]; actions?: WaitingActions }) {
+  const [picking, setPicking] = useState(false);
+  const [mates, setMates] = useState<QueueTeammate[] | null>(null);
+  const [sending, setSending] = useState<string | null>(null);
+
+  const openPicker = async () => {
+    if (!actions) return;
+    setPicking((p) => !p);
+    if (mates) return;
+    try {
+      setMates(await actions.loadTeammates());
+    } catch {
+      setMates([]);
+    }
+  };
+
+  return (
+    <div className="border-b border-border bg-amber-500/10">
+      <div className="px-3 pt-2 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+        Waiting for you ({calls.length})
+      </div>
+      <p className="px-3 text-[11px] leading-snug text-muted-foreground">
+        Picked up while you were busy. They hang up if nobody takes them soon; the one waiting
+        longest is put through first.
+      </p>
+      <div className="divide-y divide-border/60 max-h-32 overflow-y-auto">
+        {calls.map((c) => (
+          <div key={c.id} className="flex items-center gap-2 px-3 py-1.5">
+            <span className="h-2 w-2 flex-shrink-0 rounded-full bg-amber-500 animate-pulse" />
+            <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground">
+              {c.debtor}
+            </span>
+            <span className="font-mono text-[10px] tabular-nums text-amber-700 dark:text-amber-400">
+              {waitedFor(c.waitingSince)}
+            </span>
+          </div>
+        ))}
+      </div>
+      {actions && (
+        <div className="flex gap-1.5 px-3 py-2">
+          {actions.onTakeNow && (
+            <Button
+              size="sm"
+              className="h-7 flex-1 text-[11px]"
+              title="Ends your current call; the borrower waiting longest is put through to you"
+              onClick={actions.onTakeNow}
+            >
+              Take now
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 flex-1 text-[11px]"
+            title="A teammate's phone rings with the borrower waiting longest"
+            onClick={() => void openPicker()}
+          >
+            Send to a teammate
+          </Button>
+        </div>
+      )}
+      {picking && actions && (
+        <div className="max-h-40 overflow-y-auto border-t border-border bg-card">
+          {mates === null ? (
+            <p className="px-3 py-2 text-[11px] text-muted-foreground">Loading your team…</p>
+          ) : mates.length === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-muted-foreground">
+              No teammates with a calling extension on your team.
+            </p>
+          ) : (
+            mates.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                disabled={m.onCall || sending !== null}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted disabled:opacity-50"
+                onClick={async () => {
+                  setSending(m.id);
+                  try {
+                    await actions.sendToTeammate(m.id);
+                    setPicking(false);
+                  } finally {
+                    setSending(null);
+                  }
+                }}
+              >
+                <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{m.name}</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {sending === m.id
+                    ? "Sending…"
+                    : m.onCall
+                      ? "On a call"
+                      : (m.status ?? "status unknown")}{" "}
+                  · {m.extension}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
       )}
     </div>
   );

@@ -57,6 +57,8 @@ export function toLiveEntry(rec: CallRecord, now = Date.now()): LiveCallEntry {
     type: rec.participant === "ai" ? "ai" : "agent",
     providerCallId: rec.providerCallId,
     vendorRouted: rec.vendorRouted,
+    agentHandle: rec.agentHandle,
+    waitingSince: rec.waitingSince,
   };
 }
 

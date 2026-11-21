@@ -131,14 +131,16 @@ export interface OpenPredictiveRow {
  *   silent  — rows to close (never acknowledged by the vendor, older than SILENT_PREDICTIVE_SECONDS)
  *   waiting — rows requested for these agents still waiting for someone to take them
  *   busy    — these agents already on a predictive call (the answer named them)
+ *   queued  — borrowers who picked up and are waiting in the vendor's queue for these agents
  */
 export function sortOpenPredictive<T extends OpenPredictiveRow>(
   rows: T[],
   handles: string[],
   nowMs: number,
-): { silent: T[]; waiting: number; busy: string[] } {
+): { silent: T[]; waiting: number; busy: string[]; queued: T[] } {
   const mine = new Set(handles);
   const silent: T[] = [];
+  const queued: T[] = [];
   const busy = new Set<string>();
   let waiting = 0;
   for (const r of rows) {
@@ -152,9 +154,14 @@ export function sortOpenPredictive<T extends OpenPredictiveRow>(
       if (mine.has(r.agent_handle)) busy.add(r.agent_handle);
       continue;
     }
-    if (r.request_extension && mine.has(r.request_extension)) waiting++;
+    if (r.request_extension && mine.has(r.request_extension)) {
+      waiting++;
+      // SkyCRM sends nothing while a borrower's phone rings; any event before an agent is named
+      // means they picked up and are waiting in the queue for a free agent.
+      if (heard) queued.push(r);
+    }
   }
-  return { silent, waiting, busy: [...busy] };
+  return { silent, waiting, busy: [...busy], queued };
 }
 
 /** How long the agent's browser phone must have been idle, and how long ago the answer must

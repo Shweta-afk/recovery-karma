@@ -62,6 +62,7 @@ import { useProgressiveDial } from "@/lib/dialer/use-progressive-dial";
 import { ProgressiveStrip } from "@/components/call-queue/progressive-strip";
 import { checkDoNotCall } from "@/lib/telephony-actions.server";
 import { getAccessToken as getProgressiveToken } from "@/lib/access-token";
+import { getPhoneExtension } from "@/lib/telephony/phone-status";
 import type { DialTarget } from "@/lib/dialer/engine";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
@@ -1042,7 +1043,15 @@ export function CallQueueContent({
     }
     if (!isSelf || activeDialMode === "productive") return;
     if (activeCall && activeCall.phase !== "ended") return;
-    const lc = dialer.legs.find((l) => l.status === "connected" && !joinedLegs.current.has(l.id));
+    // Only a call the calling service put through to THIS agent's phone: a borrower it gave a
+    // teammate ("Send to a teammate") is theirs to open, not ours.
+    const mine = getPhoneExtension();
+    const lc = dialer.legs.find(
+      (l) =>
+        l.status === "connected" &&
+        !joinedLegs.current.has(l.id) &&
+        (!l.agentHandle || !mine || l.agentHandle === mine),
+    );
     if (!lc) return;
     joinedLegs.current.add(lc.id);
     if (joinLiveLeg(lc)) toast.success(`Connected to ${lc.debtor}`);
@@ -2335,7 +2344,38 @@ export function CallQueueContent({
           Progressive Dial (dialerMode "productive") never has more than one, so it gets its
           own sequential board below instead. ── */}
       {dialer.running && activeDialMode !== "productive" && (
-        <DialingBoard liveCalls={dialer.legs} />
+        <DialingBoard
+          liveCalls={dialer.legs}
+          waiting={{
+            // Ends this call; the calling service then puts the longest-waiting borrower through.
+            onTakeNow:
+              activeCall && activeCall.phase !== "ended"
+                ? () => {
+                    toast(
+                      "Ending this call — the next waiting borrower will be put through to you.",
+                    );
+                    endCall();
+                  }
+                : undefined,
+            loadTeammates: async () => {
+              const srv = await import("@/lib/telephony/server");
+              return srv.listQueueTeammates({ data: { accessToken: await getProgressiveToken() } });
+            },
+            sendToTeammate: async (agentId: string) => {
+              const srv = await import("@/lib/telephony/server");
+              try {
+                const res = await srv.sendWaitingToTeammate({
+                  data: { accessToken: await getProgressiveToken(), runId: dialer.runId, agentId },
+                });
+                toast.success(
+                  `${res.name} (ext ${res.extension}) will now get borrowers waiting in your queue — their phone rings next.`,
+                );
+              } catch (e) {
+                toast.error(errorText(e, "Couldn't send to that teammate"));
+              }
+            },
+          }}
+        />
       )}
 
       {/* ── Floating Progressive Dial Board (bottom-left) — one debtor at a time, in list order ── */}

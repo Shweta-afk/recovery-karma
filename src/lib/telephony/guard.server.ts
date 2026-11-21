@@ -628,6 +628,7 @@ export async function openPredictiveCalls(
   busy: string[];
   silentRefIds: string[];
   endedConnectedRefIds: string[];
+  queuedRefIds: string[];
 }> {
   const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
   const { data, error } = await db()
@@ -642,7 +643,14 @@ export async function openPredictiveCalls(
     .limit(500);
   if (error) {
     console.warn(`[telephony-guard] open predictive read failed: ${error.message}`);
-    return { ok: false, waiting: 0, busy: [], silentRefIds: [], endedConnectedRefIds: [] };
+    return {
+      ok: false,
+      waiting: 0,
+      busy: [],
+      silentRefIds: [],
+      endedConnectedRefIds: [],
+      queuedRefIds: [],
+    };
   }
   const all = (data ?? []) as (OpenPredictiveRow & { ref_id: string | null })[];
   const stuck = stuckConnectedRows(all, idle?.handle, idle?.phoneIdleSeconds, Date.now());
@@ -661,7 +669,7 @@ export async function openPredictiveCalls(
   }
   const stuckIds = new Set(stuck.map((r) => r.id));
   const rows = all.filter((r) => !stuckIds.has(r.id));
-  const { silent, waiting, busy } = sortOpenPredictive(rows, handles, Date.now());
+  const { silent, waiting, busy, queued } = sortOpenPredictive(rows, handles, Date.now());
   if (silent.length) {
     const { error: closeErr } = await db()
       .from("telephony_calls")
@@ -685,6 +693,7 @@ export async function openPredictiveCalls(
     busy,
     silentRefIds: silent.map((r) => r.ref_id ?? "").filter(Boolean),
     endedConnectedRefIds: stuck.map((r) => r.ref_id ?? "").filter(Boolean),
+    queuedRefIds: queued.map((r) => r.ref_id ?? "").filter(Boolean),
   };
 }
 

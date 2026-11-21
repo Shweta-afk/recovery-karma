@@ -7,6 +7,16 @@
 export type PhoneState = "none" | "connecting" | "ready";
 
 let state: PhoneState = "none";
+let myExtension: string | null = null;
+
+/** This browser phone's own extension, so the Call Queue opens only calls SkyCRM put through to
+ *  THIS agent — not one it gave a teammate from the same queue (2026-11-21). */
+export function setPhoneExtension(ext: string | null): void {
+  myExtension = ext?.trim() || null;
+}
+export function getPhoneExtension(): string | null {
+  return myExtension;
+}
 const listeners = new Set<() => void>();
 
 export function setPhoneState(next: PhoneState): void {

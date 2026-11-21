@@ -41,6 +41,8 @@ export interface StartArgs {
 
 export interface UseDialerRun {
   running: boolean;
+  /** The current run's id (server mode), for actions on it such as sending a teammate. */
+  runId: string;
   legs: LiveCallEntry[];
   stats: DialerRun["stats"] | null;
   start: (args: StartArgs) => Promise<void>;
@@ -287,6 +289,7 @@ export function useDialerRun(): UseDialerRun {
   const run = runRef.current;
   return {
     running: run?.running ?? false,
+    runId: runIdRef.current,
     legs: run ? toLiveEntries(run.legs) : [],
     stats: run?.stats ?? null,
     start,
