@@ -30,6 +30,7 @@ mock.module("@/lib/supabase-admin.server", () => ({
   getSupabaseAdmin: () => ({}),
   verifyCaller: async () => null,
   verifySuperadminCaller: async () => null,
+  forgetCaller: () => {},
 }));
 
 const settings = {
