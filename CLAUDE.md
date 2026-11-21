@@ -872,7 +872,11 @@ calls `deactivateUser` (`user-admin-actions.server.ts`, rules in `user-deactivat
 inbound + predictive queues, `agent_extension` NULL), phone erased, `session_nonce` rotated, login
 **banned** in Supabase Auth. A manager who still owns open portfolios or teams must hand them to
 another active manager first (hand-over dialog). Name and email stay — history and the bank's
-Feedback File are keyed on them. `reactivateUser` unbans; the extension is NOT given back.
+Feedback File are keyed on them. `reactivateUser` unbans; the extension is NOT given back. The SkyCRM login named after an extension
+("8604", `skycrm_users`) stays with the old person until the extension is assigned again; then
+`adoptExtensionLogins` (telephony-actions.server.ts, rule `extensionLoginMoves` in skycrm-users.ts)
+moves it to the new holder — on `setAgentExtension` and before "Create SkyCRM users", which would
+otherwise try to create a duplicate name SkyCRM refuses. 8604 → Richa, 8608 → Nazjri (2026-11-21).
 **`verifyCaller` now refuses `is_active = false`** — before 2026-11-21 a deactivated person could
 still sign in and use every server action. On 2026-11-21 the 9 already-inactive users were given
 the same treatment by SQL (8604 freed, phones cleared, logins banned). Manishchand (inactive
