@@ -134,6 +134,14 @@ export function DialingBoard({ liveCalls }: { liveCalls: LiveCallEntry[] }) {
         </span>
         <PhoneCall className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
       </div>
+      {ringing.some((c) => c.vendorRouted) && (
+        // Productive Dial rings borrowers first: agents took the silence for a broken phone
+        // (2026-11-21).
+        <div className="px-3 py-2 text-[11px] leading-snug text-muted-foreground border-b border-border bg-muted/30">
+          Calling {ringing.length} borrower{ringing.length === 1 ? "" : "s"} — your phone stays
+          quiet until one answers, then you're connected straight away.
+        </div>
+      )}
       <div className="divide-y divide-border/60 max-h-48 overflow-y-auto">
         {ringing.map((lc) => (
           <div key={lc.id} className="flex items-center gap-2 px-3 py-1.5">
