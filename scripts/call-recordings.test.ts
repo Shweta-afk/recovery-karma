@@ -132,7 +132,9 @@ describe("helpers", () => {
     expect(recordingObjectPath("c1", late, "../evil", "x.wav")).toBe("c1/2026-11-05/.._evil.wav");
   });
   test("retry backoff grows and caps at 6 h", () => {
-    expect(retryDelayMs(0)).toBe(10 * 60_000);
+    expect(retryDelayMs(0)).toBe(60_000); // first miss: look again in a minute
+    expect(retryDelayMs(1)).toBe(60_000);
+    expect(retryDelayMs(2)).toBe(20 * 60_000);
     expect(retryDelayMs(3)).toBe(30 * 60_000);
     expect(retryDelayMs(100)).toBe(6 * 3600_000);
   });

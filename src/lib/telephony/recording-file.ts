@@ -167,8 +167,16 @@ export function recordingObjectPath(
 
 /** Wait before retrying a call whose file couldn't be fetched: 10 min, 20 min, … capped at 6 h. */
 export function retryDelayMs(attempts: number): number {
-  return Math.min(6 * 3600_000, Math.max(1, attempts) * 10 * 60_000);
+  // The first look is ~45 s after hangup (RECORDING_FIRST_LOOK_MS), sometimes before SkyCRM has
+  // written the CDR: look again a minute later before backing off (2026-11-21).
+  if (attempts <= 1) return 60_000;
+  return Math.min(6 * 3600_000, attempts * 10 * 60_000);
 }
+
+/** How long after hangup the importer first looks for a call's recording. Was 2 min with a
+ *  2-min sweep, so recordings showed 2–4 min after a call while SkyCRM's site had them at once
+ *  (user, 2026-11-21). */
+export const RECORDING_FIRST_LOOK_MS = 45_000;
 
 /** Per-file attempts before giving up (vendor-wide outages don't count — see the importer). */
 export const MAX_RECORDING_ATTEMPTS = 8;

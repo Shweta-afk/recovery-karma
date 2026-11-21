@@ -82,6 +82,11 @@ const g = globalThis as typeof globalThis & {
      *  ~3 s, so two used to overlap: both saw the same next borrower and dialled them (one
      *  number 6 times in seconds, 2026-11-21), and the later save wiped the earlier one's legs. */
     tickingRuns: Set<string>;
+    /** Events for a run that arrived while a start/tick was dialling for it. That start/tick
+     *  works on its own copy of the run and saves it at the end, which used to overwrite (or, on
+     *  the first round, drop) a borrower's "answered" event — the call connected but its call
+     *  screen never opened (2026-11-21). The copy replays these before it is saved. */
+    heldEvents: Map<string, TelephonyEvent[]>;
   };
 };
 
@@ -95,6 +100,7 @@ g.__recoveryaiTelephony ??= {
   runTouchedAt: new Map(),
   predictiveSessions: new Map(),
   tickingRuns: new Set(),
+  heldEvents: new Map(),
 };
 // A hot-reloaded module can inherit a global created before these fields existed.
 g.__recoveryaiTelephony.owners ??= new Map();
@@ -102,6 +108,7 @@ g.__recoveryaiTelephony.runTargets ??= new Map();
 g.__recoveryaiTelephony.runTouchedAt ??= new Map();
 g.__recoveryaiTelephony.predictiveSessions ??= new Map();
 g.__recoveryaiTelephony.tickingRuns ??= new Set();
+g.__recoveryaiTelephony.heldEvents ??= new Map();
 
 const runs = g.__recoveryaiTelephony.runs;
 const owners = g.__recoveryaiTelephony.owners;
@@ -109,6 +116,27 @@ const runTargets = g.__recoveryaiTelephony.runTargets;
 const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
 const predictiveSessions = g.__recoveryaiTelephony.predictiveSessions;
 const tickingRuns = g.__recoveryaiTelephony.tickingRuns;
+const heldEvents = g.__recoveryaiTelephony.heldEvents;
+
+/** Mark a run as being dialled for: events for it are held until finishDialling replays them. */
+function beginDialling(runId: string): void {
+  tickingRuns.add(runId);
+  heldEvents.set(runId, []);
+}
+
+/** The dialling copy of a run with every event that arrived meanwhile applied to it. */
+function finishDialling(runId: string, run: DialerRun): DialerRun {
+  const held = heldEvents.get(runId) ?? [];
+  heldEvents.delete(runId);
+  tickingRuns.delete(runId);
+  let next = run;
+  for (const e of held) {
+    if (e.type === "sms_status") continue;
+    if (next.legs.some((l) => l.providerCallId === e.providerCallId))
+      next = engine.applyLegEvent(next, e);
+  }
+  return next;
+}
 const pendingPredictiveLogouts = new Set<string>();
 
 interface PredictiveSession {
@@ -166,6 +194,8 @@ function drainPredictiveLogouts(): void {
 function applyEventToRuns(event: TelephonyEvent): DialerRun[] {
   const changed: DialerRun[] = [];
   if (event.type === "sms_status") return changed;
+  // A run being dialled for may not hold this call's leg yet (its copy is saved at the end).
+  for (const id of tickingRuns) heldEvents.get(id)?.push(event);
   for (const [id, run] of runs) {
     if (!run.legs.some((l) => l.providerCallId === event.providerCallId)) continue;
     const next = engine.applyLegEvent(run, event);
@@ -870,17 +900,25 @@ export const startDialerRun = createServerFn({ method: "POST" })
         calls: 0,
       };
       predictiveSessions.set(data.runId, session);
-      const res = await predictiveDial(base, targets, data.runId, session, data.callerId, agents, {
-        agentId: caller.agentId,
-      });
-      if (res.blocked && !res.run.legs.length) {
+      beginDialling(data.runId);
+      let res: Awaited<ReturnType<typeof predictiveDial>>;
+      try {
+        res = await predictiveDial(base, targets, data.runId, session, data.callerId, agents, {
+          agentId: caller.agentId,
+        });
+      } catch (err) {
+        finishDialling(data.runId, base);
+        throw err;
+      }
+      const started = finishDialling(data.runId, res.run);
+      if (res.blocked && !started.legs.length) {
         await endPredictiveSession(data.runId);
         throw new Error(res.blocked);
       }
       sweepRuns();
       drainPredictiveLogouts();
-      saveRun(res.run);
-      return res.run;
+      saveRun(started);
+      return started;
     }
 
     const batch =
@@ -938,7 +976,8 @@ export const tickDialerRun = createServerFn({ method: "POST" })
 
     // One tick per run at a time (tickingRuns): an overlapping tick only reports the run.
     if (tickingRuns.has(data.runId)) return run;
-    tickingRuns.add(data.runId);
+    beginDialling(data.runId);
+    let finished = false;
     try {
       // Continuous dialing: top up capacity with debtors not yet dialed.
       if (run.running && data.targets?.length) {
@@ -990,6 +1029,8 @@ export const tickDialerRun = createServerFn({ method: "POST" })
         }
       }
 
+      run = finishDialling(data.runId, run);
+      finished = true;
       // Stopped (or replaced by a newer run) while this tick was dialling: don't bring it back.
       const latest = runs.get(data.runId);
       if (latest && !latest.running && run.running) return latest;
@@ -997,7 +1038,7 @@ export const tickDialerRun = createServerFn({ method: "POST" })
       saveRun(run);
       return run;
     } finally {
-      tickingRuns.delete(data.runId);
+      if (!finished) finishDialling(data.runId, run);
     }
   });
 

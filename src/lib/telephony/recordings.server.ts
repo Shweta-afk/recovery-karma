@@ -23,6 +23,7 @@ import {
   recordingMarker,
   recordingObjectPath,
   retryDelayMs,
+  RECORDING_FIRST_LOOK_MS,
   skycrmIstDate,
 } from "./recording-file";
 
@@ -33,7 +34,9 @@ const db = () => getSupabaseAdmin() as any;
 // early in a busy hour waited up to 4 hours behind newer ones. 100 every 2 min = 3,000/hour; most
 // rows are unanswered calls (one CDR lookup per sweep, no download). `state.running` stops a slow
 // sweep from overlapping the next tick.
-const SWEEP_EVERY_MS = 2 * 60_000;
+// 2026-11-21: every minute, first look 45 s after hangup (was 2 min / 2 min) — recordings came
+// 2–4 min after a call, much later than SkyCRM's own site.
+const SWEEP_EVERY_MS = 60_000;
 const PER_SWEEP = 100;
 const BACKLOG_DAYS = 30;
 
@@ -141,7 +144,7 @@ export async function importRecordings(limit = PER_SWEEP): Promise<SweepResult> 
       .is("recording_status", null)
       .not("vendor_callid", "is", null)
       .not("ended_at", "is", null)
-      .lt("ended_at", new Date(now - 2 * 60_000).toISOString())
+      .lt("ended_at", new Date(now - RECORDING_FIRST_LOOK_MS).toISOString())
       .gt("started_at", new Date(now - BACKLOG_DAYS * 24 * 3600_000).toISOString())
       .order("ended_at", { ascending: false })
       .limit(500);
