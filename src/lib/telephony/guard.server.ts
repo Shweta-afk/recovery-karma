@@ -29,6 +29,7 @@ import {
   pickPredictiveLedger,
   sortOpenPredictive,
   stuckConnectedRows,
+  teamQueueForRun,
   type OpenPredictiveRow,
 } from "./predictive-rules";
 
@@ -695,6 +696,52 @@ export async function openPredictiveCalls(
     endedConnectedRefIds: stuck.map((r) => r.ref_id ?? "").filter(Boolean),
     queuedRefIds: queued.map((r) => r.ref_id ?? "").filter(Boolean),
   };
+}
+
+/**
+ * The Productive Dial queue for a run over these portfolios: their team's own queue
+ * (teamQueueForRun). Before 20261123_team_predictive_queues.sql is applied (no column), the
+ * company's queue as before.
+ */
+export async function predictiveQueueForPortfolios(
+  clientId: string,
+  portfolioIds: string[],
+  companyQueue: string | null | undefined,
+): Promise<
+  { ok: true; teamId: string | null; queue: string | null } | { ok: false; message: string }
+> {
+  const ids = [...new Set(portfolioIds.filter(Boolean))];
+  if (!ids.length) return { ok: true, teamId: null, queue: null };
+  const { data: ports, error: pErr } = await db()
+    .from("portfolios")
+    .select("id, team_id")
+    .eq("client_id", clientId)
+    .in("id", ids);
+  if (pErr) throw new Error(`Could not read the portfolios (${pErr.message})`);
+  const rows = (ports ?? []) as { id: string; team_id: string | null }[];
+  const teamIds = [...new Set(rows.map((r) => r.team_id).filter((t): t is string => !!t))];
+  const { data: teams, error: tErr } = teamIds.length
+    ? await db()
+        .from("teams")
+        .select("id, name, predictive_queue")
+        .eq("client_id", clientId)
+        .in("id", teamIds)
+    : { data: [], error: null };
+  if (tErr) {
+    if (/predictive_queue/.test(tErr.message ?? ""))
+      return { ok: true, teamId: null, queue: companyQueue ?? null };
+    throw new Error(`Could not read the teams (${tErr.message})`);
+  }
+  const t = (teams ?? []) as { id: string; name: string; predictive_queue: string | null }[];
+  const nameOf = new Map(t.map((x) => [x.id, x.name]));
+  return teamQueueForRun(
+    rows.map((r) => ({
+      portfolioId: r.id,
+      teamId: r.team_id,
+      teamName: r.team_id ? nameOf.get(r.team_id) : null,
+    })),
+    new Map(t.map((x) => [x.id, x.predictive_queue])),
+  );
 }
 
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {

@@ -2359,7 +2359,9 @@ export function CallQueueContent({
                 : undefined,
             loadTeammates: async () => {
               const srv = await import("@/lib/telephony/server");
-              return srv.listQueueTeammates({ data: { accessToken: await getProgressiveToken() } });
+              return srv.listQueueTeammates({
+                data: { accessToken: await getProgressiveToken(), runId: dialer.runId },
+              });
             },
             sendToTeammate: async (agentId: string) => {
               const srv = await import("@/lib/telephony/server");

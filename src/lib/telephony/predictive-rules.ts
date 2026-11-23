@@ -53,6 +53,30 @@ export function predictiveMode(args: {
 
 export const SIM_QUEUE = "9999";
 
+/**
+ * Which predictive queue a Productive Dial run uses: the queue of the TEAM owning the portfolios
+ * being dialled (user, 2026-11-23). SkyCRM gives an answered borrower to any free agent in the
+ * call's queue, so a queue shared by two teams mixes their lenders' borrowers. Accounts of two
+ * teams in one run are refused (pick one portfolio). No team, or a team with no queue, gives
+ * `queue: null` — the caller falls back to one line per agent (agent rung first, never handed on).
+ */
+export function teamQueueForRun(
+  portfolios: { portfolioId: string; teamId: string | null; teamName?: string | null }[],
+  teamQueues: Map<string, string | null>,
+): { ok: true; teamId: string | null; queue: string | null } | { ok: false; message: string } {
+  const teams = new Map<string, string>();
+  for (const p of portfolios) if (p.teamId) teams.set(p.teamId, p.teamName ?? "a team");
+  if (teams.size > 1) {
+    return {
+      ok: false,
+      message: `These accounts belong to different teams (${[...teams.values()].join(", ")}). Pick one portfolio before starting Productive Dial.`,
+    };
+  }
+  const teamId = [...teams.keys()][0] ?? null;
+  const queue = teamId ? (teamQueues.get(teamId) ?? null) : null;
+  return { ok: true, teamId, queue };
+}
+
 /** Agents on the run who are not on a predictive call right now (their extension isn't on any
  *  connected leg). A leg whose answer named no extension doesn't hold anyone. */
 export function freeAgentHandles(handles: string[], legs: CallRecord[]): string[] {

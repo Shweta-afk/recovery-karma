@@ -15,6 +15,7 @@ import {
   getCompanyTelephony,
   saveCompanyTelephony,
   setAgentExtension,
+  setTeamPredictiveQueue,
   type CompanyTelephony,
 } from "@/lib/telephony-actions.server";
 
@@ -102,7 +103,6 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
           channelReserved,
           inboundDid: draft.inboundDid.trim() || null,
           inboundQueue: draft.inboundQueue.trim() || null,
-          predictiveQueue: draft.predictiveQueue.trim() || null,
           callWindowStart: draft.callWindowStart,
           callWindowEnd: draft.callWindowEnd,
           managersCanCall: draft.managersCanCall,
@@ -272,18 +272,6 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
                   className="h-8 text-xs"
                 />
               </Field>
-              <Field
-                label="Predictive queue"
-                hint="SkyCRM queue for Productive Dial: SkyCRM dials borrowers first and connects answers to free agents. Blank = one line per agent"
-              >
-                <Input
-                  value={draft.predictiveQueue}
-                  onChange={(e) => up({ predictiveQueue: e.target.value })}
-                  placeholder="None"
-                  inputMode="numeric"
-                  className="h-8 text-xs"
-                />
-              </Field>
               <Field label="Calling hours (IST)" hint="Must stay within 08:00–19:00">
                 <div className="flex items-center gap-2">
                   <Input
@@ -316,6 +304,7 @@ export function CompanyTelephonyCard({ clientId }: { clientId: string }) {
               {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
               Save telephony settings
             </Button>
+            <TeamQueues clientId={clientId} teams={data.teams} onSaved={load} />
 
             <div className="space-y-2 border-t border-border pt-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -420,6 +409,94 @@ function Field({
       <p className="text-xs text-muted-foreground">{label}</p>
       {children}
       {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+/** One SkyCRM Productive Dial queue per team (2026-11-23). SkyCRM hands a borrower who picks up
+ *  to any free agent in the call's queue, so each team needs its own or teams get each other's
+ *  borrowers. A team with no queue: Productive Dial rings the agent first, one line at a time. */
+function TeamQueues({
+  clientId,
+  teams,
+  onSaved,
+}: {
+  clientId: string;
+  teams: CompanyTelephony["teams"];
+  onSaved: () => Promise<void> | void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  useEffect(() => {
+    setDrafts(Object.fromEntries(teams.map((t) => [t.id, t.queue ?? ""])));
+  }, [teams]);
+
+  const save = async (teamId: string) => {
+    setSaving(teamId);
+    try {
+      const res = await setTeamPredictiveQueue({
+        data: {
+          accessToken: await getAccessToken(),
+          clientId,
+          teamId,
+          queue: (drafts[teamId] ?? "").trim() || null,
+        },
+      });
+      toast.success(res.queue ? `Queue ${res.queue} saved` : "Queue removed");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save the queue");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <div className="mt-6 space-y-2 border-t pt-4">
+      <p className="text-sm font-medium">Productive Dial queue per team</p>
+      <p className="text-xs text-muted-foreground">
+        SkyCRM gives a borrower who picks up to any free agent in the call&apos;s queue, so each
+        team needs its own queue — otherwise one team&apos;s borrowers reach another team. A team
+        without a queue still has Productive Dial, but it rings the agent first, one line at a time.
+      </p>
+      {teams.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No teams yet (or the team-queue migration isn&apos;t applied).
+        </p>
+      ) : (
+        <div className="divide-y rounded-md border">
+          {teams.map((t) => {
+            const changed = (drafts[t.id] ?? "") !== (t.queue ?? "");
+            return (
+              <div key={t.id} className="flex items-center gap-3 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{t.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t.agents} agent{t.agents === 1 ? "" : "s"} ·{" "}
+                    {t.queue ? `queue ${t.queue}` : "no queue: one line per agent"}
+                  </p>
+                </div>
+                <Input
+                  value={drafts[t.id] ?? ""}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [t.id]: e.target.value }))}
+                  placeholder="None"
+                  inputMode="numeric"
+                  className="h-8 w-24 text-xs"
+                  aria-label={`Productive Dial queue for ${t.name}`}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!changed || saving !== null}
+                  onClick={() => void save(t.id)}
+                >
+                  {saving === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

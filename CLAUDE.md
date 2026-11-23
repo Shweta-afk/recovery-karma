@@ -581,7 +581,17 @@ free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, 
   call). The Call Queue opens only connected legs whose `agentHandle` is this phone's extension
   (`getPhoneExtension`). A teammate sees the borrower's number but not the account unless it is
   theirs (agents see only their own accounts).
-- **Axiotta's queue is 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
+- **One queue per TEAM (user, 2026-11-23).** SkyCRM gives an answered borrower to any free agent
+  in the call's queue, so a company-wide queue let one team's (lender's) borrowers reach another
+  team. `teams.predictive_queue` (`migrations/20261123_team_predictive_queues.sql`, live; unique
+  platform-wide) is now the queue a run uses: `predictiveQueueForPortfolios` (guard.server.ts,
+  rule `teamQueueForRun`). Accounts of two teams in one run are refused; a team with no queue
+  falls back to click-to-call (one line per agent). `telephony_settings.predictive_queue` no
+  longer routes (only a fallback before the migration). Set per team on the superadmin company
+  Calling card (`setTeamPredictiveQueue`). "Send to a teammate" lists only the run's team.
+  As of 2026-11-23 only **RBL Bank → 3101**; the other 6 Axiotta teams wait for queue numbers
+  from SkyCRM (3102–3110 exist; confirm they're Axiotta's to use).
+- **Axiotta's company queue was 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
 - **Axiotta's numbers (2026-11-21): 30 Manual Dial, 20 Call Queue (on all 20 open portfolios).**
   First split 10/40; on 21 Nov by 13:30 IST 1,437 of ~1,530 calls were Manual Dial (dock), the 10
   manual numbers were at ~144 of their 150/day cap, so 20 more were moved to Manual Dial. Watch

@@ -32,6 +32,7 @@ import {
   ledgerByProviderCallId,
   loadTelephonySettings,
   openPredictiveCalls,
+  predictiveQueueForPortfolios,
   prepareCall,
   channelsFor,
   recordRefusal,
@@ -902,14 +903,25 @@ export const startDialerRun = createServerFn({ method: "POST" })
 
     const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
 
-    // "Productive Dial" (dialerMode "predictive") uses the provider's own predictive dial when it
-    // has one and the company has a queue for it; otherwise click-to-call as before.
+    // "Productive Dial" (dialerMode "predictive") uses the provider's own predictive dial when the
+    // TEAM owning these accounts has a queue (2026-11-23: one queue per team, so a borrower who
+    // picks up only reaches that team's agents); otherwise click-to-call as before.
     const prov = getTelephonyProvider();
+    let teamQueue: string | null = null;
+    if (data.settings.dialerMode === "predictive") {
+      const route = await predictiveQueueForPortfolios(
+        caller.clientId,
+        targets.map((t) => t.portfolioId ?? "").filter(Boolean),
+        (await loadTelephonySettings(caller.clientId))?.predictive_queue,
+      );
+      if (!route.ok) throw new Error(route.message);
+      teamQueue = route.queue;
+    }
     const routing = predictiveMode({
       dialerMode: data.settings.dialerMode,
       provider: prov.name,
       providerSupportsPredictive: !!prov.predictive,
-      predictiveQueue: (await loadTelephonySettings(caller.clientId))?.predictive_queue,
+      predictiveQueue: teamQueue,
     });
     if (routing.mode === "vendor") {
       await endPredictiveSession(data.runId);
@@ -1140,7 +1152,12 @@ export interface QueueTeammate {
   onCall: boolean;
 }
 
-async function teammatesOf(caller: VerifiedCaller): Promise<QueueTeammate[]> {
+async function teammatesOf(
+  caller: VerifiedCaller,
+  /** Only this team (the team whose queue a run dials on): a teammate from another team would
+   *  be handed this team's borrowers. */
+  onlyTeamId?: string | null,
+): Promise<QueueTeammate[]> {
   if (!caller.agentId) return [];
   // Tables read here aren't all in the generated types' join shapes; plain reads only.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1149,12 +1166,13 @@ async function teammatesOf(caller: VerifiedCaller): Promise<QueueTeammate[]> {
     sb.from("team_agents").select("team_id").eq("agent_id", caller.agentId),
     sb.from("teams").select("id").eq("manager_id", caller.agentId),
   ]);
-  const teamIds = [
+  const allTeamIds = [
     ...new Set([
       ...((onTeams ?? []) as { team_id: string }[]).map((r) => r.team_id),
       ...((managed ?? []) as { id: string }[]).map((r) => r.id),
     ]),
   ];
+  const teamIds = onlyTeamId ? allTeamIds.filter((t) => t === onlyTeamId) : allTeamIds;
   if (!teamIds.length) return [];
   const { data: members } = await sb.from("team_agents").select("agent_id").in("team_id", teamIds);
   const ids = [
@@ -1206,9 +1224,25 @@ async function teammatesOf(caller: VerifiedCaller): Promise<QueueTeammate[]> {
     .sort((a, b) => Number(a.onCall) - Number(b.onCall) || a.name.localeCompare(b.name));
 }
 
+/** The team whose queue a run dials on (null: none found, or no per-team queues yet). */
+async function runTeamId(clientId: string, runId: string | undefined): Promise<string | null> {
+  const queue = runId ? predictiveSessions.get(runId)?.queue : undefined;
+  if (!queue) return null;
+  const { data, error } = await (getSupabaseAdmin() as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+    .from("teams")
+    .select("id")
+    .eq("client_id", clientId)
+    .eq("predictive_queue", queue)
+    .maybeSingle();
+  return error ? null : ((data as { id: string } | null)?.id ?? null);
+}
+
 export const listQueueTeammates = createServerFn({ method: "POST" })
-  .inputValidator((d: { accessToken: string }) => d)
-  .handler(async ({ data }) => teammatesOf(await requireCaller(data.accessToken)));
+  .inputValidator((d: { accessToken: string; runId?: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    return teammatesOf(caller, await runTeamId(caller.clientId, data.runId));
+  });
 
 export const sendWaitingToTeammate = createServerFn({ method: "POST" })
   .inputValidator((d: { accessToken: string; runId: string; agentId: string }) => d)
@@ -1218,7 +1252,9 @@ export const sendWaitingToTeammate = createServerFn({ method: "POST" })
     const session = predictiveSessions.get(data.runId);
     const pd = getTelephonyProvider().predictive;
     if (!session || !pd) throw new Error("Only works while Productive Dial is running.");
-    const mate = (await teammatesOf(caller)).find((t) => t.id === data.agentId);
+    const mate = (await teammatesOf(caller, await runTeamId(caller.clientId, data.runId))).find(
+      (t) => t.id === data.agentId,
+    );
     if (!mate) throw new Error("That person isn't on your team or has no calling extension.");
     await pd.loginQueue(mate.extension, session.queue);
     (session.guests ??= new Set()).add(mate.extension);
