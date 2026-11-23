@@ -589,8 +589,10 @@ free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, 
   falls back to click-to-call (one line per agent). `telephony_settings.predictive_queue` no
   longer routes (only a fallback before the migration). Set per team on the superadmin company
   Calling card (`setTeamPredictiveQueue`). "Send to a teammate" lists only the run's team.
-  As of 2026-11-23 only **RBL Bank → 3101**; the other 6 Axiotta teams wait for queue numbers
-  from SkyCRM (3102–3110 exist; confirm they're Axiotta's to use).
+  Axiotta (user, 2026-11-23): RBL Bank 3101, AU BANK 3102, liquiloan 3103, TVS BUCKET 3104,
+  TVS Writeoff 3105, UNI PC 2 3106, UNI-PC 3107. 3108–3110 free. Not yet confirmed that SkyCRM
+  has 3102–3107 set up: if `login_in_queue1` fails, Productive Dial says "No agent with an
+  extension could join the calling queue".
 - **Axiotta's company queue was 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
 - **Axiotta's numbers (2026-11-21): 30 Manual Dial, 20 Call Queue (on all 20 open portfolios).**
   First split 10/40; on 21 Nov by 13:30 IST 1,437 of ~1,530 calls were Manual Dial (dock), the 10
