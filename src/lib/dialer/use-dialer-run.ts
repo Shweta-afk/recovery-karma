@@ -154,6 +154,7 @@ export function useDialerRun(): UseDialerRun {
         // One tick at a time: a tick can take several seconds (each call placed in turn), and
         // overlapping ticks dialled the same borrower again (2026-11-21).
         let ticking = false;
+        let tickStartedAt = 0;
         const timer = setInterval(async () => {
           // A newer run replaced this one: stop ticking, and never let this run's end switch
           // off the browser phone's auto-answer for the newer run.
@@ -161,8 +162,10 @@ export function useDialerRun(): UseDialerRun {
             clearInterval(timer);
             return;
           }
-          if (ticking) return;
+          // A status request that never answers must not stop the run's updates for good.
+          if (ticking && Date.now() - tickStartedAt < 20_000) return;
           ticking = true;
+          tickStartedAt = Date.now();
           try {
             const ticked = await srv.tickDialerRun({
               data: {

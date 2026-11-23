@@ -153,6 +153,12 @@ async function post(
   return (await postOnce(path, body, extension, null, false, opts.json)) as SkyCrmResponse;
 }
 
+/** Longest we wait for SkyCRM to answer one API request. There was no limit: one request SkyCRM
+ *  never answered could hold a Productive Dial round open, and with one round per run at a time
+ *  the run stopped dialling after its first calls (2026-11-21). Recording downloads have their
+ *  own request and are not limited by this. */
+export const SKYCRM_REQUEST_TIMEOUT_MS = 12_000;
+
 /** One request. With `softAuth`, a refused user (301/401) returns null instead of throwing. */
 async function postOnce(
   path: string,
@@ -180,6 +186,7 @@ async function postOnce(
         ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
         : { Authorization: `Bearer ${token}` },
       body: json ? JSON.stringify(fields) : new URLSearchParams(fields),
+      signal: AbortSignal.timeout(SKYCRM_REQUEST_TIMEOUT_MS),
     });
   } catch (err) {
     throw appError("SX-3102", "Could not reach the calling service. Please try again.", {
