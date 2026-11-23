@@ -269,6 +269,21 @@ export function isBillOfSupply(invoice: Pick<InvoiceRecord, "supplier">): boolea
   return !invoice.supplier.gstin;
 }
 
+/**
+ * What an Insights top-up invoice put into the company's wallet (user, 2026-11-23: "the invoice
+ * should mention how much the credit was"). The wallet is credited with the amount BEFORE GST;
+ * GST is charged on top and never reaches the wallet. That amount is the invoice's taxable value,
+ * which is already the recharge less anything taken back (createInvoice), so invoices issued
+ * before this existed show it too. Null for every other kind of invoice.
+ */
+export function walletCreditOf(
+  invoice: Pick<InvoiceRecord, "kind" | "taxable" | "total">,
+): { credited: number; gst: number } | null {
+  if (invoice.kind !== "insights_topup") return null;
+  const credited = Math.round(invoice.taxable * 100) / 100;
+  return { credited, gst: Math.round((invoice.total - invoice.taxable) * 100) / 100 };
+}
+
 export type InvoiceStatus = "unpaid" | "paid" | "cancelled";
 
 export interface InvoiceRecord {
