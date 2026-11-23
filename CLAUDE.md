@@ -801,8 +801,11 @@ admin → Settings → Manager Wallets **Take back / Take all** (`takeBackFromMa
 `profilex_manager_reclaim`, ledger `manager_to_company`) and Superadmin → Insights Wallet **Take
 back** (`takeBackFromCompany`, RPC `profilex_company_reclaim`, ledger `company_to_master`).
 Never below ₹0; a superadmin can take only what the company hasn't handed to managers. People
-who left / changed role stay listed on Manager Wallets while they hold money. Invoices for the
-original allocation are not touched (credit note by hand). Migration
+who left / changed role stay listed on Manager Wallets while they hold money. **A recharge not
+yet invoiced** opens on the Insights invoice tab at recharge − taken back (`takenBackByTopup`,
+`src/lib/topup-takebacks.ts`, newest earlier recharge first; tested in
+`scripts/topup-takebacks.test.ts`), and its amount is editable (`createInvoice` `amount`, never
+above the recharge). An invoice already issued is not changed — issue a credit note. Migration
 `20261121_wallet_take_back.sql` (applied live 2026-11-21).
 
 **SamvadX keeps its own copy of every company archive (2026-10-29;
