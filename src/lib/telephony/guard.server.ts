@@ -744,6 +744,35 @@ export async function predictiveQueueForPortfolios(
   );
 }
 
+/**
+ * Borrowers (debtor ids) who already had an outbound call today, IST, from any dial mode. A new
+ * Productive Dial run leaves them out so pressing it again doesn't ring the same people (user,
+ * 2026-11-23). Read from the ledger, not debtors.last_contacted_at: that is set only when a
+ * disposition is saved, which an unanswered Productive Dial call never gets.
+ */
+export async function debtorsCalledToday(
+  clientId: string,
+  debtorIds: string[],
+): Promise<Set<string>> {
+  const ist = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+  const since = new Date(`${ist}T00:00:00+05:30`).toISOString();
+  const ids = [...new Set(debtorIds.filter(Boolean))];
+  const called = new Set<string>();
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await db()
+      .from("telephony_calls")
+      .select("debtor_id")
+      .eq("client_id", clientId)
+      .eq("direction", "outbound")
+      .gte("started_at", since)
+      .in("debtor_id", ids.slice(i, i + 150));
+    if (error) throw new Error(`Could not check today's calls (${error.message})`);
+    for (const r of (data ?? []) as { debtor_id: string | null }[])
+      if (r.debtor_id) called.add(r.debtor_id);
+  }
+  return called;
+}
+
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {
   if (!id) return;
   const { error } = await db().from("telephony_calls").update(patch).eq("id", id);

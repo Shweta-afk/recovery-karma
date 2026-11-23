@@ -206,6 +206,11 @@ export interface DialerRun {
   settings: PortfolioSettings;
   startedAt: number;
   running: boolean;
+  /** Productive Dial paused by the agent: no new borrowers are rung; calls already ringing carry
+   *  on and can still be put through. Resume continues the same run (2026-11-23). */
+  paused?: boolean;
+  /** Borrowers left out at start because they were already called today (any call). */
+  skippedCalledToday?: number;
   /** Active + recently-ended legs (caller may prune terminals) */
   legs: CallRecord[];
   stats: DialerRunStats;

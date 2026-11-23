@@ -135,16 +135,27 @@ export interface WaitingActions {
 export function DialingBoard({
   liveCalls,
   waiting,
+  paused,
+  skippedCalledToday,
 }: {
   liveCalls: LiveCallEntry[];
   waiting?: WaitingActions;
+  paused?: boolean;
+  skippedCalledToday?: number;
 }) {
   const ringing = liveCalls.filter((c) => c.status === "ringing" && !c.incoming);
   // Productive Dial through the calling service's queue: borrowers are rung first and the agent
   // hears nothing until one picks up. Agents read the silence as a broken phone (2026-11-21), so
   // this box says what is happening at every moment, not just who is ringing.
   if (liveCalls.some((c) => c.vendorRouted))
-    return <ProductiveDialStatus liveCalls={liveCalls} actions={waiting} />;
+    return (
+      <ProductiveDialStatus
+        liveCalls={liveCalls}
+        actions={waiting}
+        paused={paused}
+        skippedCalledToday={skippedCalledToday}
+      />
+    );
   if (!ringing.length) return null;
 
   return (
@@ -188,9 +199,13 @@ function RingingList({ calls }: { calls: LiveCallEntry[] }) {
 function ProductiveDialStatus({
   liveCalls,
   actions,
+  paused,
+  skippedCalledToday,
 }: {
   liveCalls: LiveCallEntry[];
   actions?: WaitingActions;
+  paused?: boolean;
+  skippedCalledToday?: number;
 }) {
   // Borrowers who picked up and wait for a free agent — kept on screen until someone takes them
   // or they hang up (they used to flash past in a second, 2026-11-21).
@@ -210,27 +225,38 @@ function ProductiveDialStatus({
   ).length;
   const noAnswer = liveCalls.filter((c) => c.status === "no_answer").length;
 
-  const headline = onCall
-    ? `On a call with ${onCall.debtor}${waitingNow.length ? ` · ${waitingNow.length} waiting` : ""}`
-    : ringing.length
-      ? `Ringing ${ringing.length} borrower${ringing.length === 1 ? "" : "s"}`
-      : "Picking the next borrowers…";
-  const explain = onCall
-    ? "New borrowers are rung as soon as this call ends."
-    : ringing.length
-      ? "Your phone stays quiet while they ring. When one picks up you are connected straight away and their account opens. Phones nobody answers in 45 seconds are skipped."
-      : "The next borrowers in your queue will start ringing in a moment.";
+  const headline = paused
+    ? "Paused"
+    : onCall
+      ? `On a call with ${onCall.debtor}${waitingNow.length ? ` · ${waitingNow.length} waiting` : ""}`
+      : ringing.length
+        ? `Ringing ${ringing.length} borrower${ringing.length === 1 ? "" : "s"}`
+        : "Picking the next borrowers…";
+  const explain = paused
+    ? "No new borrowers will ring. Calls already ringing can still reach you. Press Resume to carry on from where you stopped."
+    : onCall
+      ? "New borrowers are rung as soon as this call ends."
+      : ringing.length
+        ? "Your phone stays quiet while they ring. When one picks up you are connected straight away and their account opens. Phones nobody answers in 45 seconds are skipped."
+        : "The next borrowers in your queue will start ringing in a moment.";
 
   return (
     <div className="fixed bottom-4 left-4 z-40 w-72 rounded-xl border border-border bg-card shadow-2xl shadow-black/20 animate-in slide-in-from-bottom-4 duration-300 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 bg-success/10 border-b border-border">
         <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse flex-shrink-0" />
-        <span className="text-xs font-semibold text-foreground flex-1">Productive Dial is on</span>
+        <span className="text-xs font-semibold text-foreground flex-1">
+          {paused ? "Productive Dial is paused" : "Productive Dial is on"}
+        </span>
         <PhoneCall className="h-3.5 w-3.5 text-success flex-shrink-0" />
       </div>
       <div className="px-3 py-2 border-b border-border">
         <div className="text-sm font-semibold text-foreground">{headline}</div>
         <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{explain}</p>
+        {skippedCalledToday ? (
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            {skippedCalledToday} already called today left out.
+          </p>
+        ) : null}
       </div>
       <div className="grid grid-cols-3 divide-x divide-border border-b border-border text-center">
         {[

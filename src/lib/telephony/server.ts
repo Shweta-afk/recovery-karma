@@ -31,6 +31,7 @@ import {
   didPrefix,
   ledgerByProviderCallId,
   loadTelephonySettings,
+  debtorsCalledToday,
   openPredictiveCalls,
   predictiveQueueForPortfolios,
   prepareCall,
@@ -117,6 +118,8 @@ const runTargets = g.__recoveryaiTelephony.runTargets;
 const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
 const predictiveSessions = g.__recoveryaiTelephony.predictiveSessions;
 const tickingRuns = g.__recoveryaiTelephony.tickingRuns;
+/** run id → borrowers left out at its start (already called today), so top-ups skip them too. */
+const skippedTargets = new Map<string, Set<string>>();
 const heldEvents = g.__recoveryaiTelephony.heldEvents;
 
 /** Mark a run as being dialled for: events for it are held until finishDialling replays them. */
@@ -195,6 +198,7 @@ function sweepRuns(now = Date.now()): void {
       runTouchedAt.delete(id);
       loggedLegs.delete(id);
       runTargets.delete(id);
+      skippedTargets.delete(id);
       // Not endPredictiveSession() here: sweepRuns is reachable from ingestCallStatusEvent, a
       // plain export that ships in the browser bundle, and anything it references (the provider,
       // SkyCRM's API code) would ship with it. Server-function handlers drain this set instead.
@@ -897,11 +901,36 @@ export const startDialerRun = createServerFn({ method: "POST" })
     const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
       filter: true,
     });
-    const targets = await resolveTargets(caller, data.runId, data.targets);
+    let targets = await resolveTargets(caller, data.runId, data.targets);
     const agents = await dialAgentsFor(caller, agentNumbers);
     rememberOwner(caller.clientId, `run:${data.runId}`);
 
-    const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
+    // Productive Dial never re-rings a borrower who already had a call today (2026-11-23): each
+    // new run used to start from the top of the list and ring the same first borrowers again.
+    // Paused runs resume where they were instead (pauseDialerRun).
+    let skippedCalledToday = 0;
+    if (data.settings.dialerMode === "predictive") {
+      const called = await debtorsCalledToday(
+        caller.clientId,
+        targets.map((t) => t.id),
+      );
+      if (called.size) {
+        skippedTargets.set(data.runId, called);
+        const before = targets.length;
+        targets = targets.filter((t) => !called.has(t.id));
+        skippedCalledToday = before - targets.length;
+      }
+      if (!targets.length) {
+        throw new Error(
+          "Everyone in this list has already been called today. Pick another filter or portfolio.",
+        );
+      }
+    }
+
+    const base = {
+      ...engine.newDialerRun({ id: data.runId, settings: data.settings }),
+      skippedCalledToday,
+    };
 
     // "Productive Dial" (dialerMode "predictive") uses the provider's own predictive dial when the
     // TEAM owning these accounts has a queue (2026-11-23: one queue per team, so a borrower who
@@ -1037,7 +1066,7 @@ export const tickDialerRun = createServerFn({ method: "POST" })
     // to answer only after placing the round's calls, so the agent's screen learned of an
     // answered call 5–15 s late, or after the borrower had already hung up. One dialling round
     // per run at a time (tickingRuns); events meanwhile are held and replayed (heldEvents).
-    if (!isDialling(data.runId, run) && run.running && data.targets?.length) {
+    if (!isDialling(data.runId, run) && run.running && !run.paused && data.targets?.length) {
       beginDialling(data.runId);
       void topUpRun(caller, data, run).catch((err: unknown) => {
         console.error(
@@ -1068,7 +1097,10 @@ async function topUpRun(
   const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
     filter: true,
   });
-  const targets = await resolveTargets(caller, data.runId, data.targets ?? []);
+  const skip = skippedTargets.get(data.runId);
+  const targets = (await resolveTargets(caller, data.runId, data.targets ?? [])).filter(
+    (t) => !skip?.has(t.id),
+  );
   const agents = await dialAgentsFor(caller, agentNumbers);
   // Productive needs the full leg history to decide "primary vs next alt number vs next
   // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
@@ -1112,9 +1144,26 @@ async function topUpRun(
   // Stopped (or replaced by a newer run) while this round was dialling: don't bring it back.
   const latest = runs.get(data.runId);
   if (latest && !latest.running && run.running) return;
+  // Paused or resumed while this round was dialling: keep what the agent chose.
+  if (latest) run = { ...run, paused: latest.paused };
   await persistLoggableLegs(run);
   saveRun(run);
 }
+
+/** Pause or resume a run (Productive Dial, 2026-11-23). Paused: no new borrowers are rung; calls
+ *  already ringing carry on and can still be put through to the agent, who stays in the queue.
+ *  Resume continues the same run, so nobody already rung is rung again. */
+export const pauseDialerRun = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; runId: string; paused: boolean }) => d)
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!owns(caller, `run:${data.runId}`)) return null;
+    const run = runs.get(data.runId);
+    if (!run || !run.running) return run ?? null;
+    const next = { ...run, paused: !!data.paused };
+    saveRun(next);
+    return next;
+  });
 
 export const stopDialerRun = createServerFn({ method: "POST" })
   .inputValidator((d: { accessToken: string; runId: string }) => d)

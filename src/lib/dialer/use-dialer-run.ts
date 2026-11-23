@@ -43,6 +43,11 @@ export interface UseDialerRun {
   running: boolean;
   /** The current run's id (server mode), for actions on it such as sending a teammate. */
   runId: string;
+  /** Paused by the agent: no new borrowers are rung until resumed. */
+  paused: boolean;
+  /** Borrowers left out at start because they were already called today. */
+  skippedCalledToday: number;
+  setPaused: (paused: boolean) => Promise<void>;
   legs: LiveCallEntry[];
   stats: DialerRun["stats"] | null;
   start: (args: StartArgs) => Promise<void>;
@@ -259,6 +264,19 @@ export function useDialerRun(): UseDialerRun {
     render();
   }, [render]);
 
+  const setPaused = useCallback(
+    async (paused: boolean) => {
+      if (modeRef.current !== "server" || !runIdRef.current) return;
+      const srv = await import("@/lib/telephony/server");
+      const updated = await srv.pauseDialerRun({
+        data: { accessToken: await getAccessToken(), runId: runIdRef.current, paused },
+      });
+      if (updated) runRef.current = updated;
+      render();
+    },
+    [render],
+  );
+
   const endLeg = useCallback(
     async (legId: string) => {
       const run = runRef.current;
@@ -293,6 +311,9 @@ export function useDialerRun(): UseDialerRun {
   return {
     running: run?.running ?? false,
     runId: runIdRef.current,
+    paused: !!run?.paused,
+    skippedCalledToday: run?.skippedCalledToday ?? 0,
+    setPaused,
     legs: run ? toLiveEntries(run.legs) : [],
     stats: run?.stats ?? null,
     start,

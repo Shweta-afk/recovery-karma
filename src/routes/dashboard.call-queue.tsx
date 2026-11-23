@@ -22,6 +22,8 @@ import {
   FileDown,
   ListOrdered,
   Loader2,
+  Pause,
+  Play,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -559,7 +561,7 @@ export function CallQueueContent({
       return;
     }
     toast.success(
-      `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
+      `Productive Dial started on the ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue. Borrowers already called today are left out.`,
     );
     // No demo "AI Bot transfer" here any more (removed 2026-11-21): 6 s after Start it opened a
     // fake call screen for a borrower from the list, and while that screen was open the real
@@ -1473,6 +1475,40 @@ export function CallQueueContent({
                 )}
               </Button>
 
+              {/* Pause / Resume (2026-11-23): stops ringing new borrowers without ending the run,
+                  so Resume carries on from where it was instead of ringing the same people. */}
+              {dialer.running && activeDialMode === "predictive" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-sm"
+                  onClick={async () => {
+                    try {
+                      await dialer.setPaused(!dialer.paused);
+                      toast(
+                        dialer.paused
+                          ? "Resumed — the next borrowers in your list will ring."
+                          : "Paused — no new borrowers will ring. Calls already ringing can still reach you.",
+                      );
+                    } catch (e) {
+                      toast.error(errorText(e, "Couldn't pause the dialer"));
+                    }
+                  }}
+                >
+                  {dialer.paused ? (
+                    <>
+                      <Play className="h-3.5 w-3.5" />
+                      Resume
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="h-3.5 w-3.5" />
+                      Pause
+                    </>
+                  )}
+                </Button>
+              )}
+
               {/* "Progressive Dial" button — one borrower at a time, in queue order, through the
                 ordinary call path (useProgressiveDial). It used to start a server dialer run
                 (dialerMode "productive") that never worked with the browser phone. Own queue
@@ -2346,6 +2382,8 @@ export function CallQueueContent({
       {dialer.running && activeDialMode !== "productive" && (
         <DialingBoard
           liveCalls={dialer.legs}
+          paused={dialer.paused}
+          skippedCalledToday={dialer.skippedCalledToday}
           waiting={{
             // Ends this call; the calling service then puts the longest-waiting borrower through.
             onTakeNow:
