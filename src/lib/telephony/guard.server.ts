@@ -6,6 +6,7 @@ import {
   STALE_CALL_MINUTES,
   channelLimitMessage,
   evaluateCall,
+  callidFitsCall,
   differentNumber,
   normalisePhone,
   type TelephonySettingsRow,
@@ -854,14 +855,18 @@ export async function ledgerForWebhook(args: {
       .like("remote_phone", `%${last10}`)
       .order("started_at", { ascending: false })
       .limit(5);
-    const hit = error ? null : pickPredictiveLedger((data ?? []) as LedgerRow[], args.remotePhone);
+    const fits = ((data ?? []) as LedgerRow[]).filter((r) =>
+      callidFitsCall(args.vendorCallId, r.started_at),
+    );
+    const hit = error ? null : pickPredictiveLedger(fits, args.remotePhone);
     if (hit) return hit;
   }
   if (args.agentHandle && last10.length === 10 && args.direction !== "inbound") {
     // This extension's own call to this number that never got a callid (2026-11-20). SkyCRM's
     // end record often arrives after the agent has ended that call and dialled the next one; it
     // belongs to the earlier call, ended or not.
-    const hit = await readLedger<LedgerRow | null>((cols) =>
+    // A repeat dial to the same number has several such rows: the callid's start time says which.
+    const rows = await readLedger<LedgerRow[]>((cols) =>
       db()
         .from("telephony_calls")
         .select(cols)
@@ -871,9 +876,9 @@ export async function ledgerForWebhook(args: {
         .gt("started_at", since)
         .like("remote_phone", `%${last10}`)
         .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+        .limit(5),
     );
+    const hit = (rows ?? []).find((r) => callidFitsCall(args.vendorCallId, r.started_at));
     if (hit) return hit;
   }
   if (args.agentHandle) {
@@ -892,7 +897,15 @@ export async function ledgerForWebhook(args: {
     // record for the agent's previous call used to land on the call in progress and end it on
     // screen (Babu Gurava Vaidya, ext 8616, 20 Nov: the 14:28 call's NO ANSWER ended the 14:30
     // call 13 s in, and it took that call's callid and recording).
-    if (hit && !differentNumber(hit.remote_phone, last10)) return hit;
+    // Nor when the event's callid started before this call was dialled (or well after): that is
+    // the agent's previous call's late event, which carries no number (23 Nov: 17 calls got the
+    // previous call's callid and recording this way).
+    if (
+      hit &&
+      !differentNumber(hit.remote_phone, last10) &&
+      callidFitsCall(args.vendorCallId, hit.started_at)
+    )
+      return hit;
   }
   return null;
 }

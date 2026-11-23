@@ -131,3 +131,31 @@ export function differentNumber(rowPhone: string | null | undefined, eventLast10
   if (eventLast10.length !== 10 || !rowPhone) return false;
   return normalisePhone(rowPhone) !== eventLast10;
 }
+
+/**
+ * SkyCRM's callid is "<unix second the call started on THEIR switch>.<seq>" (it matches the
+ * timestamp in the recording file name). Their clock runs ~30 s behind ours: across 18,000 calls
+ * (16–23 Nov 2026) 98% sat between −32 and −28 s of our `started_at`. A callid from minutes before
+ * our row was dialled, or after it, belongs to another call — usually the agent's previous one,
+ * whose late event carries no number, so `differentNumber` can't catch it. Applying it gave
+ * calls the previous call's callid, status and recording (17 calls on 23 Nov; ~1% of calls).
+ */
+export const CALLID_EARLIEST_SECONDS = -90;
+export const CALLID_LATEST_SECONDS = 120;
+
+export function callidStartSeconds(vendorCallId: string | null | undefined): number | null {
+  const m = /^(\d{10})\.\d+$/.exec(vendorCallId?.trim() ?? "");
+  return m ? Number(m[1]) : null;
+}
+
+/** False only when the callid's own start time rules out this ledger row. Unknown → true. */
+export function callidFitsCall(
+  vendorCallId: string | null | undefined,
+  rowStartedAt: string | null | undefined,
+): boolean {
+  const callidAt = callidStartSeconds(vendorCallId);
+  const startedMs = rowStartedAt ? Date.parse(rowStartedAt) : NaN;
+  if (callidAt === null || !Number.isFinite(startedMs)) return true;
+  const d = callidAt - startedMs / 1000;
+  return d >= CALLID_EARLIEST_SECONDS && d <= CALLID_LATEST_SECONDS;
+}

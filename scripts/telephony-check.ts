@@ -19,6 +19,8 @@ import { legToCallLog, collectLoggableLegs } from "@/lib/dialer/leg-disposition"
 import {
   channelAllocationError,
   channelLimitMessage,
+  callidFitsCall,
+  callidStartSeconds,
   differentNumber,
   evaluateCall,
   istMinutes,
@@ -523,6 +525,17 @@ async function simManualCall() {
 ok("event for another number is not this call's", differentNumber("+919876500700", "9560926289"));
 ok("same number matches", !differentNumber("09560926289", "9560926289"));
 ok("event without a number still matches", !differentNumber("+919876500700", ""));
+
+// SkyCRM's callid = the second their call started (~30 s behind our clock). A callid from minutes
+// before our row was dialled is the agent's previous call (ext 8605, 23 Nov 2026 15:22 IST: the
+// 15:22:08 call to …1382 took callid 1795427301 = 15:18:21, the earlier call to …1240).
+ok("callid start parsed", callidStartSeconds("1795427301.5222") === 1795427301);
+ok("non-SkyCRM id not parsed", callidStartSeconds("abc-123") === null);
+ok("own callid fits (30 s skew)", callidFitsCall("1795427145.7758", "2026-11-23T09:46:16.000Z"));
+ok("previous call's callid rejected", !callidFitsCall("1795427301.5222", "2026-11-23T09:52:08.206Z"));
+ok("a much later call's callid rejected", !callidFitsCall("1795427621.1457", "2026-11-23T09:48:51.000Z"));
+ok("unknown callid shape still matches", callidFitsCall("xyz", "2026-11-23T09:52:08.206Z"));
+ok("missing started_at still matches", callidFitsCall("1795427301.5222", null));
 
 await simE2E();
 await simManualCall();
