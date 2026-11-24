@@ -574,8 +574,31 @@ free extension in the queue. Rules are pure in `telephony/predictive-rules.ts`, 
   borrower up to 6 times in seconds and wiped each other's legs. A new run replaces older runs sharing an
   agent (`runsSharingAgents`); `use-dialer-run.ts` ignores Start while one is starting.
   Axiotta's `predictive_queue` was cleared (was 3101) the same day at the user's request —
-  Productive Dial falls back to click-to-call until it is set again.
-- **Axiotta's queue is 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
+  Productive Dial falls back to click-to-call until it is set again. (Set back to 3101 later
+  that day for testing.)
+- **"Waiting for you" (2026-11-21).** A predictive ledger row with any vendor event and no
+  `agent_handle` = the borrower picked up and waits in SkyCRM's queue (SkyCRM sends nothing while
+  a phone rings) → `CallRecord.waitingSince`, listed in the Productive Dial box. **Take now** =
+  end the current call (SkyCRM then gives the longest waiter); **Send to a teammate** =
+  `sendWaitingToTeammate` logs the teammate's extension into the run's queue
+  (`PredictiveSession.guests`, logged out with the run). SkyCRM can't be told WHICH borrower goes
+  to WHOM, and can't hold a borrower not yet with an agent (hold/transfer work only on a live
+  call). The Call Queue opens only connected legs whose `agentHandle` is this phone's extension
+  (`getPhoneExtension`). A teammate sees the borrower's number but not the account unless it is
+  theirs (agents see only their own accounts).
+- **One queue per TEAM (user, 2026-11-23).** SkyCRM gives an answered borrower to any free agent
+  in the call's queue, so a company-wide queue let one team's (lender's) borrowers reach another
+  team. `teams.predictive_queue` (`migrations/20261123_team_predictive_queues.sql`, live; unique
+  platform-wide) is now the queue a run uses: `predictiveQueueForPortfolios` (guard.server.ts,
+  rule `teamQueueForRun`). Accounts of two teams in one run are refused; a team with no queue
+  falls back to click-to-call (one line per agent). `telephony_settings.predictive_queue` no
+  longer routes (only a fallback before the migration). Set per team on the superadmin company
+  Calling card (`setTeamPredictiveQueue`). "Send to a teammate" lists only the run's team.
+  Axiotta (user, 2026-11-23): RBL Bank 3101, AU BANK 3102, liquiloan 3103, TVS BUCKET 3104,
+  TVS Writeoff 3105, UNI PC 2 3106, UNI-PC 3107. 3108–3110 free. Not yet confirmed that SkyCRM
+  has 3102–3107 set up: if `login_in_queue1` fails, Productive Dial says "No agent with an
+  extension could join the calling queue".
+- **Axiotta's company queue was 3101** (set 2026-11-20). Queues 3101–3110 come from SkyCRM.
 - **Axiotta's numbers (2026-11-21): 30 Manual Dial, 20 Call Queue (on all 20 open portfolios).**
   First split 10/40; on 21 Nov by 13:30 IST 1,437 of ~1,530 calls were Manual Dial (dock), the 10
   manual numbers were at ~144 of their 150/day cap, so 20 more were moved to Manual Dial. Watch
@@ -789,6 +812,18 @@ to bill manually — Axiotta ₹3,593.37 (₹100 deducted), Demo ₹1,672.52, Ku
 `scripts/insights-wallet-guard.test.ts` fails the build if any server action that writes a
 `debtor_traces` / `insights_manual_lookups` row does not call `holdInsightsSpend`. Reconciled live
 2026-10-29: every admin lookup since the fix has a matching `admin_charge` row.
+
+**Taking Insights money back (2026-11-21, user).** Money can move back UP the wallet chain:
+admin → Settings → Manager Wallets **Take back / Take all** (`takeBackFromManager`, RPC
+`profilex_manager_reclaim`, ledger `manager_to_company`) and Superadmin → Insights Wallet **Take
+back** (`takeBackFromCompany`, RPC `profilex_company_reclaim`, ledger `company_to_master`).
+Never below ₹0; a superadmin can take only what the company hasn't handed to managers. People
+who left / changed role stay listed on Manager Wallets while they hold money. **A recharge not
+yet invoiced** opens on the Insights invoice tab at recharge − taken back (`takenBackByTopup`,
+`src/lib/topup-takebacks.ts`, newest earlier recharge first; tested in
+`scripts/topup-takebacks.test.ts`), and its amount is editable (`createInvoice` `amount`, never
+above the recharge). An invoice already issued is not changed — issue a credit note. Migration
+`20261121_wallet_take_back.sql` (applied live 2026-11-21).
 
 **SamvadX keeps its own copy of every company archive (2026-10-29;
 `migrations/20261029_saved_archive_files.sql` applied live 2026-10-29).** So a company that forgot to download

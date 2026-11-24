@@ -92,7 +92,7 @@ const setupFrom = (prices: PriceList) => {
 
 /** What "Issue" sends to createInvoice for each kind (and "Preview" with preview: true). */
 type Draft =
-  | { kind: "insights_topup"; walletLedgerId: string; chargedOn: string }
+  | { kind: "insights_topup"; walletLedgerId: string; chargedOn: string; amount: number }
   | { kind: "setup"; lines: { description: string; amount: number }[]; chargedOn: string }
   | {
       kind: "monthly";
@@ -139,6 +139,8 @@ export function CompanyInvoicesCard({
   };
   // Recharge date per top-up, prefilled from the top-up itself; the superadmin may correct it.
   const [topupChargedOn, setTopupChargedOn] = useState<Record<string, string>>({});
+  // Edited invoice amounts per recharge; unset = the suggested amount (recharge − taken back).
+  const [topupAmount, setTopupAmount] = useState<Record<string, string>>({});
   const today = todayIstKey();
 
   const [busy, setBusy] = useState<string | null>(null);
@@ -548,15 +550,24 @@ export function CompanyInvoicesCard({
                 <ul className="divide-y divide-border rounded-md border border-border text-xs">
                   {topups.map((t) => {
                     const chargedOn = topupChargedOn[t.ledgerId] ?? istDayKey(t.createdAt);
+                    const amountText = topupAmount[t.ledgerId] ?? String(t.suggestedAmount);
+                    const amount = Math.round(Number(amountText) * 100) / 100;
                     const dateProblem = !chargedOn
                       ? "Enter the recharge date"
                       : chargedOn > today
                         ? "The recharge date can't be in the future"
-                        : null;
+                        : !(amount > 0)
+                          ? t.suggestedAmount <= 0 && topupAmount[t.ledgerId] === undefined
+                            ? "All of it was taken back — nothing to invoice"
+                            : "Enter an amount above ₹0"
+                          : amount > t.amount
+                            ? `Can't be more than the ${formatRupees(t.amount)} recharged`
+                            : null;
                     const draft: Draft = {
                       kind: "insights_topup",
                       walletLedgerId: t.ledgerId,
                       chargedOn,
+                      amount,
                     };
                     return (
                       <li
@@ -575,6 +586,12 @@ export function CompanyInvoicesCard({
                             })}
                             {t.note ? ` · ${t.note}` : ""}
                           </span>
+                          {t.takenBack > 0 && (
+                            <span className="block text-[11px] text-amber-600">
+                              {formatRupees(t.takenBack)} of it was taken back — invoice defaults to{" "}
+                              {formatRupees(t.suggestedAmount)}
+                            </span>
+                          )}
                         </span>
                         <span className="flex flex-wrap items-center gap-1.5">
                           <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -587,6 +604,20 @@ export function CompanyInvoicesCard({
                                 setTopupChargedOn((m) => ({ ...m, [t.ledgerId]: e.target.value }))
                               }
                               className="h-7 w-36 text-xs"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            Invoice ₹
+                            <Input
+                              type="number"
+                              min={0}
+                              max={t.amount}
+                              step="0.01"
+                              value={amountText}
+                              onChange={(e) =>
+                                setTopupAmount((m) => ({ ...m, [t.ledgerId]: e.target.value }))
+                              }
+                              className="h-7 w-28 text-right text-xs"
                             />
                           </label>
                           {dateProblem && (
@@ -608,7 +639,7 @@ export function CompanyInvoicesCard({
                             onClick={() => {
                               if (
                                 window.confirm(
-                                  `Issue the Insights invoice for ${formatRupees(t.amount)} + GST?`,
+                                  `Issue the Insights invoice for ${formatRupees(amount)} + GST?`,
                                 )
                               ) {
                                 void issue(draft);

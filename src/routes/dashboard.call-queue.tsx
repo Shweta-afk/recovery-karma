@@ -22,6 +22,8 @@ import {
   FileDown,
   ListOrdered,
   Loader2,
+  Pause,
+  Play,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -62,6 +64,7 @@ import { useProgressiveDial } from "@/lib/dialer/use-progressive-dial";
 import { ProgressiveStrip } from "@/components/call-queue/progressive-strip";
 import { checkDoNotCall } from "@/lib/telephony-actions.server";
 import { getAccessToken as getProgressiveToken } from "@/lib/access-token";
+import { getPhoneExtension } from "@/lib/telephony/phone-status";
 import type { DialTarget } from "@/lib/dialer/engine";
 import { fetchDialerAgentNumbers } from "@/lib/dialer/agent-pool";
 import { useSingleCall } from "@/lib/dialer/use-single-call";
@@ -551,7 +554,7 @@ export function CallQueueContent({
       return;
     }
     toast.success(
-      `Dialing ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue — ${target.length} account${target.length === 1 ? "" : "s"} across ${agentNumbers.length} agent${agentNumbers.length === 1 ? "" : "s"}`,
+      `Productive Dial started on the ${activeFilter && queueFilter !== "all" ? `"${activeFilter.label}"` : "full"} queue. Borrowers already called today are left out.`,
     );
     // No demo "AI Bot transfer" here any more (removed 2026-11-21): 6 s after Start it opened a
     // fake call screen for a borrower from the list, and while that screen was open the real
@@ -1040,7 +1043,15 @@ export function CallQueueContent({
     }
     if (!isSelf || activeDialMode === "productive") return;
     if (activeCall && activeCall.phase !== "ended") return;
-    const lc = dialer.legs.find((l) => l.status === "connected" && !joinedLegs.current.has(l.id));
+    // Only a call the calling service put through to THIS agent's phone: a borrower it gave a
+    // teammate ("Send to a teammate") is theirs to open, not ours.
+    const mine = getPhoneExtension();
+    const lc = dialer.legs.find(
+      (l) =>
+        l.status === "connected" &&
+        !joinedLegs.current.has(l.id) &&
+        (!l.agentHandle || !mine || l.agentHandle === mine),
+    );
     if (!lc) return;
     joinedLegs.current.add(lc.id);
     if (joinLiveLeg(lc)) toast.success(`Connected to ${lc.debtor}`);
@@ -1480,6 +1491,40 @@ export function CallQueueContent({
                   </>
                 )}
               </Button>
+
+              {/* Pause / Resume (2026-11-23): stops ringing new borrowers without ending the run,
+                  so Resume carries on from where it was instead of ringing the same people. */}
+              {dialer.running && activeDialMode === "predictive" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-sm"
+                  onClick={async () => {
+                    try {
+                      await dialer.setPaused(!dialer.paused);
+                      toast(
+                        dialer.paused
+                          ? "Resumed — the next borrowers in your list will ring."
+                          : "Paused — no new borrowers will ring. Calls already ringing can still reach you.",
+                      );
+                    } catch (e) {
+                      toast.error(errorText(e, "Couldn't pause the dialer"));
+                    }
+                  }}
+                >
+                  {dialer.paused ? (
+                    <>
+                      <Play className="h-3.5 w-3.5" />
+                      Resume
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="h-3.5 w-3.5" />
+                      Pause
+                    </>
+                  )}
+                </Button>
+              )}
 
               {/* "Progressive Dial" button — one borrower at a time, in queue order, through the
                 ordinary call path (useProgressiveDial). It used to start a server dialer run
@@ -2353,7 +2398,42 @@ export function CallQueueContent({
           Progressive Dial (dialerMode "productive") never has more than one, so it gets its
           own sequential board below instead. ── */}
       {dialer.running && activeDialMode !== "productive" && (
-        <DialingBoard liveCalls={dialer.legs} />
+        <DialingBoard
+          liveCalls={dialer.legs}
+          paused={dialer.paused}
+          skippedCalledToday={dialer.skippedCalledToday}
+          waiting={{
+            // Ends this call; the calling service then puts the longest-waiting borrower through.
+            onTakeNow:
+              activeCall && activeCall.phase !== "ended"
+                ? () => {
+                    toast(
+                      "Ending this call — the next waiting borrower will be put through to you.",
+                    );
+                    endCall();
+                  }
+                : undefined,
+            loadTeammates: async () => {
+              const srv = await import("@/lib/telephony/server");
+              return srv.listQueueTeammates({
+                data: { accessToken: await getProgressiveToken(), runId: dialer.runId },
+              });
+            },
+            sendToTeammate: async (agentId: string) => {
+              const srv = await import("@/lib/telephony/server");
+              try {
+                const res = await srv.sendWaitingToTeammate({
+                  data: { accessToken: await getProgressiveToken(), runId: dialer.runId, agentId },
+                });
+                toast.success(
+                  `${res.name} (ext ${res.extension}) will now get borrowers waiting in your queue — their phone rings next.`,
+                );
+              } catch (e) {
+                toast.error(errorText(e, "Couldn't send to that teammate"));
+              }
+            },
+          }}
+        />
       )}
 
       {/* ── Floating Progressive Dial Board (bottom-left) — one debtor at a time, in list order ── */}

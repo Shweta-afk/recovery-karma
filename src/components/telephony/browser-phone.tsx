@@ -24,6 +24,7 @@ import {
   PHONE_REREGISTER_EVENT,
   setPhoneInCall,
   setPhoneState,
+  setPhoneExtension,
 } from "@/lib/telephony/phone-status";
 import { startAnswerDetector } from "@/lib/telephony/answer-detector";
 import { useCallSession } from "@/lib/call-session";
@@ -349,6 +350,10 @@ function RegisteredPhone({
   useEffect(() => {
     setPhoneState(ready ? "ready" : "connecting");
   }, [ready]);
+  useEffect(() => {
+    setPhoneExtension(config.extension ?? null);
+    return () => setPhoneExtension(null);
+  }, [config.extension]);
   useEffect(() => () => setPhoneState("none"), []);
 
   // Heal by itself after a gateway restart or a network drop: SIP.js does not reconnect a closed

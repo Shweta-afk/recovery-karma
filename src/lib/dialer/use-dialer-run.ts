@@ -41,6 +41,13 @@ export interface StartArgs {
 
 export interface UseDialerRun {
   running: boolean;
+  /** The current run's id (server mode), for actions on it such as sending a teammate. */
+  runId: string;
+  /** Paused by the agent: no new borrowers are rung until resumed. */
+  paused: boolean;
+  /** Borrowers left out at start because they were already called today. */
+  skippedCalledToday: number;
+  setPaused: (paused: boolean) => Promise<void>;
   legs: LiveCallEntry[];
   stats: DialerRun["stats"] | null;
   start: (args: StartArgs) => Promise<void>;
@@ -152,6 +159,7 @@ export function useDialerRun(): UseDialerRun {
         // One tick at a time: a tick can take several seconds (each call placed in turn), and
         // overlapping ticks dialled the same borrower again (2026-11-21).
         let ticking = false;
+        let tickStartedAt = 0;
         const timer = setInterval(async () => {
           // A newer run replaced this one: stop ticking, and never let this run's end switch
           // off the browser phone's auto-answer for the newer run.
@@ -159,8 +167,10 @@ export function useDialerRun(): UseDialerRun {
             clearInterval(timer);
             return;
           }
-          if (ticking) return;
+          // A status request that never answers must not stop the run's updates for good.
+          if (ticking && Date.now() - tickStartedAt < 20_000) return;
           ticking = true;
+          tickStartedAt = Date.now();
           try {
             const ticked = await srv.tickDialerRun({
               data: {
@@ -254,6 +264,19 @@ export function useDialerRun(): UseDialerRun {
     render();
   }, [render]);
 
+  const setPaused = useCallback(
+    async (paused: boolean) => {
+      if (modeRef.current !== "server" || !runIdRef.current) return;
+      const srv = await import("@/lib/telephony/server");
+      const updated = await srv.pauseDialerRun({
+        data: { accessToken: await getAccessToken(), runId: runIdRef.current, paused },
+      });
+      if (updated) runRef.current = updated;
+      render();
+    },
+    [render],
+  );
+
   const endLeg = useCallback(
     async (legId: string) => {
       const run = runRef.current;
@@ -287,6 +310,10 @@ export function useDialerRun(): UseDialerRun {
   const run = runRef.current;
   return {
     running: run?.running ?? false,
+    runId: runIdRef.current,
+    paused: !!run?.paused,
+    skippedCalledToday: run?.skippedCalledToday ?? 0,
+    setPaused,
     legs: run ? toLiveEntries(run.legs) : [],
     stats: run?.stats ?? null,
     start,

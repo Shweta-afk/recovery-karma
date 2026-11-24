@@ -31,7 +31,9 @@ import {
   didPrefix,
   ledgerByProviderCallId,
   loadTelephonySettings,
+  debtorsCalledToday,
   openPredictiveCalls,
+  predictiveQueueForPortfolios,
   prepareCall,
   channelsFor,
   recordRefusal,
@@ -39,7 +41,7 @@ import {
   updateLedgerIfOpen,
   type DialAgent,
 } from "./guard.server";
-import { evaluateCall, normalisePhone } from "./guard-rules";
+import { evaluateCall, normalisePhone, STALE_CALL_MINUTES } from "./guard-rules";
 import {
   freeAgentHandles,
   linesPerAgent,
@@ -116,12 +118,30 @@ const runTargets = g.__recoveryaiTelephony.runTargets;
 const runTouchedAt = g.__recoveryaiTelephony.runTouchedAt;
 const predictiveSessions = g.__recoveryaiTelephony.predictiveSessions;
 const tickingRuns = g.__recoveryaiTelephony.tickingRuns;
+/** run id → borrowers left out at its start (already called today), so top-ups skip them too. */
+const skippedTargets = new Map<string, Set<string>>();
 const heldEvents = g.__recoveryaiTelephony.heldEvents;
 
 /** Mark a run as being dialled for: events for it are held until finishDialling replays them. */
 function beginDialling(runId: string): void {
   tickingRuns.add(runId);
   heldEvents.set(runId, []);
+  diallingSince.set(runId, Date.now());
+}
+
+/** When each run's current dialling round began. A round still open after this long is taken as
+ *  hung and released, so one stuck request can't stop a run dialling (2026-11-21). */
+const diallingSince = new Map<string, number>();
+const HUNG_ROUND_MS = 45_000;
+
+/** Whether a dialling round is in progress for this run (releasing one that has hung). */
+function isDialling(runId: string, run: DialerRun): boolean {
+  if (!tickingRuns.has(runId)) return false;
+  const since = diallingSince.get(runId) ?? 0;
+  if (Date.now() - since < HUNG_ROUND_MS) return true;
+  console.error(`[dialer] dialling round for ${runId} hung > ${HUNG_ROUND_MS / 1000} s; released`);
+  finishDialling(runId, run);
+  return false;
 }
 
 /** The dialling copy of a run with every event that arrived meanwhile applied to it. */
@@ -129,6 +149,7 @@ function finishDialling(runId: string, run: DialerRun): DialerRun {
   const held = heldEvents.get(runId) ?? [];
   heldEvents.delete(runId);
   tickingRuns.delete(runId);
+  diallingSince.delete(runId);
   let next = run;
   for (const e of held) {
     if (e.type === "sms_status") continue;
@@ -146,6 +167,10 @@ interface PredictiveSession {
   loggedIn: Set<string>;
   /** Calls placed so far — spreads the request extension round robin. */
   calls: number;
+  /** Teammates the agent added to take borrowers waiting in the queue ("Send to a teammate").
+   *  Kept apart from `loggedIn` so they never count as this run's agents (pacing, or a teammate's
+   *  own run replacing this one); logged out with the rest when the run ends. */
+  guests?: Set<string>;
 }
 
 // ─── Run retention ───────────────────────────────────────────────────────────────
@@ -173,6 +198,7 @@ function sweepRuns(now = Date.now()): void {
       runTouchedAt.delete(id);
       loggedLegs.delete(id);
       runTargets.delete(id);
+      skippedTargets.delete(id);
       // Not endPredictiveSession() here: sweepRuns is reachable from ingestCallStatusEvent, a
       // plain export that ships in the browser bundle, and anything it references (the provider,
       // SkyCRM's API code) would ship with it. Server-function handlers drain this set instead.
@@ -635,7 +661,7 @@ async function endPredictiveSession(runId: string): Promise<void> {
 async function logoutSession(session: PredictiveSession): Promise<void> {
   const pd = getTelephonyProvider().predictive;
   if (!pd) return;
-  for (const h of session.loggedIn) {
+  for (const h of new Set([...session.loggedIn, ...(session.guests ?? [])])) {
     await pd
       .logoutQueue(h, session.queue)
       .catch((err: unknown) =>
@@ -711,6 +737,19 @@ async function predictiveDial(
   };
   if (open.silentRefIds.length) endLegs(open.silentRefIds, "no_answer");
   if (open.endedConnectedRefIds.length) endLegs(open.endedConnectedRefIds, "completed");
+  // Borrowers who picked up and wait in SkyCRM's queue: shown to the agent as "Waiting for you".
+  if (open.queuedRefIds.length) {
+    const queued = new Set(open.queuedRefIds);
+    const at = Date.now();
+    run = {
+      ...run,
+      legs: run.legs.map((l) =>
+        queued.has(l.id) && !l.waitingSince && !l.agentHandle && !isTerminal(l.state)
+          ? { ...l, waitingSince: at }
+          : l,
+      ),
+    };
+  }
   const busy = new Set(open.busy);
   const free = freeAgentHandles(inQueue, run.legs).filter((h) => !busy.has(h));
   const dialed = new Set(run.legs.map((l) => l.debtorId));
@@ -732,63 +771,76 @@ async function predictiveDial(
 
   const batch = remaining.slice(0, n);
   const { run: withLegs, opened } = engine.openLegs(run, batch, { idPrefix, vendorRouted: true });
+  // All of a round's calls are placed AT ONCE (2026-11-21). One after another, each SkyCRM
+  // request taking ~3 s, a round of 5 took ~15 s: the borrowers rang 3 s apart and nothing new
+  // reached the agent's screen until the round was done. The channel reservation is still
+  // serialised by the database (advisory lock), so lines can't be over-booked.
+  const placed = await Promise.all(
+    opened.map(async (leg) => {
+      const t = batch.find((x) => x.id === leg.debtorId);
+      const handle = requestExtension(free, inQueue, session.calls++) as string;
+      const agent = agents.find((a) => agentHandleFor(prov.name, a) === handle) ?? {
+        id: "",
+        phone: handle,
+        extension: prov.name === "skycrm" ? handle : null,
+      };
+      let ledgerId = "";
+      try {
+        const prepared = await prepareCall({
+          clientId: session.clientId,
+          provider: prov.name,
+          agent,
+          debtorPhone: leg.phone,
+          refId: leg.id,
+          settings,
+          debtorId: leg.debtorId,
+          portfolioId: t?.portfolioId,
+          kind: "queue",
+          predictive: { queue: session.queue },
+        });
+        ledgerId = prepared.ledgerId;
+        const { providerCallId } = await pd.startCall({
+          extension: prepared.agentHandle,
+          queue: session.queue,
+          debtorNumber: leg.phone,
+          requestId: ledgerId,
+          callerId: prepared.callerId,
+          callerPrefix: prepared.callerPrefix,
+          hints: { aiScore: t?.aiScore, bestContactTime: t?.bestContactTime },
+        });
+        rememberOwner(session.clientId, providerCallId, leg.id);
+        await updateLedger(ledgerId, { provider_call_id: providerCallId });
+        return { legId: leg.id, providerCallId };
+      } catch (err) {
+        await updateLedger(ledgerId, {
+          ended_at: new Date().toISOString(),
+          status: "failed",
+          vendor_events: `start refused: ${err instanceof Error ? err.message : String(err)}`.slice(
+            0,
+            500,
+          ),
+        });
+        console.error(
+          `[dialer] predictive_call failed for leg ${leg.id}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+        return { legId: leg.id, providerCallId: null };
+      }
+    }),
+  );
   let next = withLegs;
-  for (const leg of opened) {
-    const t = batch.find((x) => x.id === leg.debtorId);
-    const handle = requestExtension(free, inQueue, session.calls++) as string;
-    const agent = agents.find((a) => agentHandleFor(prov.name, a) === handle) ?? {
-      id: "",
-      phone: handle,
-      extension: prov.name === "skycrm" ? handle : null,
-    };
-    let ledgerId = "";
-    try {
-      const prepared = await prepareCall({
-        clientId: session.clientId,
-        provider: prov.name,
-        agent,
-        debtorPhone: leg.phone,
-        refId: leg.id,
-        settings,
-        debtorId: leg.debtorId,
-        portfolioId: t?.portfolioId,
-        kind: "queue",
-        predictive: { queue: session.queue },
-      });
-      ledgerId = prepared.ledgerId;
-      const { providerCallId } = await pd.startCall({
-        extension: prepared.agentHandle,
-        queue: session.queue,
-        debtorNumber: leg.phone,
-        requestId: ledgerId,
-        callerId: prepared.callerId,
-        callerPrefix: prepared.callerPrefix,
-        hints: { aiScore: t?.aiScore, bestContactTime: t?.bestContactTime },
-      });
-      rememberOwner(session.clientId, providerCallId, leg.id);
-      await updateLedger(ledgerId, { provider_call_id: providerCallId });
-      next = engine.bindProviderCall(next, leg.id, providerCallId);
-    } catch (err) {
-      await updateLedger(ledgerId, {
-        ended_at: new Date().toISOString(),
-        status: "failed",
-        vendor_events: `start refused: ${err instanceof Error ? err.message : String(err)}`.slice(
-          0,
-          500,
-        ),
-      });
-      console.error(
-        `[dialer] predictive_call failed for leg ${leg.id}:`,
-        err instanceof Error ? err.message : String(err),
-      );
-      next = engine.applyLegEvent(engine.bindProviderCall(next, leg.id, leg.id), {
-        type: "hangup",
-        providerCallId: leg.id,
-        at: Date.now(),
-        result: "failed",
-        durationSeconds: 0,
-      });
+  for (const p of placed) {
+    if (p.providerCallId) {
+      next = engine.bindProviderCall(next, p.legId, p.providerCallId);
+      continue;
     }
+    next = engine.applyLegEvent(engine.bindProviderCall(next, p.legId, p.legId), {
+      type: "hangup",
+      providerCallId: p.legId,
+      at: Date.now(),
+      result: "failed",
+      durationSeconds: 0,
+    });
   }
   return { run: next };
 }
@@ -849,20 +901,56 @@ export const startDialerRun = createServerFn({ method: "POST" })
     const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
       filter: true,
     });
-    const targets = await resolveTargets(caller, data.runId, data.targets);
+    let targets = await resolveTargets(caller, data.runId, data.targets);
     const agents = await dialAgentsFor(caller, agentNumbers);
     rememberOwner(caller.clientId, `run:${data.runId}`);
 
-    const base = engine.newDialerRun({ id: data.runId, settings: data.settings });
+    // Productive Dial never re-rings a borrower who already had a call today (2026-11-23): each
+    // new run used to start from the top of the list and ring the same first borrowers again.
+    // Paused runs resume where they were instead (pauseDialerRun).
+    let skippedCalledToday = 0;
+    if (data.settings.dialerMode === "predictive") {
+      const called = await debtorsCalledToday(
+        caller.clientId,
+        targets.map((t) => t.id),
+      );
+      if (called.size) {
+        skippedTargets.set(data.runId, called);
+        const before = targets.length;
+        targets = targets.filter((t) => !called.has(t.id));
+        skippedCalledToday = before - targets.length;
+      }
+      if (!targets.length) {
+        throw new Error(
+          "Everyone in this list has already been called today. Pick another filter or portfolio.",
+        );
+      }
+    }
 
-    // "Productive Dial" (dialerMode "predictive") uses the provider's own predictive dial when it
-    // has one and the company has a queue for it; otherwise click-to-call as before.
+    const base = {
+      ...engine.newDialerRun({ id: data.runId, settings: data.settings }),
+      skippedCalledToday,
+    };
+
+    // "Productive Dial" (dialerMode "predictive") uses the provider's own predictive dial when the
+    // TEAM owning these accounts has a queue (2026-11-23: one queue per team, so a borrower who
+    // picks up only reaches that team's agents); otherwise click-to-call as before.
     const prov = getTelephonyProvider();
+    let teamQueue: string | null = null;
+    if (data.settings.dialerMode === "predictive") {
+      const route = await predictiveQueueForPortfolios(
+        caller.clientId,
+        targets.map((t) => t.portfolioId ?? "").filter(Boolean),
+        (await loadTelephonySettings(caller.clientId))?.predictive_queue,
+      );
+      if (!route.ok) throw new Error(route.message);
+      teamQueue = route.queue;
+    }
     const routing = predictiveMode({
       dialerMode: data.settings.dialerMode,
       provider: prov.name,
       providerSupportsPredictive: !!prov.predictive,
-      predictiveQueue: (await loadTelephonySettings(caller.clientId))?.predictive_queue,
+      predictiveQueue: teamQueue,
     });
     if (routing.mode === "vendor") {
       await endPredictiveSession(data.runId);
@@ -971,75 +1059,110 @@ export const tickDialerRun = createServerFn({ method: "POST" })
 
     ensureSubscribed();
     flushSim(); // advance the simulated carrier; subscription mutates runs in place
-    let run = runs.get(data.runId);
+    const run = runs.get(data.runId);
     if (!run) return null;
 
-    // One tick per run at a time (tickingRuns): an overlapping tick only reports the run.
-    if (tickingRuns.has(data.runId)) return run;
-    beginDialling(data.runId);
-    let finished = false;
-    try {
-      // Continuous dialing: top up capacity with debtors not yet dialed.
-      if (run.running && data.targets?.length) {
-        const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
-          filter: true,
-        });
-        const targets = await resolveTargets(caller, data.runId, data.targets);
-        const agents = await dialAgentsFor(caller, agentNumbers);
-        // Productive needs the full leg history to decide "primary vs next alt number vs next
-        // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
-        // modes can, so it gets the whole target list every tick instead of `remaining`.
-        const session = predictiveSessions.get(data.runId);
-        let batch: DialTarget[];
-        if (session) {
-          run = (
-            await predictiveDial(run, targets, data.runId, session, data.callerId, agents, {
-              agentId: caller.agentId,
-              phoneIdleSeconds: data.phoneIdleSeconds,
-            })
-          ).run;
-          batch = [];
-        } else if (run.settings.dialerMode === "productive") {
-          batch = engine.planProductiveBatch(targets, run.legs);
-        } else {
-          const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
-          const dialed = new Set(run.legs.map((l) => l.debtorId));
-          const remaining = targets.filter((t) => !dialed.has(t.id));
-          batch = engine.planDialBatch({
-            settings: run.settings,
-            queue: remaining,
-            agentsAvailable: Math.min(
-              data.agentsAvailable,
-              agentNumbers.length || data.agentsAvailable,
-            ),
-            inFlight,
-          });
-        }
-        if (batch.length) {
-          const res = await dial(
-            run,
-            batch,
-            data.runId,
-            agentNumbers,
-            caller.clientId,
-            data.callerId,
-            agents,
-          );
-          run = res.run;
-        }
-      }
-
-      run = finishDialling(data.runId, run);
-      finished = true;
-      // Stopped (or replaced by a newer run) while this tick was dialling: don't bring it back.
-      const latest = runs.get(data.runId);
-      if (latest && !latest.running && run.running) return latest;
-      await persistLoggableLegs(run); // log any AI/IVR legs that just went terminal
-      saveRun(run);
-      return run;
-    } finally {
-      if (!finished) finishDialling(data.runId, run);
+    // The tick only REPORTS the run; any dialling runs in the background (2026-11-21). It used
+    // to answer only after placing the round's calls, so the agent's screen learned of an
+    // answered call 5–15 s late, or after the borrower had already hung up. One dialling round
+    // per run at a time (tickingRuns); events meanwhile are held and replayed (heldEvents).
+    if (!isDialling(data.runId, run) && run.running && !run.paused && data.targets?.length) {
+      beginDialling(data.runId);
+      void topUpRun(caller, data, run).catch((err: unknown) => {
+        console.error(
+          `[dialer] top-up failed for ${data.runId}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+        finishDialling(data.runId, run);
+      });
     }
+    await persistLoggableLegs(run); // log any AI/IVR legs that just went terminal
+    return run;
+  });
+
+/** One dialling round for a run, in the background of a tick. Saves the run when done. */
+async function topUpRun(
+  caller: VerifiedCaller,
+  data: {
+    runId: string;
+    agentsAvailable: number;
+    targets?: DialTarget[];
+    agentNumbers?: string[];
+    callerId?: string;
+    phoneIdleSeconds?: number | null;
+  },
+  start: DialerRun,
+): Promise<void> {
+  let run = start;
+  const agentNumbers = await authorizeAgentNumbers(caller, data.agentNumbers ?? [], {
+    filter: true,
+  });
+  const skip = skippedTargets.get(data.runId);
+  const targets = (await resolveTargets(caller, data.runId, data.targets ?? [])).filter(
+    (t) => !skip?.has(t.id),
+  );
+  const agents = await dialAgentsFor(caller, agentNumbers);
+  // Productive needs the full leg history to decide "primary vs next alt number vs next
+  // debtor" — it can't be reduced to a per-debtor dialed/not-dialed set the way the other
+  // modes can, so it gets the whole target list every tick instead of `remaining`.
+  const session = predictiveSessions.get(data.runId);
+  let batch: DialTarget[];
+  if (session) {
+    run = (
+      await predictiveDial(run, targets, data.runId, session, data.callerId, agents, {
+        agentId: caller.agentId,
+        phoneIdleSeconds: data.phoneIdleSeconds,
+      })
+    ).run;
+    batch = [];
+  } else if (run.settings.dialerMode === "productive") {
+    batch = engine.planProductiveBatch(targets, run.legs);
+  } else {
+    const inFlight = run.legs.filter((l) => !isTerminal(l.state)).length;
+    const dialed = new Set(run.legs.map((l) => l.debtorId));
+    const remaining = targets.filter((t) => !dialed.has(t.id));
+    batch = engine.planDialBatch({
+      settings: run.settings,
+      queue: remaining,
+      agentsAvailable: Math.min(data.agentsAvailable, agentNumbers.length || data.agentsAvailable),
+      inFlight,
+    });
+  }
+  if (batch.length) {
+    const res = await dial(
+      run,
+      batch,
+      data.runId,
+      agentNumbers,
+      caller.clientId,
+      data.callerId,
+      agents,
+    );
+    run = res.run;
+  }
+  run = finishDialling(data.runId, run);
+  // Stopped (or replaced by a newer run) while this round was dialling: don't bring it back.
+  const latest = runs.get(data.runId);
+  if (latest && !latest.running && run.running) return;
+  // Paused or resumed while this round was dialling: keep what the agent chose.
+  if (latest) run = { ...run, paused: latest.paused };
+  await persistLoggableLegs(run);
+  saveRun(run);
+}
+
+/** Pause or resume a run (Productive Dial, 2026-11-23). Paused: no new borrowers are rung; calls
+ *  already ringing carry on and can still be put through to the agent, who stays in the queue.
+ *  Resume continues the same run, so nobody already rung is rung again. */
+export const pauseDialerRun = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; runId: string; paused: boolean }) => d)
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!owns(caller, `run:${data.runId}`)) return null;
+    const run = runs.get(data.runId);
+    if (!run || !run.running) return run ?? null;
+    const next = { ...run, paused: !!data.paused };
+    saveRun(next);
+    return next;
   });
 
 export const stopDialerRun = createServerFn({ method: "POST" })
@@ -1060,6 +1183,131 @@ export const stopDialerRun = createServerFn({ method: "POST" })
     runTargets.delete(data.runId);
     saveRun(stopped);
     return stopped;
+  });
+
+// ─── Borrowers waiting in the queue: send them to a teammate (2026-11-21) ────────────────────
+// SkyCRM gives a borrower who picked up to the next free extension in the queue; it cannot be
+// told to give a particular borrower to a particular person. "Send to a teammate" therefore adds
+// the teammate's extension to this run's queue: SkyCRM then puts the longest-waiting borrower
+// through to them. Only the caller's own team (teams they are on, or manage).
+
+export interface QueueTeammate {
+  id: string;
+  name: string;
+  extension: string;
+  /** Latest presence from agent_status_log (available, break, …); null if never set. */
+  status: string | null;
+  /** On a call right now (an open ledger row on their extension). */
+  onCall: boolean;
+}
+
+async function teammatesOf(
+  caller: VerifiedCaller,
+  /** Only this team (the team whose queue a run dials on): a teammate from another team would
+   *  be handed this team's borrowers. */
+  onlyTeamId?: string | null,
+): Promise<QueueTeammate[]> {
+  if (!caller.agentId) return [];
+  // Tables read here aren't all in the generated types' join shapes; plain reads only.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sb = getSupabaseAdmin() as any;
+  const [{ data: onTeams }, { data: managed }] = await Promise.all([
+    sb.from("team_agents").select("team_id").eq("agent_id", caller.agentId),
+    sb.from("teams").select("id").eq("manager_id", caller.agentId),
+  ]);
+  const allTeamIds = [
+    ...new Set([
+      ...((onTeams ?? []) as { team_id: string }[]).map((r) => r.team_id),
+      ...((managed ?? []) as { id: string }[]).map((r) => r.id),
+    ]),
+  ];
+  const teamIds = onlyTeamId ? allTeamIds.filter((t) => t === onlyTeamId) : allTeamIds;
+  if (!teamIds.length) return [];
+  const { data: members } = await sb.from("team_agents").select("agent_id").in("team_id", teamIds);
+  const ids = [
+    ...new Set(((members ?? []) as { agent_id: string }[]).map((r) => r.agent_id)),
+  ].filter((id) => id !== caller.agentId);
+  if (!ids.length) return [];
+  const { data: agents } = await sb
+    .from("agents")
+    .select("id, name, agent_extension")
+    .eq("client_id", caller.clientId)
+    .eq("is_active", true)
+    .not("agent_extension", "is", null)
+    .in("id", ids);
+  const rows = (agents ?? []) as { id: string; name: string; agent_extension: string }[];
+  if (!rows.length) return [];
+  const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
+  const [{ data: statuses }, { data: open }] = await Promise.all([
+    sb
+      .from("agent_status_log")
+      .select("agent_id, status")
+      .in(
+        "agent_id",
+        rows.map((r) => r.id),
+      )
+      .is("ended_at", null),
+    sb
+      .from("telephony_calls")
+      .select("agent_handle")
+      .eq("client_id", caller.clientId)
+      .is("ended_at", null)
+      .gt("started_at", since)
+      .in(
+        "agent_handle",
+        rows.map((r) => r.agent_extension),
+      ),
+  ]);
+  const statusOf = new Map(
+    ((statuses ?? []) as { agent_id: string; status: string }[]).map((s) => [s.agent_id, s.status]),
+  );
+  const busy = new Set(((open ?? []) as { agent_handle: string }[]).map((r) => r.agent_handle));
+  return rows
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      extension: r.agent_extension,
+      status: statusOf.get(r.id) ?? null,
+      onCall: busy.has(r.agent_extension),
+    }))
+    .sort((a, b) => Number(a.onCall) - Number(b.onCall) || a.name.localeCompare(b.name));
+}
+
+/** The team whose queue a run dials on (null: none found, or no per-team queues yet). */
+async function runTeamId(clientId: string, runId: string | undefined): Promise<string | null> {
+  const queue = runId ? predictiveSessions.get(runId)?.queue : undefined;
+  if (!queue) return null;
+  const { data, error } = await (getSupabaseAdmin() as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+    .from("teams")
+    .select("id")
+    .eq("client_id", clientId)
+    .eq("predictive_queue", queue)
+    .maybeSingle();
+  return error ? null : ((data as { id: string } | null)?.id ?? null);
+}
+
+export const listQueueTeammates = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; runId?: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    return teammatesOf(caller, await runTeamId(caller.clientId, data.runId));
+  });
+
+export const sendWaitingToTeammate = createServerFn({ method: "POST" })
+  .inputValidator((d: { accessToken: string; runId: string; agentId: string }) => d)
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    if (!owns(caller, `run:${data.runId}`)) throw new Error("This dialer run isn't yours.");
+    const session = predictiveSessions.get(data.runId);
+    const pd = getTelephonyProvider().predictive;
+    if (!session || !pd) throw new Error("Only works while Productive Dial is running.");
+    const mate = (await teammatesOf(caller, await runTeamId(caller.clientId, data.runId))).find(
+      (t) => t.id === data.agentId,
+    );
+    if (!mate) throw new Error("That person isn't on your team or has no calling extension.");
+    await pd.loginQueue(mate.extension, session.queue);
+    (session.guests ??= new Set()).add(mate.extension);
+    return { name: mate.name, extension: mate.extension };
   });
 
 // Ends one connected/ringing leg without touching the rest of the run — stopDialerRun above

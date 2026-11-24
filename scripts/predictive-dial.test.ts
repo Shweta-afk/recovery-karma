@@ -20,6 +20,7 @@ import {
   runsSharingAgents,
   sortOpenPredictive,
   stuckConnectedRows,
+  teamQueueForRun,
   SILENT_PREDICTIVE_SECONDS,
 } from "../src/lib/telephony/predictive-rules";
 
@@ -239,6 +240,22 @@ describe("one agent, one set of lines across runs (2026-11-21)", () => {
     expect(stuckConnectedRows(rows, "8603", 10, now)).toEqual([]);
     expect(stuckConnectedRows(rows, "8603", null, now)).toEqual([]);
     expect(stuckConnectedRows(rows, null, 60, now)).toEqual([]);
+  });
+
+  test("a borrower who picked up but has no agent yet is waiting in the queue", () => {
+    const out = sortOpenPredictive(
+      [
+        row({ id: "ringing" }), // SkyCRM sends nothing while it rings
+        row({ id: "waiting", vendor_callid: "c1", vendor_events: "Incomming Call" }),
+        row({ id: "taken", vendor_callid: "c2", vendor_events: "Answered", agent_handle: "8603" }),
+        row({ id: "other", request_extension: "8604", vendor_events: "Incomming Call" }),
+      ],
+      ["8603"],
+      now,
+    );
+    expect(out.queued.map((r) => r.id)).toEqual(["waiting"]);
+    expect(out.waiting).toBe(2); // ringing + waiting still hold this agent's lines
+    expect(out.busy).toEqual(["8603"]);
   });
 
   test("a new run replaces older runs sharing an agent in the same company", () => {
@@ -627,5 +644,50 @@ describe("browser bundle guard", () => {
     expect(body.length).toBeGreaterThan(100);
     const code = body.replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/getTelephonyProvider|endPredictiveSession|logoutSession|prov\./);
+  });
+});
+
+describe("one Productive Dial queue per team (2026-11-23)", () => {
+  const queues = new Map<string, string | null>([
+    ["rbl", "3101"],
+    ["ll", "3102"],
+    ["tvs", null],
+  ]);
+
+  test("a run uses the queue of the team owning its portfolios", () => {
+    expect(
+      teamQueueForRun(
+        [
+          { portfolioId: "p1", teamId: "rbl" },
+          { portfolioId: "p2", teamId: "rbl" },
+        ],
+        queues,
+      ),
+    ).toEqual({ ok: true, teamId: "rbl", queue: "3101" });
+  });
+
+  test("accounts of two teams in one run are refused, naming the teams", () => {
+    const r = teamQueueForRun(
+      [
+        { portfolioId: "p1", teamId: "rbl", teamName: "RBL Bank" },
+        { portfolioId: "p2", teamId: "ll", teamName: "liquiloan" },
+      ],
+      queues,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("RBL Bank, liquiloan");
+  });
+
+  test("a team without a queue, or no team, gets no queue (one line per agent)", () => {
+    expect(teamQueueForRun([{ portfolioId: "p", teamId: "tvs" }], queues)).toEqual({
+      ok: true,
+      teamId: "tvs",
+      queue: null,
+    });
+    expect(teamQueueForRun([{ portfolioId: "p", teamId: null }], queues)).toEqual({
+      ok: true,
+      teamId: null,
+      queue: null,
+    });
   });
 });

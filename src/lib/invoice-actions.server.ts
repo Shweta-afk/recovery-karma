@@ -34,6 +34,7 @@ import {
   type InvoiceRecord,
 } from "./invoice-math";
 import { loadPriceList } from "./price-list.server";
+import { takenBackByTopup } from "./topup-takebacks";
 import {
   checkCompanyDetails,
   companyDetailsFromRow,
@@ -247,7 +248,12 @@ export interface CompanyBillingDetails {
 
 export interface UninvoicedTopup {
   ledgerId: string;
+  /** What was recharged. */
   amount: number;
+  /** Of that, what SamvadX later took back (company_to_master; topup-takebacks.ts). */
+  takenBack: number;
+  /** amount − takenBack: what the invoice defaults to. Editable before issuing. */
+  suggestedAmount: number;
   note: string | null;
   createdAt: string;
 }
@@ -303,36 +309,52 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireSuperadmin(data.accessToken);
     const admin = db();
-    const [details, invoices, topups, priceList, agentsRes, clientRes] = await Promise.all([
-      admin.from("client_billing").select("*").eq("client_id", data.clientId).maybeSingle(),
-      admin
-        .from("invoices")
-        .select("*")
-        .eq("client_id", data.clientId)
-        .order("issue_date", { ascending: false })
-        .order("created_at", { ascending: false }),
-      admin
-        .from("profilex_wallet_ledger")
-        .select("id, amount, note, created_at")
-        .eq("scope", "master_to_company")
-        .eq("client_id", data.clientId)
-        .order("created_at", { ascending: false }),
-      loadPriceList(data.clientId),
-      admin
-        .from("agents")
-        .select("id", { count: "exact", head: true })
-        .eq("client_id", data.clientId)
-        .eq("role", "agent")
-        .neq("is_active", false),
-      admin
-        .from("clients")
-        .select("max_agents, company_name, subdomain")
-        .eq("id", data.clientId)
-        .maybeSingle(),
-    ]);
+    const [details, invoices, topups, priceList, agentsRes, clientRes, takeBacks] =
+      await Promise.all([
+        admin.from("client_billing").select("*").eq("client_id", data.clientId).maybeSingle(),
+        admin
+          .from("invoices")
+          .select("*")
+          .eq("client_id", data.clientId)
+          .order("issue_date", { ascending: false })
+          .order("created_at", { ascending: false }),
+        admin
+          .from("profilex_wallet_ledger")
+          .select("id, amount, note, created_at")
+          .eq("scope", "master_to_company")
+          .eq("client_id", data.clientId)
+          .order("created_at", { ascending: false }),
+        loadPriceList(data.clientId),
+        admin
+          .from("agents")
+          .select("id", { count: "exact", head: true })
+          .eq("client_id", data.clientId)
+          .eq("role", "agent")
+          .neq("is_active", false),
+        admin
+          .from("clients")
+          .select("max_agents, company_name, subdomain")
+          .eq("id", data.clientId)
+          .maybeSingle(),
+        admin
+          .from("profilex_wallet_ledger")
+          .select("id, amount, created_at")
+          .eq("scope", "company_to_master")
+          .eq("client_id", data.clientId),
+      ]);
     if (details.error) throw appError("SX-4103", "Could not load billing details.", details.error);
     if (invoices.error) throw appError("SX-4104", "Could not load invoices.", invoices.error);
     if (topups.error) throw appError("SX-4105", "Could not load top-ups.", topups.error);
+    if (takeBacks.error) throw appError("SX-4112", "Could not load take-backs.", takeBacks.error);
+    const toMove = (r: { id: string; amount: number | string; created_at: string }) => ({
+      id: r.id,
+      amount: Number(r.amount),
+      createdAt: r.created_at,
+    });
+    const takenBack = takenBackByTopup(
+      (topups.data ?? []).map(toMove),
+      ((takeBacks.data ?? []) as { id: string; amount: number; created_at: string }[]).map(toMove),
+    );
 
     const records = (invoices.data ?? []).map(toInvoiceRecord);
     // A cancelled invoice frees its top-up to be invoiced again (e.g. after fixing a GSTIN).
@@ -343,12 +365,17 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
     );
     const uninvoiced: UninvoicedTopup[] = (topups.data ?? [])
       .filter((t) => !invoiced.has(t.id))
-      .map((t) => ({
-        ledgerId: t.id,
-        amount: Number(t.amount),
-        note: t.note,
-        createdAt: t.created_at,
-      }));
+      .map((t) => {
+        const back = takenBack.get(t.id) ?? 0;
+        return {
+          ledgerId: t.id,
+          amount: Number(t.amount),
+          takenBack: back,
+          suggestedAmount: Math.max(0, Math.round((Number(t.amount) - back) * 100) / 100),
+          note: t.note,
+          createdAt: t.created_at,
+        };
+      });
 
     const d = details.data;
     const billing: CompanyBillingDetails = {
@@ -543,6 +570,9 @@ export const createInvoice = createServerFn({ method: "POST" })
           clientId: idSchema,
           kind: z.literal("insights_topup"),
           walletLedgerId: idSchema,
+          /** The amount to invoice, before GST — edited by the superadmin, e.g. after taking
+           *  part of the recharge back. Never more than the recharge. Defaults to the recharge. */
+          amount: amountSchema.optional(),
           /** When the wallet was recharged — prefilled from the top-up, editable. Defaults to the
            *  top-up's own date when left out. */
           chargedOn: chargedOnSchema.optional(),
@@ -622,7 +652,12 @@ export const createInvoice = createServerFn({ method: "POST" })
       if (!led || led.scope !== "master_to_company" || led.client_id !== data.clientId) {
         throw new Error("That top-up isn't an Insights allocation to this company");
       }
-      taxableAmount = Number(led.amount);
+      const recharged = Number(led.amount);
+      taxableAmount = data.amount === undefined ? recharged : Math.round(data.amount * 100) / 100;
+      if (!(taxableAmount > 0)) throw new Error("Enter an amount above ₹0 to invoice");
+      if (taxableAmount > recharged) {
+        throw new Error(`The invoice can't be more than the ₹${recharged.toFixed(2)} recharged`);
+      }
       walletLedgerId = led.id;
       const chargedOn = data.chargedOn ?? istDayKey(led.created_at);
       description = `Insights prepaid wallet top-up (recharged ${formatIsoDate(chargedOn)})`;

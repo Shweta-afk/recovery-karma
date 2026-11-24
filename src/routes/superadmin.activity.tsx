@@ -54,6 +54,7 @@ const ACTION_LABEL: Record<string, string> = {
   telephony_numbers_edit: "Numbers changed",
   master_topup: "Master wallet top-up",
   master_to_company: "Budget allocated",
+  company_to_master: "Budget taken back",
   actual_topup: "ProfileX top-up recorded",
   actual_charge: "Actual wallet correction",
   contract_uploaded: "Contract uploaded",
@@ -123,8 +124,13 @@ function SuperadminActivityPage() {
   const moneyTotal = useMemo(
     () =>
       rows
-        .filter((r) => r.kind === "money" && r.action === "master_to_company")
-        .reduce((sum, r) => sum + (r.amount ?? 0), 0),
+        .filter(
+          (r) =>
+            r.kind === "money" &&
+            (r.action === "master_to_company" || r.action === "company_to_master"),
+        )
+        // Net of take-backs.
+        .reduce((sum, r) => sum + (r.action === "company_to_master" ? -1 : 1) * (r.amount ?? 0), 0),
     [rows],
   );
 
@@ -155,7 +161,8 @@ function SuperadminActivityPage() {
             History
             {companyFilter !== "all" && rows.length > 0 && (
               <span className="text-xs font-normal text-muted-foreground">
-                · ₹{moneyTotal.toFixed(2)} allocated to this company in this period
+                · ₹{moneyTotal.toFixed(2)} allocated to this company in this period (less any taken
+                back)
               </span>
             )}
           </CardTitle>

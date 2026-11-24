@@ -154,6 +154,9 @@ export interface CallRecord {
   recordingUrl?: string;
   /** Captured keypresses (IVR / hybrid) */
   dtmf?: string[];
+  /** Vendor-routed: when we first saw that the borrower picked up and is waiting in the vendor's
+   *  queue for a free agent (SkyCRM's "Incomming Call" event with no agent yet). */
+  waitingSince?: number;
 }
 
 // ─── Normalized event stream ──────────────────────────────────────────────────

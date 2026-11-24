@@ -11,6 +11,7 @@ import {
   amountInWords,
   formatIsoDate,
   isBillOfSupply,
+  walletCreditOf,
   stateName,
   type InvoiceParty,
   type InvoiceRecord,
@@ -74,6 +75,7 @@ export function InvoiceDocument({
   // No supplier GSTIN → a Bill of Supply: no GST is charged, so no tax rows or reverse charge.
   const billOfSupply = isBillOfSupply(invoice);
   const chargedOn = invoice.lines.find((l) => l.chargedOn)?.chargedOn;
+  const walletCredit = walletCreditOf(invoice);
   const cancelled = invoice.status === "cancelled";
   // Printed on the company letterhead only when the invoice was ISSUED with it on (the setting
   // is snapshotted into `supplier`), so older invoices never borrow a later company's letterhead.
@@ -226,6 +228,22 @@ export function InvoiceDocument({
           <span>{formatRupees(invoice.total)}</span>
         </div>
       </div>
+
+      {/* Top-up invoices say outright what went into the wallet — GST is charged on top of it. */}
+      {!credit && walletCredit && (
+        <div className="relative mt-3 rounded border border-neutral-300 bg-neutral-50 px-3 py-2 print:bg-transparent">
+          <p className="flex justify-between font-semibold">
+            <span>Credited to your Insights wallet</span>
+            <span className="tabular-nums">{formatRupees(walletCredit.credited)}</span>
+          </p>
+          <p className="text-[11px] text-neutral-600">
+            {chargedOn ? `Added on ${formatIsoDate(chargedOn)}. ` : ""}
+            {walletCredit.gst > 0
+              ? `GST of ${formatRupees(walletCredit.gst)} is charged on top and is not added to the wallet, so ${formatRupees(invoice.total)} is payable for a ${formatRupees(walletCredit.credited)} wallet credit.`
+              : `${formatRupees(invoice.total)} is payable for this wallet credit.`}
+          </p>
+        </div>
+      )}
 
       <p className="mt-3 border-b border-neutral-300 pb-4">
         <span className="text-neutral-500">Amount in words:</span> {amountInWords(invoice.total)}

@@ -6,6 +6,7 @@ import {
   STALE_CALL_MINUTES,
   channelLimitMessage,
   evaluateCall,
+  callidFitsCall,
   differentNumber,
   normalisePhone,
   type TelephonySettingsRow,
@@ -29,6 +30,7 @@ import {
   pickPredictiveLedger,
   sortOpenPredictive,
   stuckConnectedRows,
+  teamQueueForRun,
   type OpenPredictiveRow,
 } from "./predictive-rules";
 
@@ -628,6 +630,7 @@ export async function openPredictiveCalls(
   busy: string[];
   silentRefIds: string[];
   endedConnectedRefIds: string[];
+  queuedRefIds: string[];
 }> {
   const since = new Date(Date.now() - STALE_CALL_MINUTES * 60_000).toISOString();
   const { data, error } = await db()
@@ -642,7 +645,14 @@ export async function openPredictiveCalls(
     .limit(500);
   if (error) {
     console.warn(`[telephony-guard] open predictive read failed: ${error.message}`);
-    return { ok: false, waiting: 0, busy: [], silentRefIds: [], endedConnectedRefIds: [] };
+    return {
+      ok: false,
+      waiting: 0,
+      busy: [],
+      silentRefIds: [],
+      endedConnectedRefIds: [],
+      queuedRefIds: [],
+    };
   }
   const all = (data ?? []) as (OpenPredictiveRow & { ref_id: string | null })[];
   const stuck = stuckConnectedRows(all, idle?.handle, idle?.phoneIdleSeconds, Date.now());
@@ -661,7 +671,7 @@ export async function openPredictiveCalls(
   }
   const stuckIds = new Set(stuck.map((r) => r.id));
   const rows = all.filter((r) => !stuckIds.has(r.id));
-  const { silent, waiting, busy } = sortOpenPredictive(rows, handles, Date.now());
+  const { silent, waiting, busy, queued } = sortOpenPredictive(rows, handles, Date.now());
   if (silent.length) {
     const { error: closeErr } = await db()
       .from("telephony_calls")
@@ -685,7 +695,83 @@ export async function openPredictiveCalls(
     busy,
     silentRefIds: silent.map((r) => r.ref_id ?? "").filter(Boolean),
     endedConnectedRefIds: stuck.map((r) => r.ref_id ?? "").filter(Boolean),
+    queuedRefIds: queued.map((r) => r.ref_id ?? "").filter(Boolean),
   };
+}
+
+/**
+ * The Productive Dial queue for a run over these portfolios: their team's own queue
+ * (teamQueueForRun). Before 20261123_team_predictive_queues.sql is applied (no column), the
+ * company's queue as before.
+ */
+export async function predictiveQueueForPortfolios(
+  clientId: string,
+  portfolioIds: string[],
+  companyQueue: string | null | undefined,
+): Promise<
+  { ok: true; teamId: string | null; queue: string | null } | { ok: false; message: string }
+> {
+  const ids = [...new Set(portfolioIds.filter(Boolean))];
+  if (!ids.length) return { ok: true, teamId: null, queue: null };
+  const { data: ports, error: pErr } = await db()
+    .from("portfolios")
+    .select("id, team_id")
+    .eq("client_id", clientId)
+    .in("id", ids);
+  if (pErr) throw new Error(`Could not read the portfolios (${pErr.message})`);
+  const rows = (ports ?? []) as { id: string; team_id: string | null }[];
+  const teamIds = [...new Set(rows.map((r) => r.team_id).filter((t): t is string => !!t))];
+  const { data: teams, error: tErr } = teamIds.length
+    ? await db()
+        .from("teams")
+        .select("id, name, predictive_queue")
+        .eq("client_id", clientId)
+        .in("id", teamIds)
+    : { data: [], error: null };
+  if (tErr) {
+    if (/predictive_queue/.test(tErr.message ?? ""))
+      return { ok: true, teamId: null, queue: companyQueue ?? null };
+    throw new Error(`Could not read the teams (${tErr.message})`);
+  }
+  const t = (teams ?? []) as { id: string; name: string; predictive_queue: string | null }[];
+  const nameOf = new Map(t.map((x) => [x.id, x.name]));
+  return teamQueueForRun(
+    rows.map((r) => ({
+      portfolioId: r.id,
+      teamId: r.team_id,
+      teamName: r.team_id ? nameOf.get(r.team_id) : null,
+    })),
+    new Map(t.map((x) => [x.id, x.predictive_queue])),
+  );
+}
+
+/**
+ * Borrowers (debtor ids) who already had an outbound call today, IST, from any dial mode. A new
+ * Productive Dial run leaves them out so pressing it again doesn't ring the same people (user,
+ * 2026-11-23). Read from the ledger, not debtors.last_contacted_at: that is set only when a
+ * disposition is saved, which an unanswered Productive Dial call never gets.
+ */
+export async function debtorsCalledToday(
+  clientId: string,
+  debtorIds: string[],
+): Promise<Set<string>> {
+  const ist = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+  const since = new Date(`${ist}T00:00:00+05:30`).toISOString();
+  const ids = [...new Set(debtorIds.filter(Boolean))];
+  const called = new Set<string>();
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await db()
+      .from("telephony_calls")
+      .select("debtor_id")
+      .eq("client_id", clientId)
+      .eq("direction", "outbound")
+      .gte("started_at", since)
+      .in("debtor_id", ids.slice(i, i + 150));
+    if (error) throw new Error(`Could not check today's calls (${error.message})`);
+    for (const r of (data ?? []) as { debtor_id: string | null }[])
+      if (r.debtor_id) called.add(r.debtor_id);
+  }
+  return called;
 }
 
 export async function updateLedger(id: string, patch: Record<string, unknown>): Promise<void> {
@@ -769,14 +855,18 @@ export async function ledgerForWebhook(args: {
       .like("remote_phone", `%${last10}`)
       .order("started_at", { ascending: false })
       .limit(5);
-    const hit = error ? null : pickPredictiveLedger((data ?? []) as LedgerRow[], args.remotePhone);
+    const fits = ((data ?? []) as LedgerRow[]).filter((r) =>
+      callidFitsCall(args.vendorCallId, r.started_at),
+    );
+    const hit = error ? null : pickPredictiveLedger(fits, args.remotePhone);
     if (hit) return hit;
   }
   if (args.agentHandle && last10.length === 10 && args.direction !== "inbound") {
     // This extension's own call to this number that never got a callid (2026-11-20). SkyCRM's
     // end record often arrives after the agent has ended that call and dialled the next one; it
     // belongs to the earlier call, ended or not.
-    const hit = await readLedger<LedgerRow | null>((cols) =>
+    // A repeat dial to the same number has several such rows: the callid's start time says which.
+    const rows = await readLedger<LedgerRow[]>((cols) =>
       db()
         .from("telephony_calls")
         .select(cols)
@@ -786,9 +876,9 @@ export async function ledgerForWebhook(args: {
         .gt("started_at", since)
         .like("remote_phone", `%${last10}`)
         .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+        .limit(5),
     );
+    const hit = (rows ?? []).find((r) => callidFitsCall(args.vendorCallId, r.started_at));
     if (hit) return hit;
   }
   if (args.agentHandle) {
@@ -807,7 +897,15 @@ export async function ledgerForWebhook(args: {
     // record for the agent's previous call used to land on the call in progress and end it on
     // screen (Babu Gurava Vaidya, ext 8616, 20 Nov: the 14:28 call's NO ANSWER ended the 14:30
     // call 13 s in, and it took that call's callid and recording).
-    if (hit && !differentNumber(hit.remote_phone, last10)) return hit;
+    // Nor when the event's callid started before this call was dialled (or well after): that is
+    // the agent's previous call's late event, which carries no number (23 Nov: 17 calls got the
+    // previous call's callid and recording this way).
+    if (
+      hit &&
+      !differentNumber(hit.remote_phone, last10) &&
+      callidFitsCall(args.vendorCallId, hit.started_at)
+    )
+      return hit;
   }
   return null;
 }

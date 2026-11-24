@@ -53,6 +53,30 @@ export function predictiveMode(args: {
 
 export const SIM_QUEUE = "9999";
 
+/**
+ * Which predictive queue a Productive Dial run uses: the queue of the TEAM owning the portfolios
+ * being dialled (user, 2026-11-23). SkyCRM gives an answered borrower to any free agent in the
+ * call's queue, so a queue shared by two teams mixes their lenders' borrowers. Accounts of two
+ * teams in one run are refused (pick one portfolio). No team, or a team with no queue, gives
+ * `queue: null` — the caller falls back to one line per agent (agent rung first, never handed on).
+ */
+export function teamQueueForRun(
+  portfolios: { portfolioId: string; teamId: string | null; teamName?: string | null }[],
+  teamQueues: Map<string, string | null>,
+): { ok: true; teamId: string | null; queue: string | null } | { ok: false; message: string } {
+  const teams = new Map<string, string>();
+  for (const p of portfolios) if (p.teamId) teams.set(p.teamId, p.teamName ?? "a team");
+  if (teams.size > 1) {
+    return {
+      ok: false,
+      message: `These accounts belong to different teams (${[...teams.values()].join(", ")}). Pick one portfolio before starting Productive Dial.`,
+    };
+  }
+  const teamId = [...teams.keys()][0] ?? null;
+  const queue = teamId ? (teamQueues.get(teamId) ?? null) : null;
+  return { ok: true, teamId, queue };
+}
+
 /** Agents on the run who are not on a predictive call right now (their extension isn't on any
  *  connected leg). A leg whose answer named no extension doesn't hold anyone. */
 export function freeAgentHandles(handles: string[], legs: CallRecord[]): string[] {
@@ -131,14 +155,16 @@ export interface OpenPredictiveRow {
  *   silent  — rows to close (never acknowledged by the vendor, older than SILENT_PREDICTIVE_SECONDS)
  *   waiting — rows requested for these agents still waiting for someone to take them
  *   busy    — these agents already on a predictive call (the answer named them)
+ *   queued  — borrowers who picked up and are waiting in the vendor's queue for these agents
  */
 export function sortOpenPredictive<T extends OpenPredictiveRow>(
   rows: T[],
   handles: string[],
   nowMs: number,
-): { silent: T[]; waiting: number; busy: string[] } {
+): { silent: T[]; waiting: number; busy: string[]; queued: T[] } {
   const mine = new Set(handles);
   const silent: T[] = [];
+  const queued: T[] = [];
   const busy = new Set<string>();
   let waiting = 0;
   for (const r of rows) {
@@ -152,9 +178,14 @@ export function sortOpenPredictive<T extends OpenPredictiveRow>(
       if (mine.has(r.agent_handle)) busy.add(r.agent_handle);
       continue;
     }
-    if (r.request_extension && mine.has(r.request_extension)) waiting++;
+    if (r.request_extension && mine.has(r.request_extension)) {
+      waiting++;
+      // SkyCRM sends nothing while a borrower's phone rings; any event before an agent is named
+      // means they picked up and are waiting in the queue for a free agent.
+      if (heard) queued.push(r);
+    }
   }
-  return { silent, waiting, busy: [...busy] };
+  return { silent, waiting, busy: [...busy], queued };
 }
 
 /** How long the agent's browser phone must have been idle, and how long ago the answer must

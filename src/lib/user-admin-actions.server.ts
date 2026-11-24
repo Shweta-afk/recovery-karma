@@ -403,9 +403,23 @@ export const deactivateUser = createServerFn({ method: "POST" })
     const ext = target.agent_extension?.trim() || null;
     if (ext && getTelephonyProvider().name === "skycrm") {
       const settings = await loadTelephonySettings(caller.clientId).catch(() => null);
-      const queues = [settings?.inbound_queue, settings?.predictive_queue].filter(
-        (q): q is string => !!q,
-      );
+      // Every team's Productive Dial queue too (one per team since 2026-11-23).
+      const { data: teamQueues } = await (db as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+        .from("teams")
+        .select("predictive_queue")
+        .eq("client_id", caller.clientId)
+        .not("predictive_queue", "is", null);
+      const queues = [
+        ...new Set(
+          [
+            settings?.inbound_queue,
+            settings?.predictive_queue,
+            ...((teamQueues ?? []) as { predictive_queue: string | null }[]).map(
+              (t) => t.predictive_queue,
+            ),
+          ].filter((q): q is string => !!q),
+        ),
+      ];
       for (const q of queues) {
         await deregisterQueue(ext, q).catch((err: unknown) =>
           console.warn(`[deactivateUser] queue ${q} logout for ${ext} failed:`, err),

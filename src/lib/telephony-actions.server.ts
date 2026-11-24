@@ -105,7 +105,119 @@ export interface CompanyTelephony {
       lastLoginError: string | null;
     } | null;
   }>;
+  /** Teams and their own Productive Dial queue (one per team since 2026-11-23). Null queue = the
+   *  team's Productive Dial rings the agent first, one line at a time. Empty before the migration. */
+  teams: Array<{ id: string; name: string; agents: number; queue: string | null }>;
 }
+
+/** Teams of a company with their Productive Dial queue and active agent count. */
+async function loadTeamQueues(clientId: string): Promise<CompanyTelephony["teams"]> {
+  const { data, error } = await db()
+    .from("teams")
+    .select("id, name, predictive_queue")
+    .eq("client_id", clientId)
+    .order("name");
+  if (error) return []; // column missing: 20261123_team_predictive_queues.sql not applied yet
+  const teams = (data ?? []) as { id: string; name: string; predictive_queue: string | null }[];
+  if (!teams.length) return [];
+  const { data: members } = await db()
+    .from("team_agents")
+    .select("team_id, agents!inner(is_active, role)")
+    .in(
+      "team_id",
+      teams.map((t) => t.id),
+    );
+  const count = new Map<string, number>();
+  for (const m of (members ?? []) as {
+    team_id: string;
+    agents: { is_active: boolean | null; role: string } | null;
+  }[]) {
+    if (m.agents?.is_active === false || m.agents?.role !== "agent") continue;
+    count.set(m.team_id, (count.get(m.team_id) ?? 0) + 1);
+  }
+  return teams.map((t) => ({
+    id: t.id,
+    name: t.name,
+    agents: count.get(t.id) ?? 0,
+    queue: t.predictive_queue,
+  }));
+}
+
+/**
+ * Give a team its own Productive Dial queue, or take it away (null). Superadmin only. A queue
+ * belongs to one team platform-wide (unique index) and never to another company's company-level
+ * queue: two teams on one queue would mix their lenders' borrowers.
+ */
+export const setTeamPredictiveQueue = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        teamId: idSchema,
+        queue: z.string().trim().max(10).nullable(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireSuperadmin(data.accessToken);
+    const parsed = parsePredictiveQueue(data.queue);
+    if (!parsed.ok) throw new Error(parsed.message);
+    const queue = parsed.queue;
+    if (queue) {
+      const [{ data: otherTeam }, { data: otherCompany }] = await Promise.all([
+        db()
+          .from("teams")
+          .select("id, name, client_id")
+          .eq("predictive_queue", queue)
+          .neq("id", data.teamId)
+          .limit(1),
+        db()
+          .from("telephony_settings")
+          .select("client_id")
+          .eq("predictive_queue", queue)
+          .neq("client_id", data.clientId)
+          .limit(1),
+      ]);
+      const t = (otherTeam ?? [])[0] as { name: string; client_id: string } | undefined;
+      if (t) {
+        throw new Error(
+          t.client_id === data.clientId
+            ? `Queue ${queue} already belongs to the team "${t.name}". Each team needs its own.`
+            : `Queue ${queue} is used by another company.`,
+        );
+      }
+      if ((otherCompany ?? []).length)
+        throw new Error(`Queue ${queue} is used by another company.`);
+    }
+    const { data: team, error } = await db()
+      .from("teams")
+      .update({ predictive_queue: queue })
+      .eq("id", data.teamId)
+      .eq("client_id", data.clientId)
+      .select("name")
+      .maybeSingle();
+    if (error) {
+      if (/predictive_queue/.test(error.message ?? "") && /column/.test(error.message ?? ""))
+        throw new Error(
+          "Team queues need migrations/20261123_team_predictive_queues.sql applied first.",
+        );
+      if (error.code === "23505")
+        throw new Error(`Queue ${queue} already belongs to another team.`);
+      throw new Error(`Could not save the team's queue (${error.message})`);
+    }
+    if (!team) throw new Error("That team isn't in this company.");
+    await logSuperadminActivity({
+      superadminId: caller.superadminId,
+      action: "team_predictive_queue_set",
+      clientId: data.clientId,
+      summary: queue
+        ? `Productive Dial queue ${queue} given to team "${(team as { name: string }).name}"`
+        : `Productive Dial queue removed from team "${(team as { name: string }).name}"`,
+      detail: { teamId: data.teamId, queue },
+    });
+    return { queue };
+  });
 
 export const getCompanyTelephony = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
@@ -157,7 +269,9 @@ export const getCompanyTelephony = createServerFn({ method: "POST" })
       ]),
     );
     const me = state.companies.find((c) => c.clientId === data.clientId);
+    const teams = await loadTeamQueues(data.clientId);
     return {
+      teams,
       provider: getTelephonyProvider().name,
       settings: settings ? { ...settings, channel_reserved: me?.reserved ?? 0 } : null,
       trunk: state.trunk,

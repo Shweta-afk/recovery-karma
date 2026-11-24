@@ -96,12 +96,15 @@ export function walletLabel(scope: string, view: "company" | "manager"): WalletM
       ? {
           master_to_company: ["Wallet top-up from SamvadX", 1],
           company_to_manager: ["Given to a manager's wallet", -1],
+          company_to_master: ["Taken back by SamvadX", -1],
+          manager_to_company: ["Taken back from a manager's wallet", 1],
           admin_charge: ["Admin lookups charged", -1],
           company_refund: ["Refund to company wallet", 1],
           manager_refund: ["Refund to a manager's wallet", 1],
         }
       : {
           company_to_manager: ["Added to your wallet by an admin", 1],
+          manager_to_company: ["Taken back by an admin", -1],
           manager_refund: ["Refund to your wallet", 1],
         };
   const hit = m[scope];

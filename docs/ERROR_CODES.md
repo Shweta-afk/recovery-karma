@@ -54,6 +54,8 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 | SX-1018 | Could not send the request.                    | `insight-request-store.ts`: inserting an Insights request failed (browser-side; detail in browser console).                                           |
 | SX-1019 | Could not update the request.                  | `insight-request-store.ts`: updating an Insights request failed (browser-side).                                                                       |
 | SX-1020 | Could not load the charges report.             | `getInsightsChargesReport` (`insights-charges.server.ts`): a read of debtor_traces, insights_manual_lookups, corrections or the wallet ledger failed. |
+| SX-1021 | Could not load that wallet.                    | `takeBackFromManager` (`profilex-actions.server.ts`): reading the person's `profilex_wallets` row failed.                                             |
+| SX-1022 | Could not take the money back.                 | `profilex_manager_reclaim` RPC failed. If the log names the function, `migrations/20261121_wallet_take_back.sql` is not applied.                      |
 | SX-1901 | This page is not available right now.          | `SUPABASE_URL` / `SUPABASE_ANON_KEY` missing on the server (caller-scoped read).                                                                      |
 | SX-1902 | Insights is not set up yet.                    | `PROFILEX_CLIENT_HASH_ID` / `PROFILEX_SECRET_KEY` / `PROFILEX_ACCESS_KEY` missing on Railway.                                                         |
 | SX-1903 | "<service>" is not available right now.        | ProfileX said "You Dont Have UAT Access" — service not enabled on our Neokred account, or wrong client hash id. Not charged.                          |
@@ -79,100 +81,101 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 
 ### Calling and call analysis (3xxx)
 
-| Code    | User sees                                 | What it really means                                                                                      |
-| ------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| SX-3001 | Calling is not set up yet.                | `SKYCRM_SECRET` missing on Railway. `skycrm-provider.ts`                                                  |
-| SX-3002 | Calling is not set up yet.                | `TELEPHONY_PROVIDER` on Railway is not a known value (e.g. stale `tata`/`exotel`). `telephony/index.ts`   |
-| SX-3101 | Calling is not available right now.       | SkyCRM rejected our token (status 401).                                                                   |
-| SX-3102 | Could not reach the calling service.      | Network error reaching SkyCRM.                                                                            |
-| SX-3103 | The calling service had a problem.        | SkyCRM returned non-JSON (usually their 500 HTML page).                                                   |
-| SX-3104 | The call could not be placed.             | SkyCRM returned status ≥ 300; their message is in the log.                                                |
-| SX-3105 | SMS is not available yet.                 | SkyCRM has no SMS endpoint.                                                                               |
-| SX-3106 | Your phone (extension …) isn't connected. | SkyCRM's `dial_response` says the agent's extension is Unavailable (softphone not registered / VPN down). |
-| SX-3201 | Could not transcribe this recording.      | Groq Whisper returned an error (status + body in the log; 400 was every WAV sent as .mp3 until 2026-11-20). `call-sentiment-actions.server.ts`                                        |
-| SX-3202 | Could not analyse this call.              | Gemini returned an error.                                                                                 |
-| SX-3203 | Could not analyse this call.              | Gemini returned an empty answer.                                                                          |
-| SX-3204 | Call analysis is busy right now.          | Gemini kept failing (rate limit) after all retries.                                                       |
-| SX-3205 | AI transcription isn't set up yet.        | `GROQ_API_KEY` is not set on Railway. `call-sentiment-actions.server.ts`                                    |
+| Code    | User sees                                 | What it really means                                                                                                                           |
+| ------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| SX-3001 | Calling is not set up yet.                | `SKYCRM_SECRET` missing on Railway. `skycrm-provider.ts`                                                                                       |
+| SX-3002 | Calling is not set up yet.                | `TELEPHONY_PROVIDER` on Railway is not a known value (e.g. stale `tata`/`exotel`). `telephony/index.ts`                                        |
+| SX-3101 | Calling is not available right now.       | SkyCRM rejected our token (status 401).                                                                                                        |
+| SX-3102 | Could not reach the calling service.      | Network error reaching SkyCRM.                                                                                                                 |
+| SX-3103 | The calling service had a problem.        | SkyCRM returned non-JSON (usually their 500 HTML page).                                                                                        |
+| SX-3104 | The call could not be placed.             | SkyCRM returned status ≥ 300; their message is in the log.                                                                                     |
+| SX-3105 | SMS is not available yet.                 | SkyCRM has no SMS endpoint.                                                                                                                    |
+| SX-3106 | Your phone (extension …) isn't connected. | SkyCRM's `dial_response` says the agent's extension is Unavailable (softphone not registered / VPN down).                                      |
+| SX-3201 | Could not transcribe this recording.      | Groq Whisper returned an error (status + body in the log; 400 was every WAV sent as .mp3 until 2026-11-20). `call-sentiment-actions.server.ts` |
+| SX-3202 | Could not analyse this call.              | Gemini returned an error.                                                                                                                      |
+| SX-3203 | Could not analyse this call.              | Gemini returned an empty answer.                                                                                                               |
+| SX-3204 | Call analysis is busy right now.          | Gemini kept failing (rate limit) after all retries.                                                                                            |
+| SX-3205 | AI transcription isn't set up yet.        | `GROQ_API_KEY` is not set on Railway. `call-sentiment-actions.server.ts`                                                                       |
 
 ### Invoices, billing, contracts (4xxx)
 
 All are database errors on the action named; the database message is in the log.
 
-| Code    | User sees                                                 | File                        |
-| ------- | --------------------------------------------------------- | --------------------------- |
-| SX-4101 | Could not load billing details.                           | `invoice-actions.server.ts` |
-| SX-4102 | Could not save billing details.                           | `invoice-actions.server.ts` |
-| SX-4103 | Could not load billing details.                           | `invoice-actions.server.ts` |
-| SX-4104 | Could not load invoices.                                  | `invoice-actions.server.ts` |
-| SX-4105 | Could not load top-ups.                                   | `invoice-actions.server.ts` |
-| SX-4106 | Could not save billing details.                           | `invoice-actions.server.ts` |
-| SX-4107 | Could not load the company's billing details.             | `invoice-actions.server.ts` |
-| SX-4108 | Could not load that top-up.                               | `invoice-actions.server.ts` |
-| SX-4109 | Could not create the invoice.                             | `invoice-actions.server.ts` |
-| SX-4110 | Could not update the invoice.                             | `invoice-actions.server.ts` |
-| SX-4111 | Could not load invoices.                                  | `invoice-actions.server.ts` |
-| SX-4201 | Could not save the price list.                            | `billing-actions.server.ts` |
-| SX-4202 | Could not load payments.                                  | `billing-actions.server.ts` |
-| SX-4203 | Could not load credit notes.                              | `billing-actions.server.ts` |
-| SX-4204 | Could not update the invoice status.                      | `billing-actions.server.ts` |
-| SX-4205 | Could not record the payment.                             | `billing-actions.server.ts` |
-| SX-4206 | Could not remove the payment.                             | `billing-actions.server.ts` |
-| SX-4207 | Could not issue the credit note.                          | `billing-actions.server.ts` |
-| SX-4301 | Could not create the contracts storage bucket.            | `contracts.server.ts`       |
-| SX-4302 | Could not load company admins.                            | `contracts.server.ts`       |
-| SX-4303 | Could not load contracts.                                 | `contracts.server.ts`       |
-| SX-4304 | Could not start the upload.                               | `contracts.server.ts`       |
-| SX-4305 | Could not save the contract.                              | `contracts.server.ts`       |
-| SX-4306 | Could not publish the change.                             | `contracts.server.ts`       |
-| SX-4307 | Could not withdraw the change.                            | `contracts.server.ts`       |
-| SX-4308 | Could not load contracts.                                 | `contracts.server.ts`       |
-| SX-4309 | Could not record your acceptance.                         | `contracts.server.ts`       |
-| SX-4310 | Could not open the file.                                  | `contracts.server.ts`       |
-| SX-4311 | Could not save the draft.                                 | `contracts.server.ts`       |
-| SX-4312 | Could not publish the draft.                              | `contracts.server.ts`       |
-| SX-4313 | Could not discard the draft.                              | `contracts.server.ts`       |
-| SX-4314 | Could not save the template.                              | `contracts.server.ts`       |
-| SX-4315 | Could not save the document.                              | `contracts.server.ts`       |
-| SX-4316 | Could not publish the agreement.                          | `contracts.server.ts`       |
-| SX-4317 | Could not record the send.                                | `contracts.server.ts`       |
-| SX-4318 | Could not record your signature.                          | `contracts.server.ts`       |
-| SX-4401 | Could not load invoices.                                  | `company-billing.server.ts` |
-| SX-4501 | This is not available right now. Contact SamvadX support. | `data-purge.server.ts`      |
-| SX-4502 | Could not check the portfolio.                            | `data-purge.server.ts`      |
-| SX-4503 | Could not load the certificate request.                   | `data-purge.server.ts`      |
-| SX-4504 | Could not send the request.                               | `data-purge.server.ts`      |
-| SX-4505 | Could not load the requests.                              | `data-purge.server.ts`      |
-| SX-4506 | Could not load the portfolio.                             | `data-purge.server.ts`      |
-| SX-4507 | Could not count the portfolio's accounts.                 | `data-purge.server.ts`      |
-| SX-4508 | Could not load the request.                               | `data-purge.server.ts`      |
-| SX-4509 | Could not issue the certificate.                          | `data-purge.server.ts`      |
-| SX-4510 | Could not decline the request.                            | `data-purge.server.ts`      |
+| Code    | User sees                                                 | File                                                                                               |
+| ------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| SX-4101 | Could not load billing details.                           | `invoice-actions.server.ts`                                                                        |
+| SX-4102 | Could not save billing details.                           | `invoice-actions.server.ts`                                                                        |
+| SX-4103 | Could not load billing details.                           | `invoice-actions.server.ts`                                                                        |
+| SX-4104 | Could not load invoices.                                  | `invoice-actions.server.ts`                                                                        |
+| SX-4105 | Could not load top-ups.                                   | `invoice-actions.server.ts`                                                                        |
+| SX-4112 | Could not load take-backs.                                | `invoice-actions.server.ts` (`getCompanyBilling`): reading `company_to_master` ledger rows failed. |
+| SX-4106 | Could not save billing details.                           | `invoice-actions.server.ts`                                                                        |
+| SX-4107 | Could not load the company's billing details.             | `invoice-actions.server.ts`                                                                        |
+| SX-4108 | Could not load that top-up.                               | `invoice-actions.server.ts`                                                                        |
+| SX-4109 | Could not create the invoice.                             | `invoice-actions.server.ts`                                                                        |
+| SX-4110 | Could not update the invoice.                             | `invoice-actions.server.ts`                                                                        |
+| SX-4111 | Could not load invoices.                                  | `invoice-actions.server.ts`                                                                        |
+| SX-4201 | Could not save the price list.                            | `billing-actions.server.ts`                                                                        |
+| SX-4202 | Could not load payments.                                  | `billing-actions.server.ts`                                                                        |
+| SX-4203 | Could not load credit notes.                              | `billing-actions.server.ts`                                                                        |
+| SX-4204 | Could not update the invoice status.                      | `billing-actions.server.ts`                                                                        |
+| SX-4205 | Could not record the payment.                             | `billing-actions.server.ts`                                                                        |
+| SX-4206 | Could not remove the payment.                             | `billing-actions.server.ts`                                                                        |
+| SX-4207 | Could not issue the credit note.                          | `billing-actions.server.ts`                                                                        |
+| SX-4301 | Could not create the contracts storage bucket.            | `contracts.server.ts`                                                                              |
+| SX-4302 | Could not load company admins.                            | `contracts.server.ts`                                                                              |
+| SX-4303 | Could not load contracts.                                 | `contracts.server.ts`                                                                              |
+| SX-4304 | Could not start the upload.                               | `contracts.server.ts`                                                                              |
+| SX-4305 | Could not save the contract.                              | `contracts.server.ts`                                                                              |
+| SX-4306 | Could not publish the change.                             | `contracts.server.ts`                                                                              |
+| SX-4307 | Could not withdraw the change.                            | `contracts.server.ts`                                                                              |
+| SX-4308 | Could not load contracts.                                 | `contracts.server.ts`                                                                              |
+| SX-4309 | Could not record your acceptance.                         | `contracts.server.ts`                                                                              |
+| SX-4310 | Could not open the file.                                  | `contracts.server.ts`                                                                              |
+| SX-4311 | Could not save the draft.                                 | `contracts.server.ts`                                                                              |
+| SX-4312 | Could not publish the draft.                              | `contracts.server.ts`                                                                              |
+| SX-4313 | Could not discard the draft.                              | `contracts.server.ts`                                                                              |
+| SX-4314 | Could not save the template.                              | `contracts.server.ts`                                                                              |
+| SX-4315 | Could not save the document.                              | `contracts.server.ts`                                                                              |
+| SX-4316 | Could not publish the agreement.                          | `contracts.server.ts`                                                                              |
+| SX-4317 | Could not record the send.                                | `contracts.server.ts`                                                                              |
+| SX-4318 | Could not record your signature.                          | `contracts.server.ts`                                                                              |
+| SX-4401 | Could not load invoices.                                  | `company-billing.server.ts`                                                                        |
+| SX-4501 | This is not available right now. Contact SamvadX support. | `data-purge.server.ts`                                                                             |
+| SX-4502 | Could not check the portfolio.                            | `data-purge.server.ts`                                                                             |
+| SX-4503 | Could not load the certificate request.                   | `data-purge.server.ts`                                                                             |
+| SX-4504 | Could not send the request.                               | `data-purge.server.ts`                                                                             |
+| SX-4505 | Could not load the requests.                              | `data-purge.server.ts`                                                                             |
+| SX-4506 | Could not load the portfolio.                             | `data-purge.server.ts`                                                                             |
+| SX-4507 | Could not count the portfolio's accounts.                 | `data-purge.server.ts`                                                                             |
+| SX-4508 | Could not load the request.                               | `data-purge.server.ts`                                                                             |
+| SX-4509 | Could not issue the certificate.                          | `data-purge.server.ts`                                                                             |
+| SX-4510 | Could not decline the request.                            | `data-purge.server.ts`                                                                             |
 
 ### Company, users, sign-up (5xxx)
 
-| Code    | User sees                          | What it really means                                                           |
-| ------- | ---------------------------------- | ------------------------------------------------------------------------------ |
-| SX-5101 | Could not load company details.    | Database error reading `client_billing`. `company-details.server.ts`           |
-| SX-5102 | Could not save company details.    | Database error writing `client_billing`.                                       |
-| SX-5201 | Could not verify seat limits.      | Reading the company's seat caps failed. `user-admin-actions.server.ts`         |
-| SX-5202 | Could not verify seat limits.      | Counting existing users failed.                                                |
-| SX-5203 | Could not create the login.        | Supabase Auth `createUser` failed (not "already registered").                  |
-| SX-5204 | Could not create the user.         | Inserting the `agents` row failed; the new login was rolled back.              |
-| SX-5205 | Could not check that manager.      | Reading the chosen manager failed.                                             |
-| SX-5206 | Could not load the manager's team. | Reading `teams` failed.                                                        |
-| SX-5207 | Could not create the team.         | Inserting into `teams` failed.                                                 |
-| SX-5208 | Could not add them to the team.    | Upsert into `team_agents` failed.                                              |
-| SX-5209 | Could not reset the password.      | Supabase Auth `updateUserById` failed.                                         |
-| SX-5210 | Could not create the login.        | Password reset for a user with no login: `createUser` failed.                  |
-| SX-5211 | Could not link the login.          | Writing `auth_user_id` to `agents` failed; the new login was rolled back.      |
+| Code    | User sees                           | What it really means                                                            |
+| ------- | ----------------------------------- | ------------------------------------------------------------------------------- |
+| SX-5101 | Could not load company details.     | Database error reading `client_billing`. `company-details.server.ts`            |
+| SX-5102 | Could not save company details.     | Database error writing `client_billing`.                                        |
+| SX-5201 | Could not verify seat limits.       | Reading the company's seat caps failed. `user-admin-actions.server.ts`          |
+| SX-5202 | Could not verify seat limits.       | Counting existing users failed.                                                 |
+| SX-5203 | Could not create the login.         | Supabase Auth `createUser` failed (not "already registered").                   |
+| SX-5204 | Could not create the user.          | Inserting the `agents` row failed; the new login was rolled back.               |
+| SX-5205 | Could not check that manager.       | Reading the chosen manager failed.                                              |
+| SX-5206 | Could not load the manager's team.  | Reading `teams` failed.                                                         |
+| SX-5207 | Could not create the team.          | Inserting into `teams` failed.                                                  |
+| SX-5208 | Could not add them to the team.     | Upsert into `team_agents` failed.                                               |
+| SX-5209 | Could not reset the password.       | Supabase Auth `updateUserById` failed.                                          |
+| SX-5210 | Could not create the login.         | Password reset for a user with no login: `createUser` failed.                   |
+| SX-5211 | Could not link the login.           | Writing `auth_user_id` to `agents` failed; the new login was rolled back.       |
 | SX-5220 | Could not hand over the portfolios. | Deactivating a manager: moving their open portfolios to the new manager failed. |
-| SX-5221 | Could not hand over the teams.     | Deactivating a manager: moving their teams to the new manager failed.          |
-| SX-5222 | Could not deactivate the user.     | Updating the `agents` row (inactive, extension and phone cleared) failed.      |
-| SX-5223 | Could not reactivate the user.     | Setting `agents.is_active` back to true failed.                                |
-| SX-5301 | Could not set your password.       | Sign-up: Supabase Auth `updateUserById` failed. `setup-actions.server.ts`      |
-| SX-5302 | Could not create the company.      | Sign-up: inserting into `clients` failed.                                      |
-| SX-5303 | Could not create your account.     | Sign-up: inserting the admin `agents` row failed; the company was rolled back. |
+| SX-5221 | Could not hand over the teams.      | Deactivating a manager: moving their teams to the new manager failed.           |
+| SX-5222 | Could not deactivate the user.      | Updating the `agents` row (inactive, extension and phone cleared) failed.       |
+| SX-5223 | Could not reactivate the user.      | Setting `agents.is_active` back to true failed.                                 |
+| SX-5301 | Could not set your password.        | Sign-up: Supabase Auth `updateUserById` failed. `setup-actions.server.ts`       |
+| SX-5302 | Could not create the company.       | Sign-up: inserting into `clients` failed.                                       |
+| SX-5303 | Could not create your account.      | Sign-up: inserting the admin `agents` row failed; the company was rolled back.  |
 
 ### Archive (6xxx)
 

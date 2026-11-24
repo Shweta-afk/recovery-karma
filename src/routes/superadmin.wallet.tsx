@@ -1,18 +1,37 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageGuide } from "@/components/superadmin/help";
 import { useEffect, useState } from "react";
-import { Wallet, PlusCircle, Send, Loader2, AlertTriangle, Landmark } from "lucide-react";
+import {
+  Wallet,
+  PlusCircle,
+  MinusCircle,
+  Send,
+  Loader2,
+  AlertTriangle,
+  Landmark,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { supabase } from "@/lib/supabase";
 import {
   getMasterWallet,
   topUpMasterWallet,
   allocateToCompany,
+  takeBackFromCompany,
   getCompanies,
   getActualWallet,
   topUpActualWallet,
@@ -37,6 +56,8 @@ function SuperadminWalletPage() {
   const [toppingUp, setToppingUp] = useState(false);
   const [allocDrafts, setAllocDrafts] = useState<Record<string, string>>({});
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
+  const [takeBack, setTakeBack] = useState<{ company: CompanyRow; amount: number } | null>(null);
+  const [takeBackNote, setTakeBackNote] = useState("");
 
   // The actual wallet: the true remaining balance with ProfileX/Neokred (see
   // 20260910_profilex_actual_wallet.sql). Kept in separate state from the master wallet above —
@@ -183,8 +204,89 @@ function SuperadminWalletPage() {
     }
   };
 
+  const askTakeBack = (company: CompanyRow, all = false) => {
+    const amount = all ? company.walletBalance : Number(allocDrafts[company.id]);
+    if (!(amount > 0)) {
+      toast.error("Enter a positive amount to take back");
+      return;
+    }
+    if (amount > company.walletBalance + 1e-9) {
+      toast.error(
+        `${company.companyName} only has ₹${company.walletBalance.toFixed(2)} not yet given to managers`,
+      );
+      return;
+    }
+    setTakeBackNote("");
+    setTakeBack({ company, amount: Math.round(amount * 100) / 100 });
+  };
+
+  const confirmTakeBack = async () => {
+    if (!takeBack) return;
+    const { company, amount } = takeBack;
+    setTakeBack(null);
+    setAllocatingId(company.id);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error("Your session expired — sign in again");
+      const res = await takeBackFromCompany({
+        data: {
+          accessToken: session.access_token,
+          clientId: company.id,
+          amount,
+          note: takeBackNote.trim() || undefined,
+        },
+      });
+      setCompanies((prev) =>
+        prev.map((c) => (c.id === company.id ? { ...c, walletBalance: res.companyBalance } : c)),
+      );
+      setMasterBalance((prev) => prev + amount);
+      setAllocDrafts((prev) => {
+        const next = { ...prev };
+        delete next[company.id];
+        return next;
+      });
+      toast.success(
+        `Took ₹${amount.toFixed(2)} back from ${company.companyName} into the master wallet`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not take the money back");
+    } finally {
+      setAllocatingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      <AlertDialog open={!!takeBack} onOpenChange={(open) => !open && setTakeBack(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Take ₹{takeBack?.amount.toFixed(2)} back from {takeBack?.company.companyName}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              It moves from the company's Insights budget back into the master wallet. Their budget
+              goes from ₹{takeBack?.company.walletBalance.toFixed(2)} to ₹
+              {((takeBack?.company.walletBalance ?? 0) - (takeBack?.amount ?? 0)).toFixed(2)}. Money
+              already in their managers' wallets isn't touched — the company admin takes that back
+              first. Any invoice already issued for this money stays as it is; issue a credit note
+              if one is owed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            placeholder="Reason (optional)"
+            value={takeBackNote}
+            maxLength={500}
+            onChange={(e) => setTakeBackNote(e.target.value)}
+            className="text-xs"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmTakeBack}>Take back</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div>
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Insights Wallet</h1>
@@ -376,6 +478,8 @@ function SuperadminWalletPage() {
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             Each company's admin can then top up their own managers, but never past this budget.
+            Take back returns money the company hasn't yet given to its managers to the master
+            wallet.
           </p>
         </CardHeader>
         <CardContent className="pt-4">
@@ -403,8 +507,8 @@ function SuperadminWalletPage() {
                         Budget: ₹{c.walletBalance.toFixed(2)}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-xs text-muted-foreground">+ ₹</span>
+                    <div className="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
+                      <span className="text-xs text-muted-foreground">₹</span>
                       <Input
                         type="number"
                         min={0}
@@ -429,6 +533,16 @@ function SuperadminWalletPage() {
                           <Send className="h-3 w-3" />
                         )}
                         Allocate
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 gap-1 text-xs flex-shrink-0"
+                        disabled={!canAllocate || c.walletBalance <= 0 || allocatingId === c.id}
+                        onClick={() => askTakeBack(c)}
+                      >
+                        <MinusCircle className="h-3 w-3" />
+                        Take back
                       </Button>
                     </div>
                   </div>

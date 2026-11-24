@@ -847,6 +847,53 @@ export const allocateToCompany = createServerFn({ method: "POST" })
     return { companyBalance: Number(newBalance) };
   });
 
+/** Takes money back from a company's Insights wallet into the master wallet — the reverse of
+ *  allocateToCompany (migrations/20261121_wallet_take_back.sql). Only what the company has NOT
+ *  yet handed to its managers can be taken; money already in a manager's wallet must first be
+ *  taken back by the company admin. Never below ₹0. Does not touch any invoice already issued
+ *  for the allocation — issue a credit note for that if one is owed. */
+export const takeBackFromCompany = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        clientId: idSchema,
+        amount: amountSchema,
+        note: noteSchema.optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await verifySuperadminCaller(data.accessToken);
+    if (!caller) throw new Error("Not authenticated as superadmin");
+    if (!(data.amount > 0)) throw new Error("Enter a positive amount to take back");
+    const admin = db();
+    const rpc = admin.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: unknown; error: { message: string } | null }>;
+    const { data: newBalance, error } = await rpc.call(admin, "profilex_company_reclaim", {
+      p_client_id: data.clientId,
+      p_amount: data.amount,
+      p_superadmin_id: caller.superadminId,
+      p_note: data.note?.trim() || null,
+    });
+    if (error) {
+      if (/insufficient/i.test(error.message)) {
+        const { data: w } = await admin
+          .from("profilex_company_wallets")
+          .select("balance")
+          .eq("client_id", data.clientId)
+          .maybeSingle();
+        throw new Error(
+          `That company's wallet only has ₹${Number(w?.balance ?? 0).toFixed(2)} not yet given to managers — you can't take back more than that.`,
+        );
+      }
+      throw new Error(`Could not take the money back (${error.message})`);
+    }
+    return { companyBalance: Number(newBalance) };
+  });
+
 export interface WalletLedgerRow {
   id: string;
   scope: string;
@@ -947,7 +994,8 @@ export interface ManagerBudgetRow {
   email: string;
   role: string;
   isActive: boolean;
-  /** Σ company_to_manager — what the company admin has handed this manager. */
+  /** Σ company_to_manager − Σ manager_to_company — what the company admin has handed this
+   *  manager, less what they took back. */
   allocated: number;
   /** Σ manager_charge — what this manager's lookups (and their team's) actually cost. */
   spent: number;
@@ -992,7 +1040,13 @@ export const getCompanyManagerBudgets = createServerFn({ method: "POST" })
           .from("profilex_wallet_ledger")
           .select("scope, manager_id, amount, created_at")
           .eq("client_id", data.clientId)
-          .in("scope", ["master_to_company", "company_to_manager", "manager_charge"])
+          .in("scope", [
+            "master_to_company",
+            "company_to_master",
+            "company_to_manager",
+            "manager_to_company",
+            "manager_charge",
+          ])
           .order("id")
           .range(from, to),
       ),
@@ -1036,6 +1090,10 @@ export const getCompanyManagerBudgets = createServerFn({ method: "POST" })
         receivedFromSamvadx += amount;
         continue;
       }
+      if (r.scope === "company_to_master") {
+        receivedFromSamvadx -= amount;
+        continue;
+      }
       if (!r.manager_id) continue;
       const m = byManager.get(r.manager_id) ?? {
         allocated: 0,
@@ -1048,6 +1106,9 @@ export const getCompanyManagerBudgets = createServerFn({ method: "POST" })
         m.allocated += amount;
         if (!m.lastAllocatedAt || r.created_at > m.lastAllocatedAt)
           m.lastAllocatedAt = r.created_at;
+      } else if (r.scope === "manager_to_company") {
+        // Taken back by the company admin — "allocated" is net of it.
+        m.allocated -= amount;
       } else {
         m.spent += amount;
         m.lookups += 1;
@@ -1101,6 +1162,7 @@ export const getCompanyManagerBudgets = createServerFn({ method: "POST" })
 const SUPERADMIN_MONEY_SCOPES = [
   "master_topup",
   "master_to_company",
+  "company_to_master",
   "actual_topup",
   "actual_charge",
 ];
@@ -1123,6 +1185,7 @@ export interface SuperadminActivityRow {
 const MONEY_SCOPE_LABEL: Record<string, string> = {
   master_topup: "Topped up the master Insights wallet",
   master_to_company: "Allocated Insights budget to",
+  company_to_master: "Took back Insights budget from",
   actual_topup: "Recorded a real ProfileX/Neokred top-up",
   actual_charge: "Corrected the actual ProfileX wallet balance for",
 };

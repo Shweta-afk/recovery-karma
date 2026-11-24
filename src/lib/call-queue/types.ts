@@ -356,6 +356,10 @@ export interface LiveCallEntry {
   /** Productive Dial through the calling service's own queue: the borrower is rung first and the
    * agent's phone stays quiet until one answers. */
   vendorRouted?: boolean;
+  /** The extension the calling service put this call through to (Productive Dial). */
+  agentHandle?: string;
+  /** Productive Dial: the borrower picked up and is waiting for a free agent since then (ms). */
+  waitingSince?: number;
 }
 
 // Agent availability — lives on the call queue since this is where the agent takes calls

@@ -12,6 +12,7 @@ import {
   stateFromGstin,
   sumLines,
   toInvoiceRecord,
+  walletCreditOf,
 } from "../src/lib/invoice-math";
 
 describe("gstBreakdown", () => {
@@ -182,5 +183,24 @@ describe("charge date on a line (2026-10-20)", () => {
     // Invoices issued before the field existed simply have none.
     const old = toInvoiceRecord({ ...row, lines: [{ description: "x", amount: 1 }] });
     expect(old.lines[0].chargedOn).toBeUndefined();
+  });
+});
+
+describe("walletCreditOf", () => {
+  test("top-up: the wallet gets the amount before GST; GST is on top", () => {
+    expect(walletCreditOf({ kind: "insights_topup", taxable: 11000, total: 12980 })).toEqual({
+      credited: 11000,
+      gst: 1980,
+    });
+  });
+  test("Bill of Supply top-up: no GST", () => {
+    expect(walletCreditOf({ kind: "insights_topup", taxable: 5000, total: 5000 })).toEqual({
+      credited: 5000,
+      gst: 0,
+    });
+  });
+  test("setup and monthly invoices credit no wallet", () => {
+    expect(walletCreditOf({ kind: "setup", taxable: 10000, total: 11800 })).toBeNull();
+    expect(walletCreditOf({ kind: "monthly", taxable: 10000, total: 11800 })).toBeNull();
   });
 });
