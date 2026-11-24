@@ -33,7 +33,7 @@ import {
   type UploadedPortfolio,
 } from "./portfolio-store";
 import type { DPDBucket } from "./mock-debtors";
-import type { CallOutcome, QueueDebtor } from "./call-queue/types";
+import { queueStatusForOutcome, type CallOutcome, type QueueDebtor } from "./call-queue/types";
 import { errorText } from "./app-error";
 
 export const DEBTOR_PAGE_UPDATED = "debtor-page-updated";
@@ -289,15 +289,8 @@ function toListed(r: RawRow, emailById: Map<string, string>): ListedDebtor {
     ...debtorFromRow(row, portfolio),
     loanReference: row.loanReference,
     portfolioId: r.portfolio_id,
-    // The same mapping build-queue.ts applied to the latest disposition.
-    queueStatus:
-      r.last_outcome === "promised"
-        ? "ptp"
-        : r.last_outcome === "callback"
-          ? "callback"
-          : r.last_outcome === "no_answer"
-            ? "no_answer"
-            : "fresh",
+    // The same mapping debtor_list applies to the latest disposition.
+    queueStatus: queueStatusForOutcome(r.last_outcome),
     scheduledAt: promised && r.ptp_date ? r.ptp_date : "—",
     ptpAmount: promised ? Number(r.ptp_amount ?? 0) : 0,
     ownOutcome: (r.own_outcome as CallOutcome | null) ?? undefined,

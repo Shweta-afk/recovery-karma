@@ -3,6 +3,7 @@
 // portfolios/agents at read time for display fields (no denormalized snapshot to keep in sync).
 
 import { supabase, getMyAgentRow } from "./supabase";
+import type { QueueStatus } from "./call-queue/types";
 
 export type EscalationPriority = "normal" | "urgent" | "critical";
 
@@ -23,7 +24,7 @@ export interface EscalationDebtorSnapshot {
   lastContacted: string | null;
   portfolio: string;
   language: string;
-  queueStatus: "fresh" | "callback" | "ptp" | "settlement" | "escalated" | "no_answer";
+  queueStatus: QueueStatus;
   scheduledAt: string;
   ptpAmount?: number;
 }

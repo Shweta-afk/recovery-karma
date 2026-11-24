@@ -15,6 +15,10 @@ export const QUEUE_FILTERS = [
   "switch_off",
   "nc",
   "paid",
+  "refused",
+  "dispute",
+  "wrong_number",
+  "deceased",
 ] as const;
 
 export type QueueFilter = (typeof QUEUE_FILTERS)[number];
@@ -38,8 +42,46 @@ export type CallOutcome =
   | "dispute"
   | "settlement";
 
+/** Where an account sits in the queue, from its latest (effective) disposition. "fresh" = never
+ * called (user, 2026-11-24) — every other outcome has its own status. The database's
+ * debtor_list makes the same mapping; change both together. */
+export type QueueStatus =
+  | "fresh"
+  | "callback"
+  | "ptp"
+  | "settlement"
+  | "no_answer"
+  | "paid"
+  | "refused"
+  | "dispute"
+  | "wrong_number"
+  | "deceased"
+  | "escalated";
+
+// Keyed by the stored outcome text: wrong_number / deceased / escalated are saved by the
+// disposition form but aren't in this file's CallOutcome union.
+const OUTCOME_QUEUE_STATUS: Record<string, QueueStatus | undefined> = {
+  promised: "ptp",
+  callback: "callback",
+  settlement: "settlement",
+  no_answer: "no_answer",
+  voicemail: "no_answer",
+  paid: "paid",
+  partial_paid: "paid",
+  refused: "refused",
+  dispute: "dispute",
+  wrong_number: "wrong_number",
+  deceased: "deceased",
+  escalated: "escalated",
+};
+
+/** Queue status for an account whose effective latest outcome is `outcome` (none = fresh). */
+export function queueStatusForOutcome(outcome: string | null | undefined): QueueStatus {
+  return (outcome && OUTCOME_QUEUE_STATUS[outcome]) || "fresh";
+}
+
 export interface QueueDebtor extends Debtor {
-  queueStatus: "fresh" | "callback" | "ptp" | "settlement" | "escalated" | "no_answer";
+  queueStatus: QueueStatus;
   scheduledAt: string;
   ptpAmount?: number;
   retained?: boolean;
@@ -283,6 +325,14 @@ export const QUEUE_STATUS_META: Record<QueueDebtor["queueStatus"], { label: stri
       cls: "bg-teal-500/8 text-teal-600/70 border-teal-400/15",
     },
     no_answer: { label: "No Answer", cls: "bg-muted text-muted-foreground border-border" },
+    paid: { label: "Paid", cls: "bg-success/10 text-success border-success/25" },
+    refused: { label: "Refused", cls: "bg-rose-500/8 text-rose-600/80 border-rose-400/20" },
+    dispute: { label: "Dispute", cls: "bg-purple-500/8 text-purple-600/80 border-purple-400/20" },
+    wrong_number: {
+      label: "Wrong Number",
+      cls: "bg-zinc-500/8 text-zinc-600/80 border-zinc-400/20",
+    },
+    deceased: { label: "Deceased", cls: "bg-zinc-700/10 text-zinc-700 border-zinc-500/25" },
     escalated: {
       label: "Escalated",
       cls: "bg-destructive/8 text-destructive/70 border-destructive/15",
@@ -320,10 +370,15 @@ export const STATUS_META: Record<AgentStatus, { label: string; dot: string; txt:
 };
 
 // Module-scope so they're stable across renders (used in filteredQueue's useMemo deps).
-export const PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = ["callback", "ptp", "settlement"];
-export const NON_PRODUCTIVE_STATUSES: QueueDebtor["queueStatus"][] = [
+/** Productive = the borrower engaged (callback, promise, settlement, paid). */
+export const PRODUCTIVE_STATUSES: QueueStatus[] = ["callback", "ptp", "settlement", "paid"];
+export const NON_PRODUCTIVE_STATUSES: QueueStatus[] = [
   "fresh",
   "no_answer",
+  "refused",
+  "dispute",
+  "wrong_number",
+  "deceased",
   "escalated",
 ];
 

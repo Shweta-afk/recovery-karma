@@ -352,15 +352,8 @@ export function CallQueueContent({
     };
     if (prodFilter === "productive") narrow(PRODUCTIVE_STATUSES);
     else if (prodFilter === "non_productive") narrow(NON_PRODUCTIVE_STATUSES);
-    if (
-      queueFilter === "callback" ||
-      queueFilter === "ptp" ||
-      queueFilter === "settlement" ||
-      queueFilter === "no_answer" ||
-      queueFilter === "fresh" ||
-      queueFilter === "escalated"
-    )
-      narrow([queueFilter]);
+    if (queueFilter !== "all" && queueFilter !== "retained" && queueFilter in QUEUE_STATUS_META)
+      narrow([queueFilter as QueueDebtor["queueStatus"]]);
     if (filterStatus !== "all") narrow([filterStatus]);
     return set;
   }, [prodFilter, queueFilter, filterStatus]);
@@ -975,6 +968,11 @@ export function CallQueueContent({
     settlement: statusCount("settlement"),
     no_answer: statusCount("no_answer"),
     fresh: statusCount("fresh"),
+    paid: statusCount("paid"),
+    refused: statusCount("refused"),
+    dispute: statusCount("dispute"),
+    wrong_number: statusCount("wrong_number"),
+    deceased: statusCount("deceased"),
     escalated: statusCount("escalated"),
   };
   const bucketCounts = countBy(facets, "bucket", inPortfolio);
@@ -1087,7 +1085,7 @@ export function CallQueueContent({
   }, [queueRows]);
 
   // Narrower than QueueFilter — only the statuses filterCounts actually computes from real
-  // queueStatus data. switch_off/nc/paid exist in QueueFilter for URL back-compat but were
+  // queueStatus data. switch_off/nc exist in QueueFilter for URL back-compat but were
   // never wired to real counts or filtering, so they're not offered as pills here.
   const FILTERS: { key: Extract<QueueFilter, keyof typeof filterCounts>; label: string }[] = [
     { key: "all", label: "All" },
@@ -1097,6 +1095,11 @@ export function CallQueueContent({
     { key: "settlement", label: "Settlement" },
     { key: "no_answer", label: "No Answer" },
     { key: "fresh", label: "Fresh" },
+    { key: "paid", label: "Paid" },
+    { key: "refused", label: "Refused" },
+    { key: "dispute", label: "Dispute" },
+    { key: "wrong_number", label: "Wrong Number" },
+    { key: "deceased", label: "Deceased" },
     { key: "escalated", label: "Escalated" },
   ];
 
@@ -1313,13 +1316,15 @@ export function CallQueueContent({
                   <span className="text-xs text-muted-foreground">(debtor responded)</span>
                 </div>
                 <span className="text-lg font-bold text-success">
-                  {filterCounts.callback + filterCounts.ptp}
+                  {PRODUCTIVE_STATUSES.reduce((n, st) => n + statusCount(st), 0)}
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 {[
                   { label: "Callback", value: filterCounts.callback, cls: "text-amber-500" },
                   { label: "PTP", value: filterCounts.ptp, cls: "text-blue-500" },
+                  { label: "Settlement", value: filterCounts.settlement, cls: "text-teal-600" },
+                  { label: "Paid", value: filterCounts.paid, cls: "text-success" },
                 ].map((s) => (
                   <div
                     key={s.label}
@@ -1354,16 +1359,28 @@ export function CallQueueContent({
                   <span className="text-sm font-semibold text-muted-foreground">
                     Non-Productive
                   </span>
-                  <span className="text-xs text-muted-foreground">(no response)</span>
+                  <span className="text-xs text-muted-foreground">(no commitment yet)</span>
                 </div>
                 <span className="text-lg font-bold text-muted-foreground">
-                  {filterCounts.fresh + filterCounts.no_answer + filterCounts.escalated}
+                  {NON_PRODUCTIVE_STATUSES.reduce((n, st) => n + statusCount(st), 0)}
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 {[
-                  { label: "Ringing / Fresh", value: filterCounts.fresh, cls: "text-blue-400" },
+                  {
+                    label: "Fresh (never called)",
+                    value: filterCounts.fresh,
+                    cls: "text-blue-400",
+                  },
                   { label: "No Answer", value: filterCounts.no_answer, cls: "text-destructive" },
+                  { label: "Refused", value: filterCounts.refused, cls: "text-rose-600" },
+                  { label: "Dispute", value: filterCounts.dispute, cls: "text-purple-600" },
+                  {
+                    label: "Wrong Number",
+                    value: filterCounts.wrong_number,
+                    cls: "text-zinc-600",
+                  },
+                  { label: "Deceased", value: filterCounts.deceased, cls: "text-zinc-700" },
                   {
                     label: "Escalated",
                     value: filterCounts.escalated,
@@ -2090,11 +2107,12 @@ export function CallQueueContent({
                             {(
                               [
                                 ["all", "All"],
-                                ["fresh", "Fresh"],
-                                ["callback", "Callback"],
-                                ["ptp", "PTP"],
-                                ["no_answer", "No Answer"],
-                                ["escalated", "Escalated"],
+                                ...(
+                                  Object.entries(QUEUE_STATUS_META) as [
+                                    QueueDebtor["queueStatus"],
+                                    { label: string },
+                                  ][]
+                                ).map(([k, m]) => [k, m.label]),
                               ] as [typeof filterStatus, string][]
                             ).map(([v, l]) => (
                               <ColFilterOption

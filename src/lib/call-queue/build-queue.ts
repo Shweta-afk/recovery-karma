@@ -6,19 +6,7 @@ import {
   type UploadedPortfolio,
 } from "@/lib/portfolio-store";
 import { getLatestDispositionByDebtor } from "@/lib/disposition-store";
-import type { CallOutcome, QueueDebtor } from "./types";
-
-/** Last call outcome -> the queue's own coarser status. Only these three outcomes change where
- * a debtor sits in the Productive / Non-Productive split; everything else (refused, dispute,
- * settlement, voicemail, paid) leaves the row where a never-called row sits, because the queue
- * has no distinct bucket for them and silently folding them into "no answer" would misreport
- * a contact that did happen. */
-const OUTCOME_TO_QUEUE_STATUS: Partial<Record<CallOutcome, QueueDebtor["queueStatus"]>> = {
-  promised: "ptp",
-  callback: "callback",
-  settlement: "settlement",
-  no_answer: "no_answer",
-};
+import { queueStatusForOutcome, type CallOutcome, type QueueDebtor } from "./types";
 
 /** Merges getAgentDebtorIds() across every agent in `agentIds` into one portfolio -> debtorIds
  * list — the same shape a single agent's call returns, so buildAssignedQueue below never needs
@@ -117,7 +105,7 @@ function queueFieldsFor(
 ) {
   if (!last) return { queueStatus: "fresh" as const, scheduledAt: "—", ptpAmount: 0 };
   return {
-    queueStatus: OUTCOME_TO_QUEUE_STATUS[last.outcome] ?? ("fresh" as const),
+    queueStatus: queueStatusForOutcome(last.outcome),
     scheduledAt: last.ptpDate ?? "—",
     ptpAmount: last.ptpAmount ?? 0,
   };
