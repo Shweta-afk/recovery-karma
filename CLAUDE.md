@@ -152,6 +152,11 @@ from the latest visible call log (same mapping as `build-queue.ts`); Call Queue'
 filter uses the latest call by the queue's own agent(s). Actions that need every filtered row
 (dialer start, CSV export) fetch them on click with `fetchAllDebtorRows`. If a filter changes
 meaning on one screen, change `debtor_list` too — the browser no longer filters these lists.
+**Queue status: "Fresh" = never called (user, 2026-11-24).** Every outcome has its own status:
+voicemail → No Answer, paid/partial_paid → Paid, refused/dispute/wrong_number/deceased/escalated
+by name. One mapping, `queueStatusForOutcome` (`call-queue/types.ts`), mirrored by `status_expr`
+in `debtor_list` (`migrations/20261124_queue_status_fresh_means_never_called.sql`); change both
+together. Productive = callback, PTP, settlement, paid.
 
 **If asked to wire another page/table, match this pattern** — it's a deliberate, established
 convention across the whole app, not an oversight. Don't introduce `useQuery` for it.
