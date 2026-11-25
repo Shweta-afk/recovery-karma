@@ -23,7 +23,7 @@ import { getSupabaseAdmin, verifyCaller, type VerifiedCaller } from "@/lib/supab
 import { enforceRateLimit } from "@/lib/rate-limit.server";
 import type { SimProvider } from "./sim-provider";
 import { isTerminal } from "./call-machine";
-import type { TelephonyEvent, CallStatusEvent } from "./types";
+import type { TelephonyEvent, CallStatusEvent, CallRecord } from "./types";
 import { collectLoggableLegs, type LegCallLog } from "@/lib/dialer/leg-disposition";
 import {
   doNotCallSet,
@@ -774,34 +774,47 @@ async function predictiveDial(
 
   const batch = remaining.slice(0, n);
   const { run: withLegs, opened } = engine.openLegs(run, batch, { idPrefix, vendorRouted: true });
-  // All of a round's calls are placed AT ONCE (2026-11-21). One after another, each SkyCRM
-  // request taking ~3 s, a round of 5 took ~15 s: the borrowers rang 3 s apart and nothing new
-  // reached the agent's screen until the round was done. The channel reservation is still
-  // serialised by the database (advisory lock), so lines can't be over-booked.
+  // Two steps (2026-11-25):
+  //   1. One call at a time: DNC check, caller number, line reservation and ledger row
+  //      (prepareCall). The number is the least-used one today, read from the ledger — done in
+  //      parallel, every call of a round read the same counts and took the same number (4 of 5
+  //      calls on …3738 in the 25 Nov test). Database work only, well under a second a round.
+  //   2. All at once: the SkyCRM requests (~3 s each). One after another, a round of 5 took
+  //      ~15 s and the borrowers rang 3 s apart (2026-11-21).
+  type PreparedCall = Awaited<ReturnType<typeof prepareCall>>;
+  type Prepared = { leg: CallRecord; t?: DialTarget; prepared?: PreparedCall; error?: unknown };
+  const ready: Prepared[] = [];
+  for (const leg of opened) {
+    const t = batch.find((x) => x.id === leg.debtorId);
+    const handle = requestExtension(free, inQueue, session.calls++) as string;
+    const agent = agents.find((a) => agentHandleFor(prov.name, a) === handle) ?? {
+      id: "",
+      phone: handle,
+      extension: prov.name === "skycrm" ? handle : null,
+    };
+    try {
+      const prepared = await prepareCall({
+        clientId: session.clientId,
+        provider: prov.name,
+        agent,
+        debtorPhone: leg.phone,
+        refId: leg.id,
+        settings,
+        debtorId: leg.debtorId,
+        portfolioId: t?.portfolioId,
+        kind: "queue",
+        predictive: { queue: session.queue },
+      });
+      ready.push({ leg, t, prepared });
+    } catch (error) {
+      ready.push({ leg, t, error });
+    }
+  }
   const placed = await Promise.all(
-    opened.map(async (leg) => {
-      const t = batch.find((x) => x.id === leg.debtorId);
-      const handle = requestExtension(free, inQueue, session.calls++) as string;
-      const agent = agents.find((a) => agentHandleFor(prov.name, a) === handle) ?? {
-        id: "",
-        phone: handle,
-        extension: prov.name === "skycrm" ? handle : null,
-      };
-      let ledgerId = "";
+    ready.map(async ({ leg, t, prepared, error }) => {
+      const ledgerId = prepared?.ledgerId ?? "";
       try {
-        const prepared = await prepareCall({
-          clientId: session.clientId,
-          provider: prov.name,
-          agent,
-          debtorPhone: leg.phone,
-          refId: leg.id,
-          settings,
-          debtorId: leg.debtorId,
-          portfolioId: t?.portfolioId,
-          kind: "queue",
-          predictive: { queue: session.queue },
-        });
-        ledgerId = prepared.ledgerId;
+        if (!prepared) throw error;
         const { providerCallId } = await pd.startCall({
           extension: prepared.agentHandle,
           queue: session.queue,
