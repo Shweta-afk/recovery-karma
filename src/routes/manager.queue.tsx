@@ -1,6 +1,6 @@
 import { todayIstKey } from "@/lib/date-filter";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Phone,
   Users,
@@ -109,7 +109,15 @@ export const Route = createFileRoute("/manager/queue")({
 const ALL_AGENTS = "__all__";
 
 function AgentLiveViewTab({ agents, self }: { agents: AgentRef[]; self?: AgentRef }) {
-  const [selected, setSelected] = useState<string>(ALL_AGENTS);
+  // Opens on the manager's own accounts when they may call (user, 2026-11-25: "add Productive
+  // and Progressive Dial for managers") — the whole-team view hides both dial buttons.
+  const [selected, setSelected] = useState<string>(self?.id ?? ALL_AGENTS);
+  // "Managers can call" loads after the first render; open on My accounts once it arrives,
+  // unless the manager has already picked a view.
+  const picked = useRef(false);
+  useEffect(() => {
+    if (self?.id && !picked.current) setSelected(self.id);
+  }, [self?.id]);
   useEffect(() => {
     if (
       selected !== ALL_AGENTS &&
@@ -139,7 +147,13 @@ function AgentLiveViewTab({ agents, self }: { agents: AgentRef[]; self?: AgentRe
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <span className="text-sm font-medium text-foreground">Viewing:</span>
-        <Select value={selected} onValueChange={setSelected}>
+        <Select
+          value={selected}
+          onValueChange={(v) => {
+            picked.current = true;
+            setSelected(v);
+          }}
+        >
           <SelectTrigger className="h-9 w-64 text-sm">
             <SelectValue />
           </SelectTrigger>
@@ -160,13 +174,22 @@ function AgentLiveViewTab({ agents, self }: { agents: AgentRef[]; self?: AgentRe
             Every account assigned to your {agents.length} team member
             {agents.length === 1 ? "" : "s"}, merged into one queue — same screen, same filters.
             Productive/Progressive bulk dial is turned off here since accounts can span different
-            portfolios' settings; call a row directly instead. Disposition/PTP logging still credits{" "}
-            <strong>you</strong>, not whoever the account is assigned to.
+            portfolios' settings; call a row directly instead
+            {self ? (
+              <>
+                {" "}
+                — or pick <strong>My accounts (you)</strong> above to use Productive and Progressive
+                Dial on your own accounts
+              </>
+            ) : null}
+            . Disposition/PTP logging still credits <strong>you</strong>, not whoever the account is
+            assigned to.
           </>
         ) : viewingSelf ? (
           <>
-            Your own accounts — the ones assigned to you. Call them like any agent: Call,
-            Progressive Dial and Manual Dial all work, and the calls are logged as yours.
+            Your own accounts — the ones assigned to you. Call them like any agent: Call, Productive
+            Dial, Progressive Dial and Manual Dial all work, borrowers who pick up are put through
+            to your phone, and the calls are logged as yours.
           </>
         ) : (
           <>

@@ -532,12 +532,15 @@ export function CallQueueContent({
     const target = await fetchQueueTargets();
     setDialTargetRows(target);
     const activeFilter = FILTERS.find((f) => f.key === queueFilter);
-    // The agent pool is the concurrency ceiling: click-to-call rings an agent
-    // first, so a line cannot be opened without one free to take it.
-    const agentNumbers = await fetchDialerAgentNumbers();
+    // On your own queue the run is YOURS alone: only your number/extension. The pool used to be
+    // everyone this browser can see — the server keeps only an agent's own, but a manager may
+    // dial for anyone, so a manager's Productive Dial on their own accounts put the whole team
+    // into the queue and rang borrowers for agents who weren't dialling (2026-11-25).
+    const agentNumbers =
+      isSelf && user?.agentPhone ? [user.agentPhone] : await fetchDialerAgentNumbers();
     if (!agentNumbers.length) {
       toast.error(
-        "No agents with a phone number configured — set one in Admin → Users before dialing.",
+        "No calling number or extension is set for you — ask an admin to set one before dialing.",
       );
       return;
     }
@@ -1514,7 +1517,15 @@ export function CallQueueContent({
                 the display label changed). Real engine + simulated provider via useDialerRun. */}
               <Button
                 size="sm"
-                disabled={(dialer.running && activeDialMode !== "predictive") || progressive.active}
+                // Own queue only, like Progressive Dial: a borrower who picks up is put through to
+                // the phone of whoever runs the dial, so from someone else's queue (a manager's
+                // Agent Live View) it would reach the manager, not that agent.
+                disabled={
+                  (dialer.running && activeDialMode !== "predictive") ||
+                  progressive.active ||
+                  (!isSelf && !dialer.running)
+                }
+                title={isSelf ? undefined : "Productive Dial works on your own queue"}
                 aria-busy={dialStarting === "predictive"}
                 onClick={async () => {
                   if (dialStartingRef.current) {
