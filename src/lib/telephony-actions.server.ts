@@ -29,6 +29,7 @@ import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
 import { parsePredictiveQueue } from "./telephony/predictive-rules";
 import { endWrapUp, MAX_WRAP_UP_MS, startWrapUp } from "./telephony/wrap-up";
+import { recordingMarker } from "./telephony/recording-marker";
 import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.server";
 import {
   extensionLoginMoves,
@@ -890,6 +891,22 @@ export const syncCallLogTalkTime = createServerFn({ method: "POST" })
     if (!ledger || ledger.client_id !== caller.clientId) return { ok: false };
     await copyTalkTimeToCallLogs(db(), data.providerCallId, ledger.status, ledger.duration_seconds);
     await copyRingTimeToCallLogs(db(), data.providerCallId, ledger);
+    // The recording too, when it was stored BEFORE this disposition was saved. The importer links
+    // a recording only to a call log that already exists, so a disposition saved after the copy
+    // (now ~45-90 s after the call) never got one, and its Feedback File row had no recording
+    // link although the recording was stored (6-10% of connected calls, 22-25 Nov 2026).
+    const { data: rec } = await db()
+      .from("telephony_calls")
+      .select("id, recording_object")
+      .eq("id", ledger.id)
+      .maybeSingle();
+    if ((rec as { recording_object: string | null } | null)?.recording_object) {
+      await db()
+        .from("call_logs")
+        .update({ recording_url: recordingMarker(ledger.id) })
+        .eq("provider_call_id", data.providerCallId)
+        .is("recording_url", null);
+    }
     return { ok: true };
   });
 
