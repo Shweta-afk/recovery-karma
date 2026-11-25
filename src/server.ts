@@ -7,6 +7,7 @@ import { TELEPHONY_WEBHOOK_PATH, handleTelephonyWebhook } from "./lib/telephony/
 import { ARCHIVE_CRON_PATH, handleArchiveCron } from "./lib/archive-cron.server";
 import { APP_PING_BODY, APP_PING_PATH } from "./lib/company-address";
 import { startRecordingImports } from "./lib/telephony/recordings.server";
+import { RECORDING_LINK_PATH_PREFIX, handleRecordingLink } from "./lib/recording-share-link.server";
 
 // SkyCRM call recordings → SamvadX Storage, every 5 minutes (no-op unless TELEPHONY_PROVIDER=skycrm).
 startRecordingImports();
@@ -96,6 +97,10 @@ async function handleRequest(request: Request, env: unknown, ctx: unknown): Prom
       return new Response(APP_PING_BODY, {
         headers: { "content-type": "text/plain", "cache-control": "no-store" },
       });
+    }
+    // Short recording links in the banker's Feedback File (recording-share-link.server.ts).
+    if (new URL(request.url).pathname.startsWith(RECORDING_LINK_PATH_PREFIX)) {
+      return await handleRecordingLink(request);
     }
     const handler = await getServerEntry();
     const response = await handler.fetch(request, env, ctx);

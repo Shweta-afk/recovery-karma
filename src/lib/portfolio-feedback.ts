@@ -380,6 +380,7 @@ export const LOAN_HEADERS = [
   "Account Status",
   "Contact Group",
   "DID Used",
+  "Disconnected By",
 ];
 
 export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): XlsxSheet[] {
@@ -467,6 +468,7 @@ export function buildFeedbackSheets(input: FeedbackInput, todayIst: string): Xls
       d.status ?? "",
       contacted ? "Contact" : "No Contact",
       formatDidUsed(attempts[attempts.length - 1]?.did_number),
+      attempts.length ? disconnectedBy(attempts[attempts.length - 1]) : "",
     ]);
   }
 

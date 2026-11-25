@@ -7,7 +7,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { z, tokenSchema, idSchema, isoDateSchema } from "./schemas";
 import { getSupabaseAdmin, verifyCaller, type VerifiedCaller } from "./supabase-admin.server";
 import { appError } from "./app-error";
-import { CALL_RECORDINGS_BUCKET, parseRecordingMarker } from "./telephony/recording-marker";
+import { parseRecordingMarker } from "./telephony/recording-marker";
+import { RECORDING_LINK_PATH_PREFIX, recordingLinkToken } from "./recording-share-link.server";
+import { companyAppLink } from "./billing-delivery";
 import { istDayKeyDaysAgo, istRangeBounds, type AuditCallRow } from "./call-audit";
 import {
   linkEarlierRows,
@@ -405,22 +407,25 @@ export const getPortfolioFeedbackData = createServerFn({ method: "POST" })
           .in("id", ledgerIds.slice(i, i + 200));
         for (const r of rows ?? []) if (r.recording_object) objects.set(r.id, r.recording_object);
       }
-      const paths = [...objects.values()];
-      const urlByPath = new Map<string, string>();
-      for (let i = 0; i < paths.length; i += 500) {
-        const { data: signed } = await admin.storage
-          .from(CALL_RECORDINGS_BUCKET)
-          .createSignedUrls(paths.slice(i, i + 500), SHARE_LINK_SECONDS);
-        for (const s of signed ?? []) if (s.path && s.signedUrl) urlByPath.set(s.path, s.signedUrl);
-      }
+      const { data: company } = await admin
+        .from("clients")
+        .select("subdomain")
+        .eq("id", caller.clientId)
+        .maybeSingle();
+      const expiresAt = Date.now() / 1000 + SHARE_LINK_SECONDS;
       for (const c of withRecording) {
         const ledgerId = parseRecordingMarker(c.recording_url);
         if (!ledgerId) {
           recordingLinks[c.call_id] = c.recording_url as string;
           continue;
         }
-        const url = urlByPath.get(objects.get(ledgerId) ?? "");
-        if (url) recordingLinks[c.call_id] = url;
+        // A short link on the company's own address, never the Storage path (2026-11-25).
+        if (objects.has(ledgerId)) {
+          recordingLinks[c.call_id] = companyAppLink(
+            company?.subdomain,
+            `${RECORDING_LINK_PATH_PREFIX}${recordingLinkToken(ledgerId, expiresAt)}`,
+          );
+        }
       }
     }
 

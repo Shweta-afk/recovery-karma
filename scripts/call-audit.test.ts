@@ -844,6 +844,7 @@ describe("the file matches the company's sample", () => {
     expect(cell(cc, "Agent Name")).toBe("Asha");
     expect(cell(cc, "DID Used")).toBe("07969263700");
     expect(cell(sheets[0], "DID Used")).toBe("07969263700");
+    expect(cell(sheets[0], "Disconnected By")).toBe("Customer");
     for (const r of cc.rows) expect(r.length).toBe(cc.headers.length);
   });
 
