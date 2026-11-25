@@ -49,6 +49,18 @@ const LIVE_EVENTS = [
 ];
 
 export type InsightFilterValue = "requested" | "traced" | "none";
+
+/** Call Queue's "Intensity" filter: how many times the account has been called, by anyone
+ * (disposition updates without a dial don't count). Same bands as debtor_list's p.intensity
+ * (migrations/20261125_debtor_list_call_intensity.sql); change together. */
+export const INTENSITY_BANDS = [
+  ["0", "Never called"],
+  ["1to2", "1 – 2 calls"],
+  ["3to5", "3 – 5 calls"],
+  ["6to10", "6 – 10 calls"],
+  ["gt10", "More than 10"],
+] as const;
+export type IntensityBand = (typeof INTENSITY_BANDS)[number][0];
 export type QueueStatus = QueueDebtor["queueStatus"];
 export type FacetDim =
   | "portfolio_id"
@@ -93,6 +105,7 @@ export interface DebtorQuery {
   outstanding?: "lt1L" | "1to5L" | "gt5L";
   dpdBand?: "lt30" | "30to60" | "61to90" | "gt90";
   scoreBand?: "high" | "mid" | "low";
+  intensity?: IntensityBand;
   sort?: string;
   dir?: "asc" | "desc";
 }
@@ -114,6 +127,7 @@ const FILTER_KEYS: (keyof DebtorQuery)[] = [
   "outstanding",
   "dpdBand",
   "scoreBand",
+  "intensity",
   "sort",
   "dir",
 ];
@@ -147,6 +161,8 @@ interface RawRow {
   ptp_date?: string | null;
   own_outcome?: string | null;
   own_reason?: string | null;
+  /** Queue only: call attempts on this account, by anyone. */
+  call_count?: number | string | null;
 }
 
 /** A listed debtor: the Debtor shape every screen and the profile sheet already use, plus the
@@ -234,6 +250,7 @@ async function toParams(q: DebtorQuery): Promise<Record<string, unknown>> {
   if (q.outstanding) p.outstanding = q.outstanding;
   if (q.dpdBand) p.dpd_band = q.dpdBand;
   if (q.scoreBand) p.score_band = q.scoreBand;
+  if (q.intensity) p.intensity = q.intensity;
   if (q.sort) p.sort = q.sort;
   if (q.dir) p.dir = q.dir;
   return p;
@@ -295,6 +312,7 @@ function toListed(r: RawRow, emailById: Map<string, string>): ListedDebtor {
     ptpAmount: promised ? Number(r.ptp_amount ?? 0) : 0,
     ownOutcome: (r.own_outcome as CallOutcome | null) ?? undefined,
     ownReason: r.own_reason ?? undefined,
+    callCount: r.call_count == null ? undefined : Number(r.call_count),
   };
 }
 

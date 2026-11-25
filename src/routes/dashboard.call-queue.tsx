@@ -148,9 +148,11 @@ import { ListPager, serverPaged, useServerPage } from "@/components/list-pager";
 import {
   countBy,
   fetchAllDebtorRows,
+  INTENSITY_BANDS,
   sumFacets,
   useDebtorList,
   type DebtorQuery,
+  type IntensityBand,
   type FacetDim,
   type FacetGroup,
 } from "@/lib/debtor-page-store";
@@ -316,6 +318,9 @@ export function CallQueueContent({
   const [filterDpd, setFilterDpd] = useState<"all" | "lt30" | "30to60" | "61to90" | "gt90">("all");
   const [filterScore, setFilterScore] = useState<"all" | "high" | "mid" | "low">("all");
   const [filterStatus, setFilterStatus] = useState<QueueDebtor["queueStatus"] | "all">("all");
+  // "Intensity" = times the account has been called (user, 2026-11-25) — lets agents work the
+  // least-called accounts first.
+  const [filterIntensity, setFilterIntensity] = useState<IntensityBand | "all">("all");
   const [openColFilter, setOpenColFilter] = useState<string | null>(null);
 
   const toggleQSort = (key: QueueSortKey) => {
@@ -390,6 +395,7 @@ export function CallQueueContent({
       outstanding: filterOutstanding === "all" ? undefined : filterOutstanding,
       dpdBand: filterDpd === "all" ? undefined : filterDpd,
       scoreBand: filterScore === "all" ? undefined : filterScore,
+      intensity: filterIntensity === "all" ? undefined : filterIntensity,
       sort: qSortKey ?? undefined,
       dir: qSortKey ? qSortDir : undefined,
     }),
@@ -405,6 +411,7 @@ export function CallQueueContent({
       filterOutstanding,
       filterDpd,
       filterScore,
+      filterIntensity,
       qSortKey,
       qSortDir,
     ],
@@ -437,7 +444,6 @@ export function CallQueueContent({
   // the list itself re-fetches on it inside useDebtorList.
   useEffect(() => {
     refreshDispositions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentKey]);
 
   // Rows fetched for a dialer run, kept so a ringing leg can be matched back to its debtor
@@ -2071,6 +2077,7 @@ export function CallQueueContent({
                     "Outstanding",
                     "DPD",
                     "Status",
+                    "Intensity (calls)",
                     "AI Score",
                     "Scheduled",
                   ],
@@ -2081,6 +2088,7 @@ export function CallQueueContent({
                     d.loanAmount,
                     d.dpd,
                     d.queueStatus,
+                    d.callCount ?? "",
                     d.aiScore,
                     d.scheduledAt,
                   ]),
@@ -2235,6 +2243,42 @@ export function CallQueueContent({
                       </QColHead>
                     </TableHead>
 
+                    {/* Intensity — times called; sort + band filter */}
+                    <TableHead>
+                      <QColHead
+                        label="Intensity"
+                        sortKey="intensity"
+                        activeSort={qSortKey}
+                        sortDir={qSortDir}
+                        onSort={toggleQSort}
+                        activeFilter={filterIntensity !== "all"}
+                        onFilterToggle={() =>
+                          setOpenColFilter((o) => (o === "intensity" ? null : "intensity"))
+                        }
+                      >
+                        {openColFilter === "intensity" && (
+                          <ColFilterDropdown onClose={() => setOpenColFilter(null)}>
+                            {(
+                              [["all", "All"], ...INTENSITY_BANDS] as [
+                                typeof filterIntensity,
+                                string,
+                              ][]
+                            ).map(([v, l]) => (
+                              <ColFilterOption
+                                key={v}
+                                label={l}
+                                active={filterIntensity === v}
+                                onClick={() => {
+                                  setFilterIntensity(v);
+                                  setOpenColFilter(null);
+                                }}
+                              />
+                            ))}
+                          </ColFilterDropdown>
+                        )}
+                      </QColHead>
+                    </TableHead>
+
                     {/* AI Score — sort + range filter */}
                     <TableHead>
                       <QColHead
@@ -2304,6 +2348,7 @@ export function CallQueueContent({
                       filterOutstanding !== "all" ||
                       filterDpd !== "all" ||
                       filterScore !== "all" ||
+                      filterIntensity !== "all" ||
                       filterStatus !== "all" ? (
                         <button
                           type="button"
@@ -2312,6 +2357,7 @@ export function CallQueueContent({
                             setFilterOutstanding("all");
                             setFilterDpd("all");
                             setFilterScore("all");
+                            setFilterIntensity("all");
                             setFilterStatus("all");
                           }}
                           className="text-[10px] text-primary hover:underline whitespace-nowrap"
@@ -2336,12 +2382,12 @@ export function CallQueueContent({
                       Making that position a real (if invisible) row means whatever corner case
                       Chromium mishandles lands here instead of on an actual debtor's row. */}
                   <TableRow aria-hidden className="h-0 leading-none">
-                    <TableCell colSpan={9 + extraColumns.length} className="h-0 p-0 border-0" />
+                    <TableCell colSpan={10 + extraColumns.length} className="h-0 p-0 border-0" />
                   </TableRow>
                   {queueRows.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={9 + extraColumns.length}
+                        colSpan={10 + extraColumns.length}
                         className="text-center py-12 text-muted-foreground text-sm"
                       >
                         {queueList.loading
@@ -2659,6 +2705,33 @@ function QueueRow({
         <Badge variant="outline" className={cn("text-xs", statusMeta.cls)}>
           {statusMeta.label}
         </Badge>
+      </TableCell>
+      <TableCell
+        className="text-sm tabular-nums"
+        title={
+          d.callCount == null
+            ? undefined
+            : `Called ${d.callCount} time${d.callCount === 1 ? "" : "s"} (by anyone)`
+        }
+      >
+        {d.callCount == null ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <span
+            className={cn(
+              "font-medium",
+              d.callCount === 0
+                ? "text-muted-foreground"
+                : d.callCount > 10
+                  ? "text-destructive"
+                  : d.callCount > 5
+                    ? "text-warning-foreground"
+                    : "text-foreground",
+            )}
+          >
+            {d.callCount}×
+          </span>
+        )}
       </TableCell>
       <TableCell>
         <span

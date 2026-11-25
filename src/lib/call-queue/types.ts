@@ -24,7 +24,8 @@ export const QUEUE_FILTERS = [
 
 export type QueueFilter = (typeof QUEUE_FILTERS)[number];
 export type ProdFilter = "all" | "productive" | "non_productive";
-export type QueueSortKey = "name" | "outstanding" | "dpd" | "aiScore" | "status" | "scheduled";
+export type QueueSortKey =
+  "name" | "outstanding" | "dpd" | "aiScore" | "status" | "scheduled" | "intensity";
 export type SortKey = "time" | "debtorName" | "duration" | "outcome";
 export type SortKeyAny = QueueSortKey | SortKey;
 export type SortDir = "asc" | "desc";
@@ -89,6 +90,9 @@ export interface QueueDebtor extends Debtor {
   retainedFrom?: string;
   portfolioId?: string; // owning UploadedPortfolio.id — drives per-portfolio call mode
   loanReference?: string; // the CSV's own loan/account ID, for display — id is an opaque row identifier
+  /** "Intensity": times this account has been called, by anyone (debtor_list call_count).
+   *  Undefined when the row didn't come from a queue query. */
+  callCount?: number;
 }
 
 export interface ActiveCall {

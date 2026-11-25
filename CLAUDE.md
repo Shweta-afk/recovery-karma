@@ -157,6 +157,11 @@ voicemail → No Answer, paid/partial_paid → Paid, refused/dispute/wrong_numbe
 by name. One mapping, `queueStatusForOutcome` (`call-queue/types.ts`), mirrored by `status_expr`
 in `debtor_list` (`migrations/20261124_queue_status_fresh_means_never_called.sql`); change both
 together. Productive = callback, PTP, settlement, paid.
+**Call Queue "Intensity" (user, 2026-11-25)** = times the account has been called, by anyone
+(call_logs on the debtor minus `dial_mode 'no_call'`, the Feedback File's "Intensity of Calls"
+rule). Column + sort (`sort: 'intensity'`) + band filter (`p.intensity`, `INTENSITY_BANDS` in
+debtor-page-store.ts) in `debtor_list` (`migrations/20261125_debtor_list_call_intensity.sql`,
+live). Sorting by it on a 9,274-account agent took ~1.7 s under RLS.
 
 **If asked to wire another page/table, match this pattern** — it's a deliberate, established
 convention across the whole app, not an oversight. Don't introduce `useQuery` for it.
