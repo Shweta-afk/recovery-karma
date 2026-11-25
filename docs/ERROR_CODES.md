@@ -56,12 +56,16 @@ contracts · 5xxx company, users, sign-up · 6xxx archive · 9xxx general.
 | SX-1020 | Could not load the charges report.             | `getInsightsChargesReport` (`insights-charges.server.ts`): a read of debtor_traces, insights_manual_lookups, corrections or the wallet ledger failed. |
 | SX-1021 | Could not load that wallet.                    | `takeBackFromManager` (`profilex-actions.server.ts`): reading the person's `profilex_wallets` row failed.                                             |
 | SX-1022 | Could not take the money back.                 | `profilex_manager_reclaim` RPC failed. If the log names the function, `migrations/20261121_wallet_take_back.sql` is not applied.                      |
+| SX-1023 | Could not load the lookups.                    | `getInsightsPdf` (`insights-pdf.server.ts`): reading a borrower's `debtor_traces` for the PDF failed.                                                 |
+| SX-1024 | Could not load the lookup.                     | `getInsightsPdf`: reading an `insights_manual_lookups` row for the PDF failed.                                                                        |
+| SX-1025 | Could not load the report.                     | `getInsightsPdf`: reading a `cibil_reports` row for the PDF failed.                                                                                   |
 | SX-1901 | This page is not available right now.          | `SUPABASE_URL` / `SUPABASE_ANON_KEY` missing on the server (caller-scoped read).                                                                      |
 | SX-1902 | Insights is not set up yet.                    | `PROFILEX_CLIENT_HASH_ID` / `PROFILEX_SECRET_KEY` / `PROFILEX_ACCESS_KEY` missing on Railway.                                                         |
 | SX-1903 | "<service>" is not available right now.        | ProfileX said "You Dont Have UAT Access" — service not enabled on our Neokred account, or wrong client hash id. Not charged.                          |
 | SX-1904 | This lookup could not be completed.            | ProfileX returned non-200 (status + message in the log). Not charged.                                                                                 |
 | SX-1905 | "<service>" is not available right now.        | Same as SX-1903, for an admin manual lookup.                                                                                                          |
 | SX-1906 | This lookup could not be completed.            | Same as SX-1904, for an admin manual lookup.                                                                                                          |
+| SX-1907 | This download is not available right now.      | `SUPABASE_URL` / `SUPABASE_ANON_KEY` missing on the server (`insights-pdf.server.ts` caller-scoped read).                                             |
 
 ### CIBIL (2xxx) — `src/lib/cibil-actions.server.ts`
 

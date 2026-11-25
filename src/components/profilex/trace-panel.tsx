@@ -54,6 +54,7 @@ import { CibilPanel } from "@/components/profilex/cibil-panel";
 import { errorText } from "@/lib/app-error";
 import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
 import { ReportView, hasReportValues } from "@/components/profilex/report-view";
+import { InsightsPdfButton } from "@/components/profilex/insights-pdf-button";
 
 // One line of a lookup's summary — the same label/value table look as the full report
 // (ReportView), so the summary and the tables under it read as one document.
@@ -593,6 +594,20 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
 
   return (
     <div className="space-y-4">
+      {/* One PDF with every lookup ever run on this borrower — managers and admins. */}
+      {canRun && latest.size > 0 && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2">
+          <p className="text-[11px] text-muted-foreground">
+            Save every lookup on {debtorName} as one PDF.
+          </p>
+          <InsightsPdfButton
+            scope={{ kind: "borrower", debtorId }}
+            label="Download all (PDF)"
+            title="Every lookup ever run on this borrower, in one PDF"
+          />
+        </div>
+      )}
+
       {openRequest && (
         <div className="flex items-start justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
           <div className="min-w-0">
@@ -731,10 +746,19 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
                   <ResultBody trace={trace} />
                 </div>
                 <FullReport trace={trace} label={service.label} />
-                <p className="text-[10px] text-muted-foreground mt-2">
-                  {new Date(trace.createdAt).toLocaleString("en-IN")}
-                  {showCost && trace.billable && ` · ₹${trace.cost.toFixed(2)}`}
-                </p>
+                <div className="flex items-center justify-between gap-2 mt-2">
+                  <p className="text-[10px] text-muted-foreground">
+                    {new Date(trace.createdAt).toLocaleString("en-IN")}
+                    {showCost && trace.billable && ` · ₹${trace.cost.toFixed(2)}`}
+                  </p>
+                  {/* Admins can save any single lookup as a PDF. */}
+                  {user?.role === "admin" && (
+                    <InsightsPdfButton
+                      scope={{ kind: "borrower", debtorId, traceId: trace.id }}
+                      label="PDF"
+                    />
+                  )}
+                </div>
               </div>
             ) : (
               (runnable || requestable) && (

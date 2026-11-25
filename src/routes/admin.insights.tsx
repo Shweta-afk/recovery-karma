@@ -35,6 +35,7 @@ import {
 import { isHit } from "@/lib/profilex/billing";
 import { PROFILEX_SERVICES, priceLine, type ProfilexService } from "@/lib/profilex/catalogue";
 import { ReportView } from "@/components/profilex/report-view";
+import { InsightsPdfButton } from "@/components/profilex/insights-pdf-button";
 import { NewTag, RecommendedTag } from "@/components/profilex/new-tag";
 import { errorText } from "@/lib/app-error";
 
@@ -328,7 +329,15 @@ function AdminInsightsPage() {
             <CardTitle className="text-base">
               {serviceLabel(shown.service_id)} · {shown.query_key}
             </CardTitle>
-            {statusBadge(shown)}
+            <div className="flex items-center gap-2">
+              {shown.state === "done" && (
+                <InsightsPdfButton
+                  scope={{ kind: "manual", lookupId: shown.id }}
+                  label="Download PDF"
+                />
+              )}
+              {statusBadge(shown)}
+            </div>
           </CardHeader>
           <CardContent>
             <ResultView row={shown} />

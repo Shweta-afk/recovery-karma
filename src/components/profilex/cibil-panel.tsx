@@ -39,6 +39,7 @@ import {
   type CibilForm,
 } from "@/lib/cibil/payprime";
 import { errorText } from "@/lib/app-error";
+import { InsightsPdfButton } from "@/components/profilex/insights-pdf-button";
 
 export const rupees = (n: number) => `₹${n.toFixed(2)}`;
 
@@ -290,9 +291,12 @@ function ReportFields({ report }: { report: CibilReportSummary }) {
 export function CibilReportView({
   report,
   earlier = 0,
+  pdf = false,
 }: {
   report: CibilReportSummary;
   earlier?: number;
+  /** Admins: also offer the report as a watermarked PDF. */
+  pdf?: boolean;
 }) {
   return (
     <div>
@@ -301,7 +305,10 @@ export function CibilReportView({
           <p className="text-[11px] text-muted-foreground">CIBIL score</p>
           <p className="text-2xl font-semibold text-foreground">{report.score ?? "—"}</p>
         </div>
-        <DownloadReportButton reportId={report.id} />
+        <div className="flex items-center gap-2">
+          {pdf && <InsightsPdfButton scope={{ kind: "cibil", reportId: report.id }} />}
+          <DownloadReportButton reportId={report.id} />
+        </div>
       </div>
       <ReportFields report={report} />
       <p className="text-[10px] text-muted-foreground mt-2">
@@ -450,7 +457,11 @@ export function CibilPanel({
       )}
 
       {latest ? (
-        <CibilReportView report={latest} earlier={state.reports.length - 1} />
+        <CibilReportView
+          report={latest}
+          earlier={state.reports.length - 1}
+          pdf={showCost /* admins */}
+        />
       ) : (
         !showForm && <p className="text-xs text-muted-foreground italic">Not pulled yet.</p>
       )}

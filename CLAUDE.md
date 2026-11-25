@@ -697,6 +697,19 @@ lookup their company paid for, managers only their own — found vs not found pe
 lookup's price and any correction/refund, and wallet top-ups/refunds; Excel download. Typed-in
 numbers are not shown.
 
+**Insights PDF downloads (2026-11-25).** Borrower Insights tab: managers + admins get "Download
+all (PDF)" = every completed lookup on that borrower in one file; admins also get a "PDF" per
+lookup, per CIBIL report, and per typed-in lookup on Admin → Insights. Agents get none. Server
+`insights-pdf.server.ts` (`getInsightsPdf`, read-only — never runs or charges a lookup; borrower
++ traces read AS THE CALLER so RLS decides; CIBIL only while the company's switch is on) returns
+a model; the browser draws a real .pdf with jsPDF + jspdf-autotable loaded on demand
+(`insights-pdf-render.ts`). Pure rules in `lib/profilex/insights-pdf.ts` (tested in
+`scripts/insights-pdf.test.ts`): body from `buildReportLayout`, lists wider than 7 columns print
+one record per item, Latin-1 only (₹ → "Rs", other scripts → "?"). Every page: faint diagonal
+tiled "SamvadX" / company-name watermark + "Downloaded by <name> (<role>) on <IST time>" (server
+time) in each tile and the footer; header = the full SamvadX logo (`public/logo.png`). Companies have no logo stored, so the company mark is its
+name. Typed-in mobile/UAN/GSTIN/PAN are left out of the PDF.
+
 **A blank price on a company's price list = that company's "found" price (user, 2026-10-21).**
 `priceFor(service, status, rateCard)`: a status the company's `rate_card` sets → that price; a
 known status it leaves blank → its `"1"` price; unknown/null status → the highest of ITS prices.

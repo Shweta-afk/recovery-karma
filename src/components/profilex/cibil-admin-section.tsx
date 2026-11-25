@@ -152,7 +152,7 @@ export function CibilAdminSection() {
         {shown && (
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs font-medium text-foreground mb-2">{shown.subject}</p>
-            <CibilReportView report={shown} />
+            <CibilReportView report={shown} pdf />
           </div>
         )}
 
