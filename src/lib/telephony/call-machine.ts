@@ -54,6 +54,12 @@ export function applyEvent(state: CallState, event: TelephonyEvent): CallState {
     case "ring":
       return canTransition(state, "ringing") ? "ringing" : state;
     case "answer":
+      // A provider may report the answer without ever reporting ringing: SkyCRM sends nothing
+      // while a Productive Dial borrower's phone rings, only "Answered". Treat that as ringing
+      // then answered. Until 2026-11-25 the answer was dropped here, the leg stayed "dialing":
+      // no call screen opened, and the stuck leg counted as still ringing, so the run stopped
+      // dialling new borrowers after a few pickups.
+      if (state === "queued" || state === "dialing") return "connected";
       return canTransition(state, "connected") ? "connected" : state;
     case "hangup": {
       // A connected call that hangs up is "completed" regardless of the raw result;
@@ -61,6 +67,13 @@ export function applyEvent(state: CallState, event: TelephonyEvent): CallState {
       if (state === "connected" || state === "wrapup") {
         return canTransition(state, "completed") ? "completed" : state;
       }
+      // "completed" means someone answered, even if the answer event never reached us. It isn't
+      // a legal move from dialing/ringing, so it used to leave the leg open forever.
+      if (
+        event.result === "completed" &&
+        (state === "queued" || state === "dialing" || state === "ringing")
+      )
+        return "completed";
       return canTransition(state, event.result) ? event.result : state;
     }
     case "dtmf":

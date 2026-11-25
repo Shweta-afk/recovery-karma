@@ -359,6 +359,48 @@ describe("engine: vendor-routed legs", () => {
     expect(run.stats.abandons).toBe(0);
   });
 
+  // SkyCRM's real sequence for a Productive Dial pickup: NO ringing event, just "Answered", then
+  // the end record (25 Nov, ext 8604, borrower …7070). The answer used to be dropped (dialing →
+  // connected wasn't allowed): the call screen never opened and the leg stayed "dialing".
+  test("an answer with no ringing event before it connects the leg", () => {
+    let run = engine.newDialerRun({ id: "r", settings });
+    const opened = engine.openLegs(run, [target], { idPrefix: "r", vendorRouted: true });
+    run = engine.bindProviderCall(opened.run, opened.opened[0].id, "p1");
+    expect(run.legs[0].state).toBe("dialing");
+    run = engine.applyLegEvent(run, {
+      type: "answer",
+      providerCallId: "p1",
+      at: 2,
+      agentHandle: "8604",
+    });
+    expect(run.legs[0]).toMatchObject({ state: "connected", agentHandle: "8604" });
+    run = engine.applyLegEvent(run, {
+      type: "hangup",
+      providerCallId: "p1",
+      at: 3,
+      result: "completed",
+      durationSeconds: 13,
+    });
+    expect(run.legs[0].state).toBe("completed");
+    expect(pendingLegs(run.legs)).toBe(0);
+  });
+
+  test("an end record saying completed closes a leg whose answer never arrived", () => {
+    let run = engine.newDialerRun({ id: "r", settings });
+    const opened = engine.openLegs(run, [target], { idPrefix: "r", vendorRouted: true });
+    run = engine.bindProviderCall(opened.run, opened.opened[0].id, "p1");
+    run = engine.applyLegEvent(run, {
+      type: "hangup",
+      providerCallId: "p1",
+      at: 3,
+      result: "completed",
+      durationSeconds: 13,
+    });
+    // Picked up but never reached an agent (no agentHandle): abandoned — no longer stuck "dialing".
+    expect(run.legs[0].state).toBe("abandoned");
+    expect(pendingLegs(run.legs)).toBe(0);
+  });
+
   test("answered but never put through to an agent → abandoned", () => {
     let run = engine.newDialerRun({ id: "r", settings });
     const opened = engine.openLegs(run, [target], { idPrefix: "r", vendorRouted: true });
