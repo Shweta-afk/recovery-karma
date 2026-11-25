@@ -283,6 +283,35 @@ function ProductiveDialStatus({
   );
 }
 
+/**
+ * Productive Dial's "Waiting for you" list for the top of the full call screen, which covers the
+ * dialer box (2026-11-25: borrower …4089 picked up during a call, waited unseen, hung up).
+ * Renders nothing while nobody is waiting.
+ */
+export function WaitingBanner({
+  liveCalls,
+  actions,
+}: {
+  liveCalls: LiveCallEntry[];
+  actions?: WaitingActions;
+}) {
+  const waitingNow = liveCalls
+    .filter((c) => c.status === "ringing" && c.waitingSince && !c.agentHandle)
+    .sort((a, b) => (a.waitingSince ?? 0) - (b.waitingSince ?? 0));
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!waitingNow.length) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [waitingNow.length]);
+  if (!waitingNow.length) return null;
+  return (
+    <div className="max-h-56 flex-shrink-0 overflow-y-auto">
+      <WaitingSection calls={waitingNow} actions={actions} />
+    </div>
+  );
+}
+
 function waitedFor(since: number | undefined): string {
   const s = Math.max(0, Math.floor((Date.now() - (since ?? Date.now())) / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;

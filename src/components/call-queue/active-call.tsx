@@ -1830,6 +1830,7 @@ export function ActiveCallPanel(props: CallControlProps) {
     return (
       <div className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm animate-in fade-in duration-200 flex items-center justify-center p-4 sm:p-8">
         <div className="w-full h-full max-w-6xl rounded-2xl border border-border bg-background shadow-2xl overflow-hidden flex flex-col">
+          {props.banner}
           <ActiveCallContent {...props} />
         </div>
       </div>

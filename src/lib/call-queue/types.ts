@@ -1,3 +1,4 @@
+import type React from "react";
 // Shared call-queue types + type-tied constants, extracted from dashboard.call-queue.tsx.
 // Other agent/manager surfaces (manager.queue.tsx, call-session, the dialer hooks) import
 // these; the route file re-exports them for backward compatibility.
@@ -388,6 +389,9 @@ export const NON_PRODUCTIVE_STATUSES: QueueStatus[] = [
 
 export interface CallControlProps {
   call: ActiveCall;
+  /** Shown across the top of the full call screen — Productive Dial's "Waiting for you" list,
+   *  which the call screen otherwise covers (2026-11-25: a borrower waited unseen and hung up). */
+  banner?: React.ReactNode;
   disposition: DispositionForm;
   onDisposition: (d: DispositionForm) => void;
   onMute: () => void;

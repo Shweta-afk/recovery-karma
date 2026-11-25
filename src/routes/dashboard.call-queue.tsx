@@ -113,6 +113,8 @@ export {
 import {
   DialerModeBar,
   DialingBoard,
+  WaitingBanner,
+  type WaitingActions,
   ProductiveDialBoard,
   LiveCallsPanel,
 } from "@/components/call-queue/dialer-boards";
@@ -698,6 +700,38 @@ export function CallQueueContent({
   // being polled from an earlier visit to this page) was placed by another hook instance, so
   // this one has no leg of its own to drop.
   const endCall = () => singleCall.hangup(activeCallRef.current?.providerCallId);
+
+  // Productive Dial's "Waiting for you" actions — shown in the dialer box AND across the top of
+  // the call screen, which covers that box (2026-11-25).
+  const waitingActions: WaitingActions = {
+    // Ends this call; the calling service then puts the longest-waiting borrower through.
+    onTakeNow:
+      activeCall && activeCall.phase !== "ended"
+        ? () => {
+            toast("Ending this call — the next waiting borrower will be put through to you.");
+            endCall();
+          }
+        : undefined,
+    loadTeammates: async () => {
+      const srv = await import("@/lib/telephony/server");
+      return srv.listQueueTeammates({
+        data: { accessToken: await getProgressiveToken(), runId: dialer.runId },
+      });
+    },
+    sendToTeammate: async (agentId: string) => {
+      const srv = await import("@/lib/telephony/server");
+      try {
+        const res = await srv.sendWaitingToTeammate({
+          data: { accessToken: await getProgressiveToken(), runId: dialer.runId, agentId },
+        });
+        toast.success(
+          `${res.name} (ext ${res.extension}) will now get borrowers waiting in your queue — their phone rings next.`,
+        );
+      } catch (e) {
+        toast.error(errorText(e, "Couldn't send to that teammate"));
+      }
+    },
+  };
 
   // Records a number the agent just learned (e.g. from the debtor or a family member) against
   // the debtor being called, and reflects it on the in-progress call's snapshot immediately —
@@ -2342,6 +2376,11 @@ export function CallQueueContent({
       {activeCall && activeCall.view === "panel" && (
         <ActiveCallPanel
           call={activeCall}
+          banner={
+            dialer.running && activeDialMode === "predictive" ? (
+              <WaitingBanner liveCalls={dialer.legs} actions={waitingActions} />
+            ) : undefined
+          }
           disposition={disposition}
           onDisposition={setDisposition}
           onMute={() => setActiveCall((c) => (c ? { ...c, muted: !c.muted } : null))}
@@ -2364,6 +2403,11 @@ export function CallQueueContent({
       {activeCall && activeCall.view === "modal" && (
         <ActiveCallModal
           call={activeCall}
+          banner={
+            dialer.running && activeDialMode === "predictive" ? (
+              <WaitingBanner liveCalls={dialer.legs} actions={waitingActions} />
+            ) : undefined
+          }
           disposition={disposition}
           onDisposition={setDisposition}
           onMute={() => setActiveCall((c) => (c ? { ...c, muted: !c.muted } : null))}
@@ -2402,37 +2446,7 @@ export function CallQueueContent({
           liveCalls={dialer.legs}
           paused={dialer.paused}
           skippedCalledToday={dialer.skippedCalledToday}
-          waiting={{
-            // Ends this call; the calling service then puts the longest-waiting borrower through.
-            onTakeNow:
-              activeCall && activeCall.phase !== "ended"
-                ? () => {
-                    toast(
-                      "Ending this call — the next waiting borrower will be put through to you.",
-                    );
-                    endCall();
-                  }
-                : undefined,
-            loadTeammates: async () => {
-              const srv = await import("@/lib/telephony/server");
-              return srv.listQueueTeammates({
-                data: { accessToken: await getProgressiveToken(), runId: dialer.runId },
-              });
-            },
-            sendToTeammate: async (agentId: string) => {
-              const srv = await import("@/lib/telephony/server");
-              try {
-                const res = await srv.sendWaitingToTeammate({
-                  data: { accessToken: await getProgressiveToken(), runId: dialer.runId, agentId },
-                });
-                toast.success(
-                  `${res.name} (ext ${res.extension}) will now get borrowers waiting in your queue — their phone rings next.`,
-                );
-              } catch (e) {
-                toast.error(errorText(e, "Couldn't send to that teammate"));
-              }
-            },
-          }}
+          waiting={waitingActions}
         />
       )}
 
