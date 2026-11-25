@@ -62,7 +62,7 @@ import { formatISTDate } from "@/lib/agent-time-stats";
 import { useDialerRun } from "@/lib/dialer/use-dialer-run";
 import { useProgressiveDial } from "@/lib/dialer/use-progressive-dial";
 import { ProgressiveStrip } from "@/components/call-queue/progressive-strip";
-import { checkDoNotCall } from "@/lib/telephony-actions.server";
+import { checkDoNotCall, setWrapUp } from "@/lib/telephony-actions.server";
 import { getAccessToken as getProgressiveToken } from "@/lib/access-token";
 import { getPhoneExtension } from "@/lib/telephony/phone-status";
 import type { DialTarget } from "@/lib/dialer/engine";
@@ -1064,6 +1064,32 @@ export function CallQueueContent({
     setActiveCall((c) => (c ? { ...c, providerCallId: lc.providerCallId } : c));
     return true;
   };
+
+  // Wrap-up (2026-11-25): from a Productive Dial call ending until its disposition is saved (or
+  // the screen closes), this agent is paused in the calling service and rung for nobody. Before,
+  // the service counted the agent free the moment the call ended and put the next waiting
+  // borrower through over the open disposition form. The server ends a wrap-up by itself after
+  // 5 minutes, e.g. if this page closes mid-form.
+  const wrapUpKey =
+    isSelf && activeCall && activeCall.dialMode === "multi_line" && activeCall.phase === "ended"
+      ? (activeCall.providerCallId ?? activeCall.debtor.id)
+      : null;
+  // Sent strictly in order, so an "end" for one call can't land after the "start" for the next.
+  const wrapUpChain = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => {
+    if (!wrapUpKey) return;
+    const send = (wrapping: boolean) => {
+      wrapUpChain.current = wrapUpChain.current.then(async () => {
+        try {
+          await setWrapUp({ data: { accessToken: await getProgressiveToken(), wrapping } });
+        } catch (e) {
+          console.warn("[wrap-up]", e);
+        }
+      });
+    };
+    send(true);
+    return () => send(false);
+  }, [wrapUpKey]);
 
   // Productive Dial (2026-11-18): many lines ring at once; the one that connects must come up on
   // the agent's screen by itself. Until now it only showed as a row in the Live Calls box, and

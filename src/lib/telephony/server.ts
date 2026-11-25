@@ -42,6 +42,7 @@ import {
   type DialAgent,
 } from "./guard.server";
 import { evaluateCall, normalisePhone, STALE_CALL_MINUTES } from "./guard-rules";
+import { notInWrapUp } from "./wrap-up";
 import {
   freeAgentHandles,
   linesPerAgent,
@@ -751,7 +752,9 @@ async function predictiveDial(
     };
   }
   const busy = new Set(open.busy);
-  const free = freeAgentHandles(inQueue, run.legs).filter((h) => !busy.has(h));
+  // An agent writing a disposition (wrap-up) is paused in SkyCRM; ringing borrowers for them
+  // would only leave those borrowers waiting with nobody to take them.
+  const free = notInWrapUp(freeAgentHandles(inQueue, run.legs).filter((h) => !busy.has(h)));
   const dialed = new Set(run.legs.map((l) => l.debtorId));
   const remaining = targets.filter((t) => !dialed.has(t.id));
   const { lines, atCompanyCeiling } = await channelsFor(session.clientId, settings);

@@ -28,6 +28,7 @@ import {
 import { shareError, type TrunkSettings } from "./telephony/channel-plan";
 import { groupMissedCalls } from "./telephony/missed-calls";
 import { parsePredictiveQueue } from "./telephony/predictive-rules";
+import { endWrapUp, MAX_WRAP_UP_MS, startWrapUp } from "./telephony/wrap-up";
 import { turnLogin, type TurnLogin } from "./telephony/webrtc/turn-credentials.server";
 import {
   extensionLoginMoves,
@@ -955,6 +956,55 @@ export const setQueuePresence = createServerFn({ method: "POST" })
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[setQueuePresence] ${msg}`);
       throw new Error("Could not update your inbound call status. Try again.");
+    }
+  });
+
+/** Server timers that end a wrap-up by themselves (MAX_WRAP_UP_MS), per extension. */
+const wrapUpTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+async function resumeAfterWrapUp(extension: string): Promise<void> {
+  const t = wrapUpTimers.get(extension);
+  if (t) clearTimeout(t);
+  wrapUpTimers.delete(extension);
+  endWrapUp(extension);
+  if (isSkycrm()) await unpauseQueue(extension);
+}
+
+/**
+ * Wrap-up for the caller's own extension (2026-11-25): on from a Productive Dial call ending
+ * until its disposition is saved. On = paused in SkyCRM, so the next borrower waiting in the
+ * queue isn't put through over the open disposition form, and Productive Dial rings nobody for
+ * this agent (wrap-up.ts). Ends by itself after MAX_WRAP_UP_MS.
+ */
+export const setWrapUp = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ accessToken: tokenSchema, wrapping: z.boolean() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const caller = await requireCaller(data.accessToken);
+    const extension = await callerExtension(caller.agentId);
+    if (!extension) return { ok: true, skipped: "no_extension" as const };
+    try {
+      if (data.wrapping) {
+        startWrapUp(extension);
+        const old = wrapUpTimers.get(extension);
+        if (old) clearTimeout(old);
+        const timer = setTimeout(() => {
+          void resumeAfterWrapUp(extension).catch((err: unknown) =>
+            console.warn(`[wrap-up] auto-resume ${extension} failed:`, err),
+          );
+        }, MAX_WRAP_UP_MS);
+        timer.unref?.();
+        wrapUpTimers.set(extension, timer);
+        if (isSkycrm()) await pauseQueue(extension);
+      } else {
+        await resumeAfterWrapUp(extension);
+      }
+      return { ok: true };
+    } catch (err) {
+      // Best effort: a failed pause must not block the agent's disposition.
+      console.warn(`[wrap-up] ${data.wrapping ? "pause" : "resume"} ${extension}:`, err);
+      return { ok: false };
     }
   });
 
