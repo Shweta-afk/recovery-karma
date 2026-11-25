@@ -749,10 +749,13 @@ function LookupsPanel({ debtorId, debtorName }: { debtorId: string; debtorName: 
                 <div className="flex items-center justify-between gap-2 mt-2">
                   <p className="text-[10px] text-muted-foreground">
                     {new Date(trace.createdAt).toLocaleString("en-IN")}
-                    {showCost && trace.billable && ` · ₹${trace.cost.toFixed(2)}`}
+                    {trace.earlierFrom
+                      ? ` · from the earlier upload "${trace.earlierFrom}"`
+                      : showCost && trace.billable && ` · ₹${trace.cost.toFixed(2)}`}
                   </p>
-                  {/* Admins can save any single lookup as a PDF. */}
-                  {user?.role === "admin" && (
+                  {/* Admins can save any single lookup as a PDF (not one from an earlier upload:
+                      the PDF reads this borrower row's own lookups). */}
+                  {user?.role === "admin" && !trace.earlierFrom && (
                     <InsightsPdfButton
                       scope={{ kind: "borrower", debtorId, traceId: trace.id }}
                       label="PDF"

@@ -10,6 +10,8 @@
 // Not cached to localStorage, unlike the older stores: trace responses are large, and
 // portfolio-store already blew the ~5 MB origin quota once (see report_count_rpcs migration).
 import { supabase } from "./supabase";
+import { getAccessToken } from "./access-token";
+import { getEarlierLookups } from "./earlier-lookups.server";
 import { RETIRED_SERVICE_LABELS, getService } from "./profilex/catalogue";
 
 /** A ProfileX response body. Untyped on purpose — the provider's shape differs per service and
@@ -27,6 +29,9 @@ export interface TraceRecord {
   response: TraceResponse | null;
   error: string | null;
   createdAt: string;
+  /** Set when the lookup was made on an earlier upload of the same loan (the portfolio's name).
+   *  Shown read-only; see profilex/earlier-lookups.ts. */
+  earlierFrom?: string;
 }
 
 const byDebtor = new Map<string, TraceRecord[]>();
@@ -59,6 +64,7 @@ function toRecord(row: Record<string, unknown>): TraceRecord {
     response: (row.response as TraceResponse | null) ?? null,
     error: (row.error as string | null) ?? null,
     createdAt: String(row.created_at),
+    earlierFrom: (row.earlier_portfolio as string | undefined) ?? undefined,
   };
 }
 
@@ -71,7 +77,22 @@ export async function refreshTraces(debtorId: string): Promise<void> {
   // An empty result and a blocked result look the same to the UI, so surface the error rather
   // than caching [] and rendering a confident "no traces" over what is really an RLS problem.
   if (error) throw new Error(`Could not load lookup history (${error.message})`);
-  byDebtor.set(debtorId, ((data ?? []) as Record<string, unknown>[]).map(toRecord));
+  const own = ((data ?? []) as Record<string, unknown>[]).map(toRecord);
+  // Lookups from earlier uploads of the same loan (a new upload gets new debtor rows). Best
+  // effort: if this fails, the borrower's own lookups still show.
+  let earlier: TraceRecord[] = [];
+  try {
+    const accessToken = await getAccessToken();
+    earlier = (await getEarlierLookups({ data: { accessToken, debtorId } })).map((t) =>
+      toRecord(t as unknown as Record<string, unknown>),
+    );
+  } catch (e) {
+    console.warn("[insights] earlier lookups not loaded:", e);
+  }
+  byDebtor.set(
+    debtorId,
+    [...own, ...earlier].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+  );
   window.dispatchEvent(new CustomEvent(TRACES_UPDATED, { detail: { debtorId } }));
 }
 

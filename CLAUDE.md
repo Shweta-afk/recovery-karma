@@ -813,6 +813,14 @@ lookup, call log/feedback, payment etc. per IST month; admins download a month a
 **Admin → Archive History**. `runProfilexTrace` reuses an earlier paid lookup for the same
 phone + service (other debtor rows, then the archive) at ₹0 instead of re-buying it after a
 re-upload. The schedule is deliberately NOT a migration — see `docs/MONTHLY_ARCHIVE.md`.
+**The Insights tab also shows lookups from earlier uploads of the same loan (2026-11-25).**
+Lookups live on a debtor ROW and every upload makes new rows, so after Rohit Tambe's "11 Nov 26"
+continued "9 NOV 26" the tab looked empty. `getEarlierLookups` (`earlier-lookups.server.ts`, rule
+`sameLoanAndBorrower` in `profilex/earlier-lookups.ts`, tested in `scripts/earlier-lookups.test.ts`)
+returns done lookups on other rows with the same loan ID AND the same borrower (phone or name),
+for a caller who can see the borrower; `refreshTraces` merges them, marked "from the earlier
+upload …". Read-only: nothing copied or charged; Re-run reuses at ₹0 as before. Not yet in the
+borrower PDF or the Lookup-by-Loan-ID report, which still read the row's own lookups.
 
 **Admin lookups come off the company wallet (2026-10-28).** Until then only managers were
 charged (their `profilex_wallets`); an admin's lookup — borrower Insights tab, Admin → Insights
