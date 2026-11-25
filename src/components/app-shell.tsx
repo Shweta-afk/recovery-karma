@@ -105,6 +105,36 @@ function NotificationBell({ agentId }: { agentId: string }) {
   );
 }
 
+// One colour per portal, so a screenshot or a shared screen says at a glance whose view it is:
+// a stripe along the top bar, the portal's name, and the role badge.
+const PORTAL_STYLE: Record<string, { label: string; stripe: string; badge: string }> = {
+  agent: {
+    label: "Agent portal",
+    stripe: "border-t-sky-500",
+    badge: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  },
+  manager: {
+    label: "Manager portal",
+    stripe: "border-t-emerald-500",
+    badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  },
+  auditor: {
+    label: "Call Auditor portal",
+    stripe: "border-t-violet-500",
+    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+  },
+  admin: {
+    label: "Admin portal",
+    stripe: "border-t-amber-500",
+    badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  },
+  superadmin: {
+    label: "SamvadX Superadmin",
+    stripe: "border-t-rose-500",
+    badge: "bg-rose-500/15 text-rose-700 dark:text-rose-300",
+  },
+};
+
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth();
   const { theme, toggle } = useTheme();
@@ -140,6 +170,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     await logout();
     navigate({ to: "/login" });
   };
+
+  const portal = PORTAL_STYLE[user.role] ?? PORTAL_STYLE.agent;
 
   // A superadmin has no client_id, so companyStatus is always undefined for them — the gate
   // below only ever applies to agent/manager/admin. A missing companyStatus on an ordinary
@@ -178,11 +210,16 @@ export function AppShell({ children }: { children: ReactNode }) {
             its own `overflow-auto` container. Measured on the live app: 1492px of content in a
             1440px viewport. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-4 border-b border-border bg-card px-4">
+          <header
+            className={cn(
+              "sticky top-0 z-10 flex h-14 items-center justify-between gap-4 border-b border-t-[3px] border-border bg-card px-4",
+              portal.stripe,
+            )}
+          >
             <div className="flex items-center gap-2">
               <SidebarTrigger />
-              <div className="hidden text-sm text-muted-foreground sm:block">
-                Recovery operations console
+              <div className="hidden text-sm font-medium text-foreground sm:block">
+                {portal.label}
               </div>
               {user.role === "manager" && teams.length > 1 && (
                 <button
@@ -209,7 +246,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     {initials}
                   </AvatarFallback>
                 </Avatar>
-                <Badge variant="secondary" className="capitalize">
+                <Badge variant="secondary" className={cn("capitalize", portal.badge)}>
                   {user.role}
                 </Badge>
               </div>
