@@ -225,7 +225,8 @@ function TeamActivityPage() {
         today: calcStats(scoped),
       };
     });
-  }, [agents, allDisps, ranged, dateRange]);
+    // intervals arrive after the first render; without them here the table never picked them up.
+  }, [agents, allDisps, ranged, dateRange, presenceDay, intervals]);
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;

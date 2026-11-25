@@ -20,7 +20,9 @@ import { istDayKey } from "./monthly-trend";
 import type { AgentStatus } from "./call-queue/types";
 
 export interface StatusInterval {
-  agentId: string; // agents.id (uuid)
+  /** The key the caller asked with — the account email everywhere in the app (AgentRef.id),
+   *  or agents.id (uuid). Rows are stored by uuid; see resolveAgentKeys. */
+  agentId: string;
   status: AgentStatus;
   startedAt: string;
   /** Null while the agent is still in this status. */
@@ -53,6 +55,14 @@ export async function setAgentStatus(status: AgentStatus): Promise<void> {
   if (!me?.client_id) return;
 
   await closeOpenStatus();
+  // Also any interval of THIS agent still open from another tab, a reload or yesterday: only the
+  // tab that opened a row knew to close it, so 279 of 324 rows on 24-25 Nov were never closed and
+  // stretched logged-in time to hours. One person is in one status at a time.
+  await supabase
+    .from("agent_status_log")
+    .update({ ended_at: new Date().toISOString() })
+    .eq("agent_id", me.id)
+    .is("ended_at", null);
   void syncInboundQueue(status);
 
   const { data, error } = await supabase
@@ -78,6 +88,40 @@ async function syncInboundQueue(status: AgentStatus): Promise<void> {
   }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * agent_status_log is keyed by agents.id (uuid), but every screen asks by account EMAIL (AgentRef.id).
+ * Until 2026-11-25 the emails went straight into `.in("agent_id", …)`: Postgres rejected them for
+ * the uuid column, the error was swallowed, and login / logout / break / idle showed nothing on
+ * Team Activity, the agent dashboard and Reports. Returns uuid → the key the caller used.
+ */
+async function resolveAgentKeys(keys: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const emails: string[] = [];
+  for (const k of keys) {
+    if (UUID_RE.test(k)) out.set(k, k);
+    else if (k) emails.push(k);
+  }
+  if (emails.length) {
+    const { data } = await supabase.from("agents").select("id, email").in("email", emails);
+    for (const r of (data ?? []) as { id: string; email: string }[]) out.set(r.id, r.email);
+  }
+  return out;
+}
+
+function toIntervals(
+  rows: Array<Record<string, unknown>>,
+  keyOf: Map<string, string>,
+): StatusInterval[] {
+  return rows.map((r) => ({
+    agentId: keyOf.get(String(r.agent_id)) ?? String(r.agent_id),
+    status: r.status as AgentStatus,
+    startedAt: String(r.started_at),
+    endedAt: (r.ended_at as string | null) ?? null,
+  }));
+}
+
 /**
  * Every status interval overlapping the given IST day, for the given agents.
  *
@@ -93,20 +137,20 @@ export async function fetchStatusIntervals(
   const dayStart = `${dayKey}T00:00:00+05:30`;
   const dayEnd = `${dayKey}T23:59:59.999+05:30`;
 
+  const keyOf = await resolveAgentKeys(agentIds);
+  if (!keyOf.size) return [];
   const { data, error } = await supabase
     .from("agent_status_log")
     .select("agent_id, status, started_at, ended_at")
-    .in("agent_id", agentIds)
+    .in("agent_id", [...keyOf.keys()])
     .lte("started_at", dayEnd)
     .or(`ended_at.is.null,ended_at.gte.${dayStart}`);
 
-  if (error || !data) return [];
-  return data.map((r) => ({
-    agentId: String(r.agent_id),
-    status: r.status as AgentStatus,
-    startedAt: String(r.started_at),
-    endedAt: (r.ended_at as string | null) ?? null,
-  }));
+  if (error || !data) {
+    if (error) console.warn("[presence] could not load status intervals:", error.message);
+    return [];
+  }
+  return toIntervals(data, keyOf);
 }
 
 /**
@@ -122,20 +166,20 @@ export async function fetchStatusIntervalsRange(
   const rangeStart = `${fromDay}T00:00:00+05:30`;
   const rangeEnd = `${toDay}T23:59:59.999+05:30`;
 
+  const keyOf = await resolveAgentKeys(agentIds);
+  if (!keyOf.size) return [];
   const { data, error } = await supabase
     .from("agent_status_log")
     .select("agent_id, status, started_at, ended_at")
-    .in("agent_id", agentIds)
+    .in("agent_id", [...keyOf.keys()])
     .lte("started_at", rangeEnd)
     .or(`ended_at.is.null,ended_at.gte.${rangeStart}`);
 
-  if (error || !data) return [];
-  return data.map((r) => ({
-    agentId: String(r.agent_id),
-    status: r.status as AgentStatus,
-    startedAt: String(r.started_at),
-    endedAt: (r.ended_at as string | null) ?? null,
-  }));
+  if (error || !data) {
+    if (error) console.warn("[presence] could not load status intervals:", error.message);
+    return [];
+  }
+  return toIntervals(data, keyOf);
 }
 
 /** Did we record anything at all for this agent on this day? Distinguishes "nothing happened"
