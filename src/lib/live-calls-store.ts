@@ -41,6 +41,9 @@ export interface LiveCall {
   phase: LivePhase;
   dialMode: DialMode | null;
   startedAt: string;
+  /** When the row entered its current phase — wrap-up is timed from this. Falls back to
+   *  startedAt for rows written before 20261125_live_calls_phase_since.sql. */
+  phaseSince: string;
   lastSeenAt: string;
   /** True when the heartbeat has gone quiet — the call may already be over. */
   stale: boolean;
@@ -80,6 +83,7 @@ export async function startLiveCall(c: {
       // disposition-store. An unmapped manual dial is stored with a null debtor.
       debtor_id: c.debtorId,
       phase: c.phase,
+      phase_since: new Date().toISOString(),
       dial_mode: c.dialMode ?? null,
       contact_name: c.debtorName || null,
       contact_phone: c.phone || null,
@@ -99,10 +103,15 @@ export async function startLiveCall(c: {
 /** Move the row through the call's phases, and keep the heartbeat fresh. */
 export async function updateLiveCall(phase: LivePhase): Promise<void> {
   if (!ownRowId) return;
-  await supabase
+  const now = new Date().toISOString();
+  const { error } = await supabase
     .from("live_calls")
-    .update({ phase, last_seen_at: new Date().toISOString() })
+    .update({ phase, phase_since: now, last_seen_at: now })
     .eq("id", ownRowId);
+  // Before the migration there is no phase_since column: keep the phase change itself.
+  if (error && /phase_since/.test(error.message ?? "")) {
+    await supabase.from("live_calls").update({ phase, last_seen_at: now }).eq("id", ownRowId);
+  }
 }
 
 /** Heartbeat only — no phase change. */
@@ -147,6 +156,7 @@ function toLiveCall(
     phase: (row.phase as LivePhase) ?? "connected",
     dialMode: (row.dial_mode as DialMode | null) ?? null,
     startedAt: String(row.started_at ?? ""),
+    phaseSince: String(row.phase_since ?? row.started_at ?? ""),
     lastSeenAt: lastSeen,
     stale: lastSeen ? now - new Date(lastSeen).getTime() > STALE_AFTER_MS : true,
   };
@@ -187,7 +197,7 @@ export async function fetchLiveCalls(): Promise<LiveCall[]> {
     supabase
       .from("live_calls")
       .select(
-        "id, agent_id, debtor_id, contact_name, contact_phone, loan_reference, phase, dial_mode, started_at, last_seen_at",
+        "id, agent_id, debtor_id, contact_name, contact_phone, loan_reference, phase, dial_mode, started_at, phase_since, last_seen_at",
       )
       .is("ended_at", null)
       .order("started_at", { ascending: false }),

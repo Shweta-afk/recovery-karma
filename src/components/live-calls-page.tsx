@@ -7,12 +7,15 @@ import { useState } from "react";
 import { PhoneCall, PhoneIncoming, Info, Search, X } from "lucide-react";
 import { DIAL_MODE_META, type DialMode } from "@/lib/call-queue/types";
 import { LiveCallsBoard, useLiveCalls } from "@/components/live-calls-board";
+import { AgentsRightNow } from "@/components/agents-right-now";
 
 const DIAL_MODE_ORDER: DialMode[] = ["multi_line", "sequential", "single", "manual"];
 
 export function LiveCallsPageBody({ scopeLabel }: { scopeLabel: string }) {
   const [search, setSearch] = useState("");
-  const { calls: allCalls } = useLiveCalls();
+  const { calls: everyRow } = useLiveCalls();
+  // Wrap-up rows are agents writing dispositions, not calls (see AgentsRightNow below).
+  const allCalls = everyRow.filter((c) => c.phase !== "wrapup");
   // Same filter LiveCallsBoard applies to the cards below — kept in sync here so the stat strip
   // (Ringing/Connected/dial-mode counts) reflects whichever agent's calls are actually visible,
   // rather than showing team-wide totals while the board itself is filtered down to one person.
@@ -99,6 +102,8 @@ export function LiveCallsPageBody({ scopeLabel }: { scopeLabel: string }) {
           );
         })}
       </div>
+
+      <AgentsRightNow liveRows={everyRow} search={search} />
 
       <LiveCallsBoard filterAgentName={search} />
     </div>

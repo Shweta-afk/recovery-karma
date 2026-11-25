@@ -1380,6 +1380,7 @@ export interface Database {
           debtor_id: string | null;
           provider_call_id: string | null;
           phase: string;
+          phase_since: string | null;
           dial_mode: string | null;
           contact_name: string | null;
           contact_phone: string | null;
@@ -1395,6 +1396,7 @@ export interface Database {
           debtor_id?: string | null;
           provider_call_id?: string | null;
           phase: string;
+          phase_since?: string | null;
           dial_mode?: string | null;
           contact_name?: string | null;
           contact_phone?: string | null;
@@ -1410,6 +1412,7 @@ export interface Database {
           debtor_id?: string | null;
           provider_call_id?: string | null;
           phase?: string;
+          phase_since?: string | null;
           dial_mode?: string | null;
           contact_name?: string | null;
           contact_phone?: string | null;

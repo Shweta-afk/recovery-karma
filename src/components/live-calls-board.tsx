@@ -90,7 +90,10 @@ export function LiveCallsBoard({
   // has no search of its own and still shows everyone.
   filterAgentName?: string;
 }) {
-  const { calls: allCalls, loading } = useLiveCalls();
+  const { calls: everyRow, loading } = useLiveCalls();
+  // A "wrapup" row is an agent writing a disposition after the call ended — not a call. It is
+  // shown in the Agents right now panel (live-calls-page.tsx), never as a call card.
+  const allCalls = everyRow.filter((c) => c.phase !== "wrapup");
   const needle = filterAgentName?.trim().toLowerCase();
   const calls = needle
     ? allCalls.filter((c) => c.agentName.toLowerCase().includes(needle))

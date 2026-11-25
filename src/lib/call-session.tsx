@@ -159,16 +159,44 @@ export function CallSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const phase = activeCall?.phase;
 
-    // Call over (or gone) — stamp it ended and stop.
-    if (!activeCall || phase === "ended") {
+    // Call gone (disposition saved, or the screen closed) — stamp it ended and stop.
+    if (!activeCall) {
       if (publishedPhase.current) {
         publishedPhase.current = null;
         void endLiveCall();
       }
       return;
     }
+    // Call over, disposition form open: wrap-up. The row stays, in phase "wrapup", until the
+    // disposition is saved, so Live Calls can show who is writing one and for how long
+    // (2026-11-25: agents spend a lot of time here). A call never published has nothing to show.
+    if (phase === "ended") {
+      if (publishedPhase.current && publishedPhase.current !== "wrapup") {
+        publishedPhase.current = "wrapup";
+        void updateLiveCall("wrapup");
+      }
+      return;
+    }
 
     const livePhase = phase === "ringing" ? "ringing" : "connected";
+
+    // A live call after wrap-up is a NEW call (the next Productive Dial borrower opening over an
+    // unsaved disposition): close the old row and start a new one, never reuse it.
+    if (publishedPhase.current === "wrapup") {
+      publishedPhase.current = null;
+      void endLiveCall().then(() =>
+        startLiveCall({
+          debtorId: isUuid(activeCall.debtor.id) ? activeCall.debtor.id : null,
+          debtorName: activeCall.debtor.name,
+          phone: activeCall.debtor.phone,
+          loanReference: activeCall.debtor.loanReference,
+          phase: livePhase,
+          dialMode: activeCall.dialMode,
+        }),
+      );
+      publishedPhase.current = livePhase;
+      return;
+    }
 
     if (!publishedPhase.current) {
       publishedPhase.current = livePhase;
@@ -194,7 +222,9 @@ export function CallSessionProvider({ children }: { children: ReactNode }) {
   // interval before it ever fired. No heartbeat was ever sent mid-call, so every call over a
   // minute showed as "No update from this agent's app" and hid its Listen/Whisper/Barge buttons
   // (found 2026-11-05).
-  const callLive = !!activeCall && activeCall.phase !== "ended";
+  // Wrap-up included: the row stays on the board until the disposition is saved, and without a
+  // heartbeat it would be marked stale after a minute.
+  const callLive = !!activeCall;
   useEffect(() => {
     if (!callLive) return;
     const id = setInterval(() => void touchLiveCall(), HEARTBEAT_MS);
