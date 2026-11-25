@@ -27,7 +27,13 @@ export interface StatusInterval {
   startedAt: string;
   /** Null while the agent is still in this status. */
   endedAt: string | null;
+  /** Last heartbeat from the agent's app on this interval (null on rows before 2026-11-25). */
+  lastSeenAt: string | null;
 }
+
+/** An open interval not heartbeated for this long means the app is gone (laptop closed, tab
+ *  killed): the person is not signed in any more. The app heartbeats every minute. */
+export const PRESENCE_STALE_MS = 3 * 60_000;
 
 /** The row this tab has open, so a status change closes the right interval. */
 let openIntervalId: string | null = null;
@@ -67,7 +73,12 @@ export async function setAgentStatus(status: AgentStatus): Promise<void> {
 
   const { data, error } = await supabase
     .from("agent_status_log")
-    .insert({ client_id: me.client_id, agent_id: me.id, status })
+    .insert({
+      client_id: me.client_id,
+      agent_id: me.id,
+      status,
+      last_seen_at: new Date().toISOString(),
+    })
     .select("id")
     .single();
   if (error || !data) {
@@ -75,6 +86,74 @@ export async function setAgentStatus(status: AgentStatus): Promise<void> {
     return;
   }
   openIntervalId = data.id as string;
+}
+
+/**
+ * Make sure this signed-in person has an open status interval, on ANY page (2026-11-25). The
+ * interval used to be opened by the Call Queue page and closed when the agent left it, so a
+ * signed-in agent on Debtors or History showed as Offline on Live Calls, and opening Call Queue
+ * reset a break to Available. Now the agent/manager layout calls this once and then
+ * touchPresence() every minute:
+ *   - an open interval seen recently (this tab's reload, another tab) is adopted as it is —
+ *     a break stays a break;
+ *   - open intervals not seen for a while (closed laptop) are closed at their last heartbeat;
+ *   - with none left open, a new "available" interval starts.
+ */
+export async function ensurePresence(): Promise<void> {
+  const me = await getMyAgentRow();
+  if (!me?.client_id) return;
+  const { data } = await supabase
+    .from("agent_status_log")
+    .select("id, status, started_at, last_seen_at")
+    .eq("agent_id", me.id)
+    .is("ended_at", null)
+    .order("started_at", { ascending: false })
+    .limit(20);
+  const open = (data ?? []) as {
+    id: string;
+    status: string;
+    started_at: string;
+    last_seen_at: string | null;
+  }[];
+  const now = Date.now();
+  const seen = (r: (typeof open)[number]) => Date.parse(r.last_seen_at ?? r.started_at);
+  const keep = open.find((r) => now - seen(r) < 10 * 60_000);
+  for (const r of open) {
+    if (r === keep) continue;
+    await supabase
+      .from("agent_status_log")
+      .update({ ended_at: new Date(seen(r)).toISOString() })
+      .eq("id", r.id);
+  }
+  if (keep) {
+    openIntervalId = keep.id;
+    await touchPresence();
+    return;
+  }
+  await setAgentStatus("available");
+}
+
+/** Sign-out: close every open interval of this person. */
+export async function endPresence(): Promise<void> {
+  openIntervalId = null;
+  const me = await getMyAgentRow();
+  if (!me) return;
+  await supabase
+    .from("agent_status_log")
+    .update({ ended_at: new Date().toISOString() })
+    .eq("agent_id", me.id)
+    .is("ended_at", null);
+}
+
+/** Heartbeat on this person's open interval — "still signed in". */
+export async function touchPresence(): Promise<void> {
+  const id = openIntervalId;
+  if (!id) return;
+  await supabase
+    .from("agent_status_log")
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq("id", id)
+    .is("ended_at", null);
 }
 
 /** Available agents take inbound calls; any other status pauses their softphone's queue. */
@@ -119,6 +198,7 @@ function toIntervals(
     status: r.status as AgentStatus,
     startedAt: String(r.started_at),
     endedAt: (r.ended_at as string | null) ?? null,
+    lastSeenAt: (r.last_seen_at as string | null) ?? null,
   }));
 }
 
@@ -141,7 +221,7 @@ export async function fetchStatusIntervals(
   if (!keyOf.size) return [];
   const { data, error } = await supabase
     .from("agent_status_log")
-    .select("agent_id, status, started_at, ended_at")
+    .select("agent_id, status, started_at, ended_at, last_seen_at")
     .in("agent_id", [...keyOf.keys()])
     .lte("started_at", dayEnd)
     .or(`ended_at.is.null,ended_at.gte.${dayStart}`);
@@ -170,7 +250,7 @@ export async function fetchStatusIntervalsRange(
   if (!keyOf.size) return [];
   const { data, error } = await supabase
     .from("agent_status_log")
-    .select("agent_id, status, started_at, ended_at")
+    .select("agent_id, status, started_at, ended_at, last_seen_at")
     .in("agent_id", [...keyOf.keys()])
     .lte("started_at", rangeEnd)
     .or(`ended_at.is.null,ended_at.gte.${rangeStart}`);

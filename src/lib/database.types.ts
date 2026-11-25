@@ -49,6 +49,7 @@ export interface Database {
       agent_status_log: {
         Row: {
           id: string;
+          last_seen_at: string | null;
           client_id: string;
           agent_id: string;
           status: string;
@@ -57,6 +58,7 @@ export interface Database {
         };
         Insert: {
           id?: string;
+          last_seen_at?: string | null;
           client_id: string;
           agent_id: string;
           status: string;
@@ -65,6 +67,7 @@ export interface Database {
         };
         Update: {
           id?: string;
+          last_seen_at?: string | null;
           client_id?: string;
           agent_id?: string;
           status?: string;

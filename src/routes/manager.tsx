@@ -7,6 +7,7 @@ import { IncomingCallPopup } from "@/components/incoming-call-popup";
 import { BrowserPhone } from "@/components/telephony/browser-phone";
 import { TeamPickerScreen } from "@/components/team-picker-screen";
 import { homeRouteForRole, useAuth } from "@/lib/auth";
+import { usePresenceHeartbeat } from "@/lib/use-presence-heartbeat";
 import { useActiveTeam } from "@/lib/active-team-store";
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -17,6 +18,8 @@ export const Route = createFileRoute("/manager")({
 
 function ManagerLayout() {
   const { user, loading } = useAuth();
+  // Signed in on any page = present (Live Calls' Agents right now, Team Activity).
+  usePresenceHeartbeat(!!user);
   const navigate = useNavigate();
   const managerId = user?.email ?? user?.id ?? "";
   // Admins aren't scoped to a single team (they see everything org-wide), so this hook only

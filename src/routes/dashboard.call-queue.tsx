@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { todayIstKey } from "@/lib/date-filter";
-import { setAgentStatus, closeOpenStatus } from "@/lib/agent-presence-store";
+import { setAgentStatus } from "@/lib/agent-presence-store";
 import { bucketOf, formatINR, type DPDBucket, BUCKET_META } from "@/lib/mock-debtors";
 import {
   addDebtorPhone,
@@ -629,19 +629,10 @@ export function CallQueueContent({
     activeCallRef.current = activeCall;
   }, [activeCall]);
 
-  // Open an "available" interval when an agent opens their own queue, and close it when the
-  // tab goes away. Without this, an agent who never touches the status picker records nothing
-  // and their whole day reads as untracked.
-  useEffect(() => {
-    if (!isSelf) return;
-    void setAgentStatus("available");
-    const bye = () => void closeOpenStatus();
-    window.addEventListener("pagehide", bye);
-    return () => {
-      window.removeEventListener("pagehide", bye);
-      void closeOpenStatus();
-    };
-  }, [isSelf]);
+  // Presence (the status interval) is kept by the agent/manager LAYOUT now, on every page
+  // (usePresenceHeartbeat, 2026-11-25). This page used to open "available" on arrival and close
+  // it on leaving: a signed-in agent on another page showed as Offline, and coming back here
+  // reset a break to Available.
 
   const startCall = (
     debtor: QueueDebtor,

@@ -578,6 +578,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     sessionNonceRef.current = null;
+    // Shown as "Not signed in" on Live Calls straight away, not 3 minutes later. Before sign-out:
+    // closing the interval needs this session.
+    await import("./agent-presence-store").then((m) => m.endPresence()).catch(() => {});
     await supabase.auth.signOut();
     clearLocalCaches();
     setUser(null);

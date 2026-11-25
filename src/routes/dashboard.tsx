@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useAuth } from "@/lib/auth";
+import { usePresenceHeartbeat } from "@/lib/use-presence-heartbeat";
 import { AppShell } from "@/components/app-shell";
 import { CallSessionProvider } from "@/lib/call-session";
 import { GlobalCallBar } from "@/components/global-call-bar";
@@ -14,6 +15,8 @@ export const Route = createFileRoute("/dashboard")({
 
 function DashboardLayout() {
   const { user, loading } = useAuth();
+  // Signed in on any page = present (Live Calls' Agents right now, Team Activity).
+  usePresenceHeartbeat(!!user);
   const navigate = useNavigate();
   useEffect(() => {
     if (!loading && user?.role === "auditor") navigate({ to: "/auditor" });
