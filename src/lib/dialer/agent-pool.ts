@@ -20,19 +20,32 @@ export interface DialerAgent {
 export async function fetchDialerAgents(): Promise<DialerAgent[]> {
   const { data, error } = await supabase
     .from("agents")
-    .select("id, name, agent_phone, role, is_active")
-    .eq("is_active", true)
-    .not("agent_phone", "is", null);
+    .select("id, name, agent_phone, agent_extension, role, is_active")
+    .eq("is_active", true);
 
   if (error) {
     console.error("[dialer] failed to load agent pool:", error.message);
     return [];
   }
 
-  const rows = (data ?? []) as Array<{ id: string; name: string; agent_phone: string | null }>;
+  // No phone on file: the calling extension stands in, exactly as the server's own list does
+  // (companyAgentPhones in telephony/server.ts). Phones only here meant an agent with an
+  // extension but no phone — Richa, Sejal and 5 others on 2026-11-25 — couldn't start
+  // Productive Dial: the browser sent only their manager's number and the server refused it
+  // ("Your own phone number is not set up").
+  const rows = (data ?? []) as Array<{
+    id: string;
+    name: string;
+    agent_phone: string | null;
+    agent_extension?: string | null;
+  }>;
   return rows
-    .filter((a) => typeof a.agent_phone === "string" && a.agent_phone.trim() !== "")
-    .map((a) => ({ id: a.id, name: a.name, phone: String(a.agent_phone) }));
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      phone: a.agent_phone?.trim() || a.agent_extension?.trim() || "",
+    }))
+    .filter((a) => a.phone !== "");
 }
 
 /** Just the numbers, which is what the dialer run needs. */
