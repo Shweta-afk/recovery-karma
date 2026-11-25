@@ -79,13 +79,19 @@ export function dialCapacity(settings: PortfolioSettings, agentsAvailable: numbe
 }
 
 /** Parse "HH:MM-HH:MM" and test whether `now` falls inside it (local time). */
+/** India has no daylight saving: IST is always UTC+05:30. */
+const IST_OFFSET_MINUTES = 5 * 60 + 30;
+
 export function withinTimeWindow(window: string, now: Date): boolean {
   const m = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/.exec(window.trim());
   if (!m) return true; // malformed window → don't block dialing
   const [, sh, sm, eh, em] = m;
   const start = Number(sh) * 60 + Number(sm);
   const end = Number(eh) * 60 + Number(em);
-  const cur = now.getHours() * 60 + now.getMinutes();
+  // The window is IST (portfolio calling hours). getHours() is the MACHINE's zone, and Railway
+  // runs on UTC: until 2026-11-25 a 09:00-19:00 window was really 14:30-00:30 IST on the
+  // server, so Productive Dial started and then silently placed no calls before 14:30 IST.
+  const cur = (now.getUTCHours() * 60 + now.getUTCMinutes() + IST_OFFSET_MINUTES) % (24 * 60);
   return start <= end ? cur >= start && cur <= end : cur >= start || cur <= end;
 }
 

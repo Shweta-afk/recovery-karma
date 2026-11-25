@@ -164,6 +164,24 @@ ok(
   "withinTimeWindow overnight 23:00 in 22-06",
   engine.withinTimeWindow("22:00-06:00", new Date(2026, 0, 1, 23, 0)),
 );
+// The window is IST whatever zone the machine runs in (Railway = UTC). 2026-11-25: at 14:13 IST
+// (08:43 UTC) a 09:00-19:00 portfolio placed no Productive Dial calls.
+ok(
+  "withinTimeWindow 14:13 IST (08:43 UTC) is inside 09-19",
+  engine.withinTimeWindow("09:00-19:00", new Date("2026-11-25T08:43:00Z")),
+);
+ok(
+  "withinTimeWindow 09:00 IST (03:30 UTC) is inside 09-19",
+  engine.withinTimeWindow("09:00-19:00", new Date("2026-11-25T03:30:00Z")),
+);
+ok(
+  "withinTimeWindow 20:00 IST (14:30 UTC) is outside 09-19",
+  !engine.withinTimeWindow("09:00-19:00", new Date("2026-11-25T14:30:00Z")),
+);
+ok(
+  "withinTimeWindow 08:59 IST (03:29 UTC) is outside 09-19",
+  !engine.withinTimeWindow("09:00-19:00", new Date("2026-11-25T03:29:00Z")),
+);
 
 // ── engine: routing ──────────────────────────────────────────────────────────
 console.log("engine: mode routing");
