@@ -12,6 +12,7 @@ import {
   formatIsoDate,
   isBillOfSupply,
   walletCreditOf,
+  topupPartOf,
   stateName,
   type InvoiceParty,
   type InvoiceRecord,
@@ -134,7 +135,11 @@ export function InvoiceDocument({
           {!credit && chargedOn && (
             <p>
               <span className="text-neutral-500">
-                {invoice.kind === "insights_topup" ? "Wallet recharged on" : "Setup fee charged on"}
+                {invoice.kind === "insights_topup"
+                  ? topupPartOf(invoice.lines) === "extra_credit"
+                    ? "Credit given on"
+                    : "Wallet recharged on"
+                  : "Setup fee charged on"}
               </span>{" "}
               {formatIsoDate(chargedOn)}
             </p>
