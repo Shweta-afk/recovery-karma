@@ -25,6 +25,7 @@ import {
   retryDelayMs,
   RECORDING_FIRST_LOOK_MS,
   skycrmIstDate,
+  cdrNumberDiffers,
 } from "./recording-file";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- new columns aren't in the generated types yet */
@@ -39,6 +40,8 @@ const db = () => getSupabaseAdmin() as any;
 const SWEEP_EVERY_MS = 60_000;
 const PER_SWEEP = 100;
 const BACKLOG_DAYS = 30;
+/** Misses of a call's CDR row before an old call is marked as having no recording. */
+const CDR_MISSES_BEFORE_GIVING_UP = 4;
 
 interface TodoRow {
   id: string;
@@ -46,6 +49,7 @@ interface TodoRow {
   provider_call_id: string | null;
   vendor_callid: string;
   agent_handle: string | null;
+  remote_phone: string | null;
   started_at: string;
   ended_at: string;
   recording_attempts: number;
@@ -105,20 +109,36 @@ async function ensureBucket(): Promise<void> {
   }
 }
 
+/**
+ * SkyCRM's call records for the days these rows were made on, keyed by callid.
+ *
+ * Asked ONE IST DAY AT A TIME (start_date = end_date, as in the vendor's own example). Until
+ * 2026-11-26 one request covered the whole batch (first call → last call + 24 h), and for a busy
+ * range SkyCRM answered with only the newest part of it: on 5 Nov only the 15:33–18:29 calls were
+ * found, on 14 Nov only 18:34–18:36, and ~2,100 answered calls from 4–20 Nov were marked "no
+ * recording" though SkyCRM had one. A call that ends after midnight is looked up on the next day
+ * too.
+ */
 async function cdrIndex(rows: TodoRow[]): Promise<Map<string, SkyCrmCdrRow>> {
-  const times = rows.map((r) => new Date(r.started_at).getTime());
-  const from = new Date(Math.min(...times));
-  const to = new Date(Math.max(...times) + 24 * 3600_000); // a call can end after midnight
+  const days = new Set<string>();
+  for (const r of rows) {
+    days.add(skycrmIstDate(new Date(r.started_at)));
+    if (r.ended_at) days.add(skycrmIstDate(new Date(r.ended_at)));
+  }
   const extension = rows.find((r) => r.agent_handle)?.agent_handle ?? "8601";
   const map = new Map<string, SkyCrmCdrRow>();
-  for (const process of ["Outbound", "Inbound"] as const) {
-    const list = await fetchCdrReport({
-      extension,
-      startDate: skycrmIstDate(from),
-      endDate: skycrmIstDate(to),
-      process,
-    });
-    for (const row of list) if (row.callid) map.set(String(row.callid), row);
+  for (const day of days) {
+    for (const process of ["Outbound", "Inbound"] as const) {
+      const list = await fetchCdrReport({ extension, startDate: day, endDate: day, process }).catch(
+        (err: unknown) => {
+          console.warn(`[recordings] cdr_report ${process} ${day} failed: ${String(err)}`);
+          return [] as SkyCrmCdrRow[];
+        },
+      );
+      for (const row of list) if (row.callid) map.set(String(row.callid), row);
+      // Logged so a capped answer (fewer rows than calls that day) shows in Railway's logs.
+      console.log(`[recordings] cdr_report ${process} ${day}: ${list.length} rows`);
+    }
   }
   return map;
 }
@@ -138,7 +158,7 @@ export async function importRecordings(limit = PER_SWEEP): Promise<SweepResult> 
     const { data, error } = await db()
       .from("telephony_calls")
       .select(
-        "id, client_id, provider_call_id, vendor_callid, agent_handle, started_at, ended_at, recording_attempts, recording_checked_at",
+        "id, client_id, provider_call_id, vendor_callid, agent_handle, remote_phone, started_at, ended_at, recording_attempts, recording_checked_at",
       )
       .eq("provider", "skycrm")
       .is("recording_status", null)
@@ -166,8 +186,12 @@ export async function importRecordings(limit = PER_SWEEP): Promise<SweepResult> 
       const checkedAt = new Date().toISOString();
       const rec = cdr.get(row.vendor_callid);
       if (!rec) {
-        // SkyCRM writes the CDR at hangup; a day later with none, there is nothing to fetch.
-        const old = now - new Date(row.ended_at).getTime() > 24 * 3600_000;
+        // SkyCRM writes the CDR at hangup. Give up only after several misses spread over time
+        // (retryDelayMs) on a call over a day old — one miss on an old call used to be final,
+        // which is how a bad lookup turned into ~2,100 permanently missing recordings.
+        const old =
+          now - new Date(row.ended_at).getTime() > 24 * 3600_000 &&
+          row.recording_attempts + 1 >= CDR_MISSES_BEFORE_GIVING_UP;
         await patch(row.id, {
           recording_checked_at: checkedAt,
           recording_attempts: row.recording_attempts + 1,
@@ -184,6 +208,20 @@ export async function importRecordings(limit = PER_SWEEP): Promise<SweepResult> 
           recording_status: "none",
           recording_checked_at: checkedAt,
           recording_error: `not answered (${rec.disposition ?? "?"})`,
+        });
+        result.none++;
+        continue;
+      }
+
+      // The call record is for another borrower's number: this row was matched to the wrong
+      // SkyCRM call (a late end record). Storing it would let someone play another borrower's
+      // call (Health Check "wrong recording", still 3 on 25 Nov 2026), so it is never stored.
+      const otherNumber = cdrNumberDiffers(rec, row.remote_phone);
+      if (otherNumber) {
+        await patch(row.id, {
+          recording_status: "mismatched",
+          recording_checked_at: checkedAt,
+          recording_error: `Recording belongs to another call (number ${otherNumber}) — not stored`,
         });
         result.none++;
         continue;

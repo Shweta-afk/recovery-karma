@@ -32,6 +32,22 @@ describe("health checks", () => {
     }
   });
 
+  test("answered calls with no recording: a few is fine, a large share is bad", () => {
+    expect(
+      get([row({ check_id: "recording_missing", n: 3, total: 400 })], "recording_missing").severity,
+    ).toBe("ok");
+    expect(
+      get([row({ check_id: "recording_missing", n: 40, total: 400 })], "recording_missing")
+        .severity,
+    ).toBe("warn");
+    const bad = get(
+      [row({ check_id: "recording_missing", n: 209, total: 209 })],
+      "recording_missing",
+    );
+    expect(bad.severity).toBe("bad");
+    expect(bad.items[0].text).toBe("209 of 209 answered calls (100%)");
+  });
+
   test("no rows → everything OK", () => {
     const res = evaluateHealth([], deps);
     expect(res.length).toBe(CHECK_ORDER.length);

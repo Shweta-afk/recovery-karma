@@ -262,7 +262,16 @@ export function CallReviewSheet({
             <Mic className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
               No recording is available for this call
-              {call.recording_status === "none" ? " (the call was not answered)." : " yet."}
+              {
+                // "none" means the importer found no file, not that nobody answered: a call the
+                // ledger says connected may still be fetched from the calling service later
+                // (2026-11-26 — answered calls were shown here as "not answered").
+                call.recording_status === "none" && call.ledger_status !== "completed"
+                  ? " (the call was not answered)."
+                  : call.recording_status === "none"
+                    ? ". The call was answered, but its recording could not be fetched from the calling service."
+                    : " yet."
+              }
             </span>
           </div>
         )}

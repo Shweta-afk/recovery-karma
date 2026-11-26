@@ -91,6 +91,12 @@ export const HEALTH_CHECKS: Record<string, Def> = {
     why: "SkyCRM says the call connected and how long it lasted, but the call log has no talk time — reports undercount.",
     todo: "Tell the developer (talk-time copy).",
   },
+  recording_missing: {
+    area: "Calling",
+    title: "Answered calls with no recording",
+    why: "SkyCRM says these calls were answered, but SamvadX has not stored their recording — auditors and the bank's Feedback File get no audio (4–20 Nov 2026: ~2,100 calls missed this way).",
+    todo: "Tell the developer: the recording importer is not finding SkyCRM's call records (check the '[recordings] cdr_report' lines in Railway's logs).",
+  },
   cross_company: {
     area: "Data safety",
     title: "Data crossing between companies",
@@ -219,6 +225,19 @@ export function evaluateHealth(
     const n = rowsOf(id).reduce((s, r) => s + r.n, 0);
     const t = rowsOf(id).reduce((s, r) => s + (r.total ?? 0), 0);
     summary[id] = t ? `${pct(n, t)}% of ${t} calls` : "No calls";
+  }
+
+  {
+    // A few can be calls SkyCRM recorded nothing for; a large share means the importer is broken.
+    const list = rowsOf("recording_missing").filter((r) => r.n >= 5 && pct(r.n, r.total ?? 0) > 5);
+    items.recording_missing = list.map((r) => ({
+      severity: pct(r.n, r.total ?? 0) > 20 ? "bad" : "warn",
+      company: co(r),
+      text: `${r.n} of ${r.total} answered calls (${pct(r.n, r.total ?? 0)}%)`,
+    }));
+    const n = rowsOf("recording_missing").reduce((s, r) => s + r.n, 0);
+    const t = rowsOf("recording_missing").reduce((s, r) => s + (r.total ?? 0), 0);
+    summary.recording_missing = t ? `${n} of ${t} answered calls` : "No answered calls";
   }
 
   {
