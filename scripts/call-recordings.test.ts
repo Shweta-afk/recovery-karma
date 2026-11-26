@@ -176,3 +176,20 @@ describe("recording retention (2026-11-20)", () => {
     expect(keptObjectPath(null)).toBeNull();
   });
 });
+
+describe("cdrNumberDiffers (2026-11-26)", () => {
+  test("a record for this call's number is fine", async () => {
+    const { cdrNumberDiffers } = await import("../src/lib/telephony/recording-file");
+    expect(cdrNumberDiffers({ dst: "37819004870638" }, "9004870638")).toBeNull();
+    expect(cdrNumberDiffers({ src: "919004870638", dst: "3701" }, "+91 90048 70638")).toBeNull();
+  });
+  test("a record for another number is caught", async () => {
+    const { cdrNumberDiffers } = await import("../src/lib/telephony/recording-file");
+    expect(cdrNumberDiffers({ dst: "37819004870638" }, "8108225448")).toBe("9004870638");
+  });
+  test("missing numbers never count as a difference", async () => {
+    const { cdrNumberDiffers } = await import("../src/lib/telephony/recording-file");
+    expect(cdrNumberDiffers({}, "8108225448")).toBeNull();
+    expect(cdrNumberDiffers({ dst: "37819004870638" }, null)).toBeNull();
+  });
+});

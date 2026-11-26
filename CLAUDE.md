@@ -1238,6 +1238,13 @@ wallet empty / stuck lookups / lookups charged below ProfileX's cost or ₹0. SQ
 service_role only); thresholds and wording are pure in `src/lib/health-checks.ts` (tested in
 `scripts/health-checks.test.ts`); server `health-checks.server.ts`; Overview shows a one-line
 banner. **When you fix a new class of bug, add its symptom here** so it can't hide for days again.
+**Answered calls with no recording (`recording_missing`, 2026-11-26,
+`migrations/20261126_health_check_recording_missing.sql`, live).** ~2,100 answered calls of 4–20 Nov
+were marked "no recording" though SkyCRM had one: the importer asked `cdr_report` for one multi-day
+range and SkyCRM answered with only its newest part, and an old call was given up after ONE miss.
+Now `cdrIndex` asks one IST day at a time (logs `[recordings] cdr_report <process> <day>: N rows`)
+and gives up after 4 misses. The importer also refuses to store a recording whose call record
+names another number (`cdrNumberDiffers`, recording-file.ts) → `recording_status='mismatched'`.
 
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90

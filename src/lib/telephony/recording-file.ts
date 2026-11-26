@@ -194,3 +194,24 @@ export function recordingRetentionCutoff(nowMs: number, days = RECORDING_RETENTI
 export function keptObjectPath(note: string | null | undefined): string | null {
   return note?.match(/Stored file kept at: (\S+)/)?.[1] ?? null;
 }
+
+const last10 = (v: unknown) =>
+  String(v ?? "")
+    .replace(/\D/g, "")
+    .slice(-10);
+
+/**
+ * The borrower number on SkyCRM's call record when it is NOT this call's number, else null.
+ * Outbound records carry it in dst (prefix + number), inbound in src. Null when either side is
+ * missing — only a clear difference counts.
+ */
+export function cdrNumberDiffers(
+  rec: { dst?: unknown; src?: unknown; [k: string]: unknown },
+  remotePhone: string | null,
+): string | null {
+  const ours = last10(remotePhone);
+  if (ours.length < 10) return null;
+  const theirs = [rec.dst, rec.src].map(last10).filter((n) => n.length === 10);
+  if (!theirs.length || theirs.includes(ours)) return null;
+  return theirs[0];
+}
