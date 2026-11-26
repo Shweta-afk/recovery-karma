@@ -574,10 +574,17 @@ export async function fetchCdrReport(args: {
   startDate: string;
   endDate: string;
   process: "Outbound" | "Inbound";
+  /** Extra form fields (paging probe, 2026-11-26). */
+  extra?: Record<string, string>;
 }): Promise<SkyCrmCdrRow[]> {
   const data = await post(
     "cdr_report",
-    { start_date: args.startDate, end_date: args.endDate, process: args.process },
+    {
+      start_date: args.startDate,
+      end_date: args.endDate,
+      process: args.process,
+      ...(args.extra ?? {}),
+    },
     args.extension,
   );
   const rows = (data as { data?: unknown }).data;
