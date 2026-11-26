@@ -21,6 +21,21 @@ export interface InvoiceLine {
    *  the Insights wallet was recharged. Entered by the superadmin, since only they know it for a
    *  setup fee; printed under the line. Not the invoice date. */
   chargedOn?: string;
+  /** Insights top-ups only: which part of the recharge this invoice covers. Absent = "recharge"
+   *  (the money the company paid for); "extra_credit" = credit SamvadX gave on top. One live
+   *  invoice per part per top-up (migrations/20261126_invoice_topup_split.sql). */
+  part?: TopupPart;
+}
+
+export type TopupPart = "recharge" | "extra_credit";
+export const TOPUP_PART_LABEL: Record<TopupPart, string> = {
+  recharge: "Wallet top-up (paid)",
+  extra_credit: "Extra credit (given by SamvadX)",
+};
+
+/** Which part of its recharge an Insights invoice covers (old invoices have no mark = recharge). */
+export function topupPartOf(lines: InvoiceLine[] | undefined | null): TopupPart {
+  return lines?.[0]?.part === "extra_credit" ? "extra_credit" : "recharge";
 }
 
 export const SETUP_FEE_LABEL = "SamvadX platform setup";
@@ -377,6 +392,7 @@ export function toInvoiceRecord(r: {
               rate?: number | string;
               includes?: unknown;
               chargedOn?: unknown;
+              part?: unknown;
             }[]
           ).map((l) => ({
             description: String(l.description),
@@ -385,6 +401,7 @@ export function toInvoiceRecord(r: {
             ...(l.rate != null ? { rate: Number(l.rate) } : {}),
             ...(Array.isArray(l.includes) ? { includes: l.includes.map(String) } : {}),
             ...(typeof l.chargedOn === "string" ? { chargedOn: l.chargedOn } : {}),
+            ...(l.part === "extra_credit" ? { part: "extra_credit" as const } : {}),
           }))
         : [{ description: r.description, amount: Number(r.taxable_amount) }],
     sac: r.sac,

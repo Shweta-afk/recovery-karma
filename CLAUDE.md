@@ -1280,6 +1280,14 @@ billing ↔ contracts don't import each other). Rules: `invoice-math.ts` (pure, 
 - **Price list per company** (`client_price_lists`, company Billing tab): setup lines, monthly
   lines, per-agent-seat price, payment terms (NULL = supplier default). Invoices open prefilled
   from it. Insights prices stay in `profilex_settings.rate_card` — one place each.
+- **One recharge, up to two invoices (user, 2026-11-26)**: the recharge the company paid for and
+  the extra credit SamvadX gave on top; the superadmin picks the split. The part rides on the
+  invoice's first line (`part: "extra_credit"`; no mark = recharge, `topupPartOf`), and
+  `invoices_topup_once` is now unique per top-up PER PART (`migrations/20261126_invoice_topup_split.sql`).
+  Together the live invoices on a top-up can't exceed the recharge (`createInvoice`); a top-up stays
+  on the Insights tab while a part is free and money is left (`invoicedSoFar`, `availableParts`).
+  Each invoice states its own credit (`walletCreditOf`); an extra-credit one prints "Credit given on".
+  Cancelling an invoice frees its part. Tested in `scripts/topup-split.test.ts`.
 - **Three invoice kinds**: `insights_topup` (from a wallet allocation), `setup`, `monthly`
   (`period_month`; partial unique index `invoices_monthly_once` = one live invoice per company per
   month). Due date uses the company's terms, else the supplier's.

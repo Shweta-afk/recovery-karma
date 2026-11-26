@@ -29,9 +29,11 @@ import {
   formatIsoDate,
   invoiceBalance,
   type InvoiceBalance,
+  topupPartOf,
   type InvoiceLine,
   type InvoiceParty,
   type InvoiceRecord,
+  type TopupPart,
 } from "./invoice-math";
 import { loadPriceList } from "./price-list.server";
 import { takenBackByTopup } from "./topup-takebacks";
@@ -252,8 +254,12 @@ export interface UninvoicedTopup {
   amount: number;
   /** Of that, what SamvadX later took back (company_to_master; topup-takebacks.ts). */
   takenBack: number;
-  /** amount − takenBack: what the invoice defaults to. Editable before issuing. */
+  /** amount − takenBack − already invoiced: what the next invoice defaults to. Editable. */
   suggestedAmount: number;
+  /** Taxable value of the live invoices already issued on this top-up (0 = none yet). */
+  invoicedSoFar: number;
+  /** Parts of this top-up that have no live invoice yet; at least one, or it isn't listed. */
+  availableParts: TopupPart[];
   note: string | null;
   createdAt: string;
 }
@@ -357,25 +363,37 @@ export const getCompanyBilling = createServerFn({ method: "POST" })
     );
 
     const records = (invoices.data ?? []).map(toInvoiceRecord);
-    // A cancelled invoice frees its top-up to be invoiced again (e.g. after fixing a GSTIN).
-    const invoiced = new Set(
-      records
-        .filter((r) => r.status !== "cancelled" && r.walletLedgerId)
-        .map((r) => r.walletLedgerId),
-    );
-    const uninvoiced: UninvoicedTopup[] = (topups.data ?? [])
-      .filter((t) => !invoiced.has(t.id))
-      .map((t) => {
-        const back = takenBack.get(t.id) ?? 0;
-        return {
+    // A cancelled invoice frees its part of the top-up to be invoiced again (e.g. after fixing a
+    // GSTIN). A top-up can carry two invoices — the recharge and the extra credit — so it stays
+    // listed while a part is free and money is left (user, 2026-11-26).
+    const liveByTopup = new Map<string, InvoiceRecord[]>();
+    for (const r of records) {
+      if (r.status === "cancelled" || !r.walletLedgerId) continue;
+      liveByTopup.set(r.walletLedgerId, [...(liveByTopup.get(r.walletLedgerId) ?? []), r]);
+    }
+    const uninvoiced: UninvoicedTopup[] = (topups.data ?? []).flatMap((t) => {
+      const back = takenBack.get(t.id) ?? 0;
+      const live = liveByTopup.get(t.id) ?? [];
+      const invoicedSoFar = round2(live.reduce((n, r) => n + r.taxable, 0));
+      const used = new Set(live.map((r) => topupPartOf(r.lines)));
+      const availableParts = (["recharge", "extra_credit"] as const).filter((p) => !used.has(p));
+      const suggestedAmount = Math.max(0, round2(Number(t.amount) - back - invoicedSoFar));
+      // Untouched top-ups always show (even fully taken back, with its explanation); a partly
+      // invoiced one shows only while there is something left and a part to put it on.
+      if (availableParts.length === 0 || (live.length > 0 && suggestedAmount <= 0.005)) return [];
+      return [
+        {
           ledgerId: t.id,
           amount: Number(t.amount),
           takenBack: back,
-          suggestedAmount: Math.max(0, Math.round((Number(t.amount) - back) * 100) / 100),
+          suggestedAmount,
+          invoicedSoFar,
+          availableParts: [...availableParts],
           note: t.note,
           createdAt: t.created_at,
-        };
-      });
+        },
+      ];
+    });
 
     const d = details.data;
     const billing: CompanyBillingDetails = {
@@ -570,6 +588,9 @@ export const createInvoice = createServerFn({ method: "POST" })
           clientId: idSchema,
           kind: z.literal("insights_topup"),
           walletLedgerId: idSchema,
+          /** Which part of the recharge: the money the company paid for (default) or the extra
+           *  credit SamvadX gave on top. One live invoice per part. */
+          part: z.enum(["recharge", "extra_credit"]).optional(),
           /** The amount to invoice, before GST — edited by the superadmin, e.g. after taking
            *  part of the recharge back. Never more than the recharge. Defaults to the recharge. */
           amount: amountSchema.optional(),
@@ -653,15 +674,43 @@ export const createInvoice = createServerFn({ method: "POST" })
         throw new Error("That top-up isn't an Insights allocation to this company");
       }
       const recharged = Number(led.amount);
+      const part: TopupPart = data.part ?? "recharge";
       taxableAmount = data.amount === undefined ? recharged : Math.round(data.amount * 100) / 100;
       if (!(taxableAmount > 0)) throw new Error("Enter an amount above ₹0 to invoice");
-      if (taxableAmount > recharged) {
-        throw new Error(`The invoice can't be more than the ₹${recharged.toFixed(2)} recharged`);
+      // The invoices on one top-up together can't be worth more than what was recharged.
+      const { data: others, error: othersErr } = await admin
+        .from("invoices")
+        .select("taxable_amount")
+        .eq("wallet_ledger_id", led.id)
+        .neq("status", "cancelled");
+      if (othersErr)
+        throw appError(
+          "SX-4113",
+          "Could not check the invoices already on that top-up.",
+          othersErr,
+        );
+      const already = (others ?? []).reduce((n, r) => n + Number(r.taxable_amount), 0);
+      const left = Math.round((recharged - already) * 100) / 100;
+      if (taxableAmount > left + 0.005) {
+        throw new Error(
+          already > 0
+            ? `Only ₹${left.toFixed(2)} of the ₹${recharged.toFixed(2)} recharged is left to invoice`
+            : `The invoice can't be more than the ₹${recharged.toFixed(2)} recharged`,
+        );
       }
       walletLedgerId = led.id;
       const chargedOn = data.chargedOn ?? istDayKey(led.created_at);
-      description = `Insights prepaid wallet top-up (recharged ${formatIsoDate(chargedOn)})`;
-      lines = [{ description: "Insights prepaid wallet top-up", amount: taxableAmount, chargedOn }];
+      if (part === "extra_credit") {
+        description = `Insights wallet — extra credit given by SamvadX (credited ${formatIsoDate(chargedOn)})`;
+        lines = [
+          { description: "Insights wallet — extra credit", amount: taxableAmount, chargedOn, part },
+        ];
+      } else {
+        description = `Insights prepaid wallet top-up (recharged ${formatIsoDate(chargedOn)})`;
+        lines = [
+          { description: "Insights prepaid wallet top-up", amount: taxableAmount, chargedOn },
+        ];
+      }
       sac = supplier.sacInsights;
     } else if (data.kind === "monthly") {
       lines = data.lines;
@@ -751,7 +800,7 @@ export const createInvoice = createServerFn({ method: "POST" })
     } as never);
     if (error) {
       if (/invoices_topup_once/.test(error.message)) {
-        throw new Error("That top-up has already been invoiced");
+        throw new Error("That part of the top-up has already been invoiced");
       }
       if (/invoices_monthly_once/.test(error.message)) {
         throw new Error(

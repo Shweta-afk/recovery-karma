@@ -45,6 +45,8 @@ import {
   setupPackage,
   type InvoiceRecord,
   type PriceList,
+  TOPUP_PART_LABEL,
+  type TopupPart,
 } from "@/lib/invoice-math";
 import {
   createInvoice,
@@ -92,7 +94,13 @@ const setupFrom = (prices: PriceList) => {
 
 /** What "Issue" sends to createInvoice for each kind (and "Preview" with preview: true). */
 type Draft =
-  | { kind: "insights_topup"; walletLedgerId: string; chargedOn: string; amount: number }
+  | {
+      kind: "insights_topup";
+      walletLedgerId: string;
+      chargedOn: string;
+      amount: number;
+      part: TopupPart;
+    }
   | { kind: "setup"; lines: { description: string; amount: number }[]; chargedOn: string }
   | {
       kind: "monthly";
@@ -141,6 +149,7 @@ export function CompanyInvoicesCard({
   const [topupChargedOn, setTopupChargedOn] = useState<Record<string, string>>({});
   // Edited invoice amounts per recharge; unset = the suggested amount (recharge − taken back).
   const [topupAmount, setTopupAmount] = useState<Record<string, string>>({});
+  const [topupPart, setTopupPart] = useState<Record<string, TopupPart>>({});
   const today = todayIstKey();
 
   const [busy, setBusy] = useState<string | null>(null);
@@ -538,9 +547,11 @@ export function CompanyInvoicesCard({
             {/* Insights */}
             <TabsContent value="insights" className="space-y-3">
               <p className="text-[11px] text-muted-foreground">
-                One invoice per Insights wallet top-up given to this company. Top-ups already
-                invoiced aren't listed. Each prints two dates: the invoice date (the day you issue
-                it, {formatIsoDate(today)}) and the recharge date below.
+                One top-up can have two invoices: the recharge the company paid for, and the extra
+                credit SamvadX gave on top. You decide the split — issue one, then the other for
+                what is left. Top-ups fully invoiced aren't listed. Each prints two dates: the
+                invoice date (the day you issue it, {formatIsoDate(today)}) and the recharge date
+                below.
               </p>
               {!topups.length ? (
                 <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
@@ -550,6 +561,11 @@ export function CompanyInvoicesCard({
                 <ul className="divide-y divide-border rounded-md border border-border text-xs">
                   {topups.map((t) => {
                     const chargedOn = topupChargedOn[t.ledgerId] ?? istDayKey(t.createdAt);
+                    const part: TopupPart =
+                      topupPart[t.ledgerId] && t.availableParts.includes(topupPart[t.ledgerId])
+                        ? topupPart[t.ledgerId]
+                        : t.availableParts[0];
+                    const leftToInvoice = Math.round((t.amount - t.invoicedSoFar) * 100) / 100;
                     const amountText = topupAmount[t.ledgerId] ?? String(t.suggestedAmount);
                     const amount = Math.round(Number(amountText) * 100) / 100;
                     const dateProblem = !chargedOn
@@ -560,14 +576,17 @@ export function CompanyInvoicesCard({
                           ? t.suggestedAmount <= 0 && topupAmount[t.ledgerId] === undefined
                             ? "All of it was taken back — nothing to invoice"
                             : "Enter an amount above ₹0"
-                          : amount > t.amount
-                            ? `Can't be more than the ${formatRupees(t.amount)} recharged`
+                          : amount > leftToInvoice + 0.005
+                            ? t.invoicedSoFar > 0
+                              ? `Only ${formatRupees(leftToInvoice)} is left to invoice`
+                              : `Can't be more than the ${formatRupees(t.amount)} recharged`
                             : null;
                     const draft: Draft = {
                       kind: "insights_topup",
                       walletLedgerId: t.ledgerId,
                       chargedOn,
                       amount,
+                      part,
                     };
                     return (
                       <li
@@ -586,6 +605,12 @@ export function CompanyInvoicesCard({
                             })}
                             {t.note ? ` · ${t.note}` : ""}
                           </span>
+                          {t.invoicedSoFar > 0 && (
+                            <span className="block text-[11px] text-muted-foreground">
+                              {formatRupees(t.invoicedSoFar)} already invoiced
+                              {` · ${formatRupees(leftToInvoice)} left`}
+                            </span>
+                          )}
                           {t.takenBack > 0 && (
                             <span className="block text-[11px] text-amber-600">
                               {formatRupees(t.takenBack)} of it was taken back — invoice defaults to{" "}
@@ -595,7 +620,27 @@ export function CompanyInvoicesCard({
                         </span>
                         <span className="flex flex-wrap items-center gap-1.5">
                           <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                            Recharged on
+                            Invoice for
+                            <Select
+                              value={part}
+                              onValueChange={(v) =>
+                                setTopupPart((m) => ({ ...m, [t.ledgerId]: v as TopupPart }))
+                              }
+                            >
+                              <SelectTrigger className="h-7 w-56 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {t.availableParts.map((p) => (
+                                  <SelectItem key={p} value={p} className="text-xs">
+                                    {TOPUP_PART_LABEL[p]}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            {part === "extra_credit" ? "Credited on" : "Recharged on"}
                             <Input
                               type="date"
                               max={today}
@@ -611,7 +656,7 @@ export function CompanyInvoicesCard({
                             <Input
                               type="number"
                               min={0}
-                              max={t.amount}
+                              max={leftToInvoice}
                               step="0.01"
                               value={amountText}
                               onChange={(e) =>

@@ -113,6 +113,7 @@ All are database errors on the action named; the database message is in the log.
 | SX-4104 | Could not load invoices.                                  | `invoice-actions.server.ts`                                                                        |
 | SX-4105 | Could not load top-ups.                                   | `invoice-actions.server.ts`                                                                        |
 | SX-4112 | Could not load take-backs.                                | `invoice-actions.server.ts` (`getCompanyBilling`): reading `company_to_master` ledger rows failed. |
+| SX-4113 | Could not check the invoices already on that top-up.      | `invoice-actions.server.ts` (`createInvoice`): reading the live invoices on a top-up failed.      |
 | SX-4106 | Could not save billing details.                           | `invoice-actions.server.ts`                                                                        |
 | SX-4107 | Could not load the company's billing details.             | `invoice-actions.server.ts`                                                                        |
 | SX-4108 | Could not load that top-up.                               | `invoice-actions.server.ts`                                                                        |
