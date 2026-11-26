@@ -89,9 +89,6 @@ export function startRecordingImports(): void {
     }
   };
   setTimeout(tick, 60_000);
-  setTimeout(() => {
-    if (enabled()) void probeCdrPaging().catch((e) => console.warn("[cdr-probe] failed:", e));
-  }, 30_000);
   state.timer = setInterval(tick, SWEEP_EVERY_MS);
   state.timer.unref?.();
 }
@@ -144,58 +141,6 @@ async function cdrIndex(rows: TodoRow[]): Promise<Map<string, SkyCrmCdrRow>> {
     }
   }
   return map;
-}
-
-/**
- * TEMPORARY (2026-11-26): cdr_report stops at 1,000 rows per request, so on a busy day most calls'
- * records (and so their recordings) can't be found. The vendor documents no paging. This runs
- * once per server start, reads one busy past day with a few likely paging fields, and logs what
- * comes back, so we can see in Railway's logs which field (if any) gives a different 1,000.
- * Read-only. Remove once paging is known.
- */
-async function probeCdrPaging(): Promise<void> {
-  const day = "16-11-2026"; // 2,732 calls
-  const variants: [string, Record<string, string>, string?, string?][] = [
-    ["base", {}],
-    ["page=2", { page: "2" }],
-    ["page=1", { page: "1" }],
-    ["offset=1000", { offset: "1000" }],
-    ["start=1000", { start: "1000" }],
-    ["limit=5000", { limit: "5000" }],
-    ["length=5000", { length: "5000" }],
-    ["per_page=5000", { per_page: "5000" }],
-    ["page_size=5000", { page_size: "5000" }],
-    ["start_time/end_time 10-12", { start_time: "10:00:00", end_time: "12:00:00" }],
-    ["date with time 10-12", {}, "16-11-2026 10:00:00", "16-11-2026 12:00:00"],
-  ];
-  const timeKeys = (r: SkyCrmCdrRow | undefined) =>
-    r
-      ? Object.entries(r)
-          .filter(([k]) => /date|time|start|end|id$/i.test(k))
-          .map(([k, v]) => `${k}=${String(v)}`)
-          .join(" ")
-      : "-";
-  for (const [label, extra, start, end] of variants) {
-    try {
-      const rows = await fetchCdrReport({
-        extension: "8601",
-        startDate: start ?? day,
-        endDate: end ?? day,
-        process: "Outbound",
-        extra,
-      });
-      const ids = rows.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
-      console.log(
-        `[cdr-probe] ${label}: ${rows.length} rows, id ${Math.min(...ids)}..${Math.max(...ids)}` +
-          ` | first: ${timeKeys(rows[0])} | last: ${timeKeys(rows[rows.length - 1])}`,
-      );
-      if (label === "base" && rows[0]) {
-        console.log(`[cdr-probe] fields: ${Object.keys(rows[0]).join(",")}`);
-      }
-    } catch (err) {
-      console.log(`[cdr-probe] ${label}: error ${String(err).slice(0, 200)}`);
-    }
-  }
 }
 
 async function patch(id: string, values: Record<string, unknown>): Promise<void> {

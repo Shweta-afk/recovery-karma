@@ -1245,6 +1245,14 @@ range and SkyCRM answered with only its newest part, and an old call was given u
 Now `cdrIndex` asks one IST day at a time (logs `[recordings] cdr_report <process> <day>: N rows`)
 and gives up after 4 misses. The importer also refuses to store a recording whose call record
 names another number (`cdrNumberDiffers`, recording-file.ts) → `recording_status='mismatched'`.
+**`cdr_report` returns at most the NEWEST 1,000 rows per request (proven 2026-11-26)** — per day,
+by id descending; `page`, `offset`, `start`, `limit`, `length`, `per_page`, `page_size`,
+`start_time`/`end_time` are all ignored, and a time inside `start_date` is refused. So a call's
+record is findable only while it is among the day's newest 1,000 outbound calls: the importer
+must look within minutes of the call ending (it does), and a backlog of a busy day cannot be
+recovered without a vendor-side paging option. CDR fields: id, agentname, sub_dispos, callid,
+src, srctech, dst, dsttech, start, end, billsec, disposition, direction, recordfile, module,
+audio_token.
 
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90
