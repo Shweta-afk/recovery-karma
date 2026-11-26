@@ -7,7 +7,6 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   Phone,
-  MessageCircle,
   HandCoins,
   Banknote,
   Clock,
@@ -98,7 +97,7 @@ const EXTRA: Record<
       dir: "out" | "in";
       text: string;
       time: string;
-      channel: "whatsapp" | "sms" | "ivr";
+      channel: "sms" | "ivr";
     }[];
   }
 > = {
@@ -125,13 +124,13 @@ const EXTRA: Record<
         dir: "out",
         text: "Namaste Rahul ji, aapka EMI ₹8,200 due hai. Kripya aaj payment karein.",
         time: "10:15 AM",
-        channel: "whatsapp",
+        channel: "sms",
       },
       {
         dir: "in",
         text: "Haan sir, kal tak kar dunga UPI se.",
         time: "10:18 AM",
-        channel: "whatsapp",
+        channel: "sms",
       },
       {
         dir: "out",
@@ -751,15 +750,6 @@ export function DebtorProfile({
             Call Now
           </Button>
         )}
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5 h-8 active:scale-95"
-          onClick={() => toast.success("WhatsApp opened for " + d.name)}
-        >
-          <MessageCircle className="h-3.5 w-3.5" />
-          WhatsApp
-        </Button>
         <Button
           size="sm"
           variant="outline"

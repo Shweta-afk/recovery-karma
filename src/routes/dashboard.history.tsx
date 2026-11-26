@@ -5,7 +5,6 @@ import {
   Phone,
   BotMessageSquare,
   MessageSquare,
-  MessageCircle,
   Radio,
   Search,
   FileDown,
@@ -55,7 +54,7 @@ export const Route = createFileRoute("/dashboard/history")({
       { title: "Activity History · SamvadX" },
       {
         name: "description",
-        content: "Full contact history across calls, IVR, SMS and WhatsApp with filters.",
+        content: "Full contact history across calls, IVR and SMS with filters.",
       },
     ],
   }),
@@ -64,7 +63,7 @@ export const Route = createFileRoute("/dashboard/history")({
 
 // ─── Types & metadata ─────────────────────────────────────────────────────────
 
-type Channel = "call_agent" | "call_ai" | "ivr" | "sms" | "whatsapp";
+type Channel = "call_agent" | "call_ai" | "ivr" | "sms";
 type Tone = "positive" | "neutral" | "negative";
 
 interface ActivityEvent {
@@ -88,7 +87,7 @@ interface ActivityEvent {
    * something to backfill a recording from — distinguishes "pending" from "never happened". */
   providerCallId?: string;
   /** How the call was placed. Undefined for rows logged before dial_mode existed, and for
-   * non-call events (SMS/WhatsApp), which have no dial mode by definition. */
+   * non-call events (SMS), which have no dial mode by definition. */
   dialMode?: DialMode;
   /** ISO timestamp, kept for sorting — `date`/`time` are display-only. */
   rawTime: string;
@@ -126,13 +125,6 @@ const CHANNEL_META: Record<
     cls: "bg-blue-500/8 text-blue-600/80 border-blue-400/20",
     dot: "bg-blue-500",
   },
-  whatsapp: {
-    label: "WhatsApp",
-    short: "WhatsApp",
-    icon: MessageCircle,
-    cls: "bg-success/8 text-success/80 border-success/20",
-    dot: "bg-success",
-  },
 };
 
 const TONE_CLS: Record<Tone, string> = {
@@ -142,9 +134,7 @@ const TONE_CLS: Record<Tone, string> = {
 };
 
 // ─── Real activity feed ───────────────────────────────────────────────────────
-// Built from call_logs (via the disposition store) rather than a fixture. SMS/WhatsApp
-// rows will appear here once messaging is wired — the messages table is not read anywhere
-// yet, so those channels are legitimately empty rather than hidden.
+// Built from call_logs (via the disposition store) rather than a fixture.
 
 export type DayBucket = "today" | "yesterday" | "older";
 
@@ -247,7 +237,7 @@ const MISSED_CALL_LABEL = "Missed call";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const CHANNEL_ORDER: Channel[] = ["call_agent", "call_ai", "ivr", "sms", "whatsapp"];
+const CHANNEL_ORDER: Channel[] = ["call_agent", "call_ai", "ivr", "sms"];
 
 function ActivityHistoryPage() {
   const [channel, setChannel] = useState<Channel | "all">("all");
@@ -424,7 +414,7 @@ function ActivityHistoryPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-foreground">Activity History</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Every contact across calls, IVR, SMS and WhatsApp — inbound and outbound.
+            Every contact across calls, IVR and SMS — inbound and outbound.
           </p>
         </div>
         <div className="flex items-center gap-2">

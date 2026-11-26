@@ -3,7 +3,8 @@ import { fetchDebtorsByIds } from "./debtors-fetch";
 import { sendSms } from "@/lib/telephony/server";
 import { getAccessToken } from "@/lib/access-token";
 
-export type MessageChannel = "whatsapp" | "sms" | "email";
+/** WhatsApp is not offered (no gateway; removed from the app 2026-11-26). */
+export type MessageChannel = "sms" | "email";
 export type MessageDirection = "outbound" | "inbound";
 export type MessageStatus = "sent" | "delivered" | "read" | "failed" | "replied";
 
@@ -111,10 +112,7 @@ export async function refreshMessages(): Promise<void> {
 
 /** Records an outbound message against a real debtor, and — for sms — actually sends it via the
  * telephony provider before writing the row. `status` reflects whether the provider accepted the
- * send, not just an optimistic "sent".
- *
- * WhatsApp has no gateway wired (the Exotel WABA route was dropped 2026-09-05 and nothing has
- * replaced it), so a WhatsApp send is recorded as "failed" rather than pretending to deliver. */
+ * send, not just an optimistic "sent". */
 export async function sendMessage(m: {
   debtorId: string;
   agentEmail: string;
@@ -131,7 +129,7 @@ export async function sendMessage(m: {
   const phone = debtorRows?.[0]?.phone_primary;
 
   let status: MessageStatus = "sent";
-  if (m.channel === "whatsapp" || m.channel === "sms") {
+  if (m.channel === "sms") {
     if (!phone) {
       console.error(
         `[messages] cannot send ${m.channel}: no phone on file for debtor ${m.debtorId}`,
@@ -139,18 +137,14 @@ export async function sendMessage(m: {
       status = "failed";
     } else {
       try {
-        if (m.channel === "whatsapp") {
-          throw new Error("no WhatsApp gateway is configured");
-        } else {
-          await sendSms({
-            data: {
-              accessToken: await getAccessToken(),
-              to: phone,
-              templateId: m.templateName ?? "generic_update",
-              templateParams: [m.content],
-            },
-          });
-        }
+        await sendSms({
+          data: {
+            accessToken: await getAccessToken(),
+            to: phone,
+            templateId: m.templateName ?? "generic_update",
+            templateParams: [m.content],
+          },
+        });
       } catch (err) {
         console.error(
           `[messages] ${m.channel} send failed:`,

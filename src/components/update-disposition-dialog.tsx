@@ -264,7 +264,7 @@ export function UpdateDispositionDialog({
             <Label className="text-xs">Note</Label>
             <Textarea
               rows={3}
-              placeholder="e.g. Borrower confirmed PTP on WhatsApp"
+              placeholder="e.g. Borrower confirmed PTP by SMS"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />

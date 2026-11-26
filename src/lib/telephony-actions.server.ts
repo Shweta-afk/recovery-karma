@@ -1464,7 +1464,7 @@ export const listMissedCalls = createServerFn({ method: "POST" })
     return { ready: true, entries };
   });
 
-/** "Handled" without calling back through SamvadX (e.g. reached on WhatsApp). */
+/** "Handled" without calling back through SamvadX (e.g. reached on another phone). */
 export const dismissMissedCall = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z.object({ accessToken: tokenSchema, phone: z.string().trim().min(10).max(20) }).parse(d),

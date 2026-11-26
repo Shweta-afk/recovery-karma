@@ -12,7 +12,7 @@ export interface PaymentRecord {
 export interface ContactAttempt {
   date: string;
   time: string;
-  channel: "call" | "whatsapp" | "sms" | "email";
+  channel: "call" | "sms" | "email";
   outcome: string;
   agent: string;
 }
@@ -160,7 +160,7 @@ export const MOCK_DEBTORS: Debtor[] = [
       {
         date: "2026-06-18",
         time: "03:30 PM",
-        channel: "whatsapp",
+        channel: "sms",
         outcome: "Read, no reply",
         agent: "System",
       },
@@ -368,7 +368,7 @@ export const MOCK_DEBTORS: Debtor[] = [
       {
         date: "2026-06-16",
         time: "10:00 AM",
-        channel: "whatsapp",
+        channel: "sms",
         outcome: "Read — replied 'will pay soon'",
         agent: "System",
       },
@@ -456,7 +456,7 @@ export const MOCK_DEBTORS: Debtor[] = [
     loanAmount: 178000,
     dpd: 35,
     aiScore: 8,
-    scoreReason: "WhatsApp read receipts seen, prefers digital contact",
+    scoreReason: "Reads SMS reminders, prefers digital contact",
     lastContacted: "2026-06-21",
     portfolio: "Credit Card NPA",
     language: "Bengali",
@@ -495,7 +495,7 @@ export const MOCK_DEBTORS: Debtor[] = [
       {
         date: "2026-06-21",
         time: "02:15 PM",
-        channel: "whatsapp",
+        channel: "sms",
         outcome: "Replied — salary on 24th, will pay",
         agent: "System",
       },
@@ -503,7 +503,7 @@ export const MOCK_DEBTORS: Debtor[] = [
         date: "2026-06-18",
         time: "10:00 AM",
         channel: "call",
-        outcome: "No answer — WhatsApp sent",
+        outcome: "No answer — SMS sent",
         agent: "Priya Singh",
       },
     ],
@@ -834,7 +834,7 @@ export const MOCK_DEBTORS: Debtor[] = [
     loanAmount: 142000,
     dpd: 41,
     aiScore: 7,
-    scoreReason: "Responsive on WhatsApp, slower on phone calls",
+    scoreReason: "Responsive to SMS, slower on phone calls",
     lastContacted: "2026-06-19",
     portfolio: "Personal Loan Q1",
     language: "Hindi",
@@ -874,7 +874,7 @@ export const MOCK_DEBTORS: Debtor[] = [
       {
         date: "2026-06-19",
         time: "07:30 PM",
-        channel: "whatsapp",
+        channel: "sms",
         outcome: "Replied — will pay after project payment",
         agent: "System",
       },

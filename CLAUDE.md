@@ -935,6 +935,10 @@ each template in `WA_TEMPLATES` is registered and Meta-approved. So "wired" is n
 "delivering" — but it is no longer true that nothing leaves the building, and the Messages page
 no longer claims otherwise.
 
+**2026-11-26: WhatsApp was removed from every screen** (Messages tab, profile button, history
+channel, `MessageChannel`); `WA_TEMPLATES` and the WhatsApp send branch no longer exist. The
+signed master agreement still names WhatsApp under Messaging Services.
+
 ### ⚠️ Decision (2026-09-05): do NOT pursue Exotel as the WhatsApp path — Tata and SkyCRM are also off the table
 
 The `sendWhatsApp` code above still physically exists and is described accurately, but **the
@@ -1454,7 +1458,7 @@ server on first upload; the browser uploads straight to a signed upload URL).
 | `dashboard/debtors`                                                                         | ✅ Real debtor list + Calls/Payments tabs. Messages/Disputes tabs are intentionally honest empty-states (no write path yet)                                                                                                                                       |
 | `dashboard/history` (Activity History)                                                      | ✅ Real `call_logs`, with async recording backfill. Filters by date range and by dial type (`call_logs.dial_mode`)                                                                                                                                                |
 | `dashboard/payments`                                                                        | ✅ Real `payments`/`settlement_requests` via `payments-store.ts`                                                                                                                                                                                                  |
-| `dashboard/messages`                                                                        | 🟡 Real `messages` table, but Send has no gateway behind it (see above)                                                                                                                                                                                           |
+| `dashboard/messages`                                                                        | 🟡 IVR Calls + SMS logs only. **WhatsApp removed from the whole app 2026-11-26** (user: never integrated) — no tab, button or channel; the DB CHECK still allows it                                                                                                                                                                                           |
 | `dashboard/reports`                                                                         | ✅ Real. **Was wrongly listed here as an unwired placeholder until 2026-08-27** — it has been reading real dispositions/payments/portfolios for a while, and the page says so on screen. Seven reports incl. Time & Effort (see the estimated-time warning below) |
 | Debtor profile → Insights tab (`components/profilex/`)                                      | ✅ Real ProfileX lookups; manager/admin run them, agents read-only. Needs `PROFILEX_*` env + the admin toggle                                                                                                                                                     |
 | `manager/portfolio` (Portfolio Overview)                                                    | ✅ Real, full-screen dashboard per portfolio incl. call-activity/AI-handling breakdown                                                                                                                                                                            |

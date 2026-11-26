@@ -503,17 +503,13 @@ function ActiveCallContent({
                 "mt-0.5 flex h-6 w-6 items-center justify-center rounded-full flex-shrink-0",
                 c.channel === "call"
                   ? "bg-primary/15 text-primary"
-                  : c.channel === "whatsapp"
-                    ? "bg-success/15 text-success"
-                    : c.channel === "sms"
-                      ? "bg-blue-500/15 text-blue-500"
-                      : "bg-muted/50 text-muted-foreground",
+                  : c.channel === "sms"
+                    ? "bg-blue-500/15 text-blue-500"
+                    : "bg-muted/50 text-muted-foreground",
               )}
             >
               {c.channel === "call" ? (
                 <Phone className="h-3 w-3" />
-              ) : c.channel === "whatsapp" ? (
-                <MessageCircle className="h-3 w-3" />
               ) : c.channel === "sms" ? (
                 <Send className="h-3 w-3" />
               ) : (
@@ -1733,17 +1729,13 @@ function ActiveCallContent({
                           "flex h-8 w-8 items-center justify-center rounded-full flex-shrink-0 text-[11px] font-semibold",
                           c.channel === "call"
                             ? "bg-primary/15 text-primary"
-                            : c.channel === "whatsapp"
-                              ? "bg-success/15 text-success"
-                              : c.channel === "sms"
-                                ? "bg-blue-500/15 text-blue-500"
-                                : "bg-muted/50 text-muted-foreground",
+                            : c.channel === "sms"
+                              ? "bg-blue-500/15 text-blue-500"
+                              : "bg-muted/50 text-muted-foreground",
                         )}
                       >
                         {c.channel === "call" ? (
                           <Phone className="h-3.5 w-3.5" />
-                        ) : c.channel === "whatsapp" ? (
-                          <MessageCircle className="h-3.5 w-3.5" />
                         ) : c.channel === "sms" ? (
                           <Send className="h-3.5 w-3.5" />
                         ) : (
@@ -1753,11 +1745,7 @@ function ActiveCallContent({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-medium text-foreground capitalize">
-                            {c.channel === "call"
-                              ? "Phone Call"
-                              : c.channel === "whatsapp"
-                                ? "WhatsApp"
-                                : c.channel.toUpperCase()}
+                            {c.channel === "call" ? "Phone Call" : c.channel.toUpperCase()}
                           </span>
                           <span className="text-[11px] text-muted-foreground flex-shrink-0">
                             {c.date} · {c.time}

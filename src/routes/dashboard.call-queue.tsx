@@ -2437,7 +2437,7 @@ export function CallQueueContent({
           <div className="min-w-0">
             <div className="text-sm font-semibold text-foreground">Activity History</div>
             <div className="text-xs text-muted-foreground">
-              Full call, IVR, SMS &amp; WhatsApp history with filters — now on its own page.
+              Full call, IVR &amp; SMS history with filters — now on its own page.
             </div>
           </div>
           <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-primary group-hover:underline flex-shrink-0">
