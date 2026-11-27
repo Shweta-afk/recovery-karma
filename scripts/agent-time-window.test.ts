@@ -57,3 +57,34 @@ describe("time is measured 8 am – 8 pm IST", () => {
     expect(s.loginTime).toBeNull();
   });
 });
+
+describe("presence rows that overlap or were closed late", () => {
+  test("two tabs open at once count the time once", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [
+      iv("available", "09:00", "13:00"),
+      iv("available", "10:00", "14:00"),
+    ]);
+    expect(s.loggedInSeconds).toBe(5 * 3600);
+  });
+  test("a row closed long after its last heartbeat ends at the heartbeat", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [
+      {
+        agentId: "a@x.com",
+        status: "available",
+        startedAt: at("09:00"),
+        endedAt: "2026-11-25T10:00:00+05:30",
+        lastSeenAt: at("11:00"),
+      },
+    ]);
+    expect(s.loggedInSeconds).toBe(2 * 3600 + 3 * 60);
+    expect(s.logoutTime).not.toBeNull();
+  });
+  test("break never exceeds logged-in time", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [
+      iv("break", "09:00", "10:00"),
+      iv("lunch", "09:30", "10:00"),
+    ]);
+    expect(s.breakSeconds).toBe(3600);
+    expect(s.idleSeconds).toBe(0);
+  });
+});

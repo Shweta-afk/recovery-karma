@@ -63,11 +63,7 @@ export async function setAgentStatus(status: AgentStatus): Promise<void> {
   // Also any interval of THIS agent still open from another tab, a reload or yesterday: only the
   // tab that opened a row knew to close it, so 279 of 324 rows on 24-25 Nov were never closed and
   // stretched logged-in time to hours. One person is in one status at a time.
-  await supabase
-    .from("agent_status_log")
-    .update({ ended_at: new Date().toISOString() })
-    .eq("agent_id", me.id)
-    .is("ended_at", null);
+  await closeOtherOpenRows(me.id);
   void syncInboundQueue(status);
 
   const { data, error } = await supabase
@@ -132,16 +128,40 @@ export async function ensurePresence(): Promise<void> {
   await setAgentStatus("available");
 }
 
+/**
+ * Close every open interval of this agent. A row still heartbeating ends now; a row whose app
+ * went away ends at its last heartbeat (or its start, if it never had one). Closing them all at
+ * "now" on 25 Nov turned rows open since September into weeks of logged-in time.
+ */
+async function closeOtherOpenRows(agentId: string): Promise<void> {
+  const { data } = await supabase
+    .from("agent_status_log")
+    .select("id, started_at, last_seen_at")
+    .eq("agent_id", agentId)
+    .is("ended_at", null)
+    .limit(200);
+  const now = Date.now();
+  for (const r of (data ?? []) as {
+    id: string;
+    started_at: string;
+    last_seen_at: string | null;
+  }[]) {
+    const seen = Date.parse(r.last_seen_at ?? r.started_at);
+    const end = now - seen < PRESENCE_STALE_MS ? now : seen;
+    await supabase
+      .from("agent_status_log")
+      .update({ ended_at: new Date(end).toISOString() })
+      .eq("id", r.id)
+      .is("ended_at", null);
+  }
+}
+
 /** Sign-out: close every open interval of this person. */
 export async function endPresence(): Promise<void> {
   openIntervalId = null;
   const me = await getMyAgentRow();
   if (!me) return;
-  await supabase
-    .from("agent_status_log")
-    .update({ ended_at: new Date().toISOString() })
-    .eq("agent_id", me.id)
-    .is("ended_at", null);
+  await closeOtherOpenRows(me.id);
 }
 
 /** Heartbeat on this person's open interval — "still signed in". */

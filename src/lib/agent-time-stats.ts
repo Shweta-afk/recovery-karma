@@ -21,6 +21,7 @@
 import type { DispositionRecord } from "./disposition-store";
 import type { AgentStatus } from "./call-queue/types";
 import type { StatusInterval } from "./agent-presence-store";
+import { PRESENCE_STALE_MS } from "./agent-presence-constants";
 
 export interface AgentTimeStats {
   agentId: string;
@@ -61,15 +62,39 @@ export function workWindow(dateIso: string): { start: number; end: number } {
   };
 }
 
-/** Overlap in seconds between an interval and the IST day, so a shift spanning midnight is
- * counted against each day only for the part that fell in it. */
-function secondsInDay(interval: StatusInterval, dayStart: number, dayEnd: number): number {
-  const from = Math.max(new Date(interval.startedAt).getTime(), dayStart);
-  // An interval still open is counted up to now, never to the end of the day — an agent who
-  // is 20 minutes into their shift has not been available for 14 hours.
-  const rawEnd = interval.endedAt ? new Date(interval.endedAt).getTime() : Date.now();
-  const to = Math.min(rawEnd, dayEnd);
-  return to > from ? Math.round((to - from) / 1000) : 0;
+/** When an interval really ended. Never later than its last heartbeat (+ the stale allowance):
+ *  on 25 Nov rows left open since September were closed with "now" as their end, and an open row
+ *  whose app went away (closed laptop) would otherwise run until now. */
+export function effectiveEnd(i: StatusInterval, now = Date.now()): number {
+  const seen = i.lastSeenAt ? Date.parse(i.lastSeenAt) : null;
+  const bound = seen != null ? seen + PRESENCE_STALE_MS : Number.POSITIVE_INFINITY;
+  if (i.endedAt) return Math.min(Date.parse(i.endedAt), bound);
+  return Math.min(now, bound);
+}
+
+/** The part of an interval inside [dayStart, dayEnd), as [from, to] ms, or null. */
+function clip(i: StatusInterval, dayStart: number, dayEnd: number): [number, number] | null {
+  const from = Math.max(Date.parse(i.startedAt), dayStart);
+  const to = Math.min(effectiveEnd(i), dayEnd);
+  return to > from ? [from, to] : null;
+}
+
+/** Seconds covered by a set of ranges, counting overlaps once — two tabs, or a stale row next to
+ *  a live one, must not double an agent's logged-in time. */
+export function unionSeconds(ranges: [number, number][]): number {
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let curStart = -1;
+  let curEnd = -1;
+  for (const [s, e] of sorted) {
+    if (s > curEnd) {
+      if (curEnd > curStart) total += curEnd - curStart;
+      curStart = s;
+      curEnd = e;
+    } else if (e > curEnd) curEnd = e;
+  }
+  if (curEnd > curStart) total += curEnd - curStart;
+  return Math.round(total / 1000);
 }
 
 /**
@@ -122,25 +147,27 @@ export function getAgentTimeStats(
     };
   }
 
-  let loggedInSeconds = 0;
-  let breakSeconds = 0;
+  const online: [number, number][] = [];
+  const breaks: [number, number][] = [];
   let earliest = Number.POSITIVE_INFINITY;
   let latestClosed = 0;
   let anyOpen = false;
+  const now = Date.now();
 
   for (const i of mine) {
-    const secs = secondsInDay(i, dayStart, dayEnd);
-    if (i.status !== "offline") loggedInSeconds += secs;
-    if (BREAK_STATUSES.includes(i.status)) breakSeconds += secs;
+    const r = clip(i, dayStart, dayEnd);
+    if (!r) continue;
+    if (i.status !== "offline") online.push(r);
+    if (BREAK_STATUSES.includes(i.status)) breaks.push(r);
 
-    // Login/logout are shown within the working window too, and only for time that overlapped it.
-    if (secs <= 0) continue;
-    const startedAt = Math.max(new Date(i.startedAt).getTime(), dayStart);
-    if (i.status !== "offline" && startedAt < earliest) earliest = startedAt;
-    if (i.endedAt)
-      latestClosed = Math.max(latestClosed, Math.min(new Date(i.endedAt).getTime(), dayEnd));
-    else anyOpen = true;
+    if (i.status !== "offline" && r[0] < earliest) earliest = r[0];
+    // Still signed in = open AND heartbeating; an open row whose app went away has ended.
+    if (!i.endedAt && effectiveEnd(i, now) >= now) anyOpen = true;
+    else latestClosed = Math.max(latestClosed, r[1]);
   }
+
+  const loggedInSeconds = unionSeconds(online);
+  const breakSeconds = Math.min(unionSeconds(breaks), loggedInSeconds);
 
   // Whatever is left of the logged-in day after calling, ringing, wrapping and breaks. Floored
   // at zero: clock skew between an agent's browser and the server can otherwise make the parts

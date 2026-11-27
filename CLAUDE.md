@@ -1042,6 +1042,16 @@ do not quietly promote either to fact.
   < 10 s because agents type during the call, so wrap is not "time to fill a disposition"; and
   0.5% of calls (forms left open, up to 18 h) supply ~52% of all wrap seconds. A typing-time
   measure and a per-call wrap cap were proposed, not built.
+- **Idle was hugely inflated until 2026-11-27.** The 25 Nov presence change closed every
+  agent's stale open `agent_status_log` rows (some open since September) with "now" as the end,
+  and `getAgentTimeStats` summed overlapping rows, so logged-in time (and idle = logged-in − talk −
+  ring − wrap − break) ran to thousands of hours. Now: stale rows close at their last heartbeat
+  (`closeOtherOpenRows`), and the calculation caps each row at `last_seen_at` + 3 min
+  (`effectiveEnd`) and merges overlaps (`unionSeconds`). 3,563 rows were repaired by
+  `scripts/debug/20261127-repair-status-log-ends.sql`; originals in
+  `agent_status_log_end_backup_20261127` (undo in the script). Days before 25 Nov had no
+  heartbeat, so their logged-in time is an estimate (ends at the next status row / last call /
+  8 pm). Nobody uses Break/Lunch, so breaks still show as idle.
 - **`debtors.outstanding_balance` is a straight copy of `loan_amount`** (three write sites in
   `portfolio-store.ts`). Principal and outstanding are the same number; do not render them as
   two columns. A real recovery-rate denominator needs the bank file to carry outstanding.
