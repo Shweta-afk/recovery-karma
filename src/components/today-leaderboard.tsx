@@ -141,7 +141,7 @@ export function TodayLeaderboard({ search }: { search: string }) {
         <Trophy className="h-4 w-4 text-amber-500" />
         <span className="text-sm font-semibold text-foreground">Today&apos;s leaderboard</span>
         <span className="ml-auto text-[11px] text-muted-foreground">
-          Everyone · since midnight · {shown.length} {shown.length === 1 ? "person" : "people"}
+          Everyone · 8 am – 8 pm · {shown.length} {shown.length === 1 ? "person" : "people"}
         </span>
       </div>
       <div className="grid gap-x-4 gap-y-4 p-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">

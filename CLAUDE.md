@@ -1034,6 +1034,7 @@ days (`workingDaysInMonth`).
 Two places generate plausible figures that are not observations. Both are labelled in the UI;
 do not quietly promote either to fact.
 
+- **Time is counted 08:00–20:00 IST only (user, 2026-11-27: "timing should be recorded from morning 8 to evening 8").** `getAgentTimeStats` clamps status intervals to that window (`workWindow`, `WORK_START_HOUR`/`WORK_END_HOUR`) and drops calls outside it, so logged-in, idle, break, ringing, wrap-up, talk and login/logout all agree on every screen (leaderboard, By Team, Team Activity, agent dashboard, Reports). Raw call logs and the status log are untouched; this only changes what is summed. Tested in `scripts/agent-time-window.test.ts`.
 - **`agent-time-stats.ts` is MEASURED since 2026-08-30** (this note said "seeded RNG" until
   2026-11-21 — stale). Talk = `call_logs.duration_seconds`, ring = `ring_seconds` (dial → answer),
   wrap = `wrap_seconds` (call ended on screen → disposition saved, `dashboard.call-queue.tsx`),

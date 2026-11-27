@@ -46,6 +46,21 @@ export interface AgentTimeStats {
 
 const BREAK_STATUSES: AgentStatus[] = ["break", "lunch", "training"];
 
+/** Working hours that every figure here is measured over (user, 2026-11-27: "timing should be
+ *  recorded from morning 8 to evening 8"). IST, 08:00–20:00. Time outside it — an early login, a
+ *  late call, a laptop left on overnight — counts toward nothing. */
+export const WORK_START_HOUR = 8;
+export const WORK_END_HOUR = 20;
+
+/** The IST working window of a day, as epoch ms. +05:30 is fixed for India — no DST. */
+export function workWindow(dateIso: string): { start: number; end: number } {
+  const hh = (h: number) => String(h).padStart(2, "0");
+  return {
+    start: new Date(`${dateIso}T${hh(WORK_START_HOUR)}:00:00+05:30`).getTime(),
+    end: new Date(`${dateIso}T${hh(WORK_END_HOUR)}:00:00+05:30`).getTime(),
+  };
+}
+
 /** Overlap in seconds between an interval and the IST day, so a shift spanning midnight is
  * counted against each day only for the part that fell in it. */
 function secondsInDay(interval: StatusInterval, dayStart: number, dayEnd: number): number {
@@ -60,16 +75,22 @@ function secondsInDay(interval: StatusInterval, dayStart: number, dayEnd: number
 /**
  * One agent's time breakdown for a day.
  *
- * `disps` should already be that agent's, filtered to the day. `intervals` come from
+ * `allDisps` should already be that agent's, filtered to the day. `intervals` come from
  * fetchStatusIntervals; pass an empty array when presence has not been loaded, and every
  * presence-derived field comes back null rather than fabricated.
  */
 export function getAgentTimeStats(
   agentId: string,
-  disps: DispositionRecord[],
+  allDisps: DispositionRecord[],
   dateIso: string,
   intervals: StatusInterval[] = [],
 ): AgentTimeStats {
+  // Only calls made inside the working window count (a call's time = its disposition time).
+  const { start: dayStart, end: dayEnd } = workWindow(dateIso);
+  const disps = allDisps.filter((d) => {
+    const t = new Date(d.time).getTime();
+    return t >= dayStart && t < dayEnd;
+  });
   const callingSeconds = disps.reduce((s, d) => s + (d.durationSeconds ?? 0), 0);
 
   // Summed only over calls that actually carry the field. `null` when none do, so a period of
@@ -101,10 +122,6 @@ export function getAgentTimeStats(
     };
   }
 
-  // IST day bounds. +05:30 is fixed for India — no DST to account for.
-  const dayStart = new Date(`${dateIso}T00:00:00+05:30`).getTime();
-  const dayEnd = new Date(`${dateIso}T23:59:59.999+05:30`).getTime();
-
   let loggedInSeconds = 0;
   let breakSeconds = 0;
   let earliest = Number.POSITIVE_INFINITY;
@@ -116,9 +133,12 @@ export function getAgentTimeStats(
     if (i.status !== "offline") loggedInSeconds += secs;
     if (BREAK_STATUSES.includes(i.status)) breakSeconds += secs;
 
-    const startedAt = new Date(i.startedAt).getTime();
+    // Login/logout are shown within the working window too, and only for time that overlapped it.
+    if (secs <= 0) continue;
+    const startedAt = Math.max(new Date(i.startedAt).getTime(), dayStart);
     if (i.status !== "offline" && startedAt < earliest) earliest = startedAt;
-    if (i.endedAt) latestClosed = Math.max(latestClosed, new Date(i.endedAt).getTime());
+    if (i.endedAt)
+      latestClosed = Math.max(latestClosed, Math.min(new Date(i.endedAt).getTime(), dayEnd));
     else anyOpen = true;
   }
 
