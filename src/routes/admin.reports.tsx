@@ -34,6 +34,7 @@ import {
   inDateRange,
   isRangeActive,
   describeRange,
+  todayIstKey,
   type DateRange,
 } from "@/lib/date-filter";
 import {
@@ -43,6 +44,7 @@ import {
   type DispositionRecord,
 } from "@/lib/disposition-store";
 import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
+import { teamToday } from "@/lib/team-today";
 import { usePosByDebtor } from "@/lib/pos-lookup";
 import { formatINR } from "@/lib/mock-debtors";
 import { MonthlyTrendPanel, type TrendGroup } from "@/components/reports/monthly-trend";
@@ -339,6 +341,20 @@ function AdminReportsPage() {
       const onBreakNow = team.agentIds.filter((aid) =>
         isOnBreak(currentStatusOf(todayIntervals, aid, statusNow)),
       ).length;
+      // Always today (IST), whatever the date range above. A bank-reported payment credits no
+      // person, so it reaches a team through its portfolio — same rule as the monthly trend.
+      const roster = new Set(team.agentIds);
+      const teamPortfolioIds = new Set(teamPortfolios.map((p) => p.id));
+      const today = teamToday(
+        disps.filter((d) => d.teamId === team.id),
+        disps,
+        payments.filter((p) =>
+          p.agentId === null
+            ? p.portfolioId !== undefined && teamPortfolioIds.has(p.portfolioId)
+            : roster.has(p.agentId),
+        ),
+        todayIstKey(),
+      );
       return {
         team,
         stats: calcStats(teamDisps),
@@ -347,9 +363,19 @@ function AdminReportsPage() {
         portfolios: teamPortfolios,
         avgIdlePct,
         onBreakNow,
+        today,
       };
     });
-  }, [teams, disps, rangedDisps, portfolios, activeCountByAgent, todayIntervals, statusNow]);
+  }, [
+    teams,
+    disps,
+    rangedDisps,
+    portfolios,
+    payments,
+    activeCountByAgent,
+    todayIntervals,
+    statusNow,
+  ]);
 
   // All agents across all teams with stats
   const agentStats = useMemo(() => {
@@ -816,7 +842,16 @@ function AdminReportsPage() {
             </p>
           )}
           {teamStats.map(
-            ({ team, stats, assignedCount, disps: td, portfolios: tp, avgIdlePct, onBreakNow }) => {
+            ({
+              team,
+              stats,
+              assignedCount,
+              disps: td,
+              portfolios: tp,
+              avgIdlePct,
+              onBreakNow,
+              today,
+            }) => {
               const open = expandedTeam === team.id;
               return (
                 <Card key={team.id} className="overflow-hidden">
@@ -852,6 +887,30 @@ function AdminReportsPage() {
                             {formatINR(stats.ptpAmount)} PTP value
                           </span>
                         )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs">
+                        <span className="text-muted-foreground font-medium">Today:</span>
+                        <span title="PTPs (and Partially Paid balances with a date) logged today">
+                          <span className="text-muted-foreground">Generated </span>
+                          <span className="font-semibold text-foreground">
+                            {formatINR(today.generatedAmount)}
+                          </span>
+                          <span className="text-muted-foreground"> ({today.generatedCount})</span>
+                        </span>
+                        <span title="Completed payments received today, including bank paid files">
+                          <span className="text-muted-foreground">Collected </span>
+                          <span className="font-semibold text-success">
+                            {formatINR(today.collectedAmount)}
+                          </span>
+                          <span className="text-muted-foreground"> ({today.collectedCount})</span>
+                        </span>
+                        <span title="Projection: still-open promises due today">
+                          <span className="text-muted-foreground">Due today </span>
+                          <span className="font-semibold text-foreground">
+                            {formatINR(today.dueAmount)}
+                          </span>
+                          <span className="text-muted-foreground"> ({today.dueCount})</span>
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 shrink-0 text-xs">
