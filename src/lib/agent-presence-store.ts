@@ -31,9 +31,8 @@ export interface StatusInterval {
   lastSeenAt: string | null;
 }
 
-/** An open interval not heartbeated for this long means the app is gone (laptop closed, tab
- *  killed): the person is not signed in any more. The app heartbeats every minute. */
-export const PRESENCE_STALE_MS = 3 * 60_000;
+import { PRESENCE_STALE_MS } from "./agent-presence-constants";
+export { PRESENCE_STALE_MS };
 
 /** The row this tab has open, so a status change closes the right interval. */
 let openIntervalId: string | null = null;

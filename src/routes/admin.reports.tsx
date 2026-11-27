@@ -53,7 +53,12 @@ import {
   formatDurationOrDash,
   formatClockTime,
 } from "@/lib/agent-time-stats";
-import { todayPresenceKey } from "@/lib/agent-presence-store";
+import {
+  fetchStatusIntervals,
+  todayPresenceKey,
+  type StatusInterval,
+} from "@/lib/agent-presence-store";
+import { currentStatusOf, isOnBreak, statusLabel } from "@/lib/agent-current-status";
 import {
   getPayments,
   refreshPayments,
@@ -267,6 +272,32 @@ function AdminReportsPage() {
     [portfolioTotals],
   );
 
+  // Today's status log for every team member (break, idle and "right now" on the By Team tab).
+  // Reloaded every 30 s so a break shows up soon after the agent picks it.
+  const [todayIntervals, setTodayIntervals] = useState<StatusInterval[]>([]);
+  const [statusNow, setStatusNow] = useState(() => Date.now());
+  const teamMemberKey = useMemo(
+    () => [...new Set(teams.flatMap((t) => t.agentIds))].sort().join("|"),
+    [teams],
+  );
+  useEffect(() => {
+    const emails = teamMemberKey ? teamMemberKey.split("|") : [];
+    if (!emails.length) return;
+    let live = true;
+    const load = async () => {
+      const iv = await fetchStatusIntervals(emails, todayPresenceKey());
+      if (!live) return;
+      setTodayIntervals(iv);
+      setStatusNow(Date.now());
+    };
+    void load();
+    const t = setInterval(() => void load(), 30_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [teamMemberKey]);
+
   // Per-team stats
   const teamStats = useMemo(() => {
     const now = new Date();
@@ -287,10 +318,9 @@ function AdminReportsPage() {
         const todayDisps = disps.filter(
           (d) => d.teamId === team.id && d.agentId === aid && isSameDay(d.time, now),
         );
-        // No presence intervals passed: this is a cross-team roll-up and presence is
-        // per-agent-per-day. Break/idle come back null and are skipped below rather
-        // than counted as zero.
-        return getAgentTimeStats(aid, todayDisps, todayPresenceKey());
+        // Break and idle come from today's status log; an agent with nothing logged comes back
+        // null and is skipped below rather than counted as zero.
+        return getAgentTimeStats(aid, todayDisps, todayPresenceKey(), todayIntervals);
       });
       // Averaged only over agents whose day was actually tracked — including untracked agents
       // as 0% idle would drag the team average down with data that does not exist.
@@ -301,10 +331,13 @@ function AdminReportsPage() {
         tracked.length > 0
           ? Math.round(
               (tracked.reduce((s, t) => s + (t.idleSeconds ?? 0) / (t.loggedInSeconds ?? 1), 0) /
-                todayTimeStats.length) *
+                tracked.length) *
                 100,
             )
           : 0;
+      const onBreakNow = team.agentIds.filter((aid) =>
+        isOnBreak(currentStatusOf(todayIntervals, aid, statusNow)),
+      ).length;
       return {
         team,
         stats: calcStats(teamDisps),
@@ -312,9 +345,10 @@ function AdminReportsPage() {
         disps: teamDisps,
         portfolios: teamPortfolios,
         avgIdlePct,
+        onBreakNow,
       };
     });
-  }, [teams, disps, rangedDisps, portfolios, activeCountByAgent]);
+  }, [teams, disps, rangedDisps, portfolios, activeCountByAgent, todayIntervals, statusNow]);
 
   // All agents across all teams with stats
   const agentStats = useMemo(() => {
@@ -780,7 +814,7 @@ function AdminReportsPage() {
             </p>
           )}
           {teamStats.map(
-            ({ team, stats, assignedCount, disps: td, portfolios: tp, avgIdlePct }) => {
+            ({ team, stats, assignedCount, disps: td, portfolios: tp, avgIdlePct, onBreakNow }) => {
               const open = expandedTeam === team.id;
               return (
                 <Card key={team.id} className="overflow-hidden">
@@ -806,6 +840,11 @@ function AdminReportsPage() {
                         <span>{assignedCount} accounts assigned</span>
                         <span>{stats.total} calls logged</span>
                         <span className="text-blue-500 font-medium">{stats.ptps} PTPs</span>
+                        {onBreakNow > 0 && (
+                          <span className="text-blue-600 dark:text-blue-400 font-medium">
+                            {onBreakNow} on break now
+                          </span>
+                        )}
                         {stats.ptpAmount > 0 && (
                           <span className="text-success font-medium">
                             {formatINR(stats.ptpAmount)} PTP value
@@ -828,7 +867,7 @@ function AdminReportsPage() {
                       )}
                       <div
                         className="text-center hidden md:block"
-                        title="Estimated — real presence tracking is coming soon"
+                        title="Today: signed-in time not spent calling, ringing, wrapping up or on break — averaged over agents with a tracked day"
                       >
                         <div
                           className={cn(
@@ -902,6 +941,9 @@ function AdminReportsPage() {
                                 Contact%
                               </th>
                               <th className="py-2 px-3 text-left font-medium text-muted-foreground">
+                                Right now
+                              </th>
+                              <th className="py-2 px-3 text-left font-medium text-muted-foreground">
                                 Shift (today)*
                               </th>
                               <th className="py-2 px-3 text-right font-medium text-muted-foreground">
@@ -913,6 +955,9 @@ function AdminReportsPage() {
                               <th className="py-2 px-3 text-right font-medium text-muted-foreground">
                                 Idle*
                               </th>
+                              <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                                Break*
+                              </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
@@ -921,7 +966,13 @@ function AdminReportsPage() {
                               const as_ = calcStats(ad);
                               const ref = getAgentById(aid);
                               const todayAd = ad.filter((d) => isSameDay(d.time, new Date()));
-                              const ts = getAgentTimeStats(aid, todayAd, todayPresenceKey());
+                              const ts = getAgentTimeStats(
+                                aid,
+                                todayAd,
+                                todayPresenceKey(),
+                                todayIntervals,
+                              );
+                              const cur = currentStatusOf(todayIntervals, aid, statusNow);
                               return (
                                 <tr key={aid} className="hover:bg-muted/20">
                                   <td className="py-2 px-3 font-medium text-foreground">
@@ -950,6 +1001,28 @@ function AdminReportsPage() {
                                       "—"
                                     )}
                                   </td>
+                                  <td
+                                    className={cn(
+                                      "py-2 px-3 text-left whitespace-nowrap",
+                                      isOnBreak(cur)
+                                        ? "font-medium text-blue-600 dark:text-blue-400"
+                                        : cur
+                                          ? "text-success"
+                                          : "text-muted-foreground",
+                                    )}
+                                  >
+                                    {statusLabel(cur)}
+                                    {cur && isOnBreak(cur) && (
+                                      <span className="ml-1 font-normal text-muted-foreground">
+                                        since{" "}
+                                        {new Date(cur.since).toLocaleTimeString("en-IN", {
+                                          hour: "numeric",
+                                          minute: "2-digit",
+                                          timeZone: "Asia/Kolkata",
+                                        })}
+                                      </span>
+                                    )}
+                                  </td>
                                   <td className="py-2 px-3 text-left text-muted-foreground whitespace-nowrap">
                                     {ts.loginTime ? formatClockTime(ts.loginTime) : "—"} –{" "}
                                     {ts.logoutTime
@@ -967,6 +1040,9 @@ function AdminReportsPage() {
                                   <td className="py-2 px-3 text-right text-muted-foreground tabular-nums">
                                     {formatDurationOrDash(ts.idleSeconds)}
                                   </td>
+                                  <td className="py-2 px-3 text-right text-blue-600 dark:text-blue-400 tabular-nums">
+                                    {formatDurationOrDash(ts.breakSeconds)}
+                                  </td>
                                 </tr>
                               );
                             })}
@@ -974,8 +1050,10 @@ function AdminReportsPage() {
                         </table>
                       </div>
                       <p className="text-[10px] text-muted-foreground">
-                        * Shift/Calling/Idle are today's figures — Idle, Shift start/end are
-                        estimated pending real presence tracking; Calling time is real.
+                        * Today's figures, measured from the status log and call logs. Break =
+                        break, lunch and training. "Right now" is the status the agent picked;
+                        someone not heard from for 3 minutes shows as not signed in. "—" = not
+                        recorded, never zero.
                       </p>
 
                       {/* Portfolios for team */}

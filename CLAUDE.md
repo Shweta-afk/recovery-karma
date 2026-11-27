@@ -1258,6 +1258,19 @@ recovered without a vendor-side paging option. CDR fields: id, agentname, sub_di
 src, srctech, dst, dsttech, start, end, billsec, disposition, direction, recordfile, module,
 audio_token.
 
+**Live Calls "Everyone today" + Reports → By Team break (user, 2026-11-27).** The top-3 leaderboard
+beside Live Calls' KPI cards was replaced by `AgentTimeTable` (`components/agent-time-table.tsx`):
+EVERY agent (RLS-scoped: manager = team, admin = company), sortable — status now, ringing, talking,
+wrap-up, idle, break, logged in, since midnight IST, from `getAgentTimeStats`. Reports → By Team
+(`admin.reports.tsx`) loads today's `agent_status_log` for all team members and passes the
+intervals in: before this it passed none, so **Idle was always "—" and Avg Idle always 0%**, and
+there was no break column. It now has "Right now" (who is on break/lunch/training, since when),
+Break and a "N on break now" count per team; Avg Idle is averaged over tracked agents only (it
+divided by all agents, against its own comment). Shared rule `currentStatusOf` /
+`isOnBreak` (`agent-current-status.ts`, tested): the open interval with a heartbeat in the last 3
+min (`agent-presence-constants.ts`), else "not signed in". Break here = a status the agent PICKED;
+unlike "Agents right now", idle over 5 min is NOT turned into a break in these two places.
+
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90
 days, this month, last month). The range is shared across superadmin pages and remembered per
