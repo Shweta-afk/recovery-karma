@@ -17,7 +17,7 @@ export const EMAIL_OTP_AMR_METHODS = ["otp", "magiclink"] as const;
 
 /** Roles that must pass the emailed code before they get their powers. */
 export function roleNeedsEmailOtp(role: Role | string | null | undefined): boolean {
-  return role === "admin" || role === "superadmin";
+  return role === "admin" || role === "superadmin" || role === "sales";
 }
 
 /** Reads the `amr` claim straight out of the JWT payload. Does NOT verify the signature —

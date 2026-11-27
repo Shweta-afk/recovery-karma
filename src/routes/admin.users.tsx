@@ -94,13 +94,18 @@ const ROLE_META: Record<Role, { label: string; icon: typeof User; cls: string }>
     icon: Headphones,
     cls: "bg-purple-500/10 text-purple-600 border-purple-400/20",
   },
-  // Never actually appears here — agents.role's CHECK constraint doesn't allow "superadmin";
-  // superadmins live in their own table (20260909_superadmin_and_wallets.sql). Present only so
-  // this Record<Role, ...> stays exhaustive now that Role has a fourth value.
+  // Never actually appears here — agents.role's CHECK constraint doesn't allow these;
+  // superadmins and salespeople live in their own tables (superadmins / sales_users). Present
+  // only so this Record<Role, ...> stays exhaustive.
   superadmin: {
     label: "Superadmin",
     icon: ShieldCheck,
     cls: "bg-primary/10 text-primary border-primary/20",
+  },
+  sales: {
+    label: "Sales",
+    icon: ShieldCheck,
+    cls: "bg-cyan-500/10 text-cyan-600 border-cyan-400/20",
   },
 };
 

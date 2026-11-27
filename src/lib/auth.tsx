@@ -10,7 +10,7 @@ import { roleNeedsEmailOtp, tokenHasEmailOtp } from "./login-otp";
 import { loginUrlFor, wrongAddressRedirect } from "./company-address";
 import { errorText } from "./app-error";
 
-export type Role = "agent" | "manager" | "admin" | "auditor" | "superadmin";
+export type Role = "agent" | "manager" | "admin" | "auditor" | "superadmin" | "sales";
 
 /**
  * Where a role's "home" is - the single source of truth for it.
@@ -27,8 +27,9 @@ export type Role = "agent" | "manager" | "admin" | "auditor" | "superadmin";
  */
 export function homeRouteForRole(
   role: Role | undefined,
-): "/dashboard" | "/manager" | "/admin" | "/auditor" | "/superadmin" {
+): "/dashboard" | "/manager" | "/admin" | "/auditor" | "/superadmin" | "/sales" {
   if (role === "superadmin") return "/superadmin";
+  if (role === "sales") return "/sales";
   if (role === "auditor") return "/auditor";
   if (role === "admin") return "/admin";
   if (role === "manager") return "/manager";
@@ -124,7 +125,17 @@ async function fetchSuperadminProfile(authUserId: string): Promise<AuthUser | nu
       resolveSuperadmin({ data: { accessToken: session.access_token } }),
       "superadmin lookup",
     );
-    if (!result.superadmin) return null;
+    // A salesperson resolves through the same call (sales_users, see sales.server.ts).
+    if (!result.superadmin) {
+      if (!result.sales) return null;
+      return {
+        id: authUserId,
+        name: result.sales.name,
+        email: result.sales.email,
+        role: "sales",
+        agentPhone: null,
+      };
+    }
     return {
       id: authUserId,
       name: result.superadmin.name,

@@ -92,7 +92,7 @@ export function BrowserPhone() {
   // Now it re-reads every couple of minutes (and when the tab comes back) and reconnects when
   // anything that matters changed. Never in the middle of a call.
   useEffect(() => {
-    if (!user || user.role === "superadmin") return;
+    if (!user || user.role === "superadmin" || user.role === "sales") return;
     let cancelled = false;
     const load = async () => {
       if (busy.current) return;

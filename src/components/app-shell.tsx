@@ -128,6 +128,11 @@ const PORTAL_STYLE: Record<string, { label: string; stripe: string; badge: strin
     stripe: "border-t-amber-500",
     badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
   },
+  sales: {
+    label: "SamvadX Sales",
+    stripe: "border-t-cyan-500",
+    badge: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300",
+  },
   superadmin: {
     label: "SamvadX Superadmin",
     stripe: "border-t-rose-500",

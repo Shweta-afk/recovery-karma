@@ -32,6 +32,7 @@ export const RESERVED_SUBDOMAINS: readonly string[] = [
   "api",
   "admin",
   "superadmin",
+  "sales",
   "portal",
   "login",
   "signin",

@@ -21,6 +21,7 @@ import {
 import { timingSafeEqual } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
+import { verifySalespersonOnly } from "./sales.server";
 import { loadSettings, type ProfilexSettings } from "./profilex-actions.server";
 import { ALL_SERVICE_IDS, CIBIL_SERVICE, getService, providerCost } from "./profilex/catalogue";
 import { insightsPriceChanges } from "./profilex/price-changes";
@@ -220,8 +221,18 @@ export const resolveSuperadmin = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const caller = await verifySuperadminCaller(data.accessToken);
-    if (!caller) return { superadmin: null };
-    return { superadmin: { id: caller.superadminId, name: caller.name, email: caller.email } };
+    if (!caller) {
+      // Not a superadmin — maybe a salesperson (sales_users, 20261127_sales_portal.sql).
+      const sales = await verifySalespersonOnly(data.accessToken).catch(() => null);
+      return {
+        superadmin: null,
+        sales: sales ? { id: sales.salesUserId!, name: sales.name, email: sales.email } : null,
+      };
+    }
+    return {
+      superadmin: { id: caller.superadminId, name: caller.name, email: caller.email },
+      sales: null,
+    };
   });
 
 export interface CompanyRow {

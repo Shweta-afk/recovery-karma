@@ -15,6 +15,7 @@ import { Route as AuditorRouteImport } from './routes/auditor'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ManagerRouteImport } from './routes/manager'
+import { Route as SalesRouteImport } from './routes/sales'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SetupConfirmRouteImport } from './routes/setup-confirm'
 import { Route as SuperadminRouteImport } from './routes/superadmin'
@@ -55,6 +56,9 @@ import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio
 import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
 import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
+import { Route as SalesIndexRouteImport } from './routes/sales.index'
+import { Route as SalesLeadsRouteImport } from './routes/sales.leads'
+import { Route as SalesTeamRouteImport } from './routes/sales.team'
 import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
 import { Route as SuperadminActivityRouteImport } from './routes/superadmin.activity'
 import { Route as SuperadminArchivesRouteImport } from './routes/superadmin.archives'
@@ -66,6 +70,7 @@ import { Route as SuperadminInvoicesRouteImport } from './routes/superadmin.invo
 import { Route as SuperadminNumbersRouteImport } from './routes/superadmin.numbers'
 import { Route as SuperadminRevenueRouteImport } from './routes/superadmin.revenue'
 import { Route as SuperadminWalletRouteImport } from './routes/superadmin.wallet'
+import { Route as SalesLeadsIdRouteImport } from './routes/sales.leads.$id'
 import { Route as SuperadminCompaniesIndexRouteImport } from './routes/superadmin.companies.index'
 import { Route as SuperadminCompaniesClientIdRouteImport } from './routes/superadmin.companies.$clientId'
 
@@ -97,6 +102,11 @@ const LoginRoute = LoginRouteImport.update({
 const ManagerRoute = ManagerRouteImport.update({
   id: '/manager',
   path: '/manager',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SalesRoute = SalesRouteImport.update({
+  id: '/sales',
+  path: '/sales',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -299,6 +309,21 @@ const ManagerUploadRoute = ManagerUploadRouteImport.update({
   path: '/upload',
   getParentRoute: () => ManagerRoute,
 } as any)
+const SalesIndexRoute = SalesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SalesRoute,
+} as any)
+const SalesLeadsRoute = SalesLeadsRouteImport.update({
+  id: '/leads',
+  path: '/leads',
+  getParentRoute: () => SalesRoute,
+} as any)
+const SalesTeamRoute = SalesTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => SalesRoute,
+} as any)
 const SuperadminIndexRoute = SuperadminIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -354,6 +379,11 @@ const SuperadminWalletRoute = SuperadminWalletRouteImport.update({
   path: '/wallet',
   getParentRoute: () => SuperadminRoute,
 } as any)
+const SalesLeadsIdRoute = SalesLeadsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => SalesLeadsRoute,
+} as any)
 const SuperadminCompaniesIndexRoute =
   SuperadminCompaniesIndexRouteImport.update({
     id: '/companies/',
@@ -374,6 +404,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRouteWithChildren
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
+  '/sales': typeof SalesRouteWithChildren
   '/setup': typeof SetupRoute
   '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin': typeof SuperadminRouteWithChildren
@@ -410,6 +441,8 @@ export interface FileRoutesByFullPath {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/sales/leads': typeof SalesLeadsRouteWithChildren
+  '/sales/team': typeof SalesTeamRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/archives': typeof SuperadminArchivesRoute
   '/superadmin/contracts': typeof SuperadminContractsRoute
@@ -424,7 +457,9 @@ export interface FileRoutesByFullPath {
   '/auditor/': typeof AuditorIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/manager/': typeof ManagerIndexRoute
+  '/sales/': typeof SalesIndexRoute
   '/superadmin/': typeof SuperadminIndexRoute
+  '/sales/leads/$id': typeof SalesLeadsIdRoute
   '/superadmin/companies/$clientId': typeof SuperadminCompaniesClientIdRoute
   '/superadmin/companies/': typeof SuperadminCompaniesIndexRoute
 }
@@ -466,6 +501,8 @@ export interface FileRoutesByTo {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/sales/leads': typeof SalesLeadsRouteWithChildren
+  '/sales/team': typeof SalesTeamRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/archives': typeof SuperadminArchivesRoute
   '/superadmin/contracts': typeof SuperadminContractsRoute
@@ -480,7 +517,9 @@ export interface FileRoutesByTo {
   '/auditor': typeof AuditorIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/manager': typeof ManagerIndexRoute
+  '/sales': typeof SalesIndexRoute
   '/superadmin': typeof SuperadminIndexRoute
+  '/sales/leads/$id': typeof SalesLeadsIdRoute
   '/superadmin/companies/$clientId': typeof SuperadminCompaniesClientIdRoute
   '/superadmin/companies': typeof SuperadminCompaniesIndexRoute
 }
@@ -492,6 +531,7 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRouteWithChildren
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
+  '/sales': typeof SalesRouteWithChildren
   '/setup': typeof SetupRoute
   '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin': typeof SuperadminRouteWithChildren
@@ -528,6 +568,8 @@ export interface FileRoutesById {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/sales/leads': typeof SalesLeadsRouteWithChildren
+  '/sales/team': typeof SalesTeamRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
   '/superadmin/archives': typeof SuperadminArchivesRoute
   '/superadmin/contracts': typeof SuperadminContractsRoute
@@ -542,7 +584,9 @@ export interface FileRoutesById {
   '/auditor/': typeof AuditorIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/manager/': typeof ManagerIndexRoute
+  '/sales/': typeof SalesIndexRoute
   '/superadmin/': typeof SuperadminIndexRoute
+  '/sales/leads/$id': typeof SalesLeadsIdRoute
   '/superadmin/companies/$clientId': typeof SuperadminCompaniesClientIdRoute
   '/superadmin/companies/': typeof SuperadminCompaniesIndexRoute
 }
@@ -555,6 +599,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/login'
     | '/manager'
+    | '/sales'
     | '/setup'
     | '/setup-confirm'
     | '/superadmin'
@@ -591,6 +636,8 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/sales/leads'
+    | '/sales/team'
     | '/superadmin/activity'
     | '/superadmin/archives'
     | '/superadmin/contracts'
@@ -605,7 +652,9 @@ export interface FileRouteTypes {
     | '/auditor/'
     | '/dashboard/'
     | '/manager/'
+    | '/sales/'
     | '/superadmin/'
+    | '/sales/leads/$id'
     | '/superadmin/companies/$clientId'
     | '/superadmin/companies/'
   fileRoutesByTo: FileRoutesByTo
@@ -647,6 +696,8 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/sales/leads'
+    | '/sales/team'
     | '/superadmin/activity'
     | '/superadmin/archives'
     | '/superadmin/contracts'
@@ -661,7 +712,9 @@ export interface FileRouteTypes {
     | '/auditor'
     | '/dashboard'
     | '/manager'
+    | '/sales'
     | '/superadmin'
+    | '/sales/leads/$id'
     | '/superadmin/companies/$clientId'
     | '/superadmin/companies'
   id:
@@ -672,6 +725,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/login'
     | '/manager'
+    | '/sales'
     | '/setup'
     | '/setup-confirm'
     | '/superadmin'
@@ -708,6 +762,8 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/sales/leads'
+    | '/sales/team'
     | '/superadmin/activity'
     | '/superadmin/archives'
     | '/superadmin/contracts'
@@ -722,7 +778,9 @@ export interface FileRouteTypes {
     | '/auditor/'
     | '/dashboard/'
     | '/manager/'
+    | '/sales/'
     | '/superadmin/'
+    | '/sales/leads/$id'
     | '/superadmin/companies/$clientId'
     | '/superadmin/companies/'
   fileRoutesById: FileRoutesById
@@ -734,6 +792,7 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRouteWithChildren
   LoginRoute: typeof LoginRoute
   ManagerRoute: typeof ManagerRouteWithChildren
+  SalesRoute: typeof SalesRouteWithChildren
   SetupRoute: typeof SetupRoute
   SetupConfirmRoute: typeof SetupConfirmRoute
   SuperadminRoute: typeof SuperadminRouteWithChildren
@@ -783,6 +842,13 @@ declare module '@tanstack/react-router' {
       path: '/manager'
       fullPath: '/manager'
       preLoaderRoute: typeof ManagerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sales': {
+      id: '/sales'
+      path: '/sales'
+      fullPath: '/sales'
+      preLoaderRoute: typeof SalesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -1065,6 +1131,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ManagerUploadRouteImport
       parentRoute: typeof ManagerRoute
     }
+    '/sales/': {
+      id: '/sales/'
+      path: '/'
+      fullPath: '/sales/'
+      preLoaderRoute: typeof SalesIndexRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/leads': {
+      id: '/sales/leads'
+      path: '/leads'
+      fullPath: '/sales/leads'
+      preLoaderRoute: typeof SalesLeadsRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/team': {
+      id: '/sales/team'
+      path: '/team'
+      fullPath: '/sales/team'
+      preLoaderRoute: typeof SalesTeamRouteImport
+      parentRoute: typeof SalesRoute
+    }
     '/superadmin/': {
       id: '/superadmin/'
       path: '/'
@@ -1141,6 +1228,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/superadmin/wallet'
       preLoaderRoute: typeof SuperadminWalletRouteImport
       parentRoute: typeof SuperadminRoute
+    }
+    '/sales/leads/$id': {
+      id: '/sales/leads/$id'
+      path: '/$id'
+      fullPath: '/sales/leads/$id'
+      preLoaderRoute: typeof SalesLeadsIdRouteImport
+      parentRoute: typeof SalesLeadsRoute
     }
     '/superadmin/companies/': {
       id: '/superadmin/companies/'
@@ -1265,6 +1359,32 @@ const ManagerRouteChildren: ManagerRouteChildren = {
 const ManagerRouteWithChildren =
   ManagerRoute._addFileChildren(ManagerRouteChildren)
 
+interface SalesLeadsRouteChildren {
+  SalesLeadsIdRoute: typeof SalesLeadsIdRoute
+}
+
+const SalesLeadsRouteChildren: SalesLeadsRouteChildren = {
+  SalesLeadsIdRoute: SalesLeadsIdRoute,
+}
+
+const SalesLeadsRouteWithChildren = SalesLeadsRoute._addFileChildren(
+  SalesLeadsRouteChildren,
+)
+
+interface SalesRouteChildren {
+  SalesLeadsRoute: typeof SalesLeadsRouteWithChildren
+  SalesTeamRoute: typeof SalesTeamRoute
+  SalesIndexRoute: typeof SalesIndexRoute
+}
+
+const SalesRouteChildren: SalesRouteChildren = {
+  SalesLeadsRoute: SalesLeadsRouteWithChildren,
+  SalesTeamRoute: SalesTeamRoute,
+  SalesIndexRoute: SalesIndexRoute,
+}
+
+const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
+
 interface SuperadminRouteChildren {
   SuperadminActivityRoute: typeof SuperadminActivityRoute
   SuperadminArchivesRoute: typeof SuperadminArchivesRoute
@@ -1308,6 +1428,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRouteWithChildren,
   LoginRoute: LoginRoute,
   ManagerRoute: ManagerRouteWithChildren,
+  SalesRoute: SalesRouteWithChildren,
   SetupRoute: SetupRoute,
   SetupConfirmRoute: SetupConfirmRoute,
   SuperadminRoute: SuperadminRouteWithChildren,

@@ -7,6 +7,7 @@
 import { z, tokenSchema, shortText } from "./schemas";
 import { randomBytes } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import { roleNeedsEmailOtp } from "./login-otp";
 import { addressFor, subdomainFromHostname, wrongAddressRedirect } from "./company-address";
@@ -26,12 +27,18 @@ export const checkLoginOtpRequired = createServerFn({ method: "POST" })
     } = await admin.auth.getUser(data.accessToken);
     if (userErr || !user) return { required: true as const };
 
-    const [superadmin, agent] = await Promise.all([
+    const [superadmin, agent, sales] = await Promise.all([
       admin.from("superadmins").select("id").eq("auth_user_id", user.id).maybeSingle(),
       admin.from("agents").select("role").eq("auth_user_id", user.id).maybeSingle(),
+      // Salespeople (sales_users, 20261127_sales_portal.sql) see client invoices: code too.
+      (admin as unknown as SupabaseClient)
+        .from("sales_users")
+        .select("id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle(),
     ]);
     if (superadmin.error || agent.error) return { required: true as const };
-    if (superadmin.data) return { required: true as const };
+    if (superadmin.data || sales.data) return { required: true as const };
     return { required: roleNeedsEmailOtp((agent.data as { role?: string } | null)?.role) };
   });
 

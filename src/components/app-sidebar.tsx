@@ -31,6 +31,9 @@ import {
   Star,
   FileSpreadsheet,
   Stethoscope,
+  Kanban,
+  Contact,
+  UserPlus,
 } from "lucide-react";
 import {
   Sidebar,
@@ -120,11 +123,22 @@ const superadminItems = [
   { title: "Help", url: "/superadmin/help", icon: HelpCircle },
 ];
 
+// Sales portal (2026-11-27): salespeople, and superadmins (who also manage the team).
+const salesItems = [
+  { title: "Pipeline", url: "/sales", icon: Kanban },
+  { title: "Leads & Prospects", url: "/sales/leads", icon: Contact },
+];
+const salesAdminItems = [{ title: "Sales Team", url: "/sales/team", icon: UserPlus }];
+
 export function AppSidebar({ role }: { role: Role }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const isActive = (url: string) =>
-    url === "/manager" || url === "/admin" || url === "/superadmin" || url === "/auditor"
+    url === "/manager" ||
+      url === "/admin" ||
+      url === "/superadmin" ||
+      url === "/auditor" ||
+      url === "/sales"
       ? pathname === url
       : pathname.startsWith(url);
 
@@ -234,6 +248,25 @@ export function AppSidebar({ role }: { role: Role }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 {superadminItems.map((item) => (
+                  <SidebarMenuItem key={item.url}>
+                    <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                      <Link to={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+        {(role === "sales" || role === "superadmin") && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Sales</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {[...salesItems, ...(role === "superadmin" ? salesAdminItems : [])].map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
                       <Link to={item.url}>
