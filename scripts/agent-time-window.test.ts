@@ -88,3 +88,23 @@ describe("presence rows that overlap or were closed late", () => {
     expect(s.idleSeconds).toBe(0);
   });
 });
+
+describe("an app left open overnight is not a login", () => {
+  const overnight: StatusInterval = {
+    agentId: "a@x.com",
+    status: "available",
+    startedAt: "2026-11-19T15:00:00+05:30",
+    endedAt: at("19:00"),
+    lastSeenAt: at("19:00"),
+  };
+  test("counts only from the first call of the day", () => {
+    const s = getAgentTimeStats("a@x.com", [call("10:01", 30)], DAY, [overnight]);
+    // first call began at 10:01 minus 30 s talk, 10 s ring, 20 s wrap = 10:00
+    expect(s.loggedInSeconds).toBe(9 * 3600);
+    expect(s.loginTime?.getTime()).toBe(new Date(at("10:00")).getTime());
+  });
+  test("counts nothing on a day with no calls", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [overnight]);
+    expect(s.loggedInSeconds).toBe(0);
+  });
+});

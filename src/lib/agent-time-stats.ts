@@ -154,8 +154,22 @@ export function getAgentTimeStats(
   let anyOpen = false;
   const now = Date.now();
 
+  // A row carried over from an earlier day (app left open overnight keeps heartbeating) is not a
+  // login (user, 2026-11-27): it counts only from the agent's first call of the day, and not at
+  // all on a day with no calls. A real sign-in or status change today opens a new row anyway.
+  const firstCallAt = disps.reduce((min, d) => {
+    const secs = (d.durationSeconds ?? 0) + (d.ringSeconds ?? 0) + (d.wrapSeconds ?? 0);
+    return Math.min(min, new Date(d.time).getTime() - secs * 1000);
+  }, Number.POSITIVE_INFINITY);
+
+  const istMidnight = new Date(`${dateIso}T00:00:00+05:30`).getTime();
+
   for (const i of mine) {
-    const r = clip(i, dayStart, dayEnd);
+    let r = clip(i, dayStart, dayEnd);
+    if (r && Date.parse(i.startedAt) < istMidnight) {
+      const from = Math.max(r[0], firstCallAt);
+      r = Number.isFinite(from) && from < r[1] ? [from, r[1]] : null;
+    }
     if (!r) continue;
     if (i.status !== "offline") online.push(r);
     if (BREAK_STATUSES.includes(i.status)) breaks.push(r);
