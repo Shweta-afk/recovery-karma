@@ -8,7 +8,7 @@ import { PhoneCall, PhoneIncoming, Info, Search, X } from "lucide-react";
 import { DIAL_MODE_META, type DialMode } from "@/lib/call-queue/types";
 import { LiveCallsBoard, useLiveCalls } from "@/components/live-calls-board";
 import { AgentsRightNow } from "@/components/agents-right-now";
-import { AgentTimeTable } from "@/components/agent-time-table";
+import { TodayLeaderboard } from "@/components/today-leaderboard";
 
 const DIAL_MODE_ORDER: DialMode[] = ["multi_line", "sequential", "single", "manual"];
 
@@ -75,8 +75,7 @@ export function LiveCallsPageBody({ scopeLabel }: { scopeLabel: string }) {
         </span>
       </div>
 
-      {/* KPI cards, then every agent's time today (user, 2026-11-27: the top-3 leaderboard beside
-          the cards showed only a few people). */}
+      {/* KPI cards, then today's leaderboard for every agent (user, 2026-11-27: it showed only the top 3). */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -106,7 +105,7 @@ export function LiveCallsPageBody({ scopeLabel }: { scopeLabel: string }) {
         })}
       </div>
 
-      <AgentTimeTable search={search} />
+      <TodayLeaderboard search={search} />
 
       <AgentsRightNow liveRows={everyRow} search={search} />
 
