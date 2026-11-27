@@ -1273,6 +1273,15 @@ divided by all agents, against its own comment). Shared rule `currentStatusOf` /
 min (`agent-presence-constants.ts`), else "not signed in". Break here = a status the agent PICKED;
 unlike "Agents right now", idle over 5 min is NOT turned into a break in these two places.
 
+**Search/filters on superadmin tables (user, 2026-11-27: "add filters everywhere").** One shared
+box, `components/superadmin/list-search.tsx` (`useListSearch` + `ListSearch`, case-insensitive,
+any word order, client-side, shows "N of M"), now on Insights Wallet (companies), Insights Activity
+(by company, by service, recent lookups), Revenue (by company), plus Health Check pills (all /
+needs attention, by area). Excel exports from those tables export what is shown. Companies,
+Invoices, Numbers & Lines, Contracts, Activity and Archives already had their own filters. Use
+`useListSearch` for any new superadmin table. **Manager → Portfolio Overview opens on "Open"
+(everything not closed)**; Closed and All are one click away, and the header totals follow the pill.
+
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90
 days, this month, last month). The range is shared across superadmin pages and remembered per
