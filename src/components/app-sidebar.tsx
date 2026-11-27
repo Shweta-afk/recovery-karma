@@ -128,7 +128,10 @@ const salesItems = [
   { title: "Pipeline", url: "/sales", icon: Kanban },
   { title: "Leads & Prospects", url: "/sales/leads", icon: Contact },
 ];
-const salesAdminItems = [{ title: "Sales Team", url: "/sales/team", icon: UserPlus }];
+const salesAdminItems = [
+  { title: "Sales Team", url: "/sales/team", icon: UserPlus },
+  { title: "Sales Activity", url: "/sales/activity", icon: History },
+];
 
 export function AppSidebar({ role }: { role: Role }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });

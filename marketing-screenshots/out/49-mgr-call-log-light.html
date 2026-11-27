@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en" class="">
+<head>
+<meta charset="utf-8">
+<title>Call Log · SamvadX</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-blue: var(--brand-blue);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── Light mode (default) ──────────────────────────────────────────────────── */
+:root {
+  --radius: 0.5rem;
+
+  --brand-navy: oklch(0.09 0.025 258);
+  --brand-blue: oklch(0.5 0.18 258);
+
+  --background: oklch(0.97 0.007 258);
+  --foreground: oklch(0.13 0.025 258);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.13 0.025 258);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.13 0.025 258);
+
+  --primary: oklch(0.5 0.18 258);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.92 0.012 258);
+  --secondary-foreground: oklch(0.2 0.03 258);
+
+  --muted: oklch(0.93 0.01 258);
+  --muted-foreground: oklch(0.42 0.018 258);
+
+  --accent: oklch(0.93 0.012 258);
+  --accent-foreground: oklch(0.13 0.025 258);
+
+  --destructive: oklch(0.52 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.5 0.16 152);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: oklch(0.62 0.17 75);
+  --warning-foreground: oklch(0.2 0.06 75);
+
+  --border: oklch(0.87 0.014 258);
+  --input: oklch(0.9 0.01 258);
+  --ring: oklch(0.5 0.18 258);
+
+  --sidebar: oklch(0.94 0.01 258);
+  --sidebar-foreground: oklch(0.18 0.025 258);
+  --sidebar-primary: oklch(0.5 0.18 258);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.88 0.014 258);
+  --sidebar-accent-foreground: oklch(0.13 0.025 258);
+  --sidebar-border: oklch(0.84 0.014 258);
+  --sidebar-ring: oklch(0.5 0.18 258);
+}
+
+/* ── Dark / Night mode ─────────────────────────────────────────────────────── */
+.dark {
+  --brand-navy: oklch(0.09 0.025 258);
+  --brand-blue: oklch(0.58 0.18 258);
+
+  --background: oklch(0.11 0.025 258);
+  --foreground: oklch(0.96 0.005 250);
+
+  --card: oklch(0.15 0.025 258);
+  --card-foreground: oklch(0.96 0.005 250);
+
+  --popover: oklch(0.15 0.025 258);
+  --popover-foreground: oklch(0.96 0.005 250);
+
+  --primary: oklch(0.58 0.18 258);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.2 0.03 258);
+  --secondary-foreground: oklch(0.85 0.01 250);
+
+  --muted: oklch(0.18 0.025 258);
+  --muted-foreground: oklch(0.55 0.02 257);
+
+  --accent: oklch(0.22 0.04 258);
+  --accent-foreground: oklch(0.96 0.005 250);
+
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.65 0.16 152);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: oklch(0.72 0.18 75);
+  --warning-foreground: oklch(0.15 0.04 75);
+
+  --border: oklch(0.25 0.03 258);
+  --input: oklch(0.22 0.03 258);
+  --ring: oklch(0.58 0.18 258);
+
+  --sidebar: oklch(0.09 0.025 258);
+  --sidebar-foreground: oklch(0.9 0.005 250);
+  --sidebar-primary: oklch(0.58 0.18 258);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.18 0.03 258);
+  --sidebar-accent-foreground: oklch(0.9 0.005 250);
+  --sidebar-border: oklch(0.2 0.025 258);
+  --sidebar-ring: oklch(0.58 0.18 258);
+}
+
+
+@layer base {
+  * { border-color: var(--color-border); }
+  body { background-color: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+}
+</style>
+<style>::-webkit-scrollbar{display:none} body{margin:0}</style>
+</head>
+<body>
+<div class="flex min-h-screen w-full bg-background">
+          
+  <aside class="flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+    <div class="border-b border-sidebar-border px-4 py-4">
+      <div class="inline-flex rounded-md px-3 py-1.5 dark:bg-white"><img src="logo.png" alt="SamvadX" class="h-7 w-auto"></div>
+    </div>
+    <div class="p-2">
+      <div class="flex h-8 items-center px-2 text-xs font-medium text-sidebar-foreground/70">Manager</div>
+      <ul class="flex flex-col gap-1">
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="chart-column" class="h-4 w-4 shrink-0"></i><span class="truncate">Dashboard</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="phone-call" class="h-4 w-4 shrink-0"></i><span class="truncate">Call Queue</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="radio-tower" class="h-4 w-4 shrink-0"></i><span class="truncate">Live Calls</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="history" class="h-4 w-4 shrink-0"></i><span class="truncate">Call History</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="timer" class="h-4 w-4 shrink-0"></i><span class="truncate">Team Activity</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="folder-open" class="h-4 w-4 shrink-0"></i><span class="truncate">Portfolio Overview</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="upload" class="h-4 w-4 shrink-0"></i><span class="truncate">Portfolio Upload</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="audio-lines" class="h-4 w-4 shrink-0"></i><span class="truncate">Call Audit</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="users" class="h-4 w-4 shrink-0"></i><span class="truncate">Debtors</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="credit-card" class="h-4 w-4 shrink-0"></i><span class="truncate">Payments</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm bg-sidebar-accent font-medium text-sidebar-accent-foreground"><i data-lucide="file-chart-column" class="h-4 w-4 shrink-0"></i><span class="truncate">Reports</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="file-spreadsheet" class="h-4 w-4 shrink-0"></i><span class="truncate">Feedback File</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="settings" class="h-4 w-4 shrink-0"></i><span class="truncate">Settings</span></a></li></ul>
+    </div>
+  </aside>
+          <div class="flex min-w-0 flex-1 flex-col">
+            
+  <header class="sticky top-0 z-10 flex h-14 items-center justify-between gap-4 border-b border-border bg-card px-4">
+    <div class="flex items-center gap-2">
+      <button class="inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground"><i data-lucide="panel-left" class="h-4 w-4"></i></button>
+      <div class="text-sm text-muted-foreground">Recovery operations console</div>
+      
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3">
+        <div class="flex flex-col items-end leading-tight">
+          <span class="text-sm font-medium text-foreground">Rohan Mehta</span>
+          <span class="text-xs text-muted-foreground">rohan.m@democollect.in</span>
+        </div>
+        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">RM</div>
+        <span class="rounded-md bg-secondary px-2 py-0.5 text-xs font-semibold capitalize text-secondary-foreground">manager</span>
+      </div>
+      <button class="relative inline-flex h-8 items-center rounded-md border border-border bg-background px-3 text-foreground"><i data-lucide="bell" class="h-4 w-4"></i>
+        <span class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">3</span></button>
+      <button class="inline-flex h-8 items-center rounded-md border border-border bg-background px-3 text-foreground"><i data-lucide="moon" class="h-4 w-4"></i></button>
+      <button class="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground"><i data-lucide="log-out" class="h-4 w-4"></i>Logout</button>
+    </div>
+  </header>
+            <main class="flex-1 p-6">
+<div class="space-y-4">
+  <div class="flex items-start justify-between gap-3">
+    <div><h1 class="text-xl font-semibold tracking-tight">Reports</h1><p class="text-xs text-muted-foreground">Team East · every call, with outcome, talk time, who hung up and the number used</p></div>
+    <div class="flex items-center gap-2"><div class="flex items-center gap-1.5"><i data-lucide="calendar-days" class="h-4 w-4 text-muted-foreground"></i><span class="flex h-9 items-center rounded-md border border-input bg-card px-2 text-sm">01/11/2026</span><span class="text-xs text-muted-foreground">to</span><span class="flex h-9 items-center rounded-md border border-input bg-card px-2 text-sm">24/11/2026</span></div><button class="flex h-9 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium"><i data-lucide="download" class="h-3.5 w-3.5"></i>Excel</button></div>
+  </div>
+  <div class="flex flex-wrap gap-1 border-b border-border text-xs"><span class="px-3 pb-2 text-muted-foreground">Overview</span><span class="px-3 pb-2 text-muted-foreground">By Agent</span><span class="px-3 pb-2 text-muted-foreground">Dial Mode</span><span class="border-b-2 border-foreground px-3 pb-2 font-medium text-foreground">Call Log</span><span class="px-3 pb-2 text-muted-foreground">Outcome Breakdown</span><span class="px-3 pb-2 text-muted-foreground">Monthly Trend</span><span class="px-3 pb-2 text-muted-foreground">Insights</span></div>
+  
+<div class="overflow-hidden rounded-xl border border-border bg-card"><table class="w-full text-xs"><thead class="border-b border-border"><tr class="text-left uppercase tracking-wider text-muted-foreground"><th class="px-3 py-2.5 font-medium ">Time</th><th class="px-3 py-2.5 font-medium ">Agent</th><th class="px-3 py-2.5 font-medium ">Borrower</th><th class="px-3 py-2.5 font-medium ">Outcome</th><th class="px-3 py-2.5 font-medium text-right">Talk time</th><th class="px-3 py-2.5 font-medium ">Dialled via</th><th class="px-3 py-2.5 font-medium ">Ended by</th><th class="px-3 py-2.5 font-medium ">Number used</th><th class="px-3 py-2.5 font-medium ">Recording</th></tr></thead><tbody class="divide-y divide-border"><tr><td class="px-3 py-2.5 ">24 Nov 3:41 PM</td><td class="px-3 py-2.5 ">Priya Sharma</td><td class="px-3 py-2.5 ">Sneha Kulkarni · PL-198730</td><td class="px-3 py-2.5 "><span class="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-semibold text-success">Paid ₹12,500</span></td><td class="px-3 py-2.5 text-right font-semibold">4:17</td><td class="px-3 py-2.5 ">Single</td><td class="px-3 py-2.5 ">Agent</td><td class="px-3 py-2.5 ">022 XXXX 4512</td><td class="px-3 py-2.5 "><span class="flex items-center gap-1 text-primary"><i data-lucide="play-circle" class="h-4 w-4"></i>Play</span></td></tr><tr><td class="px-3 py-2.5 ">24 Nov 3:38 PM</td><td class="px-3 py-2.5 ">Imran Shaikh</td><td class="px-3 py-2.5 ">Pooja Bansal · PL-200615</td><td class="px-3 py-2.5 "><span class="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-semibold text-primary">PTP ₹35,700</span></td><td class="px-3 py-2.5 text-right font-semibold">5:02</td><td class="px-3 py-2.5 ">Productive</td><td class="px-3 py-2.5 ">Customer</td><td class="px-3 py-2.5 ">022 XXXX 4518</td><td class="px-3 py-2.5 "><span class="flex items-center gap-1 text-primary"><i data-lucide="play-circle" class="h-4 w-4"></i>Play</span></td></tr><tr><td class="px-3 py-2.5 ">24 Nov 3:35 PM</td><td class="px-3 py-2.5 ">Rahul Nair</td><td class="px-3 py-2.5 ">Farhan Qureshi · PL-207761</td><td class="px-3 py-2.5 "><span class="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold text-warning">Call Back</span></td><td class="px-3 py-2.5 text-right font-semibold">1:12</td><td class="px-3 py-2.5 ">Productive</td><td class="px-3 py-2.5 ">Agent</td><td class="px-3 py-2.5 ">022 XXXX 4505</td><td class="px-3 py-2.5 "><span class="flex items-center gap-1 text-primary"><i data-lucide="play-circle" class="h-4 w-4"></i>Play</span></td></tr><tr><td class="px-3 py-2.5 ">24 Nov 3:31 PM</td><td class="px-3 py-2.5 ">Kiran Joshi</td><td class="px-3 py-2.5 ">Vikram Singh · TW-118204</td><td class="px-3 py-2.5 "><span class="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-semibold text-primary">Settlement</span></td><td class="px-3 py-2.5 text-right font-semibold">6:30</td><td class="px-3 py-2.5 ">Single</td><td class="px-3 py-2.5 ">Agent</td><td class="px-3 py-2.5 ">022 XXXX 4521</td><td class="px-3 py-2.5 "><span class="flex items-center gap-1 text-primary"><i data-lucide="play-circle" class="h-4 w-4"></i>Play</span></td></tr><tr><td class="px-3 py-2.5 ">24 Nov 3:27 PM</td><td class="px-3 py-2.5 ">Meera Krishnan</td><td class="px-3 py-2.5 ">Ritu Agarwal · PL-203390</td><td class="px-3 py-2.5 "><span class="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-semibold text-success">Partially Paid</span></td><td class="px-3 py-2.5 text-right font-semibold">3:48</td><td class="px-3 py-2.5 ">Manual</td><td class="px-3 py-2.5 ">Customer</td><td class="px-3 py-2.5 ">022 XXXX 4544</td><td class="px-3 py-2.5 "><span class="flex items-center gap-1 text-primary"><i data-lucide="play-circle" class="h-4 w-4"></i>Play</span></td></tr><tr><td class="px-3 py-2.5 ">24 Nov 3:22 PM</td><td class="px-3 py-2.5 ">Divya Menon</td><td class="px-3 py-2.5 ">Deepak Rao · PL-196274</td><td class="px-3 py-2.5 "><span class="rounded-full bg-destructive/15 px-2 py-0.5 text-[11px] font-semibold text-destructive">Dispute</span></td><td class="px-3 py-2.5 text-right font-semibold">2:56</td><td class="px-3 py-2.5 ">Progressive</td><td class="px-3 py-2.5 ">Agent</td><td class="px-3 py-2.5 ">022 XXXX 4509</td><td class="px-3 py-2.5 "><span class="flex items-center gap-1 text-primary"><i data-lucide="play-circle" class="h-4 w-4"></i>Play</span></td></tr><tr><td class="px-3 py-2.5 ">24 Nov 3:19 PM</td><td class="px-3 py-2.5 ">Aakash Patel</td><td class="px-3 py-2.5 ">Lakshmi Narayanan · PL-195402</td><td class="px-3 py-2.5 "><span class="rounded-full bg-muted-foreground/15 px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">No Answer</span></td><td class="px-3 py-2.5 text-right font-semibold">—</td><td class="px-3 py-2.5 ">Productive</td><td class="px-3 py-2.5 ">—</td><td class="px-3 py-2.5 ">022 XXXX 4515</td><td class="px-3 py-2.5 "><span class="text-muted-foreground">—</span></td></tr><tr><td class="px-3 py-2.5 ">24 Nov 3:15 PM</td><td class="px-3 py-2.5 ">Neha Saxena</td><td class="px-3 py-2.5 ">Arjun Verma · PL-204518</td><td class="px-3 py-2.5 "><span class="rounded-full bg-destructive/15 px-2 py-0.5 text-[11px] font-semibold text-destructive">Refused to Pay</span></td><td class="px-3 py-2.5 text-right font-semibold">1:40</td><td class="px-3 py-2.5 ">Progressive</td><td class="px-3 py-2.5 ">Customer</td><td class="px-3 py-2.5 ">022 XXXX 4502</td><td class="px-3 py-2.5 "><span class="flex items-center gap-1 text-primary"><i data-lucide="play-circle" class="h-4 w-4"></i>Play</span></td></tr><tr><td class="px-3 py-2.5 ">24 Nov 3:11 PM</td><td class="px-3 py-2.5 ">Priya Sharma</td><td class="px-3 py-2.5 ">Manoj Pillai · PL-201147</td><td class="px-3 py-2.5 "><span class="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-semibold text-primary">PTP ₹20,000</span></td><td class="px-3 py-2.5 text-right font-semibold">3:05</td><td class="px-3 py-2.5 ">Single</td><td class="px-3 py-2.5 ">Agent</td><td class="px-3 py-2.5 ">022 XXXX 4512</td><td class="px-3 py-2.5 "><span class="flex items-center gap-1 text-primary"><i data-lucide="play-circle" class="h-4 w-4"></i>Play</span></td></tr></tbody></table></div>
+
+</div>
+</main>
+          </div>
+        </div>
+<script>lucide.createIcons();</script>
+</body>
+</html>

@@ -31,6 +31,7 @@ import {
   completeTask,
   getLead,
   removeContact,
+  sendLeadEmail,
   updateLead,
   type SalesActivityRow,
   type SalesContactRow,
@@ -135,6 +136,7 @@ function SalesLeadPage() {
         </div>
         <div className="space-y-4">
           <StageCard lead={lead} canEdit={canEdit} reload={reload} />
+          <EmailCard lead={lead} contacts={contacts} canEdit={canEdit} reload={reload} />
           <TasksCard lead={lead} tasks={tasks} canEdit={canEdit} reload={reload} />
         </div>
       </div>
@@ -635,6 +637,154 @@ function ContactsCard({
               <Button size="sm" onClick={save}>Save</Button>
             </div>
           </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EmailCard({
+  lead,
+  contacts,
+  canEdit,
+  reload,
+}: {
+  lead: SalesLeadRow;
+  contacts: SalesContactRow[];
+  canEdit: boolean;
+  reload: () => Promise<void>;
+}) {
+  const emailChoices = Array.from(
+    new Set(
+      [lead.email, ...contacts.map((c) => c.email)].filter((e): e is string => !!(e && e.includes("@"))),
+    ),
+  );
+  const [to, setTo] = useState(emailChoices[0] ?? "");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!to && emailChoices[0]) setTo(emailChoices[0]);
+  }, [emailChoices, to]);
+
+  async function send() {
+    if (!to.trim() || !subject.trim() || !body.trim()) {
+      toast.error("Fill in who, what and the message.");
+      return;
+    }
+    setSending(true);
+    try {
+      const token = await getAccessToken();
+      const r = await sendLeadEmail({
+        data: {
+          accessToken: token,
+          leadId: lead.id,
+          to: to.trim(),
+          subject: subject.trim(),
+          body: body.trim(),
+        },
+      });
+      if (!r.ok) {
+        toast.error(r.error ?? "Email could not be sent yet.");
+      } else {
+        toast.success("Sent");
+        setSubject("");
+        setBody("");
+        await reload();
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const TEMPLATES: { label: string; subject: string; body: string }[] = [
+    {
+      label: "Follow up",
+      subject: `Following up — ${lead.company_name}`,
+      body: `Hello,\n\nFollowing up on our conversation about SamvadX. Could you share a convenient time this week for a quick call?\n\nBest,`,
+    },
+    {
+      label: "Demo invite",
+      subject: `SamvadX demo for ${lead.company_name}`,
+      body: `Hello,\n\nHappy to walk your team through SamvadX. Please pick a slot that suits you:\n\n• Option 1: …\n• Option 2: …\n\nThe demo takes about 30 minutes.`,
+    },
+    {
+      label: "Thanks after demo",
+      subject: `Thank you — ${lead.company_name}`,
+      body: `Hello,\n\nThank you for your time today. I'll follow up with the proposal and next steps shortly. Please tell me if any new question came up.`,
+    },
+  ];
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <Mail className="h-4 w-4" /> Email
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2 text-xs">
+        {!canEdit ? (
+          <p className="text-muted-foreground">Take this lead first to send email.</p>
+        ) : emailChoices.length === 0 ? (
+          <p className="text-muted-foreground">Add an email address to this lead or a contact first.</p>
+        ) : (
+          <>
+            <label className="block">
+              <span className="mb-1 block text-muted-foreground">To</span>
+              <Select value={to} onValueChange={setTo}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {emailChoices.map((e) => (
+                    <SelectItem key={e} value={e} className="text-xs">
+                      {e}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <div className="flex flex-wrap gap-1 text-[11px]">
+              <span className="text-muted-foreground">Template:</span>
+              {TEMPLATES.map((t) => (
+                <button
+                  key={t.label}
+                  type="button"
+                  onClick={() => {
+                    setSubject(t.subject);
+                    setBody(t.body);
+                  }}
+                  className="rounded-md border border-border px-2 py-0.5 hover:bg-accent"
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <Input
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="Subject"
+              className="h-8 text-xs"
+            />
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={5}
+              placeholder="Message…"
+              className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
+            />
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-muted-foreground">
+                Sent through SamvadX; signed off from you as SamvadX Sales.
+              </span>
+              <Button size="sm" onClick={send} disabled={sending}>
+                {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Send"}
+              </Button>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

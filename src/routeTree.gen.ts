@@ -16,6 +16,7 @@ import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ManagerRouteImport } from './routes/manager'
 import { Route as SalesRouteImport } from './routes/sales'
+import { Route as SalesSetupRouteImport } from './routes/sales-setup'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SetupConfirmRouteImport } from './routes/setup-confirm'
 import { Route as SuperadminRouteImport } from './routes/superadmin'
@@ -57,6 +58,7 @@ import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
 import { Route as ManagerUploadRouteImport } from './routes/manager.upload'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
+import { Route as SalesActivityRouteImport } from './routes/sales.activity'
 import { Route as SalesLeadsRouteImport } from './routes/sales.leads'
 import { Route as SalesTeamRouteImport } from './routes/sales.team'
 import { Route as SuperadminIndexRouteImport } from './routes/superadmin.index'
@@ -107,6 +109,11 @@ const ManagerRoute = ManagerRouteImport.update({
 const SalesRoute = SalesRouteImport.update({
   id: '/sales',
   path: '/sales',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SalesSetupRoute = SalesSetupRouteImport.update({
+  id: '/sales-setup',
+  path: '/sales-setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -314,6 +321,11 @@ const SalesIndexRoute = SalesIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SalesRoute,
 } as any)
+const SalesActivityRoute = SalesActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => SalesRoute,
+} as any)
 const SalesLeadsRoute = SalesLeadsRouteImport.update({
   id: '/leads',
   path: '/leads',
@@ -405,6 +417,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
   '/sales': typeof SalesRouteWithChildren
+  '/sales-setup': typeof SalesSetupRoute
   '/setup': typeof SetupRoute
   '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin': typeof SuperadminRouteWithChildren
@@ -441,6 +454,7 @@ export interface FileRoutesByFullPath {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/sales/activity': typeof SalesActivityRoute
   '/sales/leads': typeof SalesLeadsRouteWithChildren
   '/sales/team': typeof SalesTeamRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
@@ -466,6 +480,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/sales-setup': typeof SalesSetupRoute
   '/setup': typeof SetupRoute
   '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin-setup': typeof SuperadminSetupRoute
@@ -501,6 +516,7 @@ export interface FileRoutesByTo {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/sales/activity': typeof SalesActivityRoute
   '/sales/leads': typeof SalesLeadsRouteWithChildren
   '/sales/team': typeof SalesTeamRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
@@ -532,6 +548,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRouteWithChildren
   '/sales': typeof SalesRouteWithChildren
+  '/sales-setup': typeof SalesSetupRoute
   '/setup': typeof SetupRoute
   '/setup-confirm': typeof SetupConfirmRoute
   '/superadmin': typeof SuperadminRouteWithChildren
@@ -568,6 +585,7 @@ export interface FileRoutesById {
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
   '/manager/upload': typeof ManagerUploadRoute
+  '/sales/activity': typeof SalesActivityRoute
   '/sales/leads': typeof SalesLeadsRouteWithChildren
   '/sales/team': typeof SalesTeamRoute
   '/superadmin/activity': typeof SuperadminActivityRoute
@@ -600,6 +618,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/sales'
+    | '/sales-setup'
     | '/setup'
     | '/setup-confirm'
     | '/superadmin'
@@ -636,6 +655,7 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/sales/activity'
     | '/sales/leads'
     | '/sales/team'
     | '/superadmin/activity'
@@ -661,6 +681,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/sales-setup'
     | '/setup'
     | '/setup-confirm'
     | '/superadmin-setup'
@@ -696,6 +717,7 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/sales/activity'
     | '/sales/leads'
     | '/sales/team'
     | '/superadmin/activity'
@@ -726,6 +748,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/manager'
     | '/sales'
+    | '/sales-setup'
     | '/setup'
     | '/setup-confirm'
     | '/superadmin'
@@ -762,6 +785,7 @@ export interface FileRouteTypes {
     | '/manager/queue'
     | '/manager/reports'
     | '/manager/upload'
+    | '/sales/activity'
     | '/sales/leads'
     | '/sales/team'
     | '/superadmin/activity'
@@ -793,6 +817,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ManagerRoute: typeof ManagerRouteWithChildren
   SalesRoute: typeof SalesRouteWithChildren
+  SalesSetupRoute: typeof SalesSetupRoute
   SetupRoute: typeof SetupRoute
   SetupConfirmRoute: typeof SetupConfirmRoute
   SuperadminRoute: typeof SuperadminRouteWithChildren
@@ -849,6 +874,13 @@ declare module '@tanstack/react-router' {
       path: '/sales'
       fullPath: '/sales'
       preLoaderRoute: typeof SalesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sales-setup': {
+      id: '/sales-setup'
+      path: '/sales-setup'
+      fullPath: '/sales-setup'
+      preLoaderRoute: typeof SalesSetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -1138,6 +1170,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesIndexRouteImport
       parentRoute: typeof SalesRoute
     }
+    '/sales/activity': {
+      id: '/sales/activity'
+      path: '/activity'
+      fullPath: '/sales/activity'
+      preLoaderRoute: typeof SalesActivityRouteImport
+      parentRoute: typeof SalesRoute
+    }
     '/sales/leads': {
       id: '/sales/leads'
       path: '/leads'
@@ -1372,12 +1411,14 @@ const SalesLeadsRouteWithChildren = SalesLeadsRoute._addFileChildren(
 )
 
 interface SalesRouteChildren {
+  SalesActivityRoute: typeof SalesActivityRoute
   SalesLeadsRoute: typeof SalesLeadsRouteWithChildren
   SalesTeamRoute: typeof SalesTeamRoute
   SalesIndexRoute: typeof SalesIndexRoute
 }
 
 const SalesRouteChildren: SalesRouteChildren = {
+  SalesActivityRoute: SalesActivityRoute,
   SalesLeadsRoute: SalesLeadsRouteWithChildren,
   SalesTeamRoute: SalesTeamRoute,
   SalesIndexRoute: SalesIndexRoute,
@@ -1429,6 +1470,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ManagerRoute: ManagerRouteWithChildren,
   SalesRoute: SalesRouteWithChildren,
+  SalesSetupRoute: SalesSetupRoute,
   SetupRoute: SetupRoute,
   SetupConfirmRoute: SetupConfirmRoute,
   SuperadminRoute: SuperadminRouteWithChildren,

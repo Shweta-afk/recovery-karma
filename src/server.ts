@@ -6,6 +6,7 @@ import { CSP_REPORT_PATH, buildCspReportOnly, handleCspReport } from "./lib/csp"
 import { TELEPHONY_WEBHOOK_PATH, handleTelephonyWebhook } from "./lib/telephony/webhook-handler";
 import { ARCHIVE_CRON_PATH, handleArchiveCron } from "./lib/archive-cron.server";
 import { APP_PING_BODY, APP_PING_PATH } from "./lib/company-address";
+import { SALES_LEAD_PATH, handleSalesLead } from "./lib/sales-lead-endpoint.server";
 import { startRecordingImports } from "./lib/telephony/recordings.server";
 import { RECORDING_LINK_PATH_PREFIX, handleRecordingLink } from "./lib/recording-share-link.server";
 
@@ -98,6 +99,8 @@ async function handleRequest(request: Request, env: unknown, ctx: unknown): Prom
         headers: { "content-type": "text/plain", "cache-control": "no-store" },
       });
     }
+    // The samvadx.com demo form (sales-lead-endpoint.server.ts).
+    if (new URL(request.url).pathname === SALES_LEAD_PATH) return await handleSalesLead(request);
     // Short recording links in the banker's Feedback File (recording-share-link.server.ts).
     if (new URL(request.url).pathname.startsWith(RECORDING_LINK_PATH_PREFIX)) {
       return await handleRecordingLink(request);

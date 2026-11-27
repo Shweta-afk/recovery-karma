@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<title>Sign in · SamvadX</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-blue: var(--brand-blue);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── Light mode (default) ──────────────────────────────────────────────────── */
+:root {
+  --radius: 0.5rem;
+
+  --brand-navy: oklch(0.09 0.025 258);
+  --brand-blue: oklch(0.5 0.18 258);
+
+  --background: oklch(0.97 0.007 258);
+  --foreground: oklch(0.13 0.025 258);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.13 0.025 258);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.13 0.025 258);
+
+  --primary: oklch(0.5 0.18 258);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.92 0.012 258);
+  --secondary-foreground: oklch(0.2 0.03 258);
+
+  --muted: oklch(0.93 0.01 258);
+  --muted-foreground: oklch(0.42 0.018 258);
+
+  --accent: oklch(0.93 0.012 258);
+  --accent-foreground: oklch(0.13 0.025 258);
+
+  --destructive: oklch(0.52 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.5 0.16 152);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: oklch(0.62 0.17 75);
+  --warning-foreground: oklch(0.2 0.06 75);
+
+  --border: oklch(0.87 0.014 258);
+  --input: oklch(0.9 0.01 258);
+  --ring: oklch(0.5 0.18 258);
+
+  --sidebar: oklch(0.94 0.01 258);
+  --sidebar-foreground: oklch(0.18 0.025 258);
+  --sidebar-primary: oklch(0.5 0.18 258);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.88 0.014 258);
+  --sidebar-accent-foreground: oklch(0.13 0.025 258);
+  --sidebar-border: oklch(0.84 0.014 258);
+  --sidebar-ring: oklch(0.5 0.18 258);
+}
+
+/* ── Dark / Night mode ─────────────────────────────────────────────────────── */
+.dark {
+  --brand-navy: oklch(0.09 0.025 258);
+  --brand-blue: oklch(0.58 0.18 258);
+
+  --background: oklch(0.11 0.025 258);
+  --foreground: oklch(0.96 0.005 250);
+
+  --card: oklch(0.15 0.025 258);
+  --card-foreground: oklch(0.96 0.005 250);
+
+  --popover: oklch(0.15 0.025 258);
+  --popover-foreground: oklch(0.96 0.005 250);
+
+  --primary: oklch(0.58 0.18 258);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.2 0.03 258);
+  --secondary-foreground: oklch(0.85 0.01 250);
+
+  --muted: oklch(0.18 0.025 258);
+  --muted-foreground: oklch(0.55 0.02 257);
+
+  --accent: oklch(0.22 0.04 258);
+  --accent-foreground: oklch(0.96 0.005 250);
+
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.65 0.16 152);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: oklch(0.72 0.18 75);
+  --warning-foreground: oklch(0.15 0.04 75);
+
+  --border: oklch(0.25 0.03 258);
+  --input: oklch(0.22 0.03 258);
+  --ring: oklch(0.58 0.18 258);
+
+  --sidebar: oklch(0.09 0.025 258);
+  --sidebar-foreground: oklch(0.9 0.005 250);
+  --sidebar-primary: oklch(0.58 0.18 258);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.18 0.03 258);
+  --sidebar-accent-foreground: oklch(0.9 0.005 250);
+  --sidebar-border: oklch(0.2 0.025 258);
+  --sidebar-ring: oklch(0.58 0.18 258);
+}
+
+
+@layer base {
+  * { border-color: var(--color-border); }
+  body { background-color: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+}
+</style>
+<style>::-webkit-scrollbar{display:none} body{margin:0}</style>
+</head>
+<body>
+
+<div class="flex min-h-screen w-full bg-background">
+  <div class="relative flex w-1/2 flex-col justify-between bg-[var(--brand-navy)] p-12 text-white">
+    <div class="inline-flex w-fit rounded-md bg-white px-4 py-2"><img src="logo.png" alt="SamvadX" class="h-10 w-auto"></div>
+    <div class="space-y-5">
+      <h1 class="text-3xl font-semibold leading-tight">India's modern platform for NBFCs &amp; ARCs.</h1>
+      <p class="max-w-md text-sm text-white/70">Run compliant outbound calling and collection workflows from one operator console. Built for RBI fair-practice guidelines.</p>
+      <ul class="space-y-2 text-sm text-white/80">
+        <li>• Smart call queue prioritisation</li>
+        <li>• Browser calling — no desk phone or softphone needed</li>
+        <li>• Audit logs &amp; recordings for every conversation</li>
+      </ul>
+    </div>
+    <p class="text-xs text-white/40">© 2026 SamvadX</p>
+  </div>
+  <div class="flex w-1/2 items-center justify-center px-4 py-12">
+    <div class="w-full max-w-sm">
+      <div class="rounded-xl border border-border bg-card shadow-sm">
+        <div class="space-y-1 p-6">
+          <h2 class="text-xl font-semibold text-foreground">Sign in to your workspace</h2>
+          <p class="text-sm text-muted-foreground">Enter your work email to continue.</p>
+        </div>
+        <div class="space-y-4 px-6 pb-6">
+          <div class="space-y-2">
+            <label class="text-sm font-medium">Work email</label>
+            <div class="flex h-9 items-center rounded-md border border-input bg-transparent px-3 text-sm">agent@yourcompany.in</div>
+          </div>
+          <div class="space-y-2">
+            <label class="text-sm font-medium">Password</label>
+            <div class="flex h-9 items-center justify-between rounded-md border border-input bg-transparent px-3 text-sm">••••••••••<i data-lucide="eye" class="h-4 w-4 text-muted-foreground"></i></div>
+          </div>
+          <button class="h-9 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground">Sign in</button>
+        </div>
+      </div>
+      <p class="mt-6 text-center text-xs text-muted-foreground">RBI compliant calling window · Every call recorded</p>
+      <p class="mt-2 text-center text-xs"><a class="text-primary">Set up a new company</a></p>
+    </div>
+  </div>
+</div>
+
+<script>lucide.createIcons();</script>
+</body>
+</html>

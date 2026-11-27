@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<title>Feedback File - Personal Loan Nov-26.xlsx</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-blue: var(--brand-blue);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── Light mode (default) ──────────────────────────────────────────────────── */
+:root {
+  --radius: 0.5rem;
+
+  --brand-navy: oklch(0.09 0.025 258);
+  --brand-blue: oklch(0.5 0.18 258);
+
+  --background: oklch(0.97 0.007 258);
+  --foreground: oklch(0.13 0.025 258);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.13 0.025 258);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.13 0.025 258);
+
+  --primary: oklch(0.5 0.18 258);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.92 0.012 258);
+  --secondary-foreground: oklch(0.2 0.03 258);
+
+  --muted: oklch(0.93 0.01 258);
+  --muted-foreground: oklch(0.42 0.018 258);
+
+  --accent: oklch(0.93 0.012 258);
+  --accent-foreground: oklch(0.13 0.025 258);
+
+  --destructive: oklch(0.52 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.5 0.16 152);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: oklch(0.62 0.17 75);
+  --warning-foreground: oklch(0.2 0.06 75);
+
+  --border: oklch(0.87 0.014 258);
+  --input: oklch(0.9 0.01 258);
+  --ring: oklch(0.5 0.18 258);
+
+  --sidebar: oklch(0.94 0.01 258);
+  --sidebar-foreground: oklch(0.18 0.025 258);
+  --sidebar-primary: oklch(0.5 0.18 258);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.88 0.014 258);
+  --sidebar-accent-foreground: oklch(0.13 0.025 258);
+  --sidebar-border: oklch(0.84 0.014 258);
+  --sidebar-ring: oklch(0.5 0.18 258);
+}
+
+/* ── Dark / Night mode ─────────────────────────────────────────────────────── */
+.dark {
+  --brand-navy: oklch(0.09 0.025 258);
+  --brand-blue: oklch(0.58 0.18 258);
+
+  --background: oklch(0.11 0.025 258);
+  --foreground: oklch(0.96 0.005 250);
+
+  --card: oklch(0.15 0.025 258);
+  --card-foreground: oklch(0.96 0.005 250);
+
+  --popover: oklch(0.15 0.025 258);
+  --popover-foreground: oklch(0.96 0.005 250);
+
+  --primary: oklch(0.58 0.18 258);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.2 0.03 258);
+  --secondary-foreground: oklch(0.85 0.01 250);
+
+  --muted: oklch(0.18 0.025 258);
+  --muted-foreground: oklch(0.55 0.02 257);
+
+  --accent: oklch(0.22 0.04 258);
+  --accent-foreground: oklch(0.96 0.005 250);
+
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.65 0.16 152);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: oklch(0.72 0.18 75);
+  --warning-foreground: oklch(0.15 0.04 75);
+
+  --border: oklch(0.25 0.03 258);
+  --input: oklch(0.22 0.03 258);
+  --ring: oklch(0.58 0.18 258);
+
+  --sidebar: oklch(0.09 0.025 258);
+  --sidebar-foreground: oklch(0.9 0.005 250);
+  --sidebar-primary: oklch(0.58 0.18 258);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.18 0.03 258);
+  --sidebar-accent-foreground: oklch(0.9 0.005 250);
+  --sidebar-border: oklch(0.2 0.025 258);
+  --sidebar-ring: oklch(0.58 0.18 258);
+}
+
+
+@layer base {
+  * { border-color: var(--color-border); }
+  body { background-color: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+}
+</style>
+<style>::-webkit-scrollbar{display:none} body{margin:0}</style>
+</head>
+<body>
+
+<style>
+.win{position:fixed;inset:0;display:flex;flex-direction:column;background:#fff;font-family:Inter,system-ui,sans-serif;color:#1f2937}
+.title{height:38px;display:flex;align-items:center;gap:10px;padding:0 14px;background:#f3f4f6;border-bottom:1px solid #d1d5db;font-size:13px}
+.dot{width:11px;height:11px;border-radius:50%;display:inline-block}
+.fx{height:32px;display:flex;align-items:center;border-bottom:1px solid #d1d5db;font-size:12px}
+.fx .ref{width:90px;text-align:center;border-right:1px solid #d1d5db;height:100%;display:flex;align-items:center;justify-content:center;color:#374151}
+.fx .f{padding:0 10px;color:#6b7280;font-style:italic}
+.grid{flex:1;overflow:hidden}
+table{border-collapse:collapse;table-layout:fixed;font-size:12px;width:max-content}
+th,td{border:1px solid #e5e7eb;height:24px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th.lt{background:#f3f4f6;color:#6b7280;font-weight:500;text-align:center;font-size:11px}
+th.rn{background:#f3f4f6;color:#6b7280;font-weight:500;font-size:11px;text-align:center}
+th.corner{background:#e5e7eb}
+td.hd{font-weight:700;color:#111827;background:#fff}
+td.num{text-align:right}
+tr.sel td.hd:first-of-type{outline:2px solid #1D4ED8;outline-offset:-2px}
+.tabs{height:34px;display:flex;align-items:stretch;gap:2px;padding:0 10px;background:#f3f4f6;border-top:1px solid #d1d5db;font-size:12px}
+.tab{display:flex;align-items:center;padding:0 16px;color:#4b5563}
+.tab.on{background:#fff;color:#1D4ED8;font-weight:600;border-bottom:3px solid #1D4ED8}
+.note{margin-left:auto;display:flex;align-items:center;color:#6b7280;font-size:11px}
+</style>
+<div class="win">
+  <div class="title"><span class="dot" style="background:#f87171"></span><span class="dot" style="background:#fbbf24"></span><span class="dot" style="background:#34d399"></span>
+    <span style="margin-left:8px;font-weight:600">Feedback File - Personal Loan Nov-26.xlsx</span><span style="color:#6b7280">— downloaded from SamvadX</span></div>
+  <div class="fx"><span class="ref">A1</span><span class="f">Profile Name</span></div>
+  <div class="grid"><table><colgroup><col style="width:44px"><col style="width:150px"><col style="width:130px"><col style="width:95px"><col style="width:85px"><col style="width:65px"><col style="width:105px"><col style="width:110px"><col style="width:135px"><col style="width:125px"><col style="width:95px"><col style="width:90px"><col style="width:85px"><col style="width:125px"><col style="width:125px"></colgroup>
+    <tr><th class="corner"></th><th class="lt">A</th><th class="lt">B</th><th class="lt">C</th><th class="lt">D</th><th class="lt">E</th><th class="lt">F</th><th class="lt">G</th><th class="lt">H</th><th class="lt">I</th><th class="lt">J</th><th class="lt">K</th><th class="lt">L</th><th class="lt">M</th><th class="lt">N</th></tr>
+    <tr class="sel"><th class="rn">1</th><td class="hd">Profile Name</td><td class="hd">Loan Account Number</td><td class="hd">Reference ID</td><td class="hd">Call Date</td><td class="hd">Agent ID</td><td class="hd">Agent Name</td><td class="hd">Supervisor Name</td><td class="hd">Customer Mobile Number</td><td class="hd">Customer Name</td><td class="hd">Intensity of Calls</td><td class="hd">Connect Count</td><td class="hd">Team</td><td class="hd">Best Disposition Name</td><td class="hd">Last Disposition Name</td></tr>
+    <tr><th class="rn">2</th><td class="">Personal Loan Nov-26</td><td class="">PL-198730</td><td class="">REF-55120</td><td class="">24/11/2026</td><td class="">A014</td><td class="">Priya Sharma</td><td class="">Rohan Mehta</td><td class="">97XXX XX884</td><td class="">Sneha Kulkarni</td><td class="num">3</td><td class="num">2</td><td class="">Team East</td><td class="">Paid</td><td class="">Paid</td></tr><tr><th class="rn">3</th><td class="">Personal Loan Nov-26</td><td class="">PL-201147</td><td class="">REF-55204</td><td class="">24/11/2026</td><td class="">A014</td><td class="">Priya Sharma</td><td class="">Rohan Mehta</td><td class="">94XXX XX019</td><td class="">Manoj Pillai</td><td class="num">9</td><td class="num">4</td><td class="">Team East</td><td class="">Promise to Pay</td><td class="">Promise to Pay</td></tr><tr><th class="rn">4</th><td class="">Personal Loan Nov-26</td><td class="">PL-204518</td><td class="">REF-55311</td><td class="">24/11/2026</td><td class="">A022</td><td class="">Neha Saxena</td><td class="">Rohan Mehta</td><td class="">98XXX XX231</td><td class="">Arjun Verma</td><td class="num">4</td><td class="num">2</td><td class="">Team East</td><td class="">Call Back</td><td class="">Refused to Pay</td></tr><tr><th class="rn">5</th><td class="">Personal Loan Nov-26</td><td class="">PL-207761</td><td class="">REF-55402</td><td class="">24/11/2026</td><td class="">A011</td><td class="">Rahul Nair</td><td class="">Rohan Mehta</td><td class="">99XXX XX452</td><td class="">Farhan Qureshi</td><td class="num">6</td><td class="num">1</td><td class="">Team East</td><td class="">Call Back</td><td class="">Call Back</td></tr><tr><th class="rn">6</th><td class="">Personal Loan Nov-26</td><td class="">PL-195402</td><td class="">REF-55017</td><td class="">22/11/2026</td><td class="">A019</td><td class="">Aakash Patel</td><td class="">Rohan Mehta</td><td class="">90XXX XX367</td><td class="">Lakshmi Narayanan</td><td class="num">11</td><td class="num">3</td><td class="">Team East</td><td class="">Settlement</td><td class="">Settlement</td></tr><tr><th class="rn">7</th><td class="">Personal Loan Nov-26</td><td class="">PL-200615</td><td class="">REF-55188</td><td class="">24/11/2026</td><td class="">A007</td><td class="">Imran Shaikh</td><td class="">Rohan Mehta</td><td class="">96XXX XX115</td><td class="">Pooja Bansal</td><td class="num">5</td><td class="num">2</td><td class="">Team East</td><td class="">Promise to Pay</td><td class="">Promise to Pay</td></tr><tr><th class="rn">8</th><td class="">Personal Loan Nov-26</td><td class="">PL-196274</td><td class="">REF-55092</td><td class="">21/11/2026</td><td class="">A016</td><td class="">Divya Menon</td><td class="">Rohan Mehta</td><td class="">95XXX XX628</td><td class="">Deepak Rao</td><td class="num">6</td><td class="num">3</td><td class="">Team East</td><td class="">Dispute</td><td class="">Dispute</td></tr><tr><th class="rn">9</th><td class="">Personal Loan Nov-26</td><td class="">PL-208842</td><td class="">REF-55430</td><td class="">16/11/2026</td><td class="">A014</td><td class="">Priya Sharma</td><td class="">Rohan Mehta</td><td class="">93XXX XX506</td><td class="">Ananya Ghosh</td><td class="num">3</td><td class="num">2</td><td class="">Team East</td><td class="">Paid</td><td class="">Paid</td></tr><tr><th class="rn">10</th><td class="">Personal Loan Nov-26</td><td class="">PL-209983</td><td class="">REF-55471</td><td class="">24/11/2026</td><td class="">A014</td><td class="">Priya Sharma</td><td class="">Rohan Mehta</td><td class="">88XXX XX740</td><td class="">Ravi Teja</td><td class="num">4</td><td class="num">3</td><td class="">Team East</td><td class="">Partially Paid</td><td class="">Partially Paid</td></tr><tr><th class="rn">11</th><td class="">Personal Loan Nov-26</td><td class="">PL-203390</td><td class="">REF-55260</td><td class="">23/11/2026</td><td class="">A025</td><td class="">Sanjay Gupta</td><td class="">Rohan Mehta</td><td class="">98XXX XX554</td><td class="">Ritu Agarwal</td><td class="num">5</td><td class="num">2</td><td class="">Team East</td><td class="">Paid</td><td class="">Paid</td></tr><tr><th class="rn">12</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">13</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">14</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">15</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">16</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">17</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">18</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">19</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">20</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">21</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">22</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">23</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">24</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">25</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">26</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">27</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">28</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">29</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><th class="rn">30</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  </table></div>
+  <div class="tabs"><span class="tab on">Feedback by Loan</span><span class="tab ">Date-wise Feedback</span><span class="tab ">CC Report</span><span class="tab ">Summary</span><span class="note">44 columns in the bank's own order · sample data</span></div>
+</div>
+
+<script>lucide.createIcons();</script>
+</body>
+</html>

@@ -1,0 +1,1116 @@
+{
+  "info": {
+    "name": "SamvadX x SkyCRM-ACD",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Every SkyCRM-ACD API from spec v1.2 and the SamvadX spec (predictive dialling), numbered as in the spec (S).\n\nFill the **SkyCRM** environment first (secret, extension). Each request mints its own HS256 token, the same way SamvadX's server does. Bodies are form-encoded, except disposition_api and users_webhook_api (JSON).\n\n## S21 Events SkyCRM sends to us (webhook)\nSkyCRM posts these to SamvadX's webhook. Postman doesn't send them; they're here for reference.\n\n| Event | status | Key fields |\n|---|---|---|\n| Incoming call | `Incomming Call` | phone, direction, source, destination, queue, callid |\n| Inbound answered | `Answered` | + extension of the agent who answered |\n| Outbound call | `Outbound Call` | phone, direction, callid, extension |\n| Outbound answered | `Answered` | phone, callid, extension |\n| CDR created | (no status) | callid, src, dst, start, end, billsec, disposition, direction, recordfile |\n| IVR keypress | event `ivrdtmf` | ivr, caller, dtmf, callid |\n"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Mints the SkyCRM token (HS256 JWT) before every request, exactly as SamvadX's server does.",
+          "const secret = pm.environment.get(\"secret\");",
+          "if (!secret) throw new Error(\"Set 'secret' in the SkyCRM environment first.\");",
+          "const b64url = (words) =>",
+          "  CryptoJS.enc.Base64.stringify(words).replace(/=+$/, \"\").replace(/\\+/g, \"-\").replace(/\\//g, \"_\");",
+          "const part = (obj) => b64url(CryptoJS.enc.Utf8.parse(JSON.stringify(obj)));",
+          "const header = part({ alg: \"HS256\", typ: \"JWT\" });",
+          "const payload = part({",
+          "  username: pm.environment.get(\"username\") || \"\",",
+          "  password: pm.environment.get(\"password\") || \"\",",
+          "  extension: pm.variables.get(\"token_extension\") || pm.environment.get(\"extension\"),",
+          "  exp: Math.floor(Date.now() / 1000) + 3600,",
+          "});",
+          "const signature = b64url(CryptoJS.HmacSHA256(header + \".\" + payload, secret));",
+          "pm.variables.set(\"token\", header + \".\" + payload + \".\" + signature);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// SkyCRM answers HTTP 200 even on failure: the body's \"status\" is the real result.",
+          "let body = {};",
+          "try { body = pm.response.json(); } catch (e) {}",
+          "if (body && body.status !== undefined) {",
+          "  pm.test(\"SkyCRM status is a success\", () => {",
+          "    pm.expect(String(body.status).toLowerCase()).to.be.oneOf([\"200\", \"success\", \"user logout\"]);",
+          "  });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Login and logout",
+      "item": [
+        {
+          "name": "S22 Login (login_user_ajax2)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{base_url}}/login_user_ajax2?token={{token}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "login_user_ajax2"
+              ],
+              "query": [
+                {
+                  "key": "token",
+                  "value": "{{token}}"
+                }
+              ]
+            },
+            "description": "Checks the token. Success redirects to the SkyCRM home page; 401 = expired/invalid token, 404 = user not available."
+          }
+        },
+        {
+          "name": "S25 Logout (logout2)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{username}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/logout2",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "logout2"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Outbound calling",
+      "item": [
+        {
+          "name": "S1 Click to call (dialing_phone)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "phone_number",
+                  "value": "{{customer_number}}",
+                  "type": "text"
+                },
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "prefix",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "per_id",
+                  "value": "{{$timestamp}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/dialing_phone",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dialing_phone"
+              ]
+            },
+            "description": "WARNING: REAL call. Use your own mobile in customer_number. From Postman, SamvadX's do-not-call list and the 08:00-19:00 calling window are NOT applied."
+          }
+        },
+        {
+          "name": "S2 Call answered / phone status (dial_response)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/dial_response",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dial_response"
+              ]
+            },
+            "description": "Shows the extension's live state: InUse, the callid and who is on the line. 'Unavailable' = softphone not registered."
+          }
+        },
+        {
+          "name": "S3 Hang up (hangup_phone)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "phone_number",
+                  "value": "{{customer_number}}",
+                  "type": "text"
+                },
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "prefix",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "per_id",
+                  "value": "{{$timestamp}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/hangup_phone",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "hangup_phone"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Inbound and queues",
+      "item": [
+        {
+          "name": "S4 Register in queue (login_in_queue1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "queue",
+                  "value": "{{queue}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/login_in_queue1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "login_in_queue1"
+              ]
+            },
+            "description": "One extension at a time. queue can be a list: 4003,4004."
+          }
+        },
+        {
+          "name": "S5 Leave queue (logout_queue1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "queue",
+                  "value": "{{queue}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/logout_queue1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "logout_queue1"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "S6 Pause queue (queue_paused1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/queue_paused1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "queue_paused1"
+              ]
+            },
+            "description": "On a break or a call: no new inbound calls."
+          }
+        },
+        {
+          "name": "S7 Unpause queue (queue_unpaused1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/queue_unpaused1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "queue_unpaused1"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "S8 Check for incoming call (check_for_incoming_api)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/check_for_incoming_api",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "check_for_incoming_api"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "S9 Hang up incoming call (incoming_hangup1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "phone_number",
+                  "value": "{{customer_number}}",
+                  "type": "text"
+                },
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/incoming_hangup1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "incoming_hangup1"
+              ]
+            },
+            "description": "Works only while the agent is on a live call."
+          }
+        },
+        {
+          "name": "S10 Missed calls (misscall_data_api)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "start_date",
+                  "value": "{{start_date}}",
+                  "type": "text"
+                },
+                {
+                  "key": "end_date",
+                  "value": "{{end_date}}",
+                  "type": "text"
+                },
+                {
+                  "key": "order_by",
+                  "value": "Dscending",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/misscall_data_api",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "misscall_data_api"
+              ]
+            },
+            "description": "Dates dd-mm-yyyy. Calls that reached no extension."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Call records and recordings",
+      "item": [
+        {
+          "name": "S11 Call records (cdr_report)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "start_date",
+                  "value": "{{start_date}}",
+                  "type": "text"
+                },
+                {
+                  "key": "end_date",
+                  "value": "{{end_date}}",
+                  "type": "text"
+                },
+                {
+                  "key": "process",
+                  "value": "Outbound",
+                  "type": "text"
+                },
+                {
+                  "key": "phone_no",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/cdr_report",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "cdr_report"
+              ]
+            },
+            "description": "Dates dd-mm-yyyy. process = Inbound or Outbound. Copy an 'id' into cdr_id for the download."
+          }
+        },
+        {
+          "name": "S12 Download recordings (download_audio/)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "ids",
+                  "value": "{{cdr_id}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/download_audio/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "download_audio",
+                ""
+              ]
+            },
+            "description": "Returns a ZIP: use Send and Download. Several ids: 1,2,3. The spec writes 'download-audio'; that path is a 404, the working one is download_audio/ (underscore, trailing slash)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Live call controls",
+      "item": [
+        {
+          "name": "S15 Mute / unmute (mute_calls)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "direction",
+                  "value": "all",
+                  "type": "text"
+                },
+                {
+                  "key": "state",
+                  "value": "yes",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/mute_calls",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "mute_calls"
+              ]
+            },
+            "description": "Works only while the agent is on a live call. state: yes = mute, no = unmute. direction: in, out or all."
+          }
+        },
+        {
+          "name": "S16 Hold / resume (hold_calls)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "state",
+                  "value": "yes",
+                  "type": "text"
+                },
+                {
+                  "key": "direction",
+                  "value": "out",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/hold_calls",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "hold_calls"
+              ]
+            },
+            "description": "Works only while the agent is on a live call. state: yes = hold, no = resume. direction: in or out."
+          }
+        },
+        {
+          "name": "S17 Transfer (call_transfer)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "user_extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "extension",
+                  "value": "{{transfer_extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "to_number",
+                  "value": "{{transfer_number}}",
+                  "type": "text"
+                },
+                {
+                  "key": "direction",
+                  "value": "Outbound",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/call_transfer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "call_transfer"
+              ]
+            },
+            "description": "Works only while the agent is on a live call. Transfer to another extension, or to a mobile in to_number."
+          }
+        },
+        {
+          "name": "S18 Transfer hang up (call_transfer_hangup)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "direction",
+                  "value": "Outbound",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/call_transfer_hangup",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "call_transfer_hangup"
+              ]
+            },
+            "description": "Works only while the agent is on a live call."
+          }
+        },
+        {
+          "name": "S19 Transfer: complete / abort / three-way / swap (call_swaping)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "operate",
+                  "value": "complete",
+                  "type": "text"
+                },
+                {
+                  "key": "direction",
+                  "value": "Outbound",
+                  "type": "text"
+                },
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/call_swaping",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "call_swaping"
+              ]
+            },
+            "description": "After S17. operate: abort, complete, threeway or swap."
+          }
+        },
+        {
+          "name": "S20 Remove conference member (conf_hangup)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "direction",
+                  "value": "Outbound",
+                  "type": "text"
+                },
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/conf_hangup",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conf_hangup"
+              ]
+            },
+            "description": "Works only while the agent is on a live call."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Supervisor monitoring",
+      "item": [
+        {
+          "name": "S13 Listen / whisper / barge (call_monitor_api)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "Mode",
+                  "value": "listen",
+                  "type": "text"
+                },
+                {
+                  "key": "mode",
+                  "value": "listen",
+                  "type": "text"
+                },
+                {
+                  "key": "user_extention",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "monitor_extention",
+                  "value": "{{supervisor_extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/call_monitor_api",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "call_monitor_api"
+              ]
+            },
+            "description": "Signed as the supervisor. Mode: listen, whisper or barge. The agent must be on a live call."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set(\"token_extension\", pm.environment.get(\"supervisor_extension\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "S14 Stop monitoring (call_monitor_hangup_api)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "monitor_extention",
+                  "value": "{{supervisor_extension}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/call_monitor_hangup_api",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "call_monitor_hangup_api"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set(\"token_extension\", pm.environment.get(\"supervisor_extension\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 - After the call",
+      "item": [
+        {
+          "name": "S23 Disposition (disposition_api)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"extension\": \"{{extension}}\",\n  \"phone_number\": \"{{customer_number}}\",\n  \"caller_name\": \"Postman test\",\n  \"disposition\": \"Contacted\",\n  \"sub_disposition\": \"PTP\",\n  \"remark\": \"Test from Postman\",\n  \"callback_datetime\": \"\",\n  \"direction\": \"Outbound\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/disposition_api",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "disposition_api"
+              ]
+            },
+            "description": "JSON body (form data answers 400 'Invalid JSON'). disposition: Contacted or Non-Contacted only."
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Agent breaks",
+      "item": [
+        {
+          "name": "S24 Start break (break_events2)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{username}}",
+                  "type": "text"
+                },
+                {
+                  "key": "event",
+                  "value": "start",
+                  "type": "text"
+                },
+                {
+                  "key": "type",
+                  "value": "Tea",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/break_events2",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "break_events2"
+              ]
+            },
+            "description": "Returns a break_id; put it in the environment's break_id."
+          }
+        },
+        {
+          "name": "S24 End break (break_events2)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{username}}",
+                  "type": "text"
+                },
+                {
+                  "key": "event",
+                  "value": "end",
+                  "type": "text"
+                },
+                {
+                  "key": "type",
+                  "value": "Tea",
+                  "type": "text"
+                },
+                {
+                  "key": "break_id",
+                  "value": "{{break_id}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/break_events2",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "break_events2"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - Predictive dialling (SamvadX spec S24)",
+      "item": [
+        {
+          "name": "Step 1: join queue (login_in_queue1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "queue",
+                  "value": "{{queue}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/login_in_queue1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "login_in_queue1"
+              ]
+            },
+            "description": "Once per batch, not per call."
+          }
+        },
+        {
+          "name": "Step 2: dial a customer (predictive_call)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "prefix",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "queue",
+                  "value": "{{queue}}",
+                  "type": "text"
+                },
+                {
+                  "key": "mobile_no",
+                  "value": "{{customer_number}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/predictive_call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "predictive_call"
+              ]
+            },
+            "description": "WARNING: REAL call. Use your own mobile in customer_number. From Postman, SamvadX's do-not-call list and the 08:00-19:00 calling window are NOT applied. SkyCRM dials the customer and connects the answer to a free agent in the queue."
+          }
+        },
+        {
+          "name": "Step 3: leave queue (logout_queue1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "extension",
+                  "value": "{{extension}}",
+                  "type": "text"
+                },
+                {
+                  "key": "queue",
+                  "value": "{{queue}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/logout_queue1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "logout_queue1"
+              ]
+            },
+            "description": "After the batch."
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Users (no authentication - raise with SkyCRM)",
+      "item": [
+        {
+          "name": "Create user (users_webhook_api)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-test\",\n  \"password\": \"change-me\",\n  \"user_level\": \"user\",\n  \"process\": \"\",\n  \"assigned_to\": \"\",\n  \"user_region\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/users_webhook_api",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users_webhook_api"
+              ]
+            },
+            "description": "WARNING: Creates a REAL user. This endpoint accepts requests with no token at all.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

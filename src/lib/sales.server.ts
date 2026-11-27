@@ -9,6 +9,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServerFn } from "@tanstack/react-start";
 import { z, tokenSchema, idSchema, shortText, emailSchema } from "./schemas";
+import { timingSafeEqual } from "node:crypto";
 import { getSupabaseAdmin, verifySuperadminCaller } from "./supabase-admin.server";
 import { tokenHasEmailOtp } from "./login-otp";
 import {
@@ -197,6 +198,33 @@ async function salesPeople(): Promise<SalesPerson[]> {
     .order("name");
   if (error) throw new Error(error.message);
   return (data ?? []) as SalesPerson[];
+}
+
+// ─── Activity log helper ────────────────────────────────────────────────────
+
+export async function logSalesActivity(entry: {
+  actorName: string | null;
+  salesUserId?: string | null;
+  superadminId?: string | null;
+  action: string;
+  leadId?: string | null;
+  summary: string;
+  detail?: Record<string, unknown> | null;
+}) {
+  const { error } = await db().from("sales_activity_log").insert({
+    sales_user_id: entry.salesUserId ?? null,
+    superadmin_id: entry.superadminId ?? null,
+    actor_name: entry.actorName,
+    action: entry.action,
+    lead_id: entry.leadId ?? null,
+    summary: entry.summary,
+    detail: entry.detail ?? null,
+  });
+  if (error) console.error(`[sales] activity log "${entry.action}" failed:`, error.message);
+}
+
+function actorIds(caller: VerifiedSalesCaller) {
+  return { salesUserId: caller.salesUserId, superadminId: caller.superadminId };
 }
 
 // ─── Who am I ────────────────────────────────────────────────────────────────
@@ -675,19 +703,50 @@ export const createSalesUser = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
       .object({
-        accessToken: tokenSchema,
+        accessToken: tokenSchema.optional(),
         name: shortText(120),
         email: emailSchema,
         phone: optText(20),
         password: z.string().min(8).max(256),
+        bootstrapSecret: z.string().max(256).optional(),
       })
       .parse(d),
   )
   .handler(async ({ data }) => {
-    const sa = await requireSuperadmin(data.accessToken);
+    // Bootstrap: when nobody is in sales_users yet, allow setup with SALES_BOOTSTRAP_SECRET
+    // (same discipline as createSuperadmin). Once there is one, a superadmin must sign in to
+    // create another, like /sales/team already does.
+    const admin = db();
+    const { count: existingCount, error: countErr } = await admin
+      .from("sales_users")
+      .select("id", { count: "exact", head: true });
+    if (countErr) return { ok: false as const, error: `Could not verify setup state (${countErr.message})` };
+
+    let superadminId: string | null = null;
+    if ((existingCount ?? 0) > 0) {
+      const sa = data.accessToken ? await verifySuperadminCaller(data.accessToken) : null;
+      if (!sa) {
+        return {
+          ok: false as const,
+          error: "A sales account already exists — sign in as a superadmin to create another.",
+        };
+      }
+      superadminId = sa.superadminId;
+    } else {
+      const expected = process.env.SALES_BOOTSTRAP_SECRET?.trim();
+      const given = data.bootstrapSecret?.trim() ?? "";
+      const a = Buffer.from(given);
+      const b = Buffer.from(expected ?? "");
+      if (!expected || a.length !== b.length || !timingSafeEqual(a, b)) {
+        return {
+          ok: false as const,
+          error:
+            "Creating the first salesperson needs the setup key from the server's SALES_BOOTSTRAP_SECRET.",
+        };
+      }
+    }
     const email = data.email.trim().toLowerCase();
     if (!EMAIL_RE.test(email)) return { ok: false as const, error: "Enter a valid email address." };
-    const admin = db();
     // A separate login on purpose: a company user or superadmin must not quietly become sales.
     const { data: authData, error: authErr } = await admin.auth.admin.createUser({
       email,
@@ -708,12 +767,18 @@ export const createSalesUser = createServerFn({ method: "POST" })
       name: data.name,
       email,
       phone: data.phone,
-      created_by: sa.superadminId,
+      created_by: superadminId,
     });
     if (error) {
       await admin.auth.admin.deleteUser(authData.user.id).catch(() => {});
       return { ok: false as const, error: error.message };
     }
+    await logSalesActivity({
+      actorName: superadminId ? "A superadmin" : "Bootstrap setup",
+      superadminId,
+      action: "sales_user_created",
+      summary: `Added salesperson ${data.name} (${email})`,
+    });
     return { ok: true as const };
   });
 
@@ -722,16 +787,16 @@ export const setSalesUserActive = createServerFn({ method: "POST" })
     z.object({ accessToken: tokenSchema, id: idSchema, active: z.boolean() }).parse(d),
   )
   .handler(async ({ data }) => {
-    await requireSuperadmin(data.accessToken);
+    const sa = await requireSuperadmin(data.accessToken);
     const admin = db();
     const { data: row, error } = await admin
       .from("sales_users")
       .update({ is_active: data.active })
       .eq("id", data.id)
-      .select("auth_user_id")
+      .select("auth_user_id, name")
       .single();
     if (error) throw new Error(error.message);
-    const authId = (row as { auth_user_id: string }).auth_user_id;
+    const authId = (row as { auth_user_id: string; name: string }).auth_user_id;
     // Same as deactivating a company user: the login is banned, not just hidden.
     await admin.auth.admin.updateUserById(authId, {
       ban_duration: data.active ? "none" : "876000h",
@@ -741,5 +806,93 @@ export const setSalesUserActive = createServerFn({ method: "POST" })
       // (verifySalesCaller already refuses an inactive account on its next request.)
       await admin.from("sales_leads").update({ owner_id: null }).eq("owner_id", data.id);
     }
+    await logSalesActivity({
+      actorName: sa.name,
+      superadminId: sa.superadminId,
+      action: data.active ? "sales_user_active" : "sales_user_inactive",
+      summary: `${data.active ? "Reactivated" : "Deactivated"} ${(row as { name: string }).name}`,
+    });
     return { ok: true as const };
+  });
+
+// ─── Activity log view + email the lead ────────────────────────────────────
+
+export interface SalesActivityLogRow {
+  id: string;
+  created_at: string;
+  action: string;
+  summary: string;
+  actor_name: string | null;
+  sales_user_id: string | null;
+  lead_id: string | null;
+}
+
+export const listSalesActivity = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        actorId: idSchema.nullable().optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    await requireSuperadmin(data.accessToken);
+    let q = db()
+      .from("sales_activity_log")
+      .select("id, created_at, action, summary, actor_name, sales_user_id, lead_id")
+      .order("created_at", { ascending: false })
+      .limit(data.limit ?? 200);
+    if (data.actorId) q = q.eq("sales_user_id", data.actorId);
+    const { data: rows, error } = await q;
+    if (error) throw new Error(error.message);
+    return { rows: (rows ?? []) as SalesActivityLogRow[] };
+  });
+
+export const sendLeadEmail = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        accessToken: tokenSchema,
+        leadId: idSchema,
+        to: emailSchema,
+        subject: shortText(200),
+        body: shortText(10000),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { caller, lead } = await editableLead(data.accessToken, data.leadId);
+    const { sendEmails, emailConfigured } = await import("./email.server");
+    if (!emailConfigured()) {
+      return {
+        ok: false as const,
+        error: "Email is not set up yet (RESEND_API_KEY / EMAIL_FROM).",
+      };
+    }
+    const sent = await sendEmails([
+      {
+        to: data.to,
+        subject: data.subject,
+        text: `${data.body}\n\n— ${caller.name}, SamvadX Sales\nsales@samvadx.com`,
+      },
+    ]);
+    const summary = `Emailed ${data.to}: ${data.subject}`;
+    await logActivity(lead.id, "email", summary, caller.name);
+    await db()
+      .from("sales_leads")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", lead.id);
+    await logSalesActivity({
+      actorName: caller.name,
+      ...actorIds(caller),
+      action: "lead_email",
+      leadId: lead.id,
+      summary: `${lead.company_name}: ${summary}`,
+    });
+    const okFlag = (sent ?? 0) > 0;
+    return okFlag
+      ? { ok: true as const, sentCount: sent ?? 0 }
+      : { ok: false as const, error: "Email provider did not accept the message." };
   });

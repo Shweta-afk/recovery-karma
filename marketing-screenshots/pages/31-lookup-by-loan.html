@@ -1,0 +1,26 @@
+<!-- {"role":"manager","active":"Reports","title":"Lookup data by Loan ID · SamvadX"} -->
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <div><h1 class="text-xl font-semibold tracking-tight">Lookup data by Loan ID</h1><p class="text-xs text-muted-foreground">Everything Insights found on each loan, next to the bank file — field by field</p></div>
+    <div class="flex gap-2"><span class="flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium">Personal Loan Nov-26<i data-lucide="chevron-down" class="h-3 w-3"></i></span><button class="flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium"><i data-lucide="download" class="h-3.5 w-3.5"></i>Excel</button></div>
+  </div>
+  <div class="grid grid-cols-4 gap-2">
+    <div class="rounded-xl border border-border bg-card p-3"><div class="text-[11px] text-muted-foreground">Loans with lookups</div><div class="text-xl font-bold">612</div></div>
+    <div class="rounded-xl border border-border bg-card p-3"><div class="text-[11px] text-muted-foreground">New numbers found</div><div class="text-xl font-bold text-primary">844</div></div>
+    <div class="rounded-xl border border-border bg-card p-3"><div class="text-[11px] text-muted-foreground">Address differs from bank file</div><div class="text-xl font-bold text-warning">231</div></div>
+    <div class="rounded-xl border border-border bg-card p-3"><div class="text-[11px] text-muted-foreground">Employer found</div><div class="text-xl font-bold">398</div></div>
+  </div>
+  <div class="overflow-hidden rounded-xl border border-border bg-card">
+    <table class="w-full text-xs">
+      <thead class="border-b border-border"><tr class="text-left font-medium uppercase tracking-wider text-muted-foreground"><th class="px-4 py-3">Loan ID</th><th class="px-3 py-3">Borrower</th><th class="px-3 py-3">New numbers</th><th class="px-3 py-3">City · bank file</th><th class="px-3 py-3">City · found</th><th class="px-3 py-3"></th><th class="px-3 py-3">Employer · found</th><th class="px-3 py-3">PAN</th><th class="px-4 py-3">UPI</th></tr></thead>
+      <tbody class="divide-y divide-border">
+        <tr><td class="px-4 py-3 font-mono">PL-201147</td><td class="px-3 font-medium">Manoj Pillai</td><td class="px-3">81XXX XX662<br>70XXX XX905</td><td class="px-3">Thrissur</td><td class="px-3">Kochi</td><td class="px-3"><span class="rounded bg-warning/15 px-1.5 py-0.5 font-semibold text-warning">Differs</span></td><td class="px-3">Coastal Logistics</td><td class="px-3"><span class="rounded bg-success/15 px-1.5 py-0.5 font-semibold text-success">Match</span></td><td class="px-4">1 found</td></tr>
+        <tr><td class="px-4 py-3 font-mono">PL-204518</td><td class="px-3 font-medium">Arjun Verma</td><td class="px-3">77XXX XX310</td><td class="px-3">Pune</td><td class="px-3">Pune</td><td class="px-3"><span class="rounded bg-success/15 px-1.5 py-0.5 font-semibold text-success">Match</span></td><td class="px-3">—</td><td class="px-3"><span class="rounded bg-success/15 px-1.5 py-0.5 font-semibold text-success">Match</span></td><td class="px-4">2 found</td></tr>
+        <tr><td class="px-4 py-3 font-mono">PL-195402</td><td class="px-3 font-medium">Lakshmi Narayanan</td><td class="px-3">96XXX XX087</td><td class="px-3">Chennai</td><td class="px-3">Coimbatore</td><td class="px-3"><span class="rounded bg-warning/15 px-1.5 py-0.5 font-semibold text-warning">Differs</span></td><td class="px-3">Sri Textiles</td><td class="px-3"><span class="text-muted-foreground">New</span></td><td class="px-4">—</td></tr>
+        <tr><td class="px-4 py-3 font-mono">PL-196274</td><td class="px-3 font-medium">Deepak Rao</td><td class="px-3 text-muted-foreground">None new</td><td class="px-3">Mangaluru</td><td class="px-3">Mangaluru</td><td class="px-3"><span class="rounded bg-success/15 px-1.5 py-0.5 font-semibold text-success">Match</span></td><td class="px-3">Harbour Foods</td><td class="px-3"><span class="rounded bg-success/15 px-1.5 py-0.5 font-semibold text-success">Match</span></td><td class="px-4">1 found</td></tr>
+        <tr><td class="px-4 py-3 font-mono">PL-203390</td><td class="px-3 font-medium">Ritu Agarwal</td><td class="px-3">98XXX XX554<br>63XXX XX120</td><td class="px-3">Delhi</td><td class="px-3">Gurugram</td><td class="px-3"><span class="rounded bg-warning/15 px-1.5 py-0.5 font-semibold text-warning">Differs</span></td><td class="px-3">—</td><td class="px-3"><span class="text-muted-foreground">New</span></td><td class="px-4">—</td></tr>
+        <tr><td class="px-4 py-3 font-mono">TW-118204</td><td class="px-3 font-medium">Vikram Singh</td><td class="px-3">70XXX XX271</td><td class="px-3">Jaipur</td><td class="px-3">Jaipur</td><td class="px-3"><span class="rounded bg-success/15 px-1.5 py-0.5 font-semibold text-success">Match</span></td><td class="px-3">City Motors</td><td class="px-3"><span class="rounded bg-success/15 px-1.5 py-0.5 font-semibold text-success">Match</span></td><td class="px-4">1 found</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>

@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en" class="">
+<head>
+<meta charset="utf-8">
+<title>Call review · SamvadX</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-blue: var(--brand-blue);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── Light mode (default) ──────────────────────────────────────────────────── */
+:root {
+  --radius: 0.5rem;
+
+  --brand-navy: oklch(0.09 0.025 258);
+  --brand-blue: oklch(0.5 0.18 258);
+
+  --background: oklch(0.97 0.007 258);
+  --foreground: oklch(0.13 0.025 258);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.13 0.025 258);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.13 0.025 258);
+
+  --primary: oklch(0.5 0.18 258);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.92 0.012 258);
+  --secondary-foreground: oklch(0.2 0.03 258);
+
+  --muted: oklch(0.93 0.01 258);
+  --muted-foreground: oklch(0.42 0.018 258);
+
+  --accent: oklch(0.93 0.012 258);
+  --accent-foreground: oklch(0.13 0.025 258);
+
+  --destructive: oklch(0.52 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.5 0.16 152);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: oklch(0.62 0.17 75);
+  --warning-foreground: oklch(0.2 0.06 75);
+
+  --border: oklch(0.87 0.014 258);
+  --input: oklch(0.9 0.01 258);
+  --ring: oklch(0.5 0.18 258);
+
+  --sidebar: oklch(0.94 0.01 258);
+  --sidebar-foreground: oklch(0.18 0.025 258);
+  --sidebar-primary: oklch(0.5 0.18 258);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.88 0.014 258);
+  --sidebar-accent-foreground: oklch(0.13 0.025 258);
+  --sidebar-border: oklch(0.84 0.014 258);
+  --sidebar-ring: oklch(0.5 0.18 258);
+}
+
+/* ── Dark / Night mode ─────────────────────────────────────────────────────── */
+.dark {
+  --brand-navy: oklch(0.09 0.025 258);
+  --brand-blue: oklch(0.58 0.18 258);
+
+  --background: oklch(0.11 0.025 258);
+  --foreground: oklch(0.96 0.005 250);
+
+  --card: oklch(0.15 0.025 258);
+  --card-foreground: oklch(0.96 0.005 250);
+
+  --popover: oklch(0.15 0.025 258);
+  --popover-foreground: oklch(0.96 0.005 250);
+
+  --primary: oklch(0.58 0.18 258);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.2 0.03 258);
+  --secondary-foreground: oklch(0.85 0.01 250);
+
+  --muted: oklch(0.18 0.025 258);
+  --muted-foreground: oklch(0.55 0.02 257);
+
+  --accent: oklch(0.22 0.04 258);
+  --accent-foreground: oklch(0.96 0.005 250);
+
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.65 0.16 152);
+  --success-foreground: oklch(0.99 0 0);
+
+  --warning: oklch(0.72 0.18 75);
+  --warning-foreground: oklch(0.15 0.04 75);
+
+  --border: oklch(0.25 0.03 258);
+  --input: oklch(0.22 0.03 258);
+  --ring: oklch(0.58 0.18 258);
+
+  --sidebar: oklch(0.09 0.025 258);
+  --sidebar-foreground: oklch(0.9 0.005 250);
+  --sidebar-primary: oklch(0.58 0.18 258);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.18 0.03 258);
+  --sidebar-accent-foreground: oklch(0.9 0.005 250);
+  --sidebar-border: oklch(0.2 0.025 258);
+  --sidebar-ring: oklch(0.58 0.18 258);
+}
+
+
+@layer base {
+  * { border-color: var(--color-border); }
+  body { background-color: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+}
+</style>
+<style>::-webkit-scrollbar{display:none} body{margin:0}</style>
+</head>
+<body>
+<div class="flex min-h-screen w-full bg-background">
+          
+  <aside class="flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+    <div class="border-b border-sidebar-border px-4 py-4">
+      <div class="inline-flex rounded-md px-3 py-1.5 dark:bg-white"><img src="logo.png" alt="SamvadX" class="h-7 w-auto"></div>
+    </div>
+    <div class="p-2">
+      <div class="flex h-8 items-center px-2 text-xs font-medium text-sidebar-foreground/70">Call Auditor</div>
+      <ul class="flex flex-col gap-1">
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="layout-dashboard" class="h-4 w-4 shrink-0"></i><span class="truncate">Overview</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm bg-sidebar-accent font-medium text-sidebar-accent-foreground"><i data-lucide="list-checks" class="h-4 w-4 shrink-0"></i><span class="truncate">Audit Queue</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="headphones" class="h-4 w-4 shrink-0"></i><span class="truncate">All Calls</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="users" class="h-4 w-4 shrink-0"></i><span class="truncate">Teams & Managers</span></a></li>
+      <li><a class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground"><i data-lucide="file-spreadsheet" class="h-4 w-4 shrink-0"></i><span class="truncate">Reports</span></a></li></ul>
+    </div>
+  </aside>
+          <div class="flex min-w-0 flex-1 flex-col">
+            
+  <header class="sticky top-0 z-10 flex h-14 items-center justify-between gap-4 border-b border-border bg-card px-4">
+    <div class="flex items-center gap-2">
+      <button class="inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground"><i data-lucide="panel-left" class="h-4 w-4"></i></button>
+      <div class="text-sm text-muted-foreground">Recovery operations console</div>
+      
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3">
+        <div class="flex flex-col items-end leading-tight">
+          <span class="text-sm font-medium text-foreground">Kavya Iyer</span>
+          <span class="text-xs text-muted-foreground">kavya.i@democollect.in</span>
+        </div>
+        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">KI</div>
+        <span class="rounded-md bg-secondary px-2 py-0.5 text-xs font-semibold capitalize text-secondary-foreground">auditor</span>
+      </div>
+      <button class="relative inline-flex h-8 items-center rounded-md border border-border bg-background px-3 text-foreground"><i data-lucide="bell" class="h-4 w-4"></i>
+        <span class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">3</span></button>
+      <button class="inline-flex h-8 items-center rounded-md border border-border bg-background px-3 text-foreground"><i data-lucide="moon" class="h-4 w-4"></i></button>
+      <button class="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground"><i data-lucide="log-out" class="h-4 w-4"></i>Logout</button>
+    </div>
+  </header>
+            <main class="flex-1 p-6">
+<div class="grid grid-cols-[1fr_420px] gap-4">
+  <div class="space-y-4">
+    <div class="rounded-xl border border-border bg-card p-4">
+      <div class="flex items-center justify-between">
+        <div><div class="text-sm font-semibold">Rahul Nair → Manoj Pillai</div><div class="text-xs text-muted-foreground">10 Nov, 3:22 PM · 4m 40s · PTP ₹16,810 · Team East (Rohan Mehta)</div></div>
+        <span class="rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-warning">AI done, waiting for you</span>
+      </div>
+      <div class="mt-4 flex items-center gap-3">
+        <button class="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground"><i data-lucide="play" class="h-4 w-4"></i></button>
+        <svg viewBox="0 0 600 40" class="h-10 flex-1" preserveAspectRatio="none"><g style="fill:var(--primary)">
+          <rect x="0" y="14" width="4" height="12"/><rect x="8" y="8" width="4" height="24"/><rect x="16" y="4" width="4" height="32"/><rect x="24" y="12" width="4" height="16"/><rect x="32" y="6" width="4" height="28"/><rect x="40" y="16" width="4" height="8"/><rect x="48" y="10" width="4" height="20"/><rect x="56" y="2" width="4" height="36"/><rect x="64" y="12" width="4" height="16"/><rect x="72" y="8" width="4" height="24"/><rect x="80" y="14" width="4" height="12"/><rect x="88" y="6" width="4" height="28"/><rect x="96" y="10" width="4" height="20"/><rect x="104" y="16" width="4" height="8"/><rect x="112" y="4" width="4" height="32"/><rect x="120" y="12" width="4" height="16"/><rect x="128" y="8" width="4" height="24"/><rect x="136" y="14" width="4" height="12"/><rect x="144" y="6" width="4" height="28"/><rect x="152" y="10" width="4" height="20"/><rect x="160" y="2" width="4" height="36"/><rect x="168" y="12" width="4" height="16"/><rect x="176" y="16" width="4" height="8"/><rect x="184" y="8" width="4" height="24"/><rect x="192" y="4" width="4" height="32"/></g>
+          <g style="fill:var(--border)"><rect x="200" y="12" width="4" height="16"/><rect x="208" y="6" width="4" height="28"/><rect x="216" y="14" width="4" height="12"/><rect x="224" y="8" width="4" height="24"/><rect x="232" y="2" width="4" height="36"/><rect x="240" y="10" width="4" height="20"/><rect x="248" y="16" width="4" height="8"/><rect x="256" y="6" width="4" height="28"/><rect x="264" y="12" width="4" height="16"/><rect x="272" y="4" width="4" height="32"/><rect x="280" y="10" width="4" height="20"/><rect x="288" y="14" width="4" height="12"/><rect x="296" y="8" width="4" height="24"/><rect x="304" y="2" width="4" height="36"/><rect x="312" y="12" width="4" height="16"/><rect x="320" y="6" width="4" height="28"/><rect x="328" y="16" width="4" height="8"/><rect x="336" y="10" width="4" height="20"/><rect x="344" y="4" width="4" height="32"/><rect x="352" y="12" width="4" height="16"/><rect x="360" y="8" width="4" height="24"/><rect x="368" y="14" width="4" height="12"/><rect x="376" y="6" width="4" height="28"/><rect x="384" y="10" width="4" height="20"/><rect x="392" y="2" width="4" height="36"/><rect x="400" y="12" width="4" height="16"/><rect x="408" y="8" width="4" height="24"/><rect x="416" y="16" width="4" height="8"/><rect x="424" y="4" width="4" height="32"/><rect x="432" y="10" width="4" height="20"/><rect x="440" y="14" width="4" height="12"/><rect x="448" y="6" width="4" height="28"/><rect x="456" y="12" width="4" height="16"/><rect x="464" y="8" width="4" height="24"/><rect x="472" y="2" width="4" height="36"/><rect x="480" y="10" width="4" height="20"/><rect x="488" y="16" width="4" height="8"/><rect x="496" y="6" width="4" height="28"/><rect x="504" y="12" width="4" height="16"/><rect x="512" y="4" width="4" height="32"/><rect x="520" y="10" width="4" height="20"/><rect x="528" y="14" width="4" height="12"/><rect x="536" y="8" width="4" height="24"/><rect x="544" y="2" width="4" height="36"/><rect x="552" y="12" width="4" height="16"/><rect x="560" y="6" width="4" height="28"/><rect x="568" y="16" width="4" height="8"/><rect x="576" y="10" width="4" height="20"/><rect x="584" y="4" width="4" height="32"/><rect x="592" y="12" width="4" height="16"/></g></svg>
+        <span class="font-mono text-xs text-muted-foreground">1:32 / 4:40</span>
+      </div>
+    </div>
+    <div class="rounded-xl border border-border bg-card p-4">
+      <div class="mb-3 flex items-center justify-between"><div class="flex items-center gap-2 text-sm font-semibold"><i data-lucide="sparkles" class="h-4 w-4 text-primary"></i>AI review (suggestion)</div><span class="text-xs text-muted-foreground">Transcript + tone</span></div>
+      <div class="grid grid-cols-3 gap-2 text-xs">
+        <div class="rounded-lg bg-success/10 p-3"><div class="text-muted-foreground">Agent tone</div><div class="font-semibold text-success">Polite, empathetic</div></div>
+        <div class="rounded-lg bg-warning/10 p-3"><div class="text-muted-foreground">Borrower tone</div><div class="font-semibold text-warning">Stressed, cooperative</div></div>
+        <div class="rounded-lg bg-primary/10 p-3"><div class="text-muted-foreground">Overall</div><div class="font-semibold text-primary">Positive outcome</div></div>
+      </div>
+      <div class="mt-4 space-y-2.5 text-sm">
+        <div class="flex gap-3"><span class="w-14 shrink-0 text-xs font-semibold text-primary">Agent</span><p>Good afternoon, am I speaking with Mr. Manoj? I'm calling from Sunrise Finance about your personal loan.</p></div>
+        <div class="flex gap-3"><span class="w-14 shrink-0 text-xs font-semibold text-muted-foreground">Borrower</span><p>Yes. I know two EMIs are pending — there were hospital bills last month.</p></div>
+        <div class="flex gap-3"><span class="w-14 shrink-0 text-xs font-semibold text-primary">Agent</span><p>I understand, and I hope everyone is well now. Could you clear both by the 15th so no further charges are added?</p></div>
+        <div class="flex gap-3"><span class="w-14 shrink-0 text-xs font-semibold text-muted-foreground">Borrower</span><p>Yes, I can pay ₹16,810 by the 15th.</p></div>
+      </div>
+    </div>
+  </div>
+  <div class="rounded-xl border border-border bg-card">
+    <div class="flex items-center justify-between border-b border-border px-4 py-3"><div class="text-sm font-semibold">Scorecard</div><div class="text-2xl font-bold text-success">88%</div></div>
+    <div class="divide-y divide-border text-xs">
+      <div class="flex items-center justify-between px-4 py-2.5"><span>Opening &amp; identity check <span class="text-muted-foreground">(10)</span></span><span class="rounded bg-success/15 px-2 py-0.5 font-semibold text-success">Yes</span></div>
+      <div class="flex items-center justify-between px-4 py-2.5"><span>Right-party confirmation <span class="text-muted-foreground">(10)</span></span><span class="rounded bg-success/15 px-2 py-0.5 font-semibold text-success">Yes</span></div>
+      <div class="flex items-center justify-between px-4 py-2.5"><span>Explained dues clearly <span class="text-muted-foreground">(15)</span></span><span class="rounded bg-success/15 px-2 py-0.5 font-semibold text-success">Yes</span></div>
+      <div class="flex items-center justify-between px-4 py-2.5"><span>Empathy &amp; tone <span class="text-muted-foreground">(15)</span></span><span class="rounded bg-success/15 px-2 py-0.5 font-semibold text-success">Yes</span></div>
+      <div class="flex items-center justify-between px-4 py-2.5"><span>Negotiation &amp; PTP capture <span class="text-muted-foreground">(20)</span></span><span class="rounded bg-success/15 px-2 py-0.5 font-semibold text-success">Yes</span></div>
+      <div class="flex items-center justify-between px-4 py-2.5"><span>Payment options explained <span class="text-muted-foreground">(10)</span></span><span class="rounded bg-destructive/15 px-2 py-0.5 font-semibold text-destructive">No</span></div>
+      <div class="flex items-center justify-between px-4 py-2.5"><span>Closing &amp; summary <span class="text-muted-foreground">(10)</span></span><span class="rounded bg-muted px-2 py-0.5 font-semibold text-muted-foreground">N/A</span></div>
+      <div class="flex items-center justify-between px-4 py-2.5"><span>Fatal: threat / abusive language</span><span class="rounded bg-success/15 px-2 py-0.5 font-semibold text-success">None</span></div>
+    </div>
+    <div class="space-y-3 border-t border-border p-4">
+      <div class="space-y-1.5"><label class="text-xs font-medium">Feedback to agent</label><div class="h-16 rounded-md border border-input p-2.5 text-xs">Great empathy. Next time offer the payment link and part-payment option before closing.</div></div>
+      <div class="space-y-1.5"><label class="text-xs font-medium">Was the AI right?</label><div class="flex gap-2 text-xs"><span class="rounded-md border-2 border-success bg-success/10 px-3 py-1 font-semibold text-success">Yes</span><span class="rounded-md border border-border px-3 py-1">Partly</span><span class="rounded-md border border-border px-3 py-1">No</span></div></div>
+      <button class="h-9 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground">Save review &amp; next call</button>
+    </div>
+  </div>
+</div>
+</main>
+          </div>
+        </div>
+<script>lucide.createIcons();</script>
+</body>
+</html>
