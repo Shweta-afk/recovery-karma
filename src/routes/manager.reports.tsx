@@ -29,6 +29,7 @@ import {
   EMPTY_RANGE,
   inDateRange,
   isRangeActive,
+  normalizedRange,
   describeRange,
   type DateRange,
 } from "@/lib/date-filter";
@@ -626,6 +627,8 @@ function ManagerReportsPage() {
                                   disps={a.disps}
                                   payments={allPayments.filter((p) => p.agentId === a.agentId)}
                                   posByDebtor={posByDebtor}
+                                  fromDay={normalizedRange(dateRange).from || undefined}
+                                  toDay={normalizedRange(dateRange).to || undefined}
                                 />
                                 <div className="border-t border-border pt-3">
                                   <AgentCallLog disps={a.disps} agentName={a.name} />

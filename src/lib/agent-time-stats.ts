@@ -204,6 +204,48 @@ export function getAgentTimeStats(
   };
 }
 
+/** IST day keys from `from` to `to` inclusive ("YYYY-MM-DD"). */
+export function daysBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  const end = Date.parse(`${to}T00:00:00Z`);
+  for (let t = Date.parse(`${from}T00:00:00Z`); t <= end; t += 86_400_000)
+    out.push(new Date(t).toISOString().slice(0, 10));
+  return out;
+}
+
+/**
+ * The same breakdown summed over a range of IST days — each day measured on its own 8 am–8 pm
+ * window, then added. Login is the first day's, logout the last day's.
+ */
+export function getAgentTimeStatsRange(
+  agentId: string,
+  allDisps: DispositionRecord[],
+  fromDay: string,
+  toDay: string,
+  intervals: StatusInterval[] = [],
+): AgentTimeStats {
+  const days = daysBetween(fromDay, toDay);
+  const per = days.map((d) => getAgentTimeStats(agentId, allDisps, d, intervals));
+  if (per.length === 1) return per[0];
+  const add = (f: (s: AgentTimeStats) => number | null) => {
+    const vals = per.map(f).filter((v): v is number => v != null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+  };
+  const tracked = per.filter((s) => s.presenceRecorded);
+  return {
+    agentId,
+    callingSeconds: per.reduce((a, s) => a + s.callingSeconds, 0),
+    ringingSeconds: add((s) => s.ringingSeconds),
+    dispositionSeconds: add((s) => s.dispositionSeconds),
+    breakSeconds: add((s) => s.breakSeconds),
+    idleSeconds: add((s) => s.idleSeconds),
+    loggedInSeconds: add((s) => s.loggedInSeconds),
+    loginTime: tracked[0]?.loginTime ?? null,
+    logoutTime: tracked.at(-1)?.logoutTime ?? null,
+    presenceRecorded: tracked.length > 0,
+  };
+}
+
 export function formatDuration(totalSeconds: number): string {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);

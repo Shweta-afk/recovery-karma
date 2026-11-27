@@ -22,7 +22,7 @@ import { MonthlyTrendPanel } from "@/components/reports/monthly-trend";
 import { calcStats, type DispositionRecord } from "@/lib/disposition-store";
 import type { PaymentRecord } from "@/lib/payments-store";
 import {
-  getAgentTimeStats,
+  getAgentTimeStatsRange,
   formatDuration,
   formatDurationOrDash,
   formatClockTime,
@@ -97,18 +97,26 @@ export function AgentReportDetail({
     return { accounts: worked.size, posWorked: price(worked), posPromised: price(promised) };
   }, [disps, posByDebtor]);
 
-  // Real time data for this agent over the report's period.
-  const day = toDay ?? todayPresenceKey();
+  // Real time data for this agent over the report's period. With no range ("all time"), from
+  // their first call in the list (at most 92 days back) to today.
+  const today = todayPresenceKey();
+  const day = toDay && toDay < today ? toDay : today;
+  const start = useMemo(() => {
+    if (fromDay) return fromDay;
+    const first = disps.reduce((m, d) => (d.time < m ? d.time : m), new Date().toISOString());
+    const floor = new Date(Date.now() - 92 * 86_400_000).toISOString();
+    return istDayKey(first < floor ? floor : first);
+  }, [fromDay, disps]);
   const [intervals, setIntervals] = useState<StatusInterval[]>([]);
   useEffect(() => {
-    fetchStatusIntervalsRange([agentId], fromDay ?? day, day)
+    fetchStatusIntervalsRange([agentId], start, day)
       .then(setIntervals)
       .catch(() => setIntervals([]));
-  }, [agentId, fromDay, day]);
+  }, [agentId, start, day]);
 
   const time = useMemo(
-    () => getAgentTimeStats(agentId, disps, day, intervals),
-    [agentId, disps, day, intervals],
+    () => getAgentTimeStatsRange(agentId, disps, start, day, intervals),
+    [agentId, disps, start, day, intervals],
   );
 
   const talkPerCall = stats.total > 0 ? Math.round(time.callingSeconds / stats.total) : 0;

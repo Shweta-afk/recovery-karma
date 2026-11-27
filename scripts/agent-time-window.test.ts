@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { getAgentTimeStats, workWindow } from "../src/lib/agent-time-stats";
+import {
+  daysBetween,
+  getAgentTimeStats,
+  getAgentTimeStatsRange,
+  workWindow,
+} from "../src/lib/agent-time-stats";
 import type { StatusInterval } from "../src/lib/agent-presence-store";
 import type { DispositionRecord } from "../src/lib/disposition-store";
 
@@ -106,5 +111,28 @@ describe("an app left open overnight is not a login", () => {
   test("counts nothing on a day with no calls", () => {
     const s = getAgentTimeStats("a@x.com", [], DAY, [overnight]);
     expect(s.loggedInSeconds).toBe(0);
+  });
+});
+
+describe("time over a range of days", () => {
+  test("each day is measured on its own and added up", () => {
+    const iv2 = (day: string, from: string, to: string): StatusInterval => ({
+      agentId: "a@x.com",
+      status: "available",
+      startedAt: `${day}T${from}:00+05:30`,
+      endedAt: `${day}T${to}:00+05:30`,
+      lastSeenAt: `${day}T${to}:00+05:30`,
+    });
+    const s = getAgentTimeStatsRange("a@x.com", [], "2026-11-19", "2026-11-20", [
+      iv2("2026-11-19", "10:00", "12:00"),
+      iv2("2026-11-20", "09:00", "10:00"),
+    ]);
+    expect(s.loggedInSeconds).toBe(3 * 3600);
+    expect(daysBetween("2026-11-29", "2026-12-02")).toEqual([
+      "2026-11-29",
+      "2026-11-30",
+      "2026-12-01",
+      "2026-12-02",
+    ]);
   });
 });

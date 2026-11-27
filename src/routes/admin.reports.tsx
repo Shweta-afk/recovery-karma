@@ -33,6 +33,7 @@ import {
   EMPTY_RANGE,
   inDateRange,
   isRangeActive,
+  normalizedRange,
   describeRange,
   todayIstKey,
   type DateRange,
@@ -998,6 +999,24 @@ function AdminReportsPage() {
                               <th className="py-2 px-3 text-right font-medium text-muted-foreground">
                                 Collected
                               </th>
+                              <th
+                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
+                                title="PTPs (and Partially Paid balances with a date) this agent logged today"
+                              >
+                                Generated today
+                              </th>
+                              <th
+                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
+                                title="Completed payments this agent collected today"
+                              >
+                                Collected today
+                              </th>
+                              <th
+                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
+                                title="Projection: this agent's still-open promises due today"
+                              >
+                                Due today
+                              </th>
                               <th className="py-2 px-3 text-center font-medium text-muted-foreground">
                                 Contact%
                               </th>
@@ -1034,6 +1053,14 @@ function AdminReportsPage() {
                                 todayIntervals,
                               );
                               const cur = currentStatusOf(todayIntervals, aid, statusNow);
+                              const at = teamToday(
+                                disps.filter((d) => d.teamId === team.id && d.agentId === aid),
+                                disps,
+                                payments.filter((p) => p.agentId === aid),
+                                todayIstKey(),
+                              );
+                              const money = (amt: number, n: number) =>
+                                n > 0 ? `${formatINR(amt)} (${n})` : "—";
                               return (
                                 <tr key={aid} className="hover:bg-muted/20">
                                   <td className="py-2 px-3 font-medium text-foreground">
@@ -1048,6 +1075,15 @@ function AdminReportsPage() {
                                   </td>
                                   <td className="py-2 px-3 text-right">
                                     {as_.paidAmount > 0 ? formatINR(as_.paidAmount) : "—"}
+                                  </td>
+                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums">
+                                    {money(at.generatedAmount, at.generatedCount)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums text-success">
+                                    {money(at.collectedAmount, at.collectedCount)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums">
+                                    {money(at.dueAmount, at.dueCount)}
                                   </td>
                                   <td className="py-2 px-3 text-center">
                                     {as_.total > 0 ? (
@@ -1299,6 +1335,8 @@ function AdminReportsPage() {
                                   disps={a.disps}
                                   payments={payments.filter((p) => p.agentId === a.agentId)}
                                   posByDebtor={posByDebtor}
+                                  fromDay={normalizedRange(dateRange).from || undefined}
+                                  toDay={normalizedRange(dateRange).to || undefined}
                                 />
                                 <div className="border-t border-border pt-3">
                                   <AgentCallLog disps={a.disps} agentName={a.name} />
