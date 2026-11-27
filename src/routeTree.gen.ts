@@ -29,6 +29,7 @@ import { Route as AdminContractsRouteImport } from './routes/admin.contracts'
 import { Route as AdminFeedbackFileRouteImport } from './routes/admin.feedback-file'
 import { Route as AdminInsightsRouteImport } from './routes/admin.insights'
 import { Route as AdminLiveCallsRouteImport } from './routes/admin.live-calls'
+import { Route as AdminMisRouteImport } from './routes/admin.mis'
 import { Route as AdminPortfolioRouteImport } from './routes/admin.portfolio'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
@@ -53,6 +54,7 @@ import { Route as ManagerActivityRouteImport } from './routes/manager.activity'
 import { Route as ManagerAuditRouteImport } from './routes/manager.audit'
 import { Route as ManagerFeedbackFileRouteImport } from './routes/manager.feedback-file'
 import { Route as ManagerLiveCallsRouteImport } from './routes/manager.live-calls'
+import { Route as ManagerMisRouteImport } from './routes/manager.mis'
 import { Route as ManagerPortfolioRouteImport } from './routes/manager.portfolio'
 import { Route as ManagerQueueRouteImport } from './routes/manager.queue'
 import { Route as ManagerReportsRouteImport } from './routes/manager.reports'
@@ -176,6 +178,11 @@ const AdminLiveCallsRoute = AdminLiveCallsRouteImport.update({
   path: '/live-calls',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminMisRoute = AdminMisRouteImport.update({
+  id: '/mis',
+  path: '/mis',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminPortfolioRoute = AdminPortfolioRouteImport.update({
   id: '/portfolio',
   path: '/portfolio',
@@ -294,6 +301,11 @@ const ManagerFeedbackFileRoute = ManagerFeedbackFileRouteImport.update({
 const ManagerLiveCallsRoute = ManagerLiveCallsRouteImport.update({
   id: '/live-calls',
   path: '/live-calls',
+  getParentRoute: () => ManagerRoute,
+} as any)
+const ManagerMisRoute = ManagerMisRouteImport.update({
+  id: '/mis',
+  path: '/mis',
   getParentRoute: () => ManagerRoute,
 } as any)
 const ManagerPortfolioRoute = ManagerPortfolioRouteImport.update({
@@ -429,6 +441,7 @@ export interface FileRoutesByFullPath {
   '/admin/feedback-file': typeof AdminFeedbackFileRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
+  '/admin/mis': typeof AdminMisRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -450,6 +463,7 @@ export interface FileRoutesByFullPath {
   '/manager/audit': typeof ManagerAuditRoute
   '/manager/feedback-file': typeof ManagerFeedbackFileRoute
   '/manager/live-calls': typeof ManagerLiveCallsRoute
+  '/manager/mis': typeof ManagerMisRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
@@ -491,6 +505,7 @@ export interface FileRoutesByTo {
   '/admin/feedback-file': typeof AdminFeedbackFileRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
+  '/admin/mis': typeof AdminMisRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -512,6 +527,7 @@ export interface FileRoutesByTo {
   '/manager/audit': typeof ManagerAuditRoute
   '/manager/feedback-file': typeof ManagerFeedbackFileRoute
   '/manager/live-calls': typeof ManagerLiveCallsRoute
+  '/manager/mis': typeof ManagerMisRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
@@ -560,6 +576,7 @@ export interface FileRoutesById {
   '/admin/feedback-file': typeof AdminFeedbackFileRoute
   '/admin/insights': typeof AdminInsightsRoute
   '/admin/live-calls': typeof AdminLiveCallsRoute
+  '/admin/mis': typeof AdminMisRoute
   '/admin/portfolio': typeof AdminPortfolioRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -581,6 +598,7 @@ export interface FileRoutesById {
   '/manager/audit': typeof ManagerAuditRoute
   '/manager/feedback-file': typeof ManagerFeedbackFileRoute
   '/manager/live-calls': typeof ManagerLiveCallsRoute
+  '/manager/mis': typeof ManagerMisRoute
   '/manager/portfolio': typeof ManagerPortfolioRoute
   '/manager/queue': typeof ManagerQueueRoute
   '/manager/reports': typeof ManagerReportsRoute
@@ -630,6 +648,7 @@ export interface FileRouteTypes {
     | '/admin/feedback-file'
     | '/admin/insights'
     | '/admin/live-calls'
+    | '/admin/mis'
     | '/admin/portfolio'
     | '/admin/reports'
     | '/admin/settings'
@@ -651,6 +670,7 @@ export interface FileRouteTypes {
     | '/manager/audit'
     | '/manager/feedback-file'
     | '/manager/live-calls'
+    | '/manager/mis'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
@@ -692,6 +712,7 @@ export interface FileRouteTypes {
     | '/admin/feedback-file'
     | '/admin/insights'
     | '/admin/live-calls'
+    | '/admin/mis'
     | '/admin/portfolio'
     | '/admin/reports'
     | '/admin/settings'
@@ -713,6 +734,7 @@ export interface FileRouteTypes {
     | '/manager/audit'
     | '/manager/feedback-file'
     | '/manager/live-calls'
+    | '/manager/mis'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
@@ -760,6 +782,7 @@ export interface FileRouteTypes {
     | '/admin/feedback-file'
     | '/admin/insights'
     | '/admin/live-calls'
+    | '/admin/mis'
     | '/admin/portfolio'
     | '/admin/reports'
     | '/admin/settings'
@@ -781,6 +804,7 @@ export interface FileRouteTypes {
     | '/manager/audit'
     | '/manager/feedback-file'
     | '/manager/live-calls'
+    | '/manager/mis'
     | '/manager/portfolio'
     | '/manager/queue'
     | '/manager/reports'
@@ -967,6 +991,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminLiveCallsRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/mis': {
+      id: '/admin/mis'
+      path: '/mis'
+      fullPath: '/admin/mis'
+      preLoaderRoute: typeof AdminMisRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/portfolio': {
       id: '/admin/portfolio'
       path: '/portfolio'
@@ -1135,6 +1166,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ManagerLiveCallsRouteImport
       parentRoute: typeof ManagerRoute
     }
+    '/manager/mis': {
+      id: '/manager/mis'
+      path: '/mis'
+      fullPath: '/manager/mis'
+      preLoaderRoute: typeof ManagerMisRouteImport
+      parentRoute: typeof ManagerRoute
+    }
     '/manager/portfolio': {
       id: '/manager/portfolio'
       path: '/portfolio'
@@ -1299,6 +1337,7 @@ interface AdminRouteChildren {
   AdminFeedbackFileRoute: typeof AdminFeedbackFileRoute
   AdminInsightsRoute: typeof AdminInsightsRoute
   AdminLiveCallsRoute: typeof AdminLiveCallsRoute
+  AdminMisRoute: typeof AdminMisRoute
   AdminPortfolioRoute: typeof AdminPortfolioRoute
   AdminReportsRoute: typeof AdminReportsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
@@ -1314,6 +1353,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminFeedbackFileRoute: AdminFeedbackFileRoute,
   AdminInsightsRoute: AdminInsightsRoute,
   AdminLiveCallsRoute: AdminLiveCallsRoute,
+  AdminMisRoute: AdminMisRoute,
   AdminPortfolioRoute: AdminPortfolioRoute,
   AdminReportsRoute: AdminReportsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
@@ -1376,6 +1416,7 @@ interface ManagerRouteChildren {
   ManagerAuditRoute: typeof ManagerAuditRoute
   ManagerFeedbackFileRoute: typeof ManagerFeedbackFileRoute
   ManagerLiveCallsRoute: typeof ManagerLiveCallsRoute
+  ManagerMisRoute: typeof ManagerMisRoute
   ManagerPortfolioRoute: typeof ManagerPortfolioRoute
   ManagerQueueRoute: typeof ManagerQueueRoute
   ManagerReportsRoute: typeof ManagerReportsRoute
@@ -1388,6 +1429,7 @@ const ManagerRouteChildren: ManagerRouteChildren = {
   ManagerAuditRoute: ManagerAuditRoute,
   ManagerFeedbackFileRoute: ManagerFeedbackFileRoute,
   ManagerLiveCallsRoute: ManagerLiveCallsRoute,
+  ManagerMisRoute: ManagerMisRoute,
   ManagerPortfolioRoute: ManagerPortfolioRoute,
   ManagerQueueRoute: ManagerQueueRoute,
   ManagerReportsRoute: ManagerReportsRoute,

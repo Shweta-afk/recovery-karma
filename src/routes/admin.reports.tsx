@@ -75,6 +75,7 @@ import {
   summariseTotals,
 } from "@/lib/report-metrics-store";
 import { downloadCsv } from "@/lib/csv-export";
+import { EmailReportButton } from "@/components/report-email";
 import {
   OUTCOME_LABELS,
   OUTCOME_COLOR,
@@ -554,6 +555,7 @@ function AdminReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <EmailReportButton />
           <Badge variant="outline" className="font-normal">
             {teams.length} team{teams.length !== 1 ? "s" : ""}
           </Badge>

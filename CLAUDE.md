@@ -1183,6 +1183,25 @@ Admin → Users, not counted against agent/manager seats.
   recording had been stored (bucket bug above), so `call_logs.recording_url` was NULL everywhere. The portal's player and
   AI work once the importer starts storing files.
 
+## Collection MIS + emailing reports (2026-11-27)
+
+**Collection MIS** (`/admin/mis`, `/manager/mis`, `components/reports/collection-mis.tsx`): the
+company's five daily sheets (Differences vs last month, Ranking, Zero Numbers, Daily Collection,
+Client) built from SQL `collection_mis()` (`migrations/20261127_collection_mis.sql`, live,
+service_role only) via `collection-mis.server.ts` (manager = teams they manage); layouts pure in
+`collection-mis.ts` (tested in `scripts/collection-mis.test.ts`). Client = the portfolio's TEAM
+(`lender_name` holds manager names). Paid = completed payments by IST day, credited to
+`payments.agent_id` else the assigned agent. Projection (user) = open PTPs + Partially Paid
+balances due from the MIS date to month end, by the account's latest call. Only as complete as
+payments recorded in SamvadX — the company's own MIS uses bank files. Image = html-to-image PNG.
+**Email a report** (`components/report-email.tsx`, `report-email.server.ts`): admin keeps
+recipient lists (Admin → Settings; `report_email_lists`, log `report_email_log`, server-only,
+`migrations/20261127_report_email.sql`, live). The button arms `captureNextDownload`
+(`download-capture.ts`): the page's next `downloadCsv`/`downloadXlsx`/`downloadBlob` file opens the
+send dialog instead of saving. One Resend email per recipient (batch API takes no attachments).
+Internal recipients only. WhatsApp was considered and dropped (no API group posting).
+Scheduled sending is not built yet.
+
 ## Superadmin portal (platform owner) — rebuilt 2026-10-09
 
 The view for SamvadX/Axiotta itself, across every company. Pages (sidebar order): **Overview**

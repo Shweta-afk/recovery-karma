@@ -39,6 +39,7 @@ import {
   listEarlierPtps,
   listTeamReviews,
 } from "@/lib/call-audit.server";
+import { EmailReportButton } from "@/components/report-email";
 
 export const Route = createFileRoute("/auditor/reports")({
   head: () => ({ meta: [{ title: "Audit Reports · SamvadX" }] }),
@@ -192,11 +193,14 @@ function AuditorReports() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
-        <p className="text-sm text-muted-foreground">
-          Everything downloads as Excel, in full detail.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
+          <p className="text-sm text-muted-foreground">
+            Everything downloads as Excel, in full detail.
+          </p>
+        </div>
+        <EmailReportButton />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

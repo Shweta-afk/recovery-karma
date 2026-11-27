@@ -1,6 +1,8 @@
 // Browser-side Excel (.xlsx) download for report tables. exceljs is loaded on demand so it
 // never lands in a page's initial bundle — same approach as the Insights loan-lookup export.
 
+import { deliverOrCapture } from "./download-capture";
+
 export type XlsxCell = string | number | null | undefined;
 
 export interface XlsxSheet {
@@ -31,14 +33,15 @@ export async function downloadXlsx(filename: string, sheets: XlsxSheet[]): Promi
     });
   }
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(
-    new Blob([buf], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-  );
+  const blob = new Blob([buf], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const name = filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`;
+  if (deliverOrCapture(name, blob)) return;
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`;
+  a.download = name;
   document.body.appendChild(a);
   a.click();
   a.remove();
