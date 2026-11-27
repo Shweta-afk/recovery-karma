@@ -1034,6 +1034,7 @@ days (`workingDaysInMonth`).
 Two places generate plausible figures that are not observations. Both are labelled in the UI;
 do not quietly promote either to fact.
 
+- **Time is counted 08:00–20:00 IST only (user, 2026-11-27: "timing should be recorded from morning 8 to evening 8").** `getAgentTimeStats` clamps status intervals to that window (`workWindow`, `WORK_START_HOUR`/`WORK_END_HOUR`) and drops calls outside it, so logged-in, idle, break, ringing, wrap-up, talk and login/logout all agree on every screen (leaderboard, By Team, Team Activity, agent dashboard, Reports). Raw call logs and the status log are untouched; this only changes what is summed. Tested in `scripts/agent-time-window.test.ts`.
 - **`agent-time-stats.ts` is MEASURED since 2026-08-30** (this note said "seeded RNG" until
   2026-11-21 — stale). Talk = `call_logs.duration_seconds`, ring = `ring_seconds` (dial → answer),
   wrap = `wrap_seconds` (call ended on screen → disposition saved, `dashboard.call-queue.tsx`),
@@ -1276,6 +1277,20 @@ must look within minutes of the call ending (it does), and a backlog of a busy d
 recovered without a vendor-side paging option. CDR fields: id, agentname, sub_dispos, callid,
 src, srctech, dst, dsttech, start, end, billsec, disposition, direction, recordfile, module,
 audio_token.
+
+**Live Calls leaderboard = EVERY agent (user, 2026-11-27).** `TodayLeaderboard`
+(`components/today-leaderboard.tsx`) under the KPI cards: five ranked boards — most ringing,
+wrap-up, idle, break and time on calls — each listing every agent with time recorded, most first, the
+full length with no inner scroll (it was top 3; a table replacing it was tried and rejected the same day). Figures
+from `getAgentTimeStats`, RLS-scoped (manager = team, admin = company). Reports → By Team
+(`admin.reports.tsx`) loads today's `agent_status_log` for all team members and passes the
+intervals in: before this it passed none, so **Idle was always "—" and Avg Idle always 0%**, and
+there was no break column. It now has "Right now" (who is on break/lunch/training, since when),
+Break and a "N on break now" count per team; Avg Idle is averaged over tracked agents only (it
+divided by all agents, against its own comment). Shared rule `currentStatusOf` /
+`isOnBreak` (`agent-current-status.ts`, tested): the open interval with a heartbeat in the last 3
+min (`agent-presence-constants.ts`), else "not signed in". Break here = a status the agent PICKED;
+unlike "Agents right now", idle over 5 min is NOT turned into a break in these two places.
 
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90

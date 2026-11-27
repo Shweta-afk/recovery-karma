@@ -75,38 +75,37 @@ export function LiveCallsPageBody({ scopeLabel }: { scopeLabel: string }) {
         </span>
       </div>
 
-      {/* KPI cards on one side, today's leaderboard on the other (2026-11-25). */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="grid grid-cols-2 content-start gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-border bg-card p-3">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-              <PhoneIncoming className="h-3 w-3" />
-              Ringing
-            </div>
-            <div className="mt-1 text-xl font-bold text-amber-500 tabular-nums">{ringing}</div>
+      {/* KPI cards, then today's leaderboard for every agent (user, 2026-11-27: it showed only the top 3). */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <PhoneIncoming className="h-3 w-3" />
+            Ringing
           </div>
-          <div className="rounded-lg border border-border bg-card p-3">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-              <PhoneCall className="h-3 w-3" />
-              Connected
-            </div>
-            <div className="mt-1 text-xl font-bold text-success tabular-nums">{connected}</div>
-          </div>
-          {DIAL_MODE_ORDER.map((mode) => {
-            const count = calls.filter((c) => c.dialMode === mode).length;
-            const meta = DIAL_MODE_META[mode];
-            return (
-              <div key={mode} className="rounded-lg border border-border bg-card p-3">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground truncate">
-                  {meta.label}
-                </div>
-                <div className="mt-1 text-xl font-bold text-foreground tabular-nums">{count}</div>
-              </div>
-            );
-          })}
+          <div className="mt-1 text-xl font-bold text-amber-500 tabular-nums">{ringing}</div>
         </div>
-        <TodayLeaderboard search={search} />
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <PhoneCall className="h-3 w-3" />
+            Connected
+          </div>
+          <div className="mt-1 text-xl font-bold text-success tabular-nums">{connected}</div>
+        </div>
+        {DIAL_MODE_ORDER.map((mode) => {
+          const count = calls.filter((c) => c.dialMode === mode).length;
+          const meta = DIAL_MODE_META[mode];
+          return (
+            <div key={mode} className="rounded-lg border border-border bg-card p-3">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground truncate">
+                {meta.label}
+              </div>
+              <div className="mt-1 text-xl font-bold text-foreground tabular-nums">{count}</div>
+            </div>
+          );
+        })}
       </div>
+
+      <TodayLeaderboard search={search} />
 
       <AgentsRightNow liveRows={everyRow} search={search} />
 

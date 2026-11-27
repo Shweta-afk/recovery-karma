@@ -1,10 +1,11 @@
-// Today's leaderboard beside the Live Calls KPI cards (2026-11-25): the agents with the most
-// wrap-up, break and idle time today — the least productive — and the agent with the most time
-// on calls. Same figures as Team Activity (getAgentTimeStats: talk from call logs, wrap-up from
+// Today's leaderboard on Live Calls (2026-11-25; every agent since 2026-11-27, user: "the
+// leaderboard was good but it only shows top 3 — for all employees"): one ranked board each for
+// ringing, wrap-up, idle, break and time on calls, listing EVERY agent with time recorded, most
+// first, in a scrolling list. Same figures as Team Activity (getAgentTimeStats: talk from call logs, wrap-up from
 // wrap_seconds, break and idle from agent_status_log), so the two screens agree. Scoped by RLS
 // to the viewer's team (manager) or company (admin).
 import { useEffect, useMemo, useState } from "react";
-import { Coffee, Hourglass, PenLine, PhoneCall, Trophy } from "lucide-react";
+import { Coffee, Hourglass, PenLine, PhoneCall, PhoneOutgoing, Trophy } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { fetchStatusIntervals, todayPresenceKey } from "@/lib/agent-presence-store";
@@ -22,7 +23,8 @@ interface Person {
   name: string;
 }
 
-type Metric = "dispositionSeconds" | "breakSeconds" | "idleSeconds" | "callingSeconds";
+type Metric =
+  "ringingSeconds" | "dispositionSeconds" | "breakSeconds" | "idleSeconds" | "callingSeconds";
 
 const BOARDS: {
   metric: Metric;
@@ -31,6 +33,13 @@ const BOARDS: {
   cls: string;
   bar: string;
 }[] = [
+  {
+    metric: "ringingSeconds",
+    title: "Most ringing",
+    icon: PhoneOutgoing,
+    cls: "text-sky-600 dark:text-sky-400",
+    bar: "bg-sky-500",
+  },
   {
     metric: "dispositionSeconds",
     title: "Most wrap-up",
@@ -131,15 +140,16 @@ export function TodayLeaderboard({ search }: { search: string }) {
       <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
         <Trophy className="h-4 w-4 text-amber-500" />
         <span className="text-sm font-semibold text-foreground">Today&apos;s leaderboard</span>
-        <span className="ml-auto text-[11px] text-muted-foreground">Top 3 · since midnight</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">
+          Everyone · 8 am – 8 pm · {shown.length} {shown.length === 1 ? "person" : "people"}
+        </span>
       </div>
-      <div className="grid gap-x-4 gap-y-3 p-3 sm:grid-cols-2">
+      <div className="grid gap-x-4 gap-y-4 p-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         {BOARDS.map((b) => {
           const ranked = shown
             .map((s) => ({ name: s.person.name, secs: s.stats[b.metric] ?? 0 }))
             .filter((r) => r.secs > 0)
-            .sort((x, y) => y.secs - x.secs)
-            .slice(0, 3);
+            .sort((x, y) => y.secs - x.secs);
           const top = ranked[0]?.secs ?? 0;
           return (
             <div key={b.metric}>
