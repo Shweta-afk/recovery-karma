@@ -160,7 +160,7 @@ export function TodayLeaderboard({ search }: { search: string }) {
               {ranked.length === 0 ? (
                 <p className="text-[11px] text-muted-foreground">Nothing recorded yet today.</p>
               ) : (
-                <ol className="max-h-72 space-y-1 overflow-y-auto pr-1">
+                <ol className="space-y-1">
                   {ranked.map((r, i) => (
                     <li key={r.name} className="text-[11px]">
                       <div className="flex items-center gap-1.5">

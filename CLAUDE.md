@@ -1260,8 +1260,8 @@ audio_token.
 
 **Live Calls leaderboard = EVERY agent (user, 2026-11-27).** `TodayLeaderboard`
 (`components/today-leaderboard.tsx`) under the KPI cards: five ranked boards — most ringing,
-wrap-up, idle, break and time on calls — each listing every agent with time recorded, most first, in a
-scrolling list (it was top 3; a table replacing it was tried and rejected the same day). Figures
+wrap-up, idle, break and time on calls — each listing every agent with time recorded, most first, the
+full length with no inner scroll (it was top 3; a table replacing it was tried and rejected the same day). Figures
 from `getAgentTimeStats`, RLS-scoped (manager = team, admin = company). Reports → By Team
 (`admin.reports.tsx`) loads today's `agent_status_log` for all team members and passes the
 intervals in: before this it passed none, so **Idle was always "—" and Avg Idle always 0%**, and
