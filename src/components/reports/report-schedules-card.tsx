@@ -15,7 +15,13 @@ import {
   saveReportSchedule,
   sendReportScheduleNow,
 } from "@/lib/report-schedule.server";
-import { WEEKDAY_SHORT, type ReportSchedule } from "@/lib/report-schedule";
+import {
+  FEEDBACK_PERIOD_LABEL,
+  WEEKDAY_SHORT,
+  type FeedbackPeriod,
+  type ReportSchedule,
+  type ScheduleKind,
+} from "@/lib/report-schedule";
 import {
   MIS_SHEETS,
   MIS_SHEET_LABEL,
@@ -28,25 +34,41 @@ type Draft = Omit<ReportSchedule, "id" | "clientId" | "lastSentOn" | "lastResult
   id?: string;
 };
 
-const blank = (listId: string): Draft => ({
-  name: "Daily Collection MIS",
-  listId,
-  sheets: ["daily"],
-  sendTime: "09:00",
-  weekdays: [1, 2, 3, 4, 5, 6],
-  reportDay: "yesterday",
-  enabled: true,
-});
+const blank = (kind: ScheduleKind, listId: string): Draft =>
+  kind === "mis"
+    ? {
+        kind,
+        name: "Daily Collection MIS",
+        listId,
+        sheets: ["daily"],
+        period: "day",
+        sendTime: "09:00",
+        weekdays: [1, 2, 3, 4, 5, 6],
+        reportDay: "yesterday",
+        enabled: true,
+      }
+    : {
+        // End of the working day: that day's feedback, one email per team.
+        kind,
+        name: "End-of-day Feedback Files",
+        listId,
+        sheets: [],
+        period: "day",
+        sendTime: "20:00",
+        weekdays: [1, 2, 3, 4, 5, 6],
+        reportDay: "today",
+        enabled: true,
+      };
 
-/** Admin → Collection MIS: MIS emails sent automatically at a set time. Only for companies with
- *  both "Collection MIS" and "Report emails" switched on. */
-export function ReportSchedulesCard() {
+/** Scheduled emails. kind "mis" (Collection MIS page) needs "Collection MIS" and "Report
+ *  emails"; kind "feedback" (Feedback File page, admins) needs "Report emails". */
+export function ReportSchedulesCard({ kind = "mis" }: { kind?: ScheduleKind }) {
   const f = useCompanyFeatures();
-  if (!f.misReports || !f.reportEmails) return null;
-  return <Inner />;
+  if (!f.reportEmails || (kind === "mis" && !f.misReports)) return null;
+  return <Inner kind={kind} />;
 }
 
-function Inner() {
+function Inner({ kind }: { kind: ScheduleKind }) {
   const [schedules, setSchedules] = useState<ReportSchedule[]>([]);
   const [lists, setLists] = useState<ReportEmailList[]>([]);
   const [ready, setReady] = useState(true);
@@ -57,7 +79,7 @@ function Inner() {
     try {
       const accessToken = await getAccessToken();
       const [s, l] = await Promise.all([
-        listReportSchedules({ data: { accessToken } }),
+        listReportSchedules({ data: { accessToken, kind } }),
         listReportEmailLists({ data: { accessToken } }),
       ]);
       setSchedules(s.schedules);
@@ -66,7 +88,7 @@ function Inner() {
     } catch (e) {
       toast.error(errorText(e, "Could not load scheduled emails"));
     }
-  }, []);
+  }, [kind]);
 
   useEffect(() => {
     void load();
@@ -75,6 +97,7 @@ function Inner() {
   // A sheet's "Schedule" button on the MIS page opens a new schedule for that sheet alone.
   const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (kind !== "mis") return;
     const open = (e: Event) => {
       const key = (e as CustomEvent<MisSheetKey>).detail;
       if (!(MIS_SHEETS as readonly string[]).includes(key)) return;
@@ -83,7 +106,7 @@ function Inner() {
         return;
       }
       setDraft({
-        ...blank(lists[0].id),
+        ...blank("mis", lists[0].id),
         name: MIS_SHEET_LABEL[key],
         sheets: [key],
         ...SHEET_SCHEDULE_DEFAULT[key],
@@ -92,7 +115,7 @@ function Inner() {
     };
     window.addEventListener(SCHEDULE_SHEET_EVENT, open);
     return () => window.removeEventListener(SCHEDULE_SHEET_EVENT, open);
-  }, [lists]);
+  }, [lists, kind]);
 
   const listName = (id: string) => lists.find((l) => l.id === id)?.name ?? "—";
 
@@ -146,8 +169,9 @@ function Inner() {
           <CalendarClock className="h-4 w-4 text-primary" /> Scheduled emails
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          The MIS emailed automatically at a set time (IST) to one of your report email lists — the
-          sheets in the email body and attached as Excel. Every team in the company is included.
+          {kind === "mis"
+            ? "The MIS emailed automatically at a set time (IST) to one of your report email lists — the sheets in the email body and attached as Excel. Every team in the company is included."
+            : "Feedback Files emailed automatically at a set time (IST) to one of your report email lists — one email per team, with a Feedback File for each of the team's open portfolios attached. Recording links are never included."}
         </p>
       </CardHeader>
       <CardContent className="pt-4 space-y-3 text-sm">
@@ -175,11 +199,13 @@ function Inner() {
               </p>
               <p className="text-xs text-muted-foreground">
                 {s.sendTime} IST · {s.weekdays.map((d) => WEEKDAY_SHORT[d]).join(", ")} · to{" "}
-                {listName(s.listId)} · MIS for{" "}
+                {listName(s.listId)} · {kind === "mis" ? "MIS" : "feedback"} for{" "}
                 {s.reportDay === "yesterday" ? "the day before" : "that day so far"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {s.sheets.map((k) => MIS_SHEET_LABEL[k]).join(" · ")}
+                {kind === "mis"
+                  ? s.sheets.map((k) => MIS_SHEET_LABEL[k]).join(" · ")
+                  : `One email per team · ${FEEDBACK_PERIOD_LABEL[s.period]}`}
               </p>
               {s.lastResult && (
                 <p className="text-xs text-muted-foreground">
@@ -253,7 +279,7 @@ function Inner() {
                 IST
               </label>
               <label className="text-xs text-muted-foreground">
-                MIS for{" "}
+                {kind === "mis" ? "MIS" : "Feedback"} for{" "}
                 <select
                   className="ml-1 rounded-md border border-input bg-background px-2 py-1 text-sm"
                   value={draft.reportDay}
@@ -265,6 +291,24 @@ function Inner() {
                   <option value="today">that day so far (evening send)</option>
                 </select>
               </label>
+              {kind === "feedback" && (
+                <label className="text-xs text-muted-foreground">
+                  Covering{" "}
+                  <select
+                    className="ml-1 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                    value={draft.period}
+                    onChange={(e) =>
+                      setDraft({ ...draft, period: e.target.value as FeedbackPeriod })
+                    }
+                  >
+                    {(["day", "month", "all"] as FeedbackPeriod[]).map((p) => (
+                      <option key={p} value={p}>
+                        {FEEDBACK_PERIOD_LABEL[p]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
             <div className="flex flex-wrap gap-1">
               {WEEKDAY_SHORT.map((d, i) => (
@@ -279,18 +323,20 @@ function Inner() {
                 </Button>
               ))}
             </div>
-            <div className="space-y-1">
-              {MIS_SHEETS.map((k: MisSheetKey) => (
-                <label key={k} className="flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={draft.sheets.includes(k)}
-                    onChange={() => setDraft({ ...draft, sheets: toggle(draft.sheets, k) })}
-                  />
-                  {MIS_SHEET_LABEL[k]}
-                </label>
-              ))}
-            </div>
+            {kind === "mis" && (
+              <div className="space-y-1">
+                {MIS_SHEETS.map((k: MisSheetKey) => (
+                  <label key={k} className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={draft.sheets.includes(k)}
+                      onChange={() => setDraft({ ...draft, sheets: toggle(draft.sheets, k) })}
+                    />
+                    {MIS_SHEET_LABEL[k]}
+                  </label>
+                ))}
+              </div>
+            )}
             <label className="flex items-center gap-2 text-xs">
               <Switch
                 checked={draft.enabled}
@@ -305,7 +351,7 @@ function Inner() {
                   busy === "save" ||
                   !draft.name.trim() ||
                   !draft.listId ||
-                  !draft.sheets.length ||
+                  (kind === "mis" && !draft.sheets.length) ||
                   !draft.weekdays.length
                 }
                 onClick={save}
@@ -323,7 +369,7 @@ function Inner() {
             variant="outline"
             className="gap-2"
             disabled={!lists.length}
-            onClick={() => setDraft(blank(lists[0]?.id ?? ""))}
+            onClick={() => setDraft(blank(kind, lists[0]?.id ?? ""))}
           >
             <Plus className="h-4 w-4" /> New schedule
           </Button>

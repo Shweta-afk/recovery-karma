@@ -1,10 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { isDue, istParts, reportDayFor, type ReportSchedule } from "../src/lib/report-schedule";
+import {
+  feedbackRange,
+  isDue,
+  istParts,
+  reportDayFor,
+  type ReportSchedule,
+} from "../src/lib/report-schedule";
 import { buildMisSheets, misSheetsForXlsx, misSheetsHtml } from "../src/lib/collection-mis-email";
 import type { MisInput } from "../src/lib/collection-mis";
 
 const base: ReportSchedule = {
   id: "s",
+  kind: "mis",
+  period: "day",
   clientId: "c",
   listId: "l",
   name: "Morning",
@@ -73,5 +81,31 @@ describe("MIS email", () => {
     expect(daily.rows[0]).toEqual(["RBL <Bank>", "ASHA", 1000, 2, 1500, 2000]);
     const diff = misSheetsForXlsx(sheets)[0];
     expect(diff.rows[0]).toEqual(["RBL <Bank>", 0, 2000, 2000]);
+  });
+});
+
+describe("feedback schedules", () => {
+  const fb: ReportSchedule = {
+    ...base,
+    kind: "feedback",
+    sheets: [],
+    reportDay: "today",
+    sendTime: "20:00",
+  };
+  test("due without sheets", () => {
+    expect(isDue(fb, at("20:00"))).toBe(true);
+    expect(isDue({ ...base, sheets: [] }, at("20:00"))).toBe(false);
+  });
+  test("period → dates", () => {
+    expect(feedbackRange(fb, at("20:00"))).toEqual({ from: "2026-11-28", to: "2026-11-28" });
+    expect(feedbackRange({ ...fb, period: "month" }, at("20:00"))).toEqual({
+      from: "2026-11-01",
+      to: "2026-11-28",
+    });
+    expect(feedbackRange({ ...fb, period: "all" }, at("20:00"))).toEqual({});
+    expect(feedbackRange({ ...fb, reportDay: "yesterday" }, at("09:00"))).toEqual({
+      from: "2026-11-27",
+      to: "2026-11-27",
+    });
   });
 });

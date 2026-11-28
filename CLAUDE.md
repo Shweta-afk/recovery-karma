@@ -1224,6 +1224,13 @@ can't send twice; a send missed while down goes out later the same day. Email bo
 as inline-styled HTML tables (`collection-mis-email.ts`), plus an Excel attachment; the PNG
 images are browser-only. Rules pure in `report-schedule.ts` (tested in
 `scripts/report-schedule.test.ts`). MIS data via `collection-mis-data.server.ts`.
+**Scheduled Feedback Files** (Admin → Feedback File → Scheduled emails; needs only
+`report_emails`): same table, `kind='feedback'` + `period` (day / month to date / all,
+`migrations/20261128_feedback_schedules.sql`, live). ONE EMAIL PER TEAM, one Excel per open
+portfolio of that team, built by the same `buildFeedbackSheets` as the download over
+`loadPortfolioFeedback` (`portfolio-feedback-data.server.ts`, shared with the download's server
+action); split into parts above 25 MB. Never includes recording links. Day/month list only loans
+worked in the period; "all" lists every loan.
 
 ## Superadmin portal (platform owner) — rebuilt 2026-10-09
 

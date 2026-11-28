@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { FeedbackFileForm } from "@/components/audit/feedback-file-form";
+import { ReportSchedulesCard } from "@/components/reports/report-schedules-card";
 
 export const Route = createFileRoute("/admin/feedback-file")({
   head: () => ({ meta: [{ title: "Feedback File · SamvadX" }] }),
@@ -16,6 +17,7 @@ function AdminFeedbackFilePage() {
         </p>
       </div>
       <FeedbackFileForm />
+      <ReportSchedulesCard kind="feedback" />
     </div>
   );
 }

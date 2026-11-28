@@ -1,7 +1,7 @@
-// Sends scheduled Collection MIS emails. A once-a-minute timer in this server process (single
-// Railway replica, like the recordings importer) finds due schedules and claims each by moving
+// Sends scheduled report emails. A once-a-minute timer in this server process (single Railway
+// replica, like the recordings importer) finds due schedules and claims each by moving
 // last_sent_on to today in one conditional update — so a restart or a slow tick can't send twice.
-// Only companies with BOTH mis_reports and report_emails switched on (client_features).
+// MIS schedules need mis_reports AND report_emails; feedback schedules need report_emails.
 import { getSupabaseAdmin } from "./supabase-admin.server";
 import { emailConfigured, sendOneEmail } from "./email.server";
 import { loadFeatures } from "./company-features.server";
@@ -14,7 +14,17 @@ import {
   type MisSheetKey,
 } from "./collection-mis-email";
 import { longDay } from "./collection-mis";
-import { isDue, istParts, reportDayFor, type ReportSchedule } from "./report-schedule";
+import {
+  FEEDBACK_PERIOD_LABEL,
+  feedbackRange,
+  isDue,
+  istParts,
+  reportDayFor,
+  type ReportSchedule,
+} from "./report-schedule";
+import { buildFeedbackSheets } from "./portfolio-feedback";
+import { loadPortfolioFeedback } from "./portfolio-feedback-data.server";
+import { xlsxBuffer } from "./xlsx-server.server";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tables newer than generated types
 const db = () => getSupabaseAdmin() as any;
@@ -22,6 +32,8 @@ const db = () => getSupabaseAdmin() as any;
 export function toSchedule(r: Record<string, unknown>): ReportSchedule {
   return {
     id: String(r.id),
+    kind: r.kind === "feedback" ? "feedback" : "mis",
+    period: r.period === "month" || r.period === "all" ? r.period : "day",
     clientId: String(r.client_id),
     listId: String(r.list_id),
     name: String(r.name),
@@ -111,6 +123,165 @@ export async function sendScheduledMis(
   return { sent, total: emails.length, result };
 }
 
+/** Resend refuses an email over 40 MB (attachments base64-encoded); stay well under. */
+const MAX_EMAIL_BYTES = 25 * 1024 * 1024;
+
+const safeName = (s: string) =>
+  s
+    .replace(/[^\w\- ]+/g, "_")
+    .trim()
+    .slice(0, 60) || "portfolio";
+
+/** One email per team: that team's open portfolios' Feedback Files, one Excel each. */
+export async function sendScheduledFeedback(
+  s: ReportSchedule,
+  at: Date,
+  sentByName: string,
+): Promise<{ sent: number; total: number; result: string }> {
+  const { data: list } = await db()
+    .from("report_email_lists")
+    .select("id, name, emails")
+    .eq("id", s.listId)
+    .eq("client_id", s.clientId)
+    .maybeSingle();
+  if (!list) return { sent: 0, total: 0, result: "Email list no longer exists" };
+  const emails = (list.emails ?? []) as string[];
+
+  const { from, to } = feedbackRange(s, at);
+  const day = reportDayFor(s, at);
+  const periodText =
+    s.period === "all" ? "all feedback to date" : from === to ? longDay(day) : `${from} to ${to}`;
+  const [{ data: portfolios }, { data: teams }, { data: agents }] = await Promise.all([
+    db()
+      .from("portfolios")
+      .select("id, name, lender_name, team_id")
+      .eq("client_id", s.clientId)
+      .is("deleted_at", null)
+      .is("closed_at", null)
+      .order("name"),
+    db().from("teams").select("id, name").eq("client_id", s.clientId).order("name"),
+    db().from("agents").select("id, name").eq("client_id", s.clientId),
+  ]);
+  const teamName = new Map(
+    ((teams ?? []) as { id: string; name: string }[]).map((t) => [t.id, t.name]),
+  );
+  const byTeam = new Map<string, { id: string; name: string; lender_name: string | null }[]>();
+  for (const p of (portfolios ?? []) as {
+    id: string;
+    name: string;
+    lender_name: string | null;
+    team_id: string | null;
+  }[]) {
+    const team = (p.team_id && teamName.get(p.team_id)) || "No team";
+    byTeam.set(team, [...(byTeam.get(team) ?? []), p]);
+  }
+
+  let sent = 0;
+  let emailsTried = 0;
+  let files = 0;
+  for (const [team, pfs] of byTeam) {
+    const attachments: {
+      filename: string;
+      content: string;
+      bytes: number;
+      loans: number;
+      name: string;
+    }[] = [];
+    for (const p of pfs) {
+      const d = await loadPortfolioFeedback(s.clientId, p, {
+        from,
+        to,
+        includeRecordingLinks: false,
+      });
+      const sheets = buildFeedbackSheets(
+        {
+          ...d,
+          agentNames: new Map(
+            ((agents ?? []) as { id: string; name: string }[]).map((a) => [a.id, a.name]),
+          ),
+          recordingLinks: new Map(),
+          from: from ?? "",
+          to: to ?? "",
+          // "All feedback ever" lists every loan; a day or month only those worked in it.
+          includeNoActivity: s.period === "all",
+        },
+        istParts(at).day,
+      );
+      const buf = await xlsxBuffer(sheets);
+      attachments.push({
+        filename: `feedback-${safeName(p.name)}-${s.period === "all" ? "all-time" : `${from}_to_${to}`}.xlsx`,
+        content: buf.toString("base64"),
+        bytes: buf.length,
+        loans: sheets[0]?.rows.length ?? 0,
+        name: p.name,
+      });
+    }
+    files += attachments.length;
+    // Normally one email for the team; split if the files together are too big for one.
+    const groups: (typeof attachments)[] = [];
+    let cur: typeof attachments = [];
+    let size = 0;
+    for (const a of attachments) {
+      if (cur.length && size + a.bytes * 1.37 > MAX_EMAIL_BYTES) {
+        groups.push(cur);
+        cur = [];
+        size = 0;
+      }
+      cur.push(a);
+      size += a.bytes * 1.37;
+    }
+    if (cur.length) groups.push(cur);
+    for (const [gi, group] of groups.entries()) {
+      const part = groups.length > 1 ? ` (part ${gi + 1} of ${groups.length})` : "";
+      const lines = group.map((a) => `${a.name}: ${a.loans} loans`).join("\n");
+      const html = `<p style="font-family:Arial,sans-serif;font-size:13px;">Feedback Files for team <b>${team.replace(/[<>&]/g, "")}</b> — ${periodText} (${FEEDBACK_PERIOD_LABEL[s.period]}), sent automatically by SamvadX (${s.name.replace(/[<>&]/g, "")}).</p><ul style="font-family:Arial,sans-serif;font-size:13px;">${group
+        .map((a) => `<li>${a.name.replace(/[<>&]/g, "")}: ${a.loans} loans</li>`)
+        .join("")}</ul>`;
+      for (const to of emails) {
+        emailsTried++;
+        const ok = await sendOneEmail({
+          to,
+          subject: `Feedback File — ${team} — ${periodText}${part}`,
+          text: `Feedback Files for team ${team}, ${periodText}:\n${lines}`,
+          html,
+          attachments: group.map(({ filename, content }) => ({ filename, content })),
+        });
+        if (ok) sent++;
+      }
+    }
+  }
+
+  const result = byTeam.size
+    ? `${sent}/${emailsTried} emails sent — ${byTeam.size} team${byTeam.size === 1 ? "" : "s"}, ${files} file${files === 1 ? "" : "s"}, ${periodText}`
+    : "No open portfolios to send";
+  await db()
+    .from("report_email_log")
+    .insert({
+      client_id: s.clientId,
+      list_id: list.id,
+      list_name: list.name,
+      sent_by: null,
+      sent_by_name: sentByName,
+      report_name: `Feedback Files — ${periodText}`,
+      filename: `${files} file${files === 1 ? "" : "s"}, ${byTeam.size} team email${byTeam.size === 1 ? "" : "s"}`,
+      recipients: emails,
+      sent_count: sent,
+      note: null,
+    });
+  await db()
+    .from("report_email_schedules")
+    .update({ last_result: `${result} at ${istParts(new Date()).time}` })
+    .eq("id", s.id);
+  return { sent, total: emailsTried, result };
+}
+
+/** Send any kind of schedule now. */
+export function sendSchedule(s: ReportSchedule, at: Date, sentByName: string) {
+  return s.kind === "feedback"
+    ? sendScheduledFeedback(s, at, sentByName)
+    : sendScheduledMis(s, at, sentByName);
+}
+
 async function tick(): Promise<void> {
   if (!emailConfigured()) return;
   const now = new Date();
@@ -119,7 +290,7 @@ async function tick(): Promise<void> {
   for (const s of (data as Record<string, unknown>[]).map(toSchedule)) {
     if (!isDue(s, now)) continue;
     const f = await loadFeatures(s.clientId);
-    if (!f.misReports || !f.reportEmails) continue;
+    if (!f.reportEmails || (s.kind === "mis" && !f.misReports)) continue;
     const today = istParts(now).day;
     // Claim: only one tick (or process) can move last_sent_on forward for today.
     const q = db().from("report_email_schedules").update({ last_sent_on: today }).eq("id", s.id);
@@ -128,7 +299,7 @@ async function tick(): Promise<void> {
     ).select("id");
     if (!claimed?.length) continue;
     try {
-      const r = await sendScheduledMis(s, now, `Scheduled: ${s.name}`);
+      const r = await sendSchedule(s, now, `Scheduled: ${s.name}`);
       console.log(`[report-schedule] ${s.name}: ${r.result}`);
     } catch (e) {
       console.warn(`[report-schedule] ${s.name} failed:`, e);

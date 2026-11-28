@@ -1,12 +1,21 @@
-// When a scheduled MIS email is due (pure; IST throughout — India has no DST).
+// When a scheduled report email is due, and which days it covers (pure; IST throughout — India
+// has no DST). Two kinds: the Collection MIS, and Feedback Files (one email per team).
 import type { MisSheetKey } from "./collection-mis-email";
+
+export type ScheduleKind = "mis" | "feedback";
+/** Feedback schedules: the day only, the month up to it, or everything ever recorded. */
+export type FeedbackPeriod = "day" | "month" | "all";
 
 export interface ReportSchedule {
   id: string;
+  kind: ScheduleKind;
   clientId: string;
   listId: string;
   name: string;
+  /** MIS only; empty for feedback. */
   sheets: MisSheetKey[];
+  /** Feedback only. */
+  period: FeedbackPeriod;
   /** "HH:MM" IST */
   sendTime: string;
   /** 0 = Sunday … 6 = Saturday */
@@ -32,7 +41,7 @@ export function previousDay(day: string): string {
 /** Due once per IST day: on a chosen weekday, at or after the send time, not already sent today.
  *  A send missed while the server was down still goes out later that same day. */
 export function isDue(s: ReportSchedule, at: Date): boolean {
-  if (!s.enabled || !s.sheets.length) return false;
+  if (!s.enabled || (s.kind === "mis" && !s.sheets.length)) return false;
   const { day, time, weekday } = istParts(at);
   if (!s.weekdays.includes(weekday)) return false;
   if (time < s.sendTime) return false;
@@ -46,3 +55,20 @@ export function reportDayFor(s: Pick<ReportSchedule, "reportDay">, at: Date): st
 }
 
 export const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Feedback File dates for a send: undefined = no bound (all time). */
+export function feedbackRange(
+  s: Pick<ReportSchedule, "reportDay" | "period">,
+  at: Date,
+): { from?: string; to?: string } {
+  const day = reportDayFor(s, at);
+  if (s.period === "all") return {};
+  if (s.period === "month") return { from: `${day.slice(0, 8)}01`, to: day };
+  return { from: day, to: day };
+}
+
+export const FEEDBACK_PERIOD_LABEL: Record<FeedbackPeriod, string> = {
+  day: "that day only",
+  month: "month to date",
+  all: "all feedback ever",
+};
