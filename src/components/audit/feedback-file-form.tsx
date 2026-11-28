@@ -17,6 +17,7 @@ import { EMPTY_RANGE, type DateRange } from "@/lib/date-filter";
 import { errorText } from "@/lib/app-error";
 import { getAccessToken } from "@/lib/access-token";
 import { downloadXlsx } from "@/lib/xlsx-export";
+import { EmailReportButton } from "@/components/report-email";
 import { istDayKeyDaysAgo } from "@/lib/call-audit";
 import { buildFeedbackSheets } from "@/lib/portfolio-feedback";
 import { getPortfolioFeedbackData, listFeedbackPortfolios } from "@/lib/portfolio-feedback.server";
@@ -216,10 +217,13 @@ export function FeedbackFileForm() {
         </label>
       </div>
 
-      <Button disabled={!portfolioId || busy} onClick={download} className="gap-2">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-        {busy ? "Building file…" : "Download feedback file"}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button disabled={!portfolioId || busy} onClick={download} className="gap-2">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          {busy ? "Building file…" : "Download feedback file"}
+        </Button>
+        <EmailReportButton />
+      </div>
     </Card>
   );
 }

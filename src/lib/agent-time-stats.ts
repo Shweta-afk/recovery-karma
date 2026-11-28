@@ -21,6 +21,7 @@
 import type { DispositionRecord } from "./disposition-store";
 import type { AgentStatus } from "./call-queue/types";
 import type { StatusInterval } from "./agent-presence-store";
+import { PRESENCE_STALE_MS } from "./agent-presence-constants";
 
 export interface AgentTimeStats {
   agentId: string;
@@ -61,15 +62,39 @@ export function workWindow(dateIso: string): { start: number; end: number } {
   };
 }
 
-/** Overlap in seconds between an interval and the IST day, so a shift spanning midnight is
- * counted against each day only for the part that fell in it. */
-function secondsInDay(interval: StatusInterval, dayStart: number, dayEnd: number): number {
-  const from = Math.max(new Date(interval.startedAt).getTime(), dayStart);
-  // An interval still open is counted up to now, never to the end of the day — an agent who
-  // is 20 minutes into their shift has not been available for 14 hours.
-  const rawEnd = interval.endedAt ? new Date(interval.endedAt).getTime() : Date.now();
-  const to = Math.min(rawEnd, dayEnd);
-  return to > from ? Math.round((to - from) / 1000) : 0;
+/** When an interval really ended. Never later than its last heartbeat (+ the stale allowance):
+ *  on 25 Nov rows left open since September were closed with "now" as their end, and an open row
+ *  whose app went away (closed laptop) would otherwise run until now. */
+export function effectiveEnd(i: StatusInterval, now = Date.now()): number {
+  const seen = i.lastSeenAt ? Date.parse(i.lastSeenAt) : null;
+  const bound = seen != null ? seen + PRESENCE_STALE_MS : Number.POSITIVE_INFINITY;
+  if (i.endedAt) return Math.min(Date.parse(i.endedAt), bound);
+  return Math.min(now, bound);
+}
+
+/** The part of an interval inside [dayStart, dayEnd), as [from, to] ms, or null. */
+function clip(i: StatusInterval, dayStart: number, dayEnd: number): [number, number] | null {
+  const from = Math.max(Date.parse(i.startedAt), dayStart);
+  const to = Math.min(effectiveEnd(i), dayEnd);
+  return to > from ? [from, to] : null;
+}
+
+/** Seconds covered by a set of ranges, counting overlaps once — two tabs, or a stale row next to
+ *  a live one, must not double an agent's logged-in time. */
+export function unionSeconds(ranges: [number, number][]): number {
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let curStart = -1;
+  let curEnd = -1;
+  for (const [s, e] of sorted) {
+    if (s > curEnd) {
+      if (curEnd > curStart) total += curEnd - curStart;
+      curStart = s;
+      curEnd = e;
+    } else if (e > curEnd) curEnd = e;
+  }
+  if (curEnd > curStart) total += curEnd - curStart;
+  return Math.round(total / 1000);
 }
 
 /**
@@ -122,25 +147,41 @@ export function getAgentTimeStats(
     };
   }
 
-  let loggedInSeconds = 0;
-  let breakSeconds = 0;
+  const online: [number, number][] = [];
+  const breaks: [number, number][] = [];
   let earliest = Number.POSITIVE_INFINITY;
   let latestClosed = 0;
   let anyOpen = false;
+  const now = Date.now();
+
+  // A row carried over from an earlier day (app left open overnight keeps heartbeating) is not a
+  // login (user, 2026-11-27): it counts only from the agent's first call of the day, and not at
+  // all on a day with no calls. A real sign-in or status change today opens a new row anyway.
+  const firstCallAt = disps.reduce((min, d) => {
+    const secs = (d.durationSeconds ?? 0) + (d.ringSeconds ?? 0) + (d.wrapSeconds ?? 0);
+    return Math.min(min, new Date(d.time).getTime() - secs * 1000);
+  }, Number.POSITIVE_INFINITY);
+
+  const istMidnight = new Date(`${dateIso}T00:00:00+05:30`).getTime();
 
   for (const i of mine) {
-    const secs = secondsInDay(i, dayStart, dayEnd);
-    if (i.status !== "offline") loggedInSeconds += secs;
-    if (BREAK_STATUSES.includes(i.status)) breakSeconds += secs;
+    let r = clip(i, dayStart, dayEnd);
+    if (r && Date.parse(i.startedAt) < istMidnight) {
+      const from = Math.max(r[0], firstCallAt);
+      r = Number.isFinite(from) && from < r[1] ? [from, r[1]] : null;
+    }
+    if (!r) continue;
+    if (i.status !== "offline") online.push(r);
+    if (BREAK_STATUSES.includes(i.status)) breaks.push(r);
 
-    // Login/logout are shown within the working window too, and only for time that overlapped it.
-    if (secs <= 0) continue;
-    const startedAt = Math.max(new Date(i.startedAt).getTime(), dayStart);
-    if (i.status !== "offline" && startedAt < earliest) earliest = startedAt;
-    if (i.endedAt)
-      latestClosed = Math.max(latestClosed, Math.min(new Date(i.endedAt).getTime(), dayEnd));
-    else anyOpen = true;
+    if (i.status !== "offline" && r[0] < earliest) earliest = r[0];
+    // Still signed in = open AND heartbeating; an open row whose app went away has ended.
+    if (!i.endedAt && effectiveEnd(i, now) >= now) anyOpen = true;
+    else latestClosed = Math.max(latestClosed, r[1]);
   }
+
+  const loggedInSeconds = unionSeconds(online);
+  const breakSeconds = Math.min(unionSeconds(breaks), loggedInSeconds);
 
   // Whatever is left of the logged-in day after calling, ringing, wrapping and breaks. Floored
   // at zero: clock skew between an agent's browser and the server can otherwise make the parts
@@ -160,6 +201,48 @@ export function getAgentTimeStats(
     logoutTime: anyOpen || !latestClosed ? null : new Date(latestClosed),
     loggedInSeconds,
     presenceRecorded: true,
+  };
+}
+
+/** IST day keys from `from` to `to` inclusive ("YYYY-MM-DD"). */
+export function daysBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  const end = Date.parse(`${to}T00:00:00Z`);
+  for (let t = Date.parse(`${from}T00:00:00Z`); t <= end; t += 86_400_000)
+    out.push(new Date(t).toISOString().slice(0, 10));
+  return out;
+}
+
+/**
+ * The same breakdown summed over a range of IST days — each day measured on its own 8 am–8 pm
+ * window, then added. Login is the first day's, logout the last day's.
+ */
+export function getAgentTimeStatsRange(
+  agentId: string,
+  allDisps: DispositionRecord[],
+  fromDay: string,
+  toDay: string,
+  intervals: StatusInterval[] = [],
+): AgentTimeStats {
+  const days = daysBetween(fromDay, toDay);
+  const per = days.map((d) => getAgentTimeStats(agentId, allDisps, d, intervals));
+  if (per.length === 1) return per[0];
+  const add = (f: (s: AgentTimeStats) => number | null) => {
+    const vals = per.map(f).filter((v): v is number => v != null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+  };
+  const tracked = per.filter((s) => s.presenceRecorded);
+  return {
+    agentId,
+    callingSeconds: per.reduce((a, s) => a + s.callingSeconds, 0),
+    ringingSeconds: add((s) => s.ringingSeconds),
+    dispositionSeconds: add((s) => s.dispositionSeconds),
+    breakSeconds: add((s) => s.breakSeconds),
+    idleSeconds: add((s) => s.idleSeconds),
+    loggedInSeconds: add((s) => s.loggedInSeconds),
+    loginTime: tracked[0]?.loginTime ?? null,
+    logoutTime: tracked.at(-1)?.logoutTime ?? null,
+    presenceRecorded: tracked.length > 0,
   };
 }
 

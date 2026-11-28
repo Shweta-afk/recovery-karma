@@ -30,7 +30,7 @@ export function isRangeActive(r: DateRange): boolean {
 
 /** Both ends set but backwards reads as a typo mid-entry, not an empty result — swap rather
  * than showing the user a table that has silently gone blank. */
-function normalize(r: DateRange): DateRange {
+export function normalizedRange(r: DateRange): DateRange {
   if (r.from && r.to && r.from > r.to) return { from: r.to, to: r.from };
   return r;
 }
@@ -40,7 +40,7 @@ function normalize(r: DateRange): DateRange {
 export function inDayRange(day: string | null | undefined, range: DateRange): boolean {
   if (!isRangeActive(range)) return true;
   if (!day) return false; // undated rows can't satisfy an active filter
-  const { from, to } = normalize(range);
+  const { from, to } = normalizedRange(range);
   if (from && day < from) return false;
   if (to && day > to) return false;
   return true;
@@ -61,7 +61,7 @@ export function todayIstKey(): string {
 /** Compact human label for an active range, for chips/summaries. */
 export function describeRange(range: DateRange): string {
   if (!isRangeActive(range)) return "All dates";
-  const { from, to } = normalize(range);
+  const { from, to } = normalizedRange(range);
   if (from && to) return from === to ? from : `${from} → ${to}`;
   return from ? `From ${from}` : `Until ${to}`;
 }

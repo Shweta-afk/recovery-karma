@@ -33,7 +33,9 @@ import {
   EMPTY_RANGE,
   inDateRange,
   isRangeActive,
+  normalizedRange,
   describeRange,
+  todayIstKey,
   type DateRange,
 } from "@/lib/date-filter";
 import {
@@ -43,6 +45,7 @@ import {
   type DispositionRecord,
 } from "@/lib/disposition-store";
 import { getVisiblePortfolioMeta, refreshVisiblePortfolioMeta } from "@/lib/scoped-debtors";
+import { teamToday } from "@/lib/team-today";
 import { usePosByDebtor } from "@/lib/pos-lookup";
 import { formatINR } from "@/lib/mock-debtors";
 import { MonthlyTrendPanel, type TrendGroup } from "@/components/reports/monthly-trend";
@@ -80,6 +83,7 @@ import {
   summariseTotals,
 } from "@/lib/report-metrics-store";
 import { downloadCsv } from "@/lib/csv-export";
+import { EmailReportButton } from "@/components/report-email";
 import {
   OUTCOME_LABELS,
   OUTCOME_COLOR,
@@ -338,6 +342,20 @@ function AdminReportsPage() {
       const onBreakNow = team.agentIds.filter((aid) =>
         isOnBreak(currentStatusOf(todayIntervals, aid, statusNow)),
       ).length;
+      // Always today (IST), whatever the date range above. A bank-reported payment credits no
+      // person, so it reaches a team through its portfolio — same rule as the monthly trend.
+      const roster = new Set(team.agentIds);
+      const teamPortfolioIds = new Set(teamPortfolios.map((p) => p.id));
+      const today = teamToday(
+        disps.filter((d) => d.teamId === team.id),
+        disps,
+        payments.filter((p) =>
+          p.agentId === null
+            ? p.portfolioId !== undefined && teamPortfolioIds.has(p.portfolioId)
+            : roster.has(p.agentId),
+        ),
+        todayIstKey(),
+      );
       return {
         team,
         stats: calcStats(teamDisps),
@@ -346,9 +364,19 @@ function AdminReportsPage() {
         portfolios: teamPortfolios,
         avgIdlePct,
         onBreakNow,
+        today,
       };
     });
-  }, [teams, disps, rangedDisps, portfolios, activeCountByAgent, todayIntervals, statusNow]);
+  }, [
+    teams,
+    disps,
+    rangedDisps,
+    portfolios,
+    payments,
+    activeCountByAgent,
+    todayIntervals,
+    statusNow,
+  ]);
 
   // All agents across all teams with stats
   const agentStats = useMemo(() => {
@@ -588,6 +616,7 @@ function AdminReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <EmailReportButton />
           <Badge variant="outline" className="font-normal">
             {teams.length} team{teams.length !== 1 ? "s" : ""}
           </Badge>
@@ -814,7 +843,16 @@ function AdminReportsPage() {
             </p>
           )}
           {teamStats.map(
-            ({ team, stats, assignedCount, disps: td, portfolios: tp, avgIdlePct, onBreakNow }) => {
+            ({
+              team,
+              stats,
+              assignedCount,
+              disps: td,
+              portfolios: tp,
+              avgIdlePct,
+              onBreakNow,
+              today,
+            }) => {
               const open = expandedTeam === team.id;
               return (
                 <Card key={team.id} className="overflow-hidden">
@@ -850,6 +888,30 @@ function AdminReportsPage() {
                             {formatINR(stats.ptpAmount)} PTP value
                           </span>
                         )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs">
+                        <span className="text-muted-foreground font-medium">Today:</span>
+                        <span title="PTPs (and Partially Paid balances with a date) logged today">
+                          <span className="text-muted-foreground">Generated </span>
+                          <span className="font-semibold text-foreground">
+                            {formatINR(today.generatedAmount)}
+                          </span>
+                          <span className="text-muted-foreground"> ({today.generatedCount})</span>
+                        </span>
+                        <span title="Completed payments received today, including bank paid files">
+                          <span className="text-muted-foreground">Collected </span>
+                          <span className="font-semibold text-success">
+                            {formatINR(today.collectedAmount)}
+                          </span>
+                          <span className="text-muted-foreground"> ({today.collectedCount})</span>
+                        </span>
+                        <span title="Projection: still-open promises due today">
+                          <span className="text-muted-foreground">Due today </span>
+                          <span className="font-semibold text-foreground">
+                            {formatINR(today.dueAmount)}
+                          </span>
+                          <span className="text-muted-foreground"> ({today.dueCount})</span>
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 shrink-0 text-xs">
@@ -937,6 +999,24 @@ function AdminReportsPage() {
                               <th className="py-2 px-3 text-right font-medium text-muted-foreground">
                                 Collected
                               </th>
+                              <th
+                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
+                                title="PTPs (and Partially Paid balances with a date) this agent logged today"
+                              >
+                                Generated today
+                              </th>
+                              <th
+                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
+                                title="Completed payments this agent collected today"
+                              >
+                                Collected today
+                              </th>
+                              <th
+                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
+                                title="Projection: this agent's still-open promises due today"
+                              >
+                                Due today
+                              </th>
                               <th className="py-2 px-3 text-center font-medium text-muted-foreground">
                                 Contact%
                               </th>
@@ -973,6 +1053,14 @@ function AdminReportsPage() {
                                 todayIntervals,
                               );
                               const cur = currentStatusOf(todayIntervals, aid, statusNow);
+                              const at = teamToday(
+                                disps.filter((d) => d.teamId === team.id && d.agentId === aid),
+                                disps,
+                                payments.filter((p) => p.agentId === aid),
+                                todayIstKey(),
+                              );
+                              const money = (amt: number, n: number) =>
+                                n > 0 ? `${formatINR(amt)} (${n})` : "—";
                               return (
                                 <tr key={aid} className="hover:bg-muted/20">
                                   <td className="py-2 px-3 font-medium text-foreground">
@@ -987,6 +1075,15 @@ function AdminReportsPage() {
                                   </td>
                                   <td className="py-2 px-3 text-right">
                                     {as_.paidAmount > 0 ? formatINR(as_.paidAmount) : "—"}
+                                  </td>
+                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums">
+                                    {money(at.generatedAmount, at.generatedCount)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums text-success">
+                                    {money(at.collectedAmount, at.collectedCount)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums">
+                                    {money(at.dueAmount, at.dueCount)}
                                   </td>
                                   <td className="py-2 px-3 text-center">
                                     {as_.total > 0 ? (
@@ -1238,6 +1335,8 @@ function AdminReportsPage() {
                                   disps={a.disps}
                                   payments={payments.filter((p) => p.agentId === a.agentId)}
                                   posByDebtor={posByDebtor}
+                                  fromDay={normalizedRange(dateRange).from || undefined}
+                                  toDay={normalizedRange(dateRange).to || undefined}
                                 />
                                 <div className="border-t border-border pt-3">
                                   <AgentCallLog disps={a.disps} agentName={a.name} />

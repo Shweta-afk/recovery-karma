@@ -29,6 +29,7 @@ import {
   EMPTY_RANGE,
   inDateRange,
   isRangeActive,
+  normalizedRange,
   describeRange,
   type DateRange,
 } from "@/lib/date-filter";
@@ -53,6 +54,7 @@ import { MonthlyTrendPanel, type TrendGroup } from "@/components/reports/monthly
 import { scopeToAgents, unattributedCollected } from "@/lib/monthly-trend";
 import { formatINR } from "@/lib/mock-debtors";
 import { downloadCsv } from "@/lib/csv-export";
+import { EmailReportButton } from "@/components/report-email";
 import {
   OUTCOME_LABELS,
   OUTCOME_COLOR,
@@ -311,6 +313,7 @@ function ManagerReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <EmailReportButton />
           <Badge variant="outline" className="font-normal text-xs">
             {teamAgents.length} agent{teamAgents.length !== 1 ? "s" : ""}
           </Badge>
@@ -624,6 +627,8 @@ function ManagerReportsPage() {
                                   disps={a.disps}
                                   payments={allPayments.filter((p) => p.agentId === a.agentId)}
                                   posByDebtor={posByDebtor}
+                                  fromDay={normalizedRange(dateRange).from || undefined}
+                                  toDay={normalizedRange(dateRange).to || undefined}
                                 />
                                 <div className="border-t border-border pt-3">
                                   <AgentCallLog disps={a.disps} agentName={a.name} />

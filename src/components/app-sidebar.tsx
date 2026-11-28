@@ -34,6 +34,7 @@ import {
   Kanban,
   Contact,
   UserPlus,
+  TableProperties,
 } from "lucide-react";
 import {
   Sidebar,
@@ -76,6 +77,7 @@ const managerItems = [
   { title: "Debtors", url: "/dashboard/debtors", icon: Users },
   { title: "Payments", url: "/dashboard/payments", icon: CreditCard },
   { title: "Reports", url: "/manager/reports", icon: FileBarChart },
+  { title: "Collection MIS", url: "/manager/mis", icon: TableProperties },
   { title: "Feedback File", url: "/manager/feedback-file", icon: FileSpreadsheet },
   { title: "Settings", url: "/dashboard/settings", icon: Settings },
 ];
@@ -86,6 +88,7 @@ const adminItems = [
   { title: "Users", url: "/admin/users", icon: UserCog },
   { title: "Teams", url: "/admin/teams", icon: Users },
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
+  { title: "Collection MIS", url: "/admin/mis", icon: TableProperties },
   { title: "Feedback File", url: "/admin/feedback-file", icon: FileSpreadsheet },
   { title: "Call Auditor", url: "/auditor", icon: Headphones },
   { title: "Insights", url: "/admin/insights", icon: Sparkles },

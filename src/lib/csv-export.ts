@@ -1,6 +1,7 @@
 // Shared CSV export — sanitizes against Excel formula injection and triggers a download.
 // Single source of truth for the pattern previously duplicated in dashboard.call-queue.tsx,
 // dashboard.history.tsx, and manager.upload.tsx.
+import { deliverOrCapture } from "./download-capture";
 
 function sanitize(v: string | number): string {
   const s = String(v);
@@ -23,6 +24,7 @@ export function downloadCsv(
 ): void {
   const csv = toCsv(headers, rows);
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  if (deliverOrCapture(filename, blob)) return;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

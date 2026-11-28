@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { getAgentTimeStats, workWindow } from "../src/lib/agent-time-stats";
+import {
+  daysBetween,
+  getAgentTimeStats,
+  getAgentTimeStatsRange,
+  workWindow,
+} from "../src/lib/agent-time-stats";
 import type { StatusInterval } from "../src/lib/agent-presence-store";
 import type { DispositionRecord } from "../src/lib/disposition-store";
 
@@ -55,5 +60,79 @@ describe("time is measured 8 am – 8 pm IST", () => {
     expect(s.loggedInSeconds).toBe(0);
     expect(s.idleSeconds).toBe(0);
     expect(s.loginTime).toBeNull();
+  });
+});
+
+describe("presence rows that overlap or were closed late", () => {
+  test("two tabs open at once count the time once", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [
+      iv("available", "09:00", "13:00"),
+      iv("available", "10:00", "14:00"),
+    ]);
+    expect(s.loggedInSeconds).toBe(5 * 3600);
+  });
+  test("a row closed long after its last heartbeat ends at the heartbeat", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [
+      {
+        agentId: "a@x.com",
+        status: "available",
+        startedAt: at("09:00"),
+        endedAt: "2026-11-25T10:00:00+05:30",
+        lastSeenAt: at("11:00"),
+      },
+    ]);
+    expect(s.loggedInSeconds).toBe(2 * 3600 + 3 * 60);
+    expect(s.logoutTime).not.toBeNull();
+  });
+  test("break never exceeds logged-in time", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [
+      iv("break", "09:00", "10:00"),
+      iv("lunch", "09:30", "10:00"),
+    ]);
+    expect(s.breakSeconds).toBe(3600);
+    expect(s.idleSeconds).toBe(0);
+  });
+});
+
+describe("an app left open overnight is not a login", () => {
+  const overnight: StatusInterval = {
+    agentId: "a@x.com",
+    status: "available",
+    startedAt: "2026-11-19T15:00:00+05:30",
+    endedAt: at("19:00"),
+    lastSeenAt: at("19:00"),
+  };
+  test("counts only from the first call of the day", () => {
+    const s = getAgentTimeStats("a@x.com", [call("10:01", 30)], DAY, [overnight]);
+    // first call began at 10:01 minus 30 s talk, 10 s ring, 20 s wrap = 10:00
+    expect(s.loggedInSeconds).toBe(9 * 3600);
+    expect(s.loginTime?.getTime()).toBe(new Date(at("10:00")).getTime());
+  });
+  test("counts nothing on a day with no calls", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [overnight]);
+    expect(s.loggedInSeconds).toBe(0);
+  });
+});
+
+describe("time over a range of days", () => {
+  test("each day is measured on its own and added up", () => {
+    const iv2 = (day: string, from: string, to: string): StatusInterval => ({
+      agentId: "a@x.com",
+      status: "available",
+      startedAt: `${day}T${from}:00+05:30`,
+      endedAt: `${day}T${to}:00+05:30`,
+      lastSeenAt: `${day}T${to}:00+05:30`,
+    });
+    const s = getAgentTimeStatsRange("a@x.com", [], "2026-11-19", "2026-11-20", [
+      iv2("2026-11-19", "10:00", "12:00"),
+      iv2("2026-11-20", "09:00", "10:00"),
+    ]);
+    expect(s.loggedInSeconds).toBe(3 * 3600);
+    expect(daysBetween("2026-11-29", "2026-12-02")).toEqual([
+      "2026-11-29",
+      "2026-11-30",
+      "2026-12-01",
+      "2026-12-02",
+    ]);
   });
 });
