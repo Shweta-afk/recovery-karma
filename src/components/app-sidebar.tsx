@@ -36,6 +36,7 @@ import {
   UserPlus,
   TableProperties,
 } from "lucide-react";
+import { useCompanyFeatures } from "@/lib/use-company-features";
 import {
   Sidebar,
   SidebarContent,
@@ -137,14 +138,17 @@ const salesAdminItems = [
 ];
 
 export function AppSidebar({ role }: { role: Role }) {
+  // Sellable features stay out of the menu for companies that don't have them.
+  const features = useCompanyFeatures();
+  const showItem = (item: { url: string }) => !item.url.endsWith("/mis") || features.misReports;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const isActive = (url: string) =>
     url === "/manager" ||
-      url === "/admin" ||
-      url === "/superadmin" ||
-      url === "/auditor" ||
-      url === "/sales"
+    url === "/admin" ||
+    url === "/superadmin" ||
+    url === "/auditor" ||
+    url === "/sales"
       ? pathname === url
       : pathname.startsWith(url);
 
@@ -191,7 +195,7 @@ export function AppSidebar({ role }: { role: Role }) {
             <SidebarGroupLabel>Manager</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {managerItems.map((item) => (
+                {managerItems.filter(showItem).map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
                       <Link to={item.url}>
@@ -212,7 +216,7 @@ export function AppSidebar({ role }: { role: Role }) {
             <SidebarGroupLabel>Administration</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {adminItems.map((item) => (
+                {adminItems.filter(showItem).map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
                       <Link to={item.url}>

@@ -8,10 +8,13 @@ import { ARCHIVE_CRON_PATH, handleArchiveCron } from "./lib/archive-cron.server"
 import { APP_PING_BODY, APP_PING_PATH } from "./lib/company-address";
 import { SALES_LEAD_PATH, handleSalesLead } from "./lib/sales-lead-endpoint.server";
 import { startRecordingImports } from "./lib/telephony/recordings.server";
+import { startReportSchedules } from "./lib/report-schedule-runner.server";
 import { RECORDING_LINK_PATH_PREFIX, handleRecordingLink } from "./lib/recording-share-link.server";
 
 // SkyCRM call recordings → SamvadX Storage, every 5 minutes (no-op unless TELEPHONY_PROVIDER=skycrm).
 startRecordingImports();
+// Scheduled Collection MIS emails, checked every minute (report-schedule-runner.server.ts).
+startReportSchedules();
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;

@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { getAccessToken } from "@/lib/access-token";
 import { errorText } from "@/lib/app-error";
 import { captureNextDownload } from "@/lib/download-capture";
+import { useCompanyFeatures } from "@/lib/use-company-features";
 import {
   deleteReportEmailList,
   listReportEmailLists,
@@ -46,7 +47,7 @@ async function blobToBase64(blob: Blob): Promise<string> {
  * Reports page header button. Click → the page's next Download builds its file as usual, but
  * the file opens a "send to list" dialog instead of being saved.
  */
-export function EmailReportButton() {
+function EmailReportButtonInner() {
   const [armed, setArmed] = useState(false);
   const [file, setFile] = useState<{ filename: string; blob: Blob } | null>(null);
 
@@ -237,7 +238,7 @@ function SendDialog({
 }
 
 /** Admin → Settings: manage recipient lists + see what was sent recently. */
-export function ReportEmailListsCard() {
+function ReportEmailListsCardInner() {
   const [lists, setLists] = useState<ReportEmailList[]>([]);
   const [log, setLog] = useState<ReportEmailLogRow[]>([]);
   const [ready, setReady] = useState(true);
@@ -389,4 +390,15 @@ export function ReportEmailListsCard() {
       </CardContent>
     </Card>
   );
+}
+
+/** Shown only to companies with "Report emails" switched on. */
+export function EmailReportButton() {
+  const f = useCompanyFeatures();
+  return f.reportEmails ? <EmailReportButtonInner /> : null;
+}
+
+export function ReportEmailListsCard() {
+  const f = useCompanyFeatures();
+  return f.reportEmails ? <ReportEmailListsCardInner /> : null;
 }

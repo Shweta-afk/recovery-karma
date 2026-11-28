@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FileSpreadsheet, ImageDown, Loader2 } from "lucide-react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { CalendarClock, FileSpreadsheet, ImageDown, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { EmailReportButton } from "@/components/report-email";
+import { useCompanyFeatures } from "@/lib/use-company-features";
 import { getAccessToken } from "@/lib/access-token";
 import { errorText } from "@/lib/app-error";
 import { downloadBlob } from "@/lib/download-capture";
@@ -24,6 +25,7 @@ import {
   type MisInput,
 } from "@/lib/collection-mis";
 import { todayIstKey } from "@/lib/date-filter";
+import { SCHEDULE_SHEET_EVENT, type MisSheetKey } from "@/lib/collection-mis-email";
 
 // Fixed "spreadsheet" colours on purpose: these tables are exported as images and must look the
 // same as the company's Excel MIS whatever theme the viewer uses.
@@ -69,17 +71,23 @@ async function savePng(node: HTMLElement, filename: string) {
   downloadBlob(filename, blob);
 }
 
+/** Admin MIS page only: each sheet gets a "Schedule" button. */
+const CanSchedule = createContext(false);
+
 function Sheet({
   title,
   file,
   xlsx,
+  sheet,
   children,
 }: {
   title: string;
   file: string;
   xlsx: () => { headers: string[]; rows: XlsxCell[][] };
+  sheet: MisSheetKey;
   children: ReactNode;
 }) {
+  const canSchedule = useContext(CanSchedule);
   const ref = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const png = async () => {
@@ -117,6 +125,18 @@ function Sheet({
           >
             <FileSpreadsheet className="h-4 w-4" /> Excel
           </Button>
+          {canSchedule && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2"
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent(SCHEDULE_SHEET_EVENT, { detail: sheet }))
+              }
+            >
+              <CalendarClock className="h-4 w-4" /> Schedule
+            </Button>
+          )}
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -153,7 +173,23 @@ function Head({ cols }: { cols: string[] }) {
   );
 }
 
-export function CollectionMisView() {
+export function CollectionMisView({ canSchedule = false }: { canSchedule?: boolean }) {
+  const f = useCompanyFeatures();
+  if (!f.loaded) return <Loader2 className="h-4 w-4 animate-spin" />;
+  if (!f.misReports)
+    return (
+      <p className="text-sm text-muted-foreground">
+        Collection MIS isn't on your company's plan. Contact SamvadX to add it.
+      </p>
+    );
+  return (
+    <CanSchedule.Provider value={canSchedule && f.reportEmails}>
+      <MisView />
+    </CanSchedule.Provider>
+  );
+}
+
+function MisView() {
   const [asOf, setAsOf] = useState(todayIstKey());
   const [data, setData] = useState<(MisInput & { teamCount: number }) | null>(null);
   const [loading, setLoading] = useState(false);
@@ -224,6 +260,7 @@ function Sheets({ data, stamp }: { data: MisInput; stamp: string }) {
     <div className="space-y-4">
       {/* 1. Differences */}
       <Sheet
+        sheet="differences"
         title="Differences (last month vs this month)"
         file={`mis-differences-${fileDay}`}
         xlsx={() => ({
@@ -279,6 +316,7 @@ function Sheets({ data, stamp }: { data: MisInput; stamp: string }) {
 
       {/* 2. Ranking */}
       <Sheet
+        sheet="ranking"
         title="Daily Collection Ranking MIS"
         file={`mis-ranking-${fileDay}`}
         xlsx={() => ({
@@ -319,6 +357,7 @@ function Sheets({ data, stamp }: { data: MisInput; stamp: string }) {
 
       {/* 3. Zero numbers */}
       <Sheet
+        sheet="zero"
         title="Zero Numbers MIS"
         file={`mis-zero-numbers-${fileDay}`}
         xlsx={() => ({
@@ -378,6 +417,7 @@ function Sheets({ data, stamp }: { data: MisInput; stamp: string }) {
 
       {/* 4. Daily collection */}
       <Sheet
+        sheet="daily"
         title="Daily Collection MIS"
         file={`mis-daily-collection-${fileDay}`}
         xlsx={() => ({
@@ -465,6 +505,7 @@ function Sheets({ data, stamp }: { data: MisInput; stamp: string }) {
 
       {/* 5. Client */}
       <Sheet
+        sheet="client"
         title="Daily Collection Client MIS"
         file={`mis-client-${fileDay}`}
         xlsx={() => ({
