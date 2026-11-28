@@ -981,61 +981,46 @@ function AdminReportsPage() {
                         Agent Performance
                       </div>
                       <div className="rounded-md border border-border overflow-hidden">
-                        <table className="w-full text-xs">
+                        <table className="w-full text-[11px]">
                           <thead>
                             <tr className="bg-muted/20 border-b border-border">
-                              <th className="py-2 px-3 text-left font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-left font-medium text-muted-foreground">
                                 Agent
                               </th>
-                              <th className="py-2 px-3 text-center font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-center font-medium text-muted-foreground">
                                 Calls
                               </th>
-                              <th className="py-2 px-3 text-center font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-right font-medium text-muted-foreground">
                                 PTPs
                               </th>
-                              <th className="py-2 px-3 text-right font-medium text-muted-foreground">
-                                PTP Value
-                              </th>
-                              <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-right font-medium text-muted-foreground">
                                 Collected
                               </th>
                               <th
-                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
-                                title="PTPs (and Partially Paid balances with a date) this agent logged today"
+                                className="py-1.5 px-2 text-right font-medium text-muted-foreground"
+                                title="Generated = PTPs (and dated Partially Paid balances) logged today · Collected = payments collected today · Due = still-open promises due today"
                               >
-                                Generated today
+                                Today
                               </th>
-                              <th
-                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
-                                title="Completed payments this agent collected today"
-                              >
-                                Collected today
+                              <th className="py-1.5 px-2 text-center font-medium text-muted-foreground">
+                                Contact
                               </th>
-                              <th
-                                className="py-2 px-3 text-right font-medium text-muted-foreground whitespace-nowrap"
-                                title="Projection: this agent's still-open promises due today"
-                              >
-                                Due today
-                              </th>
-                              <th className="py-2 px-3 text-center font-medium text-muted-foreground">
-                                Contact%
-                              </th>
-                              <th className="py-2 px-3 text-left font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-left font-medium text-muted-foreground">
                                 Right now
                               </th>
-                              <th className="py-2 px-3 text-left font-medium text-muted-foreground">
-                                Shift (today)*
+                              <th className="py-1.5 px-2 text-left font-medium text-muted-foreground">
+                                Shift*
                               </th>
-                              <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-right font-medium text-muted-foreground">
                                 Ringing*
                               </th>
-                              <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-right font-medium text-muted-foreground">
                                 Calling*
                               </th>
-                              <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-right font-medium text-muted-foreground">
                                 Idle*
                               </th>
-                              <th className="py-2 px-3 text-right font-medium text-muted-foreground">
+                              <th className="py-1.5 px-2 text-right font-medium text-muted-foreground">
                                 Break*
                               </th>
                             </tr>
@@ -1063,44 +1048,48 @@ function AdminReportsPage() {
                                 n > 0 ? `${formatINR(amt)} (${n})` : "—";
                               return (
                                 <tr key={aid} className="hover:bg-muted/20">
-                                  <td className="py-2 px-3 font-medium text-foreground">
+                                  <td className="py-1.5 px-2 font-medium text-foreground">
                                     {ref?.name ?? aid}
                                   </td>
-                                  <td className="py-2 px-3 text-center">{as_.total}</td>
-                                  <td className="py-2 px-3 text-center text-blue-500 font-medium">
-                                    {as_.ptps}
+                                  <td className="py-1.5 px-2 text-center">{as_.total}</td>
+                                  <td className="py-1.5 px-2 text-right tabular-nums">
+                                    <span className="font-medium text-blue-500">{as_.ptps}</span>
+                                    {as_.ptpAmount > 0 && (
+                                      <div className="text-success">{formatINR(as_.ptpAmount)}</div>
+                                    )}
                                   </td>
-                                  <td className="py-2 px-3 text-right text-success">
-                                    {as_.ptpAmount > 0 ? formatINR(as_.ptpAmount) : "—"}
-                                  </td>
-                                  <td className="py-2 px-3 text-right">
+                                  <td className="py-1.5 px-2 text-right">
                                     {as_.paidAmount > 0 ? formatINR(as_.paidAmount) : "—"}
                                   </td>
-                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums">
-                                    {money(at.generatedAmount, at.generatedCount)}
-                                  </td>
-                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums text-success">
-                                    {money(at.collectedAmount, at.collectedCount)}
-                                  </td>
-                                  <td className="py-2 px-3 text-right whitespace-nowrap tabular-nums">
-                                    {money(at.dueAmount, at.dueCount)}
-                                  </td>
-                                  <td className="py-2 px-3 text-center">
-                                    {as_.total > 0 ? (
-                                      <div className="flex items-center gap-1.5">
-                                        <Progress
-                                          value={as_.contactRate}
-                                          className="h-1.5 flex-1"
-                                        />
-                                        <span className="w-8 text-right">{as_.contactRate}%</span>
-                                      </div>
-                                    ) : (
+                                  <td className="py-1.5 px-2 text-right tabular-nums leading-tight">
+                                    {at.generatedCount + at.collectedCount + at.dueCount === 0 ? (
                                       "—"
+                                    ) : (
+                                      <>
+                                        {at.generatedCount > 0 && (
+                                          <div className="whitespace-nowrap">
+                                            Gen {money(at.generatedAmount, at.generatedCount)}
+                                          </div>
+                                        )}
+                                        {at.collectedCount > 0 && (
+                                          <div className="whitespace-nowrap text-success">
+                                            Coll {money(at.collectedAmount, at.collectedCount)}
+                                          </div>
+                                        )}
+                                        {at.dueCount > 0 && (
+                                          <div className="whitespace-nowrap">
+                                            Due {money(at.dueAmount, at.dueCount)}
+                                          </div>
+                                        )}
+                                      </>
                                     )}
+                                  </td>
+                                  <td className="py-1.5 px-2 text-center">
+                                    {as_.total > 0 ? `${as_.contactRate}%` : "—"}
                                   </td>
                                   <td
                                     className={cn(
-                                      "py-2 px-3 text-left whitespace-nowrap",
+                                      "py-1.5 px-2 text-left",
                                       isOnBreak(cur)
                                         ? "font-medium text-blue-600 dark:text-blue-400"
                                         : cur
@@ -1110,7 +1099,7 @@ function AdminReportsPage() {
                                   >
                                     {statusLabel(cur)}
                                     {cur && isOnBreak(cur) && (
-                                      <span className="ml-1 font-normal text-muted-foreground">
+                                      <span className="block font-normal text-muted-foreground">
                                         since{" "}
                                         {new Date(cur.since).toLocaleTimeString("en-IN", {
                                           hour: "numeric",
@@ -1120,7 +1109,7 @@ function AdminReportsPage() {
                                       </span>
                                     )}
                                   </td>
-                                  <td className="py-2 px-3 text-left text-muted-foreground whitespace-nowrap">
+                                  <td className="py-1.5 px-2 text-left text-muted-foreground">
                                     {ts.loginTime ? formatClockTime(ts.loginTime) : "—"} –{" "}
                                     {ts.logoutTime
                                       ? formatClockTime(ts.logoutTime)
@@ -1128,16 +1117,16 @@ function AdminReportsPage() {
                                         ? "now"
                                         : "—"}
                                   </td>
-                                  <td className="py-2 px-3 text-right text-blue-500 tabular-nums">
+                                  <td className="py-1.5 px-2 text-right text-blue-500 tabular-nums">
                                     {formatDurationOrDash(ts.ringingSeconds)}
                                   </td>
-                                  <td className="py-2 px-3 text-right text-foreground font-medium tabular-nums">
+                                  <td className="py-1.5 px-2 text-right text-foreground font-medium tabular-nums">
                                     {formatDuration(ts.callingSeconds)}
                                   </td>
-                                  <td className="py-2 px-3 text-right text-muted-foreground tabular-nums">
+                                  <td className="py-1.5 px-2 text-right text-muted-foreground tabular-nums">
                                     {formatDurationOrDash(ts.idleSeconds)}
                                   </td>
-                                  <td className="py-2 px-3 text-right text-blue-600 dark:text-blue-400 tabular-nums">
+                                  <td className="py-1.5 px-2 text-right text-blue-600 dark:text-blue-400 tabular-nums">
                                     {formatDurationOrDash(ts.breakSeconds)}
                                   </td>
                                 </tr>
