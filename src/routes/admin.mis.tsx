@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { CollectionMisView } from "@/components/reports/collection-mis";
+import { ReportSchedulesCard } from "@/components/reports/report-schedules-card";
 
 export const Route = createFileRoute("/admin/mis")({
   head: () => ({ meta: [{ title: "Collection MIS · SamvadX" }] }),
@@ -11,6 +12,7 @@ export const Route = createFileRoute("/admin/mis")({
           Daily collection sheets — download as an image or Excel, or email them to a list.
         </p>
       </div>
+      <ReportSchedulesCard />
       <CollectionMisView />
     </div>
   ),

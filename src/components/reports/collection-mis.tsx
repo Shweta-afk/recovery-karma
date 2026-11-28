@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { EmailReportButton } from "@/components/report-email";
+import { useCompanyFeatures } from "@/lib/use-company-features";
 import { getAccessToken } from "@/lib/access-token";
 import { errorText } from "@/lib/app-error";
 import { downloadBlob } from "@/lib/download-capture";
@@ -154,6 +155,18 @@ function Head({ cols }: { cols: string[] }) {
 }
 
 export function CollectionMisView() {
+  const f = useCompanyFeatures();
+  if (!f.loaded) return <Loader2 className="h-4 w-4 animate-spin" />;
+  if (!f.misReports)
+    return (
+      <p className="text-sm text-muted-foreground">
+        Collection MIS isn't on your company's plan. Contact SamvadX to add it.
+      </p>
+    );
+  return <MisView />;
+}
+
+function MisView() {
   const [asOf, setAsOf] = useState(todayIstKey());
   const [data, setData] = useState<(MisInput & { teamCount: number }) | null>(null);
   const [loading, setLoading] = useState(false);

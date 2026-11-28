@@ -23,6 +23,33 @@ export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
+/** One email with HTML and attachments (Resend's batch endpoint takes no attachments).
+ *  Never throws; true when Resend accepted it. */
+export async function sendOneEmail(email: {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  attachments?: { filename: string; content: string }[];
+}): Promise<boolean> {
+  if (!emailConfigured()) return false;
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from: process.env.EMAIL_FROM, ...email, to: [email.to] }),
+    });
+    if (!res.ok) console.error(`[email] Resend rejected (${res.status}):`, await res.text());
+    return res.ok;
+  } catch (e) {
+    console.error("[email] could not reach Resend:", e);
+    return false;
+  }
+}
+
 /**
  * Sends each email separately (one recipient each, so no one sees anyone else's address).
  * Never throws: returns how many Resend accepted, so a failed email can't undo the action that

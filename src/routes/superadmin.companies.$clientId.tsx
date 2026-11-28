@@ -66,6 +66,7 @@ import { rangeInstants, rangeLabel } from "@/lib/superadmin-range";
 import { downloadXlsx, reportFilename } from "@/lib/xlsx-export";
 import { PLATFORM_SUBDOMAIN, addressFor } from "@/lib/company-address";
 import { CompanyTelephonyCard } from "@/components/telephony/company-telephony-card";
+import { CompanyFeaturesCard } from "@/components/superadmin/company-features-card";
 
 type EditableRole = "agent" | "manager" | "admin" | "auditor";
 type CompanyStatus = "pending" | "approved" | "rejected";
@@ -820,6 +821,7 @@ function SuperadminCompanyDetailPage() {
         </TabsContent>
 
         <TabsContent value="settings" className="space-y-6 pt-2">
+          <CompanyFeaturesCard clientId={clientId} />
           <Card>
             <CardHeader className="border-b border-border pb-3">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">

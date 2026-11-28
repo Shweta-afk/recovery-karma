@@ -1211,7 +1211,18 @@ recipient lists (Admin → Settings; `report_email_lists`, log `report_email_log
 (`download-capture.ts`): the page's next `downloadCsv`/`downloadXlsx`/`downloadBlob` file opens the
 send dialog instead of saving. One Resend email per recipient (batch API takes no attachments).
 Internal recipients only. WhatsApp was considered and dropped (no API group posting).
-Scheduled sending is not built yet.
+**Both are paid add-ons, switched per company (user, 2026-11-28)**: `client_features`
+(`mis_reports`, `report_emails`; off unless a row says on; superadmin → company → Settings →
+Report features, `company-features.server.ts`). ON for Axiotta only. Every server action checks
+`requireFeature`; the sidebar link, MIS page, Email button and lists card hide when off.
+**Scheduled MIS emails** (Collection MIS page → Scheduled emails, admins; needs BOTH features):
+`report_email_schedules` (`migrations/20261128_report_email_schedules.sql`, live). A
+once-a-minute timer in `server.ts` (`report-schedule-runner.server.ts`, single replica) sends
+due schedules, claiming each by moving `last_sent_on` to today in one conditional update so it
+can't send twice; a send missed while down goes out later the same day. Email body = the sheets
+as inline-styled HTML tables (`collection-mis-email.ts`), plus an Excel attachment; the PNG
+images are browser-only. Rules pure in `report-schedule.ts` (tested in
+`scripts/report-schedule.test.ts`). MIS data via `collection-mis-data.server.ts`.
 
 ## Superadmin portal (platform owner) — rebuilt 2026-10-09
 

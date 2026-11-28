@@ -5,6 +5,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z, tokenSchema, idSchema, shortText, noteSchema } from "./schemas";
 import { getSupabaseAdmin, verifyCaller } from "./supabase-admin.server";
 import { emailConfigured } from "./email.server";
+import { requireFeature } from "./company-features.server";
 import {
   ALLOWED_TYPES,
   MAX_ATTACHMENT_BYTES,
@@ -25,6 +26,7 @@ async function caller(accessToken: string, adminOnly = false) {
   if (!c) throw new Error("Not authenticated");
   if (adminOnly ? c.role !== "admin" : !SENDER_ROLES.has(c.role))
     throw new Error(adminOnly ? "Only admins can change email lists" : "Not allowed");
+  await requireFeature(c.clientId, "reportEmails");
   return c;
 }
 
