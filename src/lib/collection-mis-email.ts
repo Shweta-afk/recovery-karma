@@ -26,6 +26,22 @@ export const MIS_SHEET_LABEL: Record<MisSheetKey, string> = {
   client: "Daily Collection Client MIS",
 };
 
+/** Fired by a sheet's "Schedule" button (detail = MisSheetKey); the schedules card opens a new
+ *  schedule for that sheet. */
+export const SCHEDULE_SHEET_EVENT = "samvadx:schedule-mis-sheet";
+
+/** Starting values when scheduling one sheet — the times the company's own MIS goes out. */
+export const SHEET_SCHEDULE_DEFAULT: Record<
+  MisSheetKey,
+  { sendTime: string; reportDay: "yesterday" | "today" }
+> = {
+  daily: { sendTime: "09:00", reportDay: "yesterday" },
+  client: { sendTime: "11:30", reportDay: "today" },
+  differences: { sendTime: "17:00", reportDay: "today" },
+  ranking: { sendTime: "18:00", reportDay: "today" },
+  zero: { sendTime: "18:00", reportDay: "today" },
+};
+
 type Cell = { v: string | number; bg?: string; bold?: boolean; right?: boolean; center?: boolean };
 interface Sheet {
   key: MisSheetKey;

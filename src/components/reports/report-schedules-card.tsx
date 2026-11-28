@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarClock, Loader2, Pencil, Plus, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,13 @@ import {
   sendReportScheduleNow,
 } from "@/lib/report-schedule.server";
 import { WEEKDAY_SHORT, type ReportSchedule } from "@/lib/report-schedule";
-import { MIS_SHEETS, MIS_SHEET_LABEL, type MisSheetKey } from "@/lib/collection-mis-email";
+import {
+  MIS_SHEETS,
+  MIS_SHEET_LABEL,
+  SCHEDULE_SHEET_EVENT,
+  SHEET_SCHEDULE_DEFAULT,
+  type MisSheetKey,
+} from "@/lib/collection-mis-email";
 
 type Draft = Omit<ReportSchedule, "id" | "clientId" | "lastSentOn" | "lastResult"> & {
   id?: string;
@@ -66,6 +72,28 @@ function Inner() {
     void load();
   }, [load]);
 
+  // A sheet's "Schedule" button on the MIS page opens a new schedule for that sheet alone.
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const open = (e: Event) => {
+      const key = (e as CustomEvent<MisSheetKey>).detail;
+      if (!(MIS_SHEETS as readonly string[]).includes(key)) return;
+      if (!lists.length) {
+        toast.error("Create a report email list first (Admin → Settings → Report email lists).");
+        return;
+      }
+      setDraft({
+        ...blank(lists[0].id),
+        name: MIS_SHEET_LABEL[key],
+        sheets: [key],
+        ...SHEET_SCHEDULE_DEFAULT[key],
+      });
+      cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    window.addEventListener(SCHEDULE_SHEET_EVENT, open);
+    return () => window.removeEventListener(SCHEDULE_SHEET_EVENT, open);
+  }, [lists]);
+
   const listName = (id: string) => lists.find((l) => l.id === id)?.name ?? "—";
 
   const save = async () => {
@@ -112,7 +140,7 @@ function Inner() {
     arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
 
   return (
-    <Card>
+    <Card ref={cardRef}>
       <CardHeader className="border-b border-border pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <CalendarClock className="h-4 w-4 text-primary" /> Scheduled emails
