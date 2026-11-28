@@ -1919,8 +1919,8 @@ function PortfolioOverviewPage() {
           agents={agents}
           onClose={() => setSelected(null)}
           replacedByName={rawPortfolios.find((x) => x.replacesPortfolioId === selected.id)?.name}
-          // A closed portfolio is a historical record — reassigning, editing its settings, or
-          // uploading a paid file against a superseded cycle doesn't make sense, so these are
+          // A closed portfolio is a historical record — reassigning or editing its settings
+          // doesn't make sense, so these are
           // simply omitted rather than passed disabled; PortfolioDetail already renders as
           // view-only whenever a handler prop is missing (same mechanism Admin Portfolio
           // Assignment's always-read-only view uses).
@@ -1933,11 +1933,14 @@ function PortfolioOverviewPage() {
               openEdit(selected);
               setSelected(null);
             },
-            onUploadPaid: () => {
-              openBulkPaid(selected);
-              setSelected(null);
-            },
           })}
+          // A bank's paid file often arrives after the cycle is closed, so it can be uploaded to a
+          // closed portfolio too (user, 2026-11-28) — it only marks accounts paid and records the
+          // payment; nothing else about the closed portfolio changes.
+          onUploadPaid={() => {
+            openBulkPaid(selected);
+            setSelected(null);
+          }}
         />
       )}
       <ReassignDialog portfolio={reassignTarget} onClose={() => setReassignTarget(null)} />

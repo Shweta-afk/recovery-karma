@@ -1629,7 +1629,9 @@ portfolio, insert by manager/admin as themselves). The portfolio dashboard shows
 uploaded" table and "Paid · file 27 Nov" on each account (`fetchPaidFileInfo`, `PAID_FILES_UPDATED`).
 Backfilled 2026-11-28 from bank_reported payments: 123 accounts dated, 14 earlier uploads rebuilt
 (named "Earlier upload (rebuilt from its payments)", no uploader). Amount-less files before this
-left no date, so ~1,000 paid accounts have none.
+left no date, so ~1,000 paid accounts have none. **Paid files can be uploaded to a CLOSED portfolio
+too** (user, 2026-11-28) — the bank's file often arrives after the cycle ends; it only marks
+accounts paid and records payments (RLS `debtors_update` has no closed check).
 **Manager → Team Activity (2026-11-28)** shows every figure as a column (Now, login–logout,
 signed in, talking, ringing, wrap-up, break, idle, calls + contact %, PTPs, collected), team totals
 on top, and a click on an agent opens the same `AgentTimeBreakdown` + outcome split as the agent
