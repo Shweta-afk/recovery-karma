@@ -136,3 +136,49 @@ describe("time over a range of days", () => {
     ]);
   });
 });
+
+import { setFixedBreak } from "../src/lib/agent-time-stats";
+
+describe("a company's fixed break (Axiotta 1:10–2:30 pm)", () => {
+  const withBreak = (fn: () => void) => {
+    setFixedBreak({ start: "13:10", end: "14:30" });
+    try {
+      fn();
+    } finally {
+      setFixedBreak(null);
+    }
+  };
+  test("lunch is cut out of signed-in time and reported on its own", () => {
+    withBreak(() => {
+      const s = getAgentTimeStats("a@x.com", [], DAY, [iv("available", "08:00", "20:00")]);
+      expect(s.loggedInSeconds).toBe(12 * 3600 - 80 * 60);
+      expect(s.lunchSeconds).toBe(80 * 60);
+      expect(s.idleSeconds).toBe(12 * 3600 - 80 * 60); // not idle at lunch
+    });
+  });
+  test("a break the agent picked only counts outside the fixed break", () => {
+    withBreak(() => {
+      const s = getAgentTimeStats("a@x.com", [], DAY, [
+        iv("available", "08:00", "13:00"),
+        iv("break", "13:00", "15:00"),
+        iv("available", "15:00", "20:00"),
+      ]);
+      expect(s.breakSeconds).toBe(40 * 60); // 13:00–13:10 and 14:30–15:00
+      expect(s.lunchSeconds).toBe(80 * 60);
+    });
+  });
+  test("a call saved during lunch still counts as a call but does not reduce idle", () => {
+    withBreak(() => {
+      const s = getAgentTimeStats("a@x.com", [call("13:30", 300)], DAY, [
+        iv("available", "08:00", "20:00"),
+      ]);
+      expect(s.callingSeconds).toBe(300);
+      expect(s.idleSeconds).toBe(12 * 3600 - 80 * 60);
+    });
+  });
+  test("no fixed break set = the old behaviour, lunchSeconds null", () => {
+    const s = getAgentTimeStats("a@x.com", [], DAY, [iv("available", "08:00", "20:00")]);
+    expect(s.loggedInSeconds).toBe(12 * 3600);
+    expect(s.lunchSeconds).toBeNull();
+  });
+});

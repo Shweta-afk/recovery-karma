@@ -33,6 +33,7 @@ import {
   type StatusInterval,
 } from "@/lib/agent-presence-store";
 import { istDayKey } from "@/lib/monthly-trend";
+import { AgentTimeBreakdown } from "@/components/reports/agent-time-breakdown";
 
 function Tile({
   icon: Icon,
@@ -166,40 +167,17 @@ export function AgentReportDetail({
         />
       </div>
 
-      {/* Time. Real as of the time-tracking migration; "—" where a day was never recorded. */}
-      <div>
-        <div className="mb-2 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-          <Clock3 className="h-3 w-3" />
-          Time &amp; effort
-          {!time.presenceRecorded && (
-            <span className="ml-1 normal-case tracking-normal text-amber-500">
-              · presence not recorded for this period
-            </span>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          <Tile
-            icon={Clock3}
-            label="Talk"
-            value={formatDuration(time.callingSeconds)}
-            sub="measured"
-          />
-          <Tile icon={Clock3} label="Avg call" value={formatDuration(talkPerCall)} sub="per call" />
-          <Tile icon={Clock3} label="Ringing" value={formatDurationOrDash(time.ringingSeconds)} />
-          <Tile icon={Clock3} label="Wrap" value={formatDurationOrDash(time.dispositionSeconds)} />
-          <Tile icon={Clock3} label="Break" value={formatDurationOrDash(time.breakSeconds)} />
-          <Tile
-            icon={Clock3}
-            label="Idle"
-            value={formatDurationOrDash(time.idleSeconds)}
-            sub={
-              time.loginTime
-                ? `from ${formatClockTime(time.loginTime)}${time.logoutTime ? ` to ${formatClockTime(time.logoutTime)}` : ""}`
-                : undefined
-            }
-          />
-        </div>
-      </div>
+      {/* Time: one table that adds up, the rules in plain words, and the day step by step. */}
+      <AgentTimeBreakdown
+        agentId={agentId}
+        agentName={agentName}
+        time={time}
+        disps={disps}
+        intervals={intervals}
+        fromDay={start}
+        toDay={day}
+        avgCallSeconds={talkPerCall}
+      />
 
       <div>
         <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">

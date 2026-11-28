@@ -9,6 +9,7 @@ import {
 import { roleNeedsEmailOtp, tokenHasEmailOtp } from "./login-otp";
 import { loginUrlFor, wrongAddressRedirect } from "./company-address";
 import { errorText } from "./app-error";
+import { setFixedBreak } from "./agent-time-stats";
 
 export type Role = "agent" | "manager" | "admin" | "auditor" | "superadmin" | "sales";
 
@@ -51,6 +52,9 @@ export interface AuthUser {
    *  e.g. a profile cached before this field existed — never treated as "no subdomain", or a
    *  stale cache would bounce a company's users off their own address. */
   companySubdomain?: string | null;
+  /** The company's fixed daily break, "HH:MM" IST (clients.fixed_break_*), or null for none.
+   *  Undefined = a profile cached before this existed, which is refetched. */
+  fixedBreak?: { start: string; end: string } | null;
 }
 
 export interface LoginResult {
@@ -197,7 +201,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { profile, at } = JSON.parse(cached) as { profile: AuthUser; at: number };
         // Without this check the cache never expires, so an admin edit to the agent's row
         // (e.g. their phone number) would never reach a browser that had logged in once.
-        if (profile && Date.now() - at < PROFILE_CACHE_TTL_MS) return profile;
+        // A profile cached before fixedBreak existed (undefined) is refetched, so the break
+        // reaches this browser without waiting for the cache to expire.
+        if (
+          profile &&
+          Date.now() - at < PROFILE_CACHE_TTL_MS &&
+          (profile.role === "superadmin" || profile.fixedBreak !== undefined)
+        ) {
+          setFixedBreak(profile.fixedBreak);
+          return profile;
+        }
       } catch {
         // Cache corrupted, fall through to fetch
       }
@@ -217,7 +230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // profile and the company's verification status (20260909_company_verification_and_
             // subdomain.sql), which the "pending" gate screen below needs on every login.
             .select(
-              "name, email, role, agent_phone, agent_extension, session_nonce, clients(status, subdomain)",
+              "name, email, role, agent_phone, agent_extension, session_nonce, clients(status, subdomain, fixed_break_start, fixed_break_end)",
             )
             .eq("auth_user_id", authUserId)
             .maybeSingle(),
@@ -242,7 +255,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Embedded FK selects come back as an object for a to-one relationship, but supabase-js
     // types it defensively as possibly-array — narrow either shape down to one row.
-    type EmbeddedClient = { status?: string; subdomain?: string | null };
+    type EmbeddedClient = {
+      status?: string;
+      subdomain?: string | null;
+      fixed_break_start?: string | null;
+      fixed_break_end?: string | null;
+    };
     const embeddedClient = data.clients as EmbeddedClient | EmbeddedClient[] | null;
     const clientStatus = Array.isArray(embeddedClient) ? embeddedClient[0] : embeddedClient;
 
@@ -258,7 +276,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         null) as string | null,
       companyStatus: clientStatus?.status as AuthUser["companyStatus"],
       companySubdomain: clientStatus ? (clientStatus.subdomain ?? null) : undefined,
+      fixedBreak:
+        clientStatus?.fixed_break_start && clientStatus?.fixed_break_end
+          ? { start: clientStatus.fixed_break_start, end: clientStatus.fixed_break_end }
+          : null,
     };
+    setFixedBreak(profile.fixedBreak);
 
     localStorage.setItem(cacheKey, JSON.stringify({ profile, at: Date.now() }));
     return profile;

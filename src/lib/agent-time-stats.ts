@@ -43,6 +43,10 @@ export interface AgentTimeStats {
   loggedInSeconds: number | null;
   /** False when agent_status_log has nothing for this agent on this day. */
   presenceRecorded: boolean;
+  /** The company's fixed daily break (e.g. Axiotta 1:10–2:30 pm) as it applied to this agent:
+   *  the part of that window that fell inside their day, up to now. NOT counted in logged-in,
+   *  idle or break above — it is shown on its own. Null when the company has no fixed break. */
+  lunchSeconds: number | null;
 }
 
 const BREAK_STATUSES: AgentStatus[] = ["break", "lunch", "training"];
@@ -52,6 +56,47 @@ const BREAK_STATUSES: AgentStatus[] = ["break", "lunch", "training"];
  *  late call, a laptop left on overnight — counts toward nothing. */
 export const WORK_START_HOUR = 8;
 export const WORK_END_HOUR = 20;
+
+/** A company's fixed daily break, "HH:MM" IST (user, 2026-11-28: Axiotta's is 1:10–2:30 pm). It is
+ *  excluded from idle and logged-in time — nobody is idle at lunch — and reported separately. */
+export interface FixedBreak {
+  start: string;
+  end: string;
+}
+
+let fixedBreak: FixedBreak | null = null;
+
+/** Set once when the signed-in user's company is known (auth.tsx). Module state on purpose:
+ *  every screen that shows time (leaderboard, reports, agent dashboard) goes through
+ *  getAgentTimeStats, and threading a parameter through all of them would miss one. */
+export function setFixedBreak(b: FixedBreak | null | undefined): void {
+  fixedBreak = b && /^\d{2}:\d{2}$/.test(b.start) && /^\d{2}:\d{2}$/.test(b.end) ? b : null;
+}
+export function getFixedBreak(): FixedBreak | null {
+  return fixedBreak;
+}
+
+/** The fixed break of an IST day as epoch ms [from, to], or null (none set, or end ≤ start). */
+export function fixedBreakWindow(dateIso: string, b: FixedBreak | null = fixedBreak) {
+  if (!b) return null;
+  const from = new Date(`${dateIso}T${b.start}:00+05:30`).getTime();
+  const to = new Date(`${dateIso}T${b.end}:00+05:30`).getTime();
+  return to > from ? ([from, to] as [number, number]) : null;
+}
+
+/** `ranges` with the part inside `cut` removed. */
+export function subtractRange(ranges: [number, number][], cut: [number, number] | null) {
+  if (!cut) return ranges;
+  const out: [number, number][] = [];
+  for (const [s, e] of ranges) {
+    if (e <= cut[0] || s >= cut[1]) out.push([s, e]);
+    else {
+      if (s < cut[0]) out.push([s, cut[0]]);
+      if (e > cut[1]) out.push([cut[1], e]);
+    }
+  }
+  return out;
+}
 
 /** The IST working window of a day, as epoch ms. +05:30 is fixed for India — no DST. */
 export function workWindow(dateIso: string): { start: number; end: number } {
@@ -144,6 +189,7 @@ export function getAgentTimeStats(
       logoutTime: null,
       loggedInSeconds: null,
       presenceRecorded: false,
+      lunchSeconds: null,
     };
   }
 
@@ -180,14 +226,39 @@ export function getAgentTimeStats(
     else latestClosed = Math.max(latestClosed, r[1]);
   }
 
-  const loggedInSeconds = unionSeconds(online);
-  const breakSeconds = Math.min(unionSeconds(breaks), loggedInSeconds);
+  // The company's fixed break (Axiotta 1:10–2:30 pm) is cut out of signed-in and break time, so
+  // nobody is "idle" at lunch; it is reported on its own as `lunchSeconds`. Only the part of the
+  // window the agent's day actually reached counts — up to now for today.
+  const lunch = fixedBreakWindow(dateIso);
+  let lunchSeconds: number | null = null;
+  if (lunch) {
+    const lo = online.length ? Math.min(...online.map((r) => r[0])) : null;
+    const hi = online.length ? Math.max(...online.map((r) => r[1])) : null;
+    lunchSeconds =
+      lo == null || hi == null
+        ? 0
+        : Math.max(0, Math.round((Math.min(lunch[1], hi, now) - Math.max(lunch[0], lo)) / 1000));
+  }
+  const loggedInSeconds = unionSeconds(subtractRange(online, lunch));
+  const breakSeconds = Math.min(unionSeconds(subtractRange(breaks, lunch)), loggedInSeconds);
+
+  // Calls saved during the fixed break still count toward talk/ring/wrap above, but their time is
+  // not part of the (lunch-free) signed-in time, so it must not be taken off idle either.
+  const outsideLunch = lunch
+    ? disps.filter((d) => {
+        const t = new Date(d.time).getTime();
+        return t < lunch[0] || t >= lunch[1];
+      })
+    : disps;
+  const accountedCalls = outsideLunch.reduce(
+    (a, d) => a + (d.durationSeconds ?? 0) + (d.ringSeconds ?? 0) + (d.wrapSeconds ?? 0),
+    0,
+  );
 
   // Whatever is left of the logged-in day after calling, ringing, wrapping and breaks. Floored
   // at zero: clock skew between an agent's browser and the server can otherwise make the parts
   // sum to slightly more than the whole and report negative idle time.
-  const accounted =
-    callingSeconds + (ringingSeconds ?? 0) + (dispositionSeconds ?? 0) + breakSeconds;
+  const accounted = accountedCalls + breakSeconds;
   const idleSeconds = Math.max(0, loggedInSeconds - accounted);
 
   return {
@@ -201,6 +272,7 @@ export function getAgentTimeStats(
     logoutTime: anyOpen || !latestClosed ? null : new Date(latestClosed),
     loggedInSeconds,
     presenceRecorded: true,
+    lunchSeconds,
   };
 }
 
@@ -243,6 +315,7 @@ export function getAgentTimeStatsRange(
     loginTime: tracked[0]?.loginTime ?? null,
     logoutTime: tracked.at(-1)?.logoutTime ?? null,
     presenceRecorded: tracked.length > 0,
+    lunchSeconds: add((s) => s.lunchSeconds),
   };
 }
 
