@@ -1149,7 +1149,7 @@ function BulkPaidUploadDialog({
 
     setUploading(true);
     try {
-      const res = await applyBulkPaidFile(portfolio.id, parsed);
+      const res = await applyBulkPaidFile(portfolio.id, parsed, fileName);
       setResult(res);
       toast.success(
         `${res.matched} debtor${res.matched === 1 ? "" : "s"} marked paid` +

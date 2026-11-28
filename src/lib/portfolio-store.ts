@@ -801,6 +801,74 @@ export interface BulkPaidRow {
   amount?: number;
 }
 
+export const PAID_FILES_UPDATED = "paid-files-updated";
+
+export interface PaidFileUpload {
+  id: string;
+  uploadedAt: string;
+  uploadedBy: string | null;
+  fileName: string | null;
+  rowsInFile: number;
+  markedPaid: number;
+  alreadyPaid: number;
+  notFound: number;
+  amountRecorded: number;
+}
+
+/** A portfolio's paid-file uploads, newest first, plus when each account was reported paid. */
+export async function fetchPaidFileInfo(portfolioId: string): Promise<{
+  uploads: PaidFileUpload[];
+  paidAt: Map<string, string>;
+}> {
+  const [up, deb] = await Promise.all([
+    supabase
+      .from("paid_file_uploads" as never)
+      .select(
+        "id, uploaded_at, file_name, rows_in_file, marked_paid, already_paid, not_found, amount_recorded, agents(name)",
+      )
+      .eq("portfolio_id", portfolioId)
+      .order("uploaded_at", { ascending: false })
+      .limit(100),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("debtors")
+        .select("id, paid_reported_at" as never)
+        .eq("portfolio_id", portfolioId)
+        .not("paid_reported_at" as never, "is", null)
+        .range(from, to),
+    ),
+  ]);
+  type U = {
+    id: string;
+    uploaded_at: string;
+    file_name: string | null;
+    rows_in_file: number;
+    marked_paid: number;
+    already_paid: number;
+    not_found: number;
+    amount_recorded: number | string;
+    agents: { name: string } | { name: string }[] | null;
+  };
+  const uploads = ((up.data ?? []) as unknown as U[]).map((u) => {
+    const a = Array.isArray(u.agents) ? u.agents[0] : u.agents;
+    return {
+      id: u.id,
+      uploadedAt: u.uploaded_at,
+      uploadedBy: a?.name ?? null,
+      fileName: u.file_name,
+      rowsInFile: u.rows_in_file,
+      markedPaid: u.marked_paid,
+      alreadyPaid: u.already_paid,
+      notFound: u.not_found,
+      amountRecorded: Number(u.amount_recorded),
+    };
+  });
+  const paidAt = new Map<string, string>();
+  for (const d of (deb.data ?? []) as unknown as { id: string; paid_reported_at: string }[])
+    paidAt.set(d.id, d.paid_reported_at);
+  return { uploads, paidAt };
+}
+
 export interface BulkPaidResult {
   matched: number;
   /** Of `matched`, how many carried an amount and so produced a payments row. */
@@ -844,6 +912,7 @@ export interface BulkPaidResult {
 export async function applyBulkPaidFile(
   portfolioId: string,
   rows: BulkPaidRow[],
+  fileName?: string,
 ): Promise<BulkPaidResult> {
   const { data: existing, error: exErr } = await fetchAllRows((from, to) =>
     supabase
@@ -889,7 +958,34 @@ export async function applyBulkPaidFile(
   }
 
   const reconciliation = { fileTotal, skippedAlreadyPaid, skippedNotFound, duplicateRefs };
-  if (!toMark.length)
+  const uploadedAt = new Date().toISOString();
+  // Every upload is recorded with its date (user, 2026-11-28), even one that marked nothing —
+  // "we uploaded it on the 25th" must be checkable. Best-effort: a missing table (code deployed
+  // ahead of 20261128_paid_file_uploads.sql) must not fail the upload itself.
+  const logUpload = async (markedPaid: number, amountRecorded: number) => {
+    try {
+      const me = await getMyAgentRow();
+      if (!me?.client_id) return;
+      const { error } = await supabase.from("paid_file_uploads" as never).insert({
+        client_id: me.client_id,
+        portfolio_id: portfolioId,
+        uploaded_by: me.id,
+        uploaded_at: uploadedAt,
+        file_name: fileName ?? null,
+        rows_in_file: rows.length,
+        marked_paid: markedPaid,
+        already_paid: alreadyPaid,
+        not_found: notFound,
+        amount_recorded: amountRecorded,
+      } as never);
+      if (error) console.warn("[paid-file] upload not logged:", error.message);
+      window.dispatchEvent(new CustomEvent(PAID_FILES_UPDATED, { detail: { portfolioId } }));
+    } catch (e) {
+      console.warn("[paid-file] upload not logged:", e);
+    }
+  };
+  if (!toMark.length) {
+    await logUpload(0, 0);
     return {
       matched: 0,
       withAmount: 0,
@@ -899,14 +995,15 @@ export async function applyBulkPaidFile(
       recorded: 0,
       ...reconciliation,
     };
+  }
 
-  const now = new Date().toISOString();
+  const now = uploadedAt;
   for (let i = 0; i < toMark.length; i += CHUNK_SIZE) {
     const chunk = toMark.slice(i, i + CHUNK_SIZE);
 
     const { error: updateErr } = await supabase
       .from("debtors")
-      .update({ status: "paid" })
+      .update({ status: "paid", paid_reported_at: now } as never)
       .in(
         "id",
         chunk.map((c) => c.id),
@@ -941,6 +1038,10 @@ export async function applyBulkPaidFile(
   await refreshPayments();
 
   const priced = toMark.filter((c) => (c.amount ?? 0) > 0);
+  await logUpload(
+    toMark.length,
+    priced.reduce((sum, c) => sum + (c.amount ?? 0), 0),
+  );
   return {
     matched: toMark.length,
     withAmount: priced.length,

@@ -8,6 +8,9 @@ import {
   getRemovedDebtors,
   isPortfolioEnded,
   fetchPortfolioRows,
+  fetchPaidFileInfo,
+  PAID_FILES_UPDATED,
+  type PaidFileUpload,
   type UploadedPortfolio,
   type UploadedDebtor,
   type PortfolioSettings,
@@ -318,7 +321,102 @@ function MarkedAsBadge({ outcome }: { outcome?: CallOutcome }) {
 /** debtors.status in the Accounts table. Without this column a debtor marked paid — by a
  * disposition or by the bank's paid-file upload (applyBulkPaidFile) — looked identical to an
  * active one, which is most of why a paid-file upload appeared to do nothing at all. */
-function DebtorStatusBadge({ status }: { status?: string }) {
+const istDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+const istDateTime = (iso: string) =>
+  new Date(iso).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+/** A portfolio's paid-file uploads and when each account was reported paid, kept current
+ *  after a new upload. */
+function usePaidFileInfo(portfolioId: string) {
+  const [info, setInfo] = useState<{ uploads: PaidFileUpload[]; paidAt: Map<string, string> }>(
+    () => ({ uploads: [], paidAt: new Map() }),
+  );
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetchPaidFileInfo(portfolioId)
+        .then((r) => live && setInfo(r))
+        .catch(() => {});
+    void load();
+    const onUpdate = (e: Event) => {
+      const id = (e as CustomEvent<{ portfolioId?: string }>).detail?.portfolioId;
+      if (!id || id === portfolioId) void load();
+    };
+    window.addEventListener(PAID_FILES_UPDATED, onUpdate);
+    return () => {
+      live = false;
+      window.removeEventListener(PAID_FILES_UPDATED, onUpdate);
+    };
+  }, [portfolioId]);
+  return info;
+}
+
+/** Every paid file uploaded to this portfolio, newest first, with the upload date. */
+function PaidFileUploadsPanel({ uploads }: { uploads: PaidFileUpload[] }) {
+  if (!uploads.length) return null;
+  return (
+    <div>
+      <div className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        Paid files uploaded
+      </div>
+      <div className="overflow-hidden rounded-md border border-border">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border bg-muted/20 text-left text-muted-foreground">
+              <th className="px-3 py-2 font-medium">Uploaded on</th>
+              <th className="px-3 py-2 font-medium">By</th>
+              <th className="px-3 py-2 font-medium">File</th>
+              <th className="px-3 py-2 text-right font-medium">Rows</th>
+              <th className="px-3 py-2 text-right font-medium">Marked paid</th>
+              <th className="px-3 py-2 text-right font-medium">Already paid</th>
+              <th className="px-3 py-2 text-right font-medium">Not found</th>
+              <th className="px-3 py-2 text-right font-medium">Amount recorded</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {uploads.map((u) => (
+              <tr key={u.id}>
+                <td className="whitespace-nowrap px-3 py-2 font-medium text-foreground">
+                  {istDateTime(u.uploadedAt)}
+                </td>
+                <td className="px-3 py-2 text-muted-foreground">{u.uploadedBy ?? "—"}</td>
+                <td className="max-w-[14rem] truncate px-3 py-2 text-muted-foreground">
+                  {u.fileName ?? "—"}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">{u.rowsInFile}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-success">{u.markedPaid}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                  {u.alreadyPaid}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                  {u.notFound}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {u.amountRecorded > 0 ? formatINR(u.amountRecorded) : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DebtorStatusBadge({ status, paidAt }: { status?: string; paidAt?: string }) {
   const meta: Record<string, { label: string; cls: string }> = {
     paid: { label: "Paid", cls: "bg-success/10 text-success border-success/20" },
     settled: { label: "Settled", cls: "bg-success/10 text-success border-success/20" },
@@ -332,8 +430,12 @@ function DebtorStatusBadge({ status }: { status?: string }) {
         "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
         m.cls,
       )}
+      title={paidAt ? `Reported paid by the bank file uploaded ${istDateTime(paidAt)}` : undefined}
     >
       {m.label}
+      {status === "paid" && paidAt && (
+        <span className="ml-1 font-normal opacity-80">· file {istDate(paidAt)}</span>
+      )}
     </span>
   );
 }
@@ -341,10 +443,13 @@ function DebtorStatusBadge({ status }: { status?: string }) {
 function AccountsTable({
   rows,
   agents,
+  paidAt,
   readOnly = false,
 }: {
   rows: UploadedDebtor[];
   agents: AgentRef[];
+  /** debtor id → when a bank paid file marked it paid. */
+  paidAt?: Map<string, string>;
   // A closed portfolio's accounts are a historical record, not something to keep editing —
   // transferring/removing accounts out of a superseded cycle, or re-editing who worked them,
   // reads as live portfolio management on data that's already over. Drops the checkboxes, the
@@ -554,7 +659,7 @@ function AccountsTable({
                     <MarkedAsBadge outcome={markOf(r.id)} />
                   </td>
                   <td className="py-2 pl-3">
-                    <DebtorStatusBadge status={r.status} />
+                    <DebtorStatusBadge status={r.status} paidAt={paidAt?.get(r.id)} />
                   </td>
                   <td className="py-2 pr-3">
                     {readOnly ? (
@@ -1096,6 +1201,7 @@ export function PortfolioDetail({
   // portfolio's own record has no forward pointer to its successor. Only meaningful once closed.
   replacedByName?: string;
 }) {
+  const paidFiles = usePaidFileInfo(p.id);
   const recoveryPct =
     p.totalOutstanding > 0 ? ((p.recovered / p.totalOutstanding) * 100).toFixed(1) : "0.0";
   const assignPct =
@@ -1535,9 +1641,16 @@ export function PortfolioDetail({
           ) : (
             raw &&
             agents.length > 0 && (
-              <AccountsTable rows={accountRows} agents={agents} readOnly={p.status === "closed"} />
+              <AccountsTable
+                rows={accountRows}
+                agents={agents}
+                paidAt={paidFiles.paidAt}
+                readOnly={p.status === "closed"}
+              />
             )
           )}
+
+          <PaidFileUploadsPanel uploads={paidFiles.uploads} />
 
           {/* Removed accounts */}
           <RemovedAccountsPanel portfolioId={p.id} />

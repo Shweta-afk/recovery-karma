@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  ChevronRight,
   Info,
   Users,
   Settings2,
@@ -37,10 +38,13 @@ import {
 } from "@/lib/date-filter";
 import { useActiveTeam } from "@/lib/active-team-store";
 import {
-  fetchStatusIntervals,
+  fetchStatusIntervalsRange,
   todayPresenceKey,
   type StatusInterval,
 } from "@/lib/agent-presence-store";
+import { currentStatusOf, isOnBreak, statusLabel } from "@/lib/agent-current-status";
+import { AgentTimeBreakdown } from "@/components/reports/agent-time-breakdown";
+import { OutcomeBreakdown } from "@/components/reports/outcome-breakdown";
 import {
   useTeamAgents,
   useRoster,
@@ -61,7 +65,7 @@ import {
 } from "@/lib/disposition-store";
 import { escalateMissedCasesToAdmin } from "@/lib/ptp-escalation-store";
 import {
-  getAgentTimeStats,
+  getAgentTimeStatsRange,
   formatDuration,
   formatDurationOrDash,
   formatClockTime,
@@ -70,6 +74,7 @@ import {
 } from "@/lib/agent-time-stats";
 import { formatINR } from "@/lib/mock-debtors";
 import { cn } from "@/lib/utils";
+import { istDayKey } from "@/lib/monthly-trend";
 import { errorText } from "@/lib/app-error";
 
 export const Route = createFileRoute("/manager/activity")({
@@ -97,16 +102,8 @@ export const Route = createFileRoute("/manager/activity")({
 // active (see active-team-store.ts) — switching teams happens via the header's "Change Team",
 // not from this page.
 
-function isSameDay(iso: string, now: Date): boolean {
-  const d = new Date(iso);
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
-}
-
-type SortKey = "name" | "calls" | "collected" | "calling" | "idle" | "loggedIn";
+type SortKey =
+  "name" | "calls" | "collected" | "calling" | "ringing" | "wrap" | "break" | "idle" | "loggedIn";
 type SortDir = "asc" | "desc";
 
 const SEGMENTS: { key: keyof AgentTimeStats; label: string; cls: string }[] = [
@@ -193,40 +190,78 @@ function TeamActivityPage() {
   }, [agents, allDisps]);
 
   const ranged = isRangeActive(dateRange);
-  // Presence is per-day, so a multi-day range reports on its first day rather than silently
-  // summing several shifts into one. Shown in the label below.
+  // The period every figure on this page covers: today, or the picked range (an open end is
+  // capped at today; an open start at 31 days before the end, so "all time" stays readable).
   const todayIso = todayPresenceKey();
-  const presenceDay = ranged && dateRange.from ? dateRange.from : todayIso;
+  const toDay = ranged && dateRange.to && dateRange.to < todayIso ? dateRange.to : todayIso;
+  const fromDay = ranged
+    ? dateRange.from ||
+      new Date(Date.parse(`${toDay}T00:00:00Z`) - 31 * 86_400_000).toISOString().slice(0, 10)
+    : todayIso;
 
-  // agent_status_log is the real source for break/idle/login. Fetched here and passed down;
-  // without it getAgentTimeStats returns nulls, which render as "—" rather than as zero.
+  // agent_status_log is the real source for break/idle/login. Fetched for the whole period and
+  // reloaded every minute so "Now" and today's figures stay current.
   const [intervals, setIntervals] = useState<StatusInterval[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+  const agentKey = agents.map((a) => a.id).join("|");
   useEffect(() => {
-    const ids = agents.map((a) => a.id);
+    const ids = agentKey ? agentKey.split("|") : [];
     if (!ids.length) return;
-    fetchStatusIntervals(ids, presenceDay)
-      .then(setIntervals)
-      .catch(() => setIntervals([]));
-  }, [agents, presenceDay]);
+    let live = true;
+    const load = () =>
+      fetchStatusIntervalsRange(ids, fromDay, toDay)
+        .then((iv) => {
+          if (!live) return;
+          setIntervals(iv);
+          setNow(Date.now());
+        })
+        .catch(() => live && setIntervals([]));
+    void load();
+    const t = setInterval(load, 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [agentKey, fromDay, toDay]);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const periodLabel = ranged ? describeRange(dateRange) : "Today";
 
   const rows = useMemo(() => {
-    const now = new Date();
     return agents.map((agent: AgentRef) => {
       const mine = allDisps.filter((d) => d.agentId === agent.id);
       // `today` keeps its name — it is still today's numbers until a range is picked, and the
       // column headers/labels follow `periodLabel` below rather than the key.
       const scoped = ranged
         ? mine.filter((d) => inDateRange(d.time, dateRange))
-        : mine.filter((d) => isSameDay(d.time, now));
+        : mine.filter((d) => istDayKey(d.time) === todayIso);
       return {
         agent,
-        stats: getAgentTimeStats(agent.id, scoped, presenceDay, intervals),
+        stats: getAgentTimeStatsRange(agent.id, scoped, fromDay, toDay, intervals),
         today: calcStats(scoped),
+        disps: scoped,
+        now: toDay === todayIso ? currentStatusOf(intervals, agent.id, now) : null,
+        lastCall: scoped.reduce<string | null>((m, d) => (m && m > d.time ? m : d.time), null),
       };
     });
     // intervals arrive after the first render; without them here the table never picked them up.
-  }, [agents, allDisps, ranged, dateRange, presenceDay, intervals]);
+  }, [agents, allDisps, ranged, dateRange, fromDay, toDay, todayIso, intervals, now]);
+
+  // Team totals for the period, above the table.
+  const totals = useMemo(() => {
+    const sum = (f: (r: (typeof rows)[number]) => number | null) =>
+      rows.reduce((a, r) => a + (f(r) ?? 0), 0);
+    return {
+      calls: sum((r) => r.today.total),
+      contacted: sum((r) => Math.round((r.today.total * r.today.contactRate) / 100)),
+      ptps: sum((r) => r.today.ptps),
+      collected: sum((r) => r.today.paidAmount),
+      talk: sum((r) => r.stats.callingSeconds),
+      idle: sum((r) => r.stats.idleSeconds),
+      brk: sum((r) => r.stats.breakSeconds),
+      onBreak: rows.filter((r) => isOnBreak(r.now)).length,
+      signedInNow: rows.filter((r) => r.now).length,
+    };
+  }, [rows]);
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -240,6 +275,12 @@ function TeamActivityPage() {
           return (a.today.paidAmount - b.today.paidAmount) * dir;
         case "calling":
           return (a.stats.callingSeconds - b.stats.callingSeconds) * dir;
+        case "ringing":
+          return ((a.stats.ringingSeconds ?? -1) - (b.stats.ringingSeconds ?? -1)) * dir;
+        case "wrap":
+          return ((a.stats.dispositionSeconds ?? -1) - (b.stats.dispositionSeconds ?? -1)) * dir;
+        case "break":
+          return ((a.stats.breakSeconds ?? -1) - (b.stats.breakSeconds ?? -1)) * dir;
         case "idle":
           // Untracked days sort last rather than as zero, which would rank an agent whose
           // presence was never recorded as the most efficient on the team.
@@ -335,6 +376,34 @@ function TeamActivityPage() {
         </Badge>
       </div>
 
+      {agents.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+          {[
+            { label: "Calls", value: totals.calls.toLocaleString("en-IN") },
+            { label: "Contacted", value: totals.contacted.toLocaleString("en-IN") },
+            { label: "PTPs", value: String(totals.ptps) },
+            { label: "Collected", value: formatINR(totals.collected) },
+            { label: "Talking (all)", value: formatDuration(totals.talk) },
+            { label: "Idle (all)", value: formatDuration(totals.idle) },
+            { label: "Break (all)", value: formatDuration(totals.brk) },
+            {
+              label: "Right now",
+              value:
+                toDay === todayIso ? `${totals.signedInNow} in · ${totals.onBreak} on break` : "—",
+            },
+          ].map((c) => (
+            <div key={c.label} className="rounded-lg border border-border bg-card px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {c.label}
+              </div>
+              <div className="mt-0.5 text-sm font-semibold tabular-nums text-foreground">
+                {c.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {agents.length === 0 ? (
         <Card>
           <CardContent className="py-16 text-center">
@@ -354,95 +423,165 @@ function TeamActivityPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
-                    <th className="py-2 pl-4 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    <th className="w-6" />
+                    <th className="py-2 px-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                       <SortHeader label="Agent" sortKeyName="name" />
                     </th>
-                    <th className="py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                      Login
+                    <th className="py-2 px-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Now
                     </th>
-                    <th className="py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                      Logout
+                    <th className="py-2 px-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Login – Logout
                     </th>
-                    <th className="py-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                      <SortHeader label="Logged In" sortKeyName="loggedIn" />
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <SortHeader label="Signed in" sortKeyName="loggedIn" />
                     </th>
-                    <th className="py-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <SortHeader label="Talking" sortKeyName="calling" />
+                    </th>
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <SortHeader label="Ringing" sortKeyName="ringing" />
+                    </th>
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <SortHeader label="Wrap-up" sortKeyName="wrap" />
+                    </th>
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <SortHeader label="Break" sortKeyName="break" />
+                    </th>
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <SortHeader label="Idle" sortKeyName="idle" />
+                    </th>
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                       <SortHeader label="Calls" sortKeyName="calls" />
                     </th>
-                    <th className="py-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                       PTPs
                     </th>
-                    <th className="py-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    <th className="py-2 px-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                       <SortHeader label="Collected" sortKeyName="collected" />
                     </th>
-                    <th className="py-2 pr-4 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                      <SortHeader label="Activity Breakdown" sortKeyName="calling" />
+                    <th className="py-2 pr-4 pl-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Split
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {sorted.map(({ agent, stats, today }) => (
-                    <tr key={agent.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="py-2.5 pl-4">
-                        <div className="flex items-center gap-2">
-                          <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center text-[10px] font-semibold text-primary/80 flex-shrink-0">
-                            {agent.name
-                              .split(" ")
-                              .map((n) => n[0])
-                              .slice(0, 2)
-                              .join("")
-                              .toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-xs font-medium text-foreground truncate">
-                              {agent.name}
-                            </div>
-                            <div className="text-[10px] text-muted-foreground truncate">
-                              {agent.email}
-                              {agent.agentCode && (
-                                <span className="ml-1.5 font-mono opacity-70">
-                                  · {agent.agentCode}
-                                </span>
+                  {sorted.map(({ agent, stats, today, disps, now: cur, lastCall }) => {
+                    const open = expanded === agent.id;
+                    return (
+                      <Fragment key={agent.id}>
+                        <tr
+                          className={cn(
+                            "cursor-pointer transition-colors hover:bg-muted/20",
+                            open && "bg-muted/20",
+                          )}
+                          onClick={() => setExpanded(open ? null : agent.id)}
+                          title="Click for the full breakdown and the day step by step"
+                        >
+                          <td className="pl-3">
+                            <ChevronRight
+                              className={cn(
+                                "h-3.5 w-3.5 text-muted-foreground transition-transform",
+                                open && "rotate-90",
                               )}
+                            />
+                          </td>
+                          <td className="py-2.5 px-2">
+                            <div className="min-w-0">
+                              <div className="truncate text-xs font-medium text-foreground">
+                                {agent.name}
+                              </div>
+                              <div className="truncate text-[10px] text-muted-foreground">
+                                {agent.agentCode ? `${agent.agentCode} · ` : ""}
+                                {lastCall
+                                  ? `last call ${new Date(lastCall).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" })}`
+                                  : "no calls"}
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-2.5 text-xs text-muted-foreground">
-                        {stats.loginTime ? formatClockTime(stats.loginTime) : "—"}
-                      </td>
-                      <td className="py-2.5 text-xs text-muted-foreground">
-                        {/* "Active" only when we KNOW they are still in an open interval. An
-                            untracked day has no logout because nothing was recorded, which is
-                            not the same as being on shift. */}
-                        {stats.logoutTime ? (
-                          formatClockTime(stats.logoutTime)
-                        ) : stats.presenceRecorded ? (
-                          <span className="inline-flex items-center gap-1 text-success">
-                            <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-                            Active
-                          </span>
-                        ) : (
-                          "—"
+                          </td>
+                          <td
+                            className={cn(
+                              "whitespace-nowrap py-2.5 px-2 text-xs",
+                              isOnBreak(cur)
+                                ? "font-medium text-blue-600 dark:text-blue-400"
+                                : cur
+                                  ? "text-success"
+                                  : "text-muted-foreground",
+                            )}
+                          >
+                            {toDay === todayIso ? statusLabel(cur) : "—"}
+                          </td>
+                          <td className="whitespace-nowrap py-2.5 px-2 text-xs text-muted-foreground">
+                            {stats.loginTime ? formatClockTime(stats.loginTime) : "—"} –{" "}
+                            {stats.logoutTime
+                              ? formatClockTime(stats.logoutTime)
+                              : stats.presenceRecorded
+                                ? "now"
+                                : "—"}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs tabular-nums font-medium text-foreground">
+                            {formatDurationOrDash(stats.loggedInSeconds)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs tabular-nums text-success">
+                            {formatDuration(stats.callingSeconds)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs tabular-nums text-sky-600 dark:text-sky-400">
+                            {formatDurationOrDash(stats.ringingSeconds)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs tabular-nums text-violet-600 dark:text-violet-400">
+                            {formatDurationOrDash(stats.dispositionSeconds)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs tabular-nums text-blue-600 dark:text-blue-400">
+                            {formatDurationOrDash(stats.breakSeconds)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs tabular-nums text-amber-600 dark:text-amber-400">
+                            {formatDurationOrDash(stats.idleSeconds)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs font-semibold tabular-nums text-foreground">
+                            {today.total}
+                            <div className="text-[10px] font-normal text-muted-foreground">
+                              {today.contactRate}% contact
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs tabular-nums font-medium text-blue-600">
+                            {today.ptps}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-xs tabular-nums font-semibold text-success">
+                            {formatINR(today.paidAmount)}
+                          </td>
+                          <td className="py-2.5 pr-4 pl-2">
+                            <ActivityBar stats={stats} />
+                          </td>
+                        </tr>
+                        {open && (
+                          <tr className="bg-muted/10">
+                            <td colSpan={14} className="px-4 py-4">
+                              <div className="space-y-4">
+                                <AgentTimeBreakdown
+                                  agentId={agent.id}
+                                  agentName={agent.name}
+                                  time={stats}
+                                  disps={disps}
+                                  intervals={intervals}
+                                  fromDay={fromDay}
+                                  toDay={toDay}
+                                  avgCallSeconds={
+                                    today.total ? Math.round(stats.callingSeconds / today.total) : 0
+                                  }
+                                />
+                                <div>
+                                  <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                    How {agent.name.split(" ")[0]}&apos;s calls ended
+                                  </div>
+                                  <OutcomeBreakdown disps={disps} />
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                      <td className="py-2.5 text-right text-xs font-medium text-foreground tabular-nums">
-                        {formatDurationOrDash(stats.loggedInSeconds)}
-                      </td>
-                      <td className="py-2.5 text-right text-xs font-semibold text-foreground tabular-nums">
-                        {today.total}
-                      </td>
-                      <td className="py-2.5 text-right text-xs font-medium text-blue-600 tabular-nums">
-                        {today.ptps}
-                      </td>
-                      <td className="py-2.5 text-right text-xs font-semibold text-success tabular-nums">
-                        {formatINR(today.paidAmount)}
-                      </td>
-                      <td className="py-2.5 pr-4">
-                        <ActivityBar stats={stats} />
-                      </td>
-                    </tr>
-                  ))}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -1610,6 +1610,20 @@ await saveDisposition({ ...data });
   `payments`. The two fields themselves survive only as the fallback for an ad-hoc manual call
   (no debtor row behind it) and go away with the `MOCK_DEBTORS` array.
 
+**Paid-file uploads are dated (user, 2026-11-28).** `applyBulkPaidFile(portfolioId, rows, fileName)`
+stamps `debtors.paid_reported_at` on every account it marks paid and logs one `paid_file_uploads`
+row per upload (who, when, file, rows / marked / already paid / not found / amount), even when it
+marks nothing (`migrations/20261128_paid_file_uploads.sql`, live; RLS: same company + visible
+portfolio, insert by manager/admin as themselves). The portfolio dashboard shows a "Paid files
+uploaded" table and "Paid · file 27 Nov" on each account (`fetchPaidFileInfo`, `PAID_FILES_UPDATED`).
+Backfilled 2026-11-28 from bank_reported payments: 123 accounts dated, 14 earlier uploads rebuilt
+(named "Earlier upload (rebuilt from its payments)", no uploader). Amount-less files before this
+left no date, so ~1,000 paid accounts have none.
+**Manager → Team Activity (2026-11-28)** shows every figure as a column (Now, login–logout,
+signed in, talking, ringing, wrap-up, break, idle, calls + contact %, PTPs, collected), team totals
+on top, and a click on an agent opens the same `AgentTimeBreakdown` + outcome split as the agent
+report. Time follows the date filter (`getAgentTimeStatsRange`; an open start = 31 days back).
+
 **Closing and reopening portfolios (2026-10-22).** Picking an old portfolio under "Continues
 portfolio" on the upload page closes it the moment the new file is saved (`createPortfolio`) —
 on 2026-10-22 a 1-account RBL test file closed "AU BANK" (594 accounts, 470 lookups), which looked
