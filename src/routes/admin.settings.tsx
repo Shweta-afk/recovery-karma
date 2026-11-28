@@ -16,6 +16,7 @@ import { CompanyDetailsCard } from "@/components/company-details-card";
 import { ReportEmailListsCard } from "@/components/report-email";
 import { CompanyCallingNumbersCard } from "@/components/telephony/calling-numbers";
 import { errorText } from "@/lib/app-error";
+import { WorkScheduleCard } from "@/components/settings/work-schedule-card";
 import { CallingHoursCard, DoNotCallCard } from "@/components/telephony/do-not-call-card";
 
 export const Route = createFileRoute("/admin/settings")({
@@ -160,6 +161,7 @@ function AdminSettingsPage() {
         </SettingRow>
       </SectionCard>
 
+      <WorkScheduleCard />
       <CallingHoursCard />
       <DoNotCallCard canRemove />
 

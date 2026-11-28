@@ -10,7 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { fetchStatusIntervals, todayPresenceKey } from "@/lib/agent-presence-store";
 import type { StatusInterval } from "@/lib/agent-presence-store";
-import { getAgentTimeStats, getFixedBreak } from "@/lib/agent-time-stats";
+import { clock12, getAgentTimeStats, getFixedBreak, getWorkShift } from "@/lib/agent-time-stats";
 import {
   getDispositions,
   refreshDispositions,
@@ -141,7 +141,8 @@ export function TodayLeaderboard({ search }: { search: string }) {
         <Trophy className="h-4 w-4 text-amber-500" />
         <span className="text-sm font-semibold text-foreground">Today&apos;s leaderboard</span>
         <span className="ml-auto text-[11px] text-muted-foreground">
-          Everyone · 8 am – 8 pm{getFixedBreak() ? ", fixed break left out" : ""} · {shown.length}{" "}
+          Everyone · {clock12(getWorkShift().start)} – {clock12(getWorkShift().end)}
+          {getFixedBreak() ? ", fixed break left out" : ""} · {shown.length}{" "}
           {shown.length === 1 ? "person" : "people"}
         </span>
       </div>

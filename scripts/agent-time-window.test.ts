@@ -1,3 +1,5 @@
+import { setWorkShift, workWindow as ww } from "../src/lib/agent-time-stats";
+import { validateWorkSchedule } from "../src/lib/work-schedule";
 import { describe, expect, test } from "bun:test";
 import {
   daysBetween,
@@ -180,5 +182,31 @@ describe("a company's fixed break (Axiotta 1:10–2:30 pm)", () => {
     const s = getAgentTimeStats("a@x.com", [], DAY, [iv("available", "08:00", "20:00")]);
     expect(s.loggedInSeconds).toBe(12 * 3600);
     expect(s.lunchSeconds).toBeNull();
+  });
+});
+
+describe("company shift (admin setting)", () => {
+  test("a 09:30–18:30 shift counts only inside it", () => {
+    setWorkShift({ start: "09:30", end: "18:30" });
+    try {
+      expect(new Date(ww(DAY).start).toISOString().slice(11, 16)).toBe("04:00");
+      const s = getAgentTimeStats("a@x.com", [], DAY, [iv("available", "08:00", "20:00")]);
+      expect(s.loggedInSeconds).toBe(9 * 3600);
+    } finally {
+      setWorkShift(null);
+    }
+  });
+  test("bad shift falls back to 8–8", () => {
+    setWorkShift({ start: "18:00", end: "09:00" });
+    expect(new Date(ww(DAY).start).toISOString().slice(11, 16)).toBe("02:30");
+    setWorkShift(null);
+  });
+  test("validation", () => {
+    const ok = { shiftStart: "09:00", shiftEnd: "18:00", breakStart: null, breakEnd: null };
+    expect(validateWorkSchedule(ok)).toBeNull();
+    expect(validateWorkSchedule({ ...ok, shiftEnd: "08:00" })).not.toBeNull();
+    expect(validateWorkSchedule({ ...ok, breakStart: "13:00", breakEnd: "14:00" })).toBeNull();
+    expect(validateWorkSchedule({ ...ok, breakStart: "08:00", breakEnd: "09:30" })).not.toBeNull();
+    expect(validateWorkSchedule({ ...ok, breakStart: "13:00", breakEnd: null })).not.toBeNull();
   });
 });

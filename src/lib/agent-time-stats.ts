@@ -98,12 +98,38 @@ export function subtractRange(ranges: [number, number][], cut: [number, number] 
   return out;
 }
 
-/** The IST working window of a day, as epoch ms. +05:30 is fixed for India — no DST. */
-export function workWindow(dateIso: string): { start: number; end: number } {
-  const hh = (h: number) => String(h).padStart(2, "0");
+/** A company's working shift, "HH:MM" IST (admin → Settings → Shift & break). Every figure here
+ *  is measured inside it; time outside counts toward nothing. Default 08:00–20:00. */
+export interface WorkShift {
+  start: string;
+  end: string;
+}
+export const DEFAULT_SHIFT: WorkShift = {
+  start: `${String(WORK_START_HOUR).padStart(2, "0")}:00`,
+  end: `${String(WORK_END_HOUR).padStart(2, "0")}:00`,
+};
+let shift: WorkShift = DEFAULT_SHIFT;
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+/** Set from the signed-in user's company (auth.tsx), or after an admin saves a new shift. */
+export function setWorkShift(s: WorkShift | null | undefined): void {
+  shift = s && HHMM.test(s.start) && HHMM.test(s.end) && s.end > s.start ? s : DEFAULT_SHIFT;
+}
+export function getWorkShift(): WorkShift {
+  return shift;
+}
+
+/** "13:10" → "1:10 pm". */
+export function clock12(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  return `${((h + 11) % 12) + 1}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "am" : "pm"}`;
+}
+
+/** The company's working window of an IST day, as epoch ms. +05:30 is fixed for India. */
+export function workWindow(dateIso: string, s: WorkShift = shift): { start: number; end: number } {
   return {
-    start: new Date(`${dateIso}T${hh(WORK_START_HOUR)}:00:00+05:30`).getTime(),
-    end: new Date(`${dateIso}T${hh(WORK_END_HOUR)}:00:00+05:30`).getTime(),
+    start: new Date(`${dateIso}T${s.start}:00+05:30`).getTime(),
+    end: new Date(`${dateIso}T${s.end}:00+05:30`).getTime(),
   };
 }
 

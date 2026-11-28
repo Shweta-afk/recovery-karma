@@ -7,8 +7,8 @@
 import { useMemo } from "react";
 import { Clock3 } from "lucide-react";
 import {
-  WORK_END_HOUR,
-  WORK_START_HOUR,
+  clock12,
+  getWorkShift,
   effectiveEnd,
   fixedBreakWindow,
   formatDuration,
@@ -21,7 +21,6 @@ import type { StatusInterval } from "@/lib/agent-presence-store";
 import { istDayKey } from "@/lib/monthly-trend";
 import { cn } from "@/lib/utils";
 
-const hh = (h: number) => `${((h + 11) % 12) + 1}${h < 12 ? " am" : " pm"}`;
 /** "13:10" → "1:10 pm". */
 function clock(hhmm: string): string {
   const [h, m] = hhmm.split(":").map(Number);
@@ -154,7 +153,7 @@ export function AgentTimeBreakdown({
         <div className="border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
           How this is counted: only{" "}
           <strong className="text-foreground">
-            {hh(WORK_START_HOUR)} – {hh(WORK_END_HOUR)}
+            {clock12(getWorkShift().start)} – {clock12(getWorkShift().end)}
           </strong>{" "}
           each day
           {fb && (
