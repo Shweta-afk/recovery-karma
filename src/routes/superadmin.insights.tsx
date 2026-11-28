@@ -22,6 +22,7 @@ import {
   useSuperadminRange,
 } from "@/components/superadmin/usage-shared";
 import { PROFILEX_SERVICES } from "@/lib/profilex/catalogue";
+import { ListSearch, useListSearch } from "@/components/superadmin/list-search";
 import { ExportRequestsCard } from "@/components/profilex/export-requests-card";
 
 export const Route = createFileRoute("/superadmin/insights")({
@@ -69,6 +70,12 @@ function SuperadminInsightsPage() {
   const [range, setRange] = useSuperadminRange();
   const [report, setReport] = useState<InsightsReport | null>(null);
   const [rows, setRows] = useState<InsightsActivityRow[]>([]);
+  const companySearch = useListSearch(report?.byCompany ?? [], (c) => c.companyName);
+  const serviceSearch = useListSearch(report?.byService ?? [], (r) => serviceLabel(r.serviceId));
+  const lookupSearch = useListSearch(
+    rows,
+    (r) => `${r.companyName ?? ""} ${r.managerName ?? ""} ${serviceLabel(r.serviceId)}`,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -179,17 +186,26 @@ function SuperadminInsightsPage() {
                   from what ProfileX really bills for the same lookups.
                 </p>
               </div>
-              <ExcelButton
-                onExport={() =>
-                  downloadXlsx(reportFilename("insights-by-company", range), [
-                    {
-                      name: "By company",
-                      headers: ["Company", ...BUCKET_HEADERS],
-                      rows: report.byCompany.map((c) => [c.companyName, ...bucketCells(c)]),
-                    },
-                  ])
-                }
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <ListSearch
+                  query={companySearch.query}
+                  setQuery={companySearch.setQuery}
+                  placeholder="Search company…"
+                  shown={companySearch.shown.length}
+                  total={report?.byCompany.length ?? 0}
+                />
+                <ExcelButton
+                  onExport={() =>
+                    downloadXlsx(reportFilename("insights-by-company", range), [
+                      {
+                        name: "By company",
+                        headers: ["Company", ...BUCKET_HEADERS],
+                        rows: companySearch.shown.map((c) => [c.companyName, ...bucketCells(c)]),
+                      },
+                    ])
+                  }
+                />
+              </div>
             </CardHeader>
             <CardContent className="pt-4">
               <div className="overflow-x-auto">
@@ -208,14 +224,16 @@ function SuperadminInsightsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {report.byCompany.length === 0 && (
+                    {companySearch.shown.length === 0 && (
                       <tr>
                         <td colSpan={9} className="py-6 text-center text-muted-foreground">
-                          No lookups in this period.
+                          {companySearch.filtered
+                            ? "No company matches that search."
+                            : "No lookups in this period."}
                         </td>
                       </tr>
                     )}
-                    {report.byCompany.map((c) => {
+                    {companySearch.shown.map((c) => {
                       const delta = c.realCost - c.companyCost;
                       return (
                         <tr key={c.clientId} className="border-b border-border last:border-0">
@@ -262,20 +280,29 @@ function SuperadminInsightsPage() {
                   {label}. Where the money goes, and which lookups return nothing.
                 </p>
               </div>
-              <ExcelButton
-                onExport={() =>
-                  downloadXlsx(reportFilename("insights-by-service", range), [
-                    {
-                      name: "By service",
-                      headers: ["Service", ...BUCKET_HEADERS],
-                      rows: report.byService.map((r) => [
-                        serviceLabel(r.serviceId),
-                        ...bucketCells(r),
-                      ]),
-                    },
-                  ])
-                }
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <ListSearch
+                  query={serviceSearch.query}
+                  setQuery={serviceSearch.setQuery}
+                  placeholder="Search service…"
+                  shown={serviceSearch.shown.length}
+                  total={report?.byService.length ?? 0}
+                />
+                <ExcelButton
+                  onExport={() =>
+                    downloadXlsx(reportFilename("insights-by-service", range), [
+                      {
+                        name: "By service",
+                        headers: ["Service", ...BUCKET_HEADERS],
+                        rows: serviceSearch.shown.map((r) => [
+                          serviceLabel(r.serviceId),
+                          ...bucketCells(r),
+                        ]),
+                      },
+                    ])
+                  }
+                />
+              </div>
             </CardHeader>
             <CardContent className="pt-4">
               <div className="overflow-x-auto">
@@ -293,14 +320,16 @@ function SuperadminInsightsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {report.byService.length === 0 && (
+                    {serviceSearch.shown.length === 0 && (
                       <tr>
                         <td colSpan={8} className="py-6 text-center text-muted-foreground">
-                          No lookups in this period.
+                          {serviceSearch.filtered
+                            ? "No service matches that search."
+                            : "No lookups in this period."}
                         </td>
                       </tr>
                     )}
-                    {report.byService.map((r) => (
+                    {serviceSearch.shown.map((r) => (
                       <tr key={r.serviceId} className="border-b border-border last:border-0">
                         <td className="py-2 pr-4 text-foreground font-medium">
                           {serviceLabel(r.serviceId)}
@@ -329,40 +358,49 @@ function SuperadminInsightsPage() {
               <Sparkles className="h-4 w-4 text-primary" />
               Recent lookups
             </CardTitle>
-            <ExcelButton
-              disabled={loading || rows.length === 0}
-              onExport={() =>
-                // The typed-in mobile/UAN of a manual lookup is left out on purpose: the
-                // download is a usage record, not a list of people's numbers.
-                downloadXlsx(reportFilename("insights-lookups", range), [
-                  {
-                    name: "Lookups",
-                    headers: [
-                      "When",
-                      "Company",
-                      "Run by",
-                      "Service",
-                      "Result",
-                      "Manual",
-                      "Company charged (₹)",
-                      "Actual ProfileX cost (₹)",
-                      "Delta (₹)",
-                    ],
-                    rows: rows.map((r) => [
-                      new Date(r.createdAt).toLocaleString("en-IN"),
-                      r.companyName ?? "",
-                      r.managerName ?? "",
-                      serviceLabel(r.serviceId),
-                      stateBadge(r).label,
-                      r.manual ? "Yes" : "No",
-                      +r.cost.toFixed(2),
-                      +r.realCost.toFixed(2),
-                      +(r.realCost - r.cost).toFixed(2),
-                    ]),
-                  },
-                ])
-              }
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <ListSearch
+                query={lookupSearch.query}
+                setQuery={lookupSearch.setQuery}
+                placeholder="Search company, manager, service…"
+                shown={lookupSearch.shown.length}
+                total={rows.length}
+              />
+              <ExcelButton
+                disabled={loading || rows.length === 0}
+                onExport={() =>
+                  // The typed-in mobile/UAN of a manual lookup is left out on purpose: the
+                  // download is a usage record, not a list of people's numbers.
+                  downloadXlsx(reportFilename("insights-lookups", range), [
+                    {
+                      name: "Lookups",
+                      headers: [
+                        "When",
+                        "Company",
+                        "Run by",
+                        "Service",
+                        "Result",
+                        "Manual",
+                        "Company charged (₹)",
+                        "Actual ProfileX cost (₹)",
+                        "Delta (₹)",
+                      ],
+                      rows: lookupSearch.shown.map((r) => [
+                        new Date(r.createdAt).toLocaleString("en-IN"),
+                        r.companyName ?? "",
+                        r.managerName ?? "",
+                        serviceLabel(r.serviceId),
+                        stateBadge(r).label,
+                        r.manual ? "Yes" : "No",
+                        +r.cost.toFixed(2),
+                        +r.realCost.toFixed(2),
+                        +(r.realCost - r.cost).toFixed(2),
+                      ]),
+                    },
+                  ])
+                }
+              />
+            </div>
           </div>
           {!loading && (
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -395,7 +433,7 @@ function SuperadminInsightsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => {
+                  {lookupSearch.shown.map((row) => {
                     const badge = stateBadge(row);
                     const delta = row.realCost - row.cost;
                     return (

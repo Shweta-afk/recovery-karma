@@ -1149,7 +1149,7 @@ function BulkPaidUploadDialog({
 
     setUploading(true);
     try {
-      const res = await applyBulkPaidFile(portfolio.id, parsed);
+      const res = await applyBulkPaidFile(portfolio.id, parsed, fileName);
       setResult(res);
       toast.success(
         `${res.matched} debtor${res.matched === 1 ? "" : "s"} marked paid` +
@@ -1495,7 +1495,9 @@ function PortfolioOverviewPage() {
   // the per-account transfer dropdown (AccountsTable) and the Edit Portfolio agent-targets list.
   const agents = useMemo(() => withSelf(teamAgents, managerId), [teamAgents, managerId]);
 
-  const [statusFilter, setStatusFilter] = useState<Portfolio["status"] | "all">("all");
+  // Opens on "Open" = everything not closed (user, 2026-11-27: Portfolio Overview showed every
+  // closed portfolio too). Closed ones are one click away on the "Closed" / "All" pills.
+  const [statusFilter, setStatusFilter] = useState<Portfolio["status"] | "open" | "all">("open");
   const [portfolioFilter, setPortfolioFilter] = useState<string>(ALL_PORTFOLIOS);
   const [selected, setSelected] = useState<Portfolio | null>(null);
   const [reassignTarget, setReassignTarget] = useState<UploadedPortfolio | null>(null);
@@ -1569,20 +1571,23 @@ function PortfolioOverviewPage() {
     setSelected((prev) => (prev ? (allPortfolios.find((p) => p.id === prev.id) ?? prev) : prev));
   }, [allPortfolios]);
 
+  const matchesStatus = (p: Portfolio) =>
+    statusFilter === "all" ||
+    (statusFilter === "open" ? p.status !== "closed" : p.status === statusFilter);
   // Falls back to "all" once the picked portfolio is gone (deleted, or a team switch).
-  const pickedPortfolio = allPortfolios.some((p) => p.id === portfolioFilter)
+  const pickedPortfolio = allPortfolios.filter(matchesStatus).some((p) => p.id === portfolioFilter)
     ? portfolioFilter
     : ALL_PORTFOLIOS;
-  const filtered = allPortfolios.filter(
-    (p) =>
-      (statusFilter === "all" || p.status === statusFilter) &&
-      (pickedPortfolio === ALL_PORTFOLIOS || p.id === pickedPortfolio),
+  const statusScoped = allPortfolios.filter(matchesStatus);
+  const filtered = statusScoped.filter(
+    (p) => pickedPortfolio === ALL_PORTFOLIOS || p.id === pickedPortfolio,
   );
 
-  const totalAccounts = allPortfolios.reduce((s, p) => s + p.totalAccounts, 0);
-  const totalOutstanding = allPortfolios.reduce((s, p) => s + p.totalOutstanding, 0);
-  const totalRecovered = allPortfolios.reduce((s, p) => s + p.recovered, 0);
-  const unassigned = allPortfolios.filter((p) => p.assignedAccounts === 0).length;
+  // The header totals follow the status pill, so closed portfolios don't inflate them by default.
+  const totalAccounts = statusScoped.reduce((s, p) => s + p.totalAccounts, 0);
+  const totalOutstanding = statusScoped.reduce((s, p) => s + p.totalOutstanding, 0);
+  const totalRecovered = statusScoped.reduce((s, p) => s + p.recovered, 0);
+  const unassigned = statusScoped.filter((p) => p.assignedAccounts === 0).length;
 
   const openReassign = (p: Portfolio) => {
     const raw = rawPortfolios.find((r) => r.id === p.id);
@@ -1625,7 +1630,7 @@ function PortfolioOverviewPage() {
             <StatCard
               icon={Briefcase}
               label="Total Portfolios"
-              value={String(allPortfolios.length)}
+              value={String(statusScoped.length)}
               sub={`${unassigned} need assignment`}
               accent="bg-primary"
             />
@@ -1662,7 +1667,7 @@ function PortfolioOverviewPage() {
           {/* Filter row */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex flex-wrap gap-1.5">
-              {(["all", "active", "stale", "completed", "closed"] as const).map((s) => (
+              {(["open", "active", "stale", "completed", "closed", "all"] as const).map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -1674,11 +1679,13 @@ function PortfolioOverviewPage() {
                       : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
                   )}
                 >
-                  {s === "all" ? "All" : STATUS_META[s].label}
+                  {s === "all" ? "All" : s === "open" ? "Open" : STATUS_META[s].label}
                   <span className="ml-1.5 opacity-60">
                     {s === "all"
                       ? allPortfolios.length
-                      : allPortfolios.filter((p) => p.status === s).length}
+                      : s === "open"
+                        ? allPortfolios.filter((p) => p.status !== "closed").length
+                        : allPortfolios.filter((p) => p.status === s).length}
                   </span>
                 </button>
               ))}
@@ -1690,7 +1697,7 @@ function PortfolioOverviewPage() {
               <SelectContent>
                 <SelectItem value={ALL_PORTFOLIOS}>All portfolios</SelectItem>
                 <SelectSeparator />
-                {allPortfolios.map((p) => (
+                {statusScoped.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.name}
                     {p.status === "closed" && (
@@ -1912,8 +1919,8 @@ function PortfolioOverviewPage() {
           agents={agents}
           onClose={() => setSelected(null)}
           replacedByName={rawPortfolios.find((x) => x.replacesPortfolioId === selected.id)?.name}
-          // A closed portfolio is a historical record — reassigning, editing its settings, or
-          // uploading a paid file against a superseded cycle doesn't make sense, so these are
+          // A closed portfolio is a historical record — reassigning or editing its settings
+          // doesn't make sense, so these are
           // simply omitted rather than passed disabled; PortfolioDetail already renders as
           // view-only whenever a handler prop is missing (same mechanism Admin Portfolio
           // Assignment's always-read-only view uses).
@@ -1926,11 +1933,14 @@ function PortfolioOverviewPage() {
               openEdit(selected);
               setSelected(null);
             },
-            onUploadPaid: () => {
-              openBulkPaid(selected);
-              setSelected(null);
-            },
           })}
+          // A bank's paid file often arrives after the cycle is closed, so it can be uploaded to a
+          // closed portfolio too (user, 2026-11-28) — it only marks accounts paid and records the
+          // payment; nothing else about the closed portfolio changes.
+          onUploadPaid={() => {
+            openBulkPaid(selected);
+            setSelected(null);
+          }}
         />
       )}
       <ReassignDialog portfolio={reassignTarget} onClose={() => setReassignTarget(null)} />

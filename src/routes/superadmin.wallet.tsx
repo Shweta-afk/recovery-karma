@@ -40,6 +40,7 @@ import {
 } from "@/lib/superadmin-actions.server";
 import { WalletHistoryCard } from "@/components/superadmin/wallet-history-card";
 import { ExcelButton } from "@/components/superadmin/usage-shared";
+import { ListSearch, useListSearch } from "@/components/superadmin/list-search";
 import { downloadXlsx } from "@/lib/xlsx-export";
 import { todayIstKey } from "@/lib/date-filter";
 
@@ -52,6 +53,7 @@ function SuperadminWalletPage() {
   const [loading, setLoading] = useState(true);
   const [masterBalance, setMasterBalance] = useState(0);
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
+  const companySearch = useListSearch(companies, (c) => `${c.companyName} ${c.status}`);
   const [topUpAmount, setTopUpAmount] = useState("");
   const [toppingUp, setToppingUp] = useState(false);
   const [allocDrafts, setAllocDrafts] = useState<Record<string, string>>({});
@@ -458,6 +460,13 @@ function SuperadminWalletPage() {
               <Send className="h-4 w-4 text-primary" />
               Allocate to a company
             </CardTitle>
+            <ListSearch
+              query={companySearch.query}
+              setQuery={companySearch.setQuery}
+              placeholder="Search company or status…"
+              shown={companySearch.shown.length}
+              total={companies.length}
+            />
             <ExcelButton
               label="Download budgets"
               disabled={loading || companies.length === 0}
@@ -466,7 +475,7 @@ function SuperadminWalletPage() {
                   {
                     name: "Company budgets",
                     headers: ["Company", "Status", "Insights budget (₹)"],
-                    rows: companies.map((c) => [
+                    rows: companySearch.shown.map((c) => [
                       c.companyName,
                       c.status,
                       +c.walletBalance.toFixed(2),
@@ -491,7 +500,12 @@ function SuperadminWalletPage() {
             <p className="py-6 text-center text-xs text-muted-foreground">No companies yet.</p>
           ) : (
             <div className="space-y-2">
-              {companies.map((c) => {
+              {companySearch.shown.length === 0 && (
+                <p className="py-4 text-center text-xs text-muted-foreground">
+                  No company matches that search.
+                </p>
+              )}
+              {companySearch.shown.map((c) => {
                 const draft = allocDrafts[c.id] ?? "";
                 const canAllocate = draft !== "" && Number(draft) > 0;
                 return (

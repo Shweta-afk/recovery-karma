@@ -1035,6 +1035,7 @@ Two places generate plausible figures that are not observations. Both are labell
 do not quietly promote either to fact.
 
 - **Time is counted 08:00–20:00 IST only (user, 2026-11-27: "timing should be recorded from morning 8 to evening 8").** `getAgentTimeStats` clamps status intervals to that window (`workWindow`, `WORK_START_HOUR`/`WORK_END_HOUR`) and drops calls outside it, so logged-in, idle, break, ringing, wrap-up, talk and login/logout all agree on every screen (leaderboard, By Team, Team Activity, agent dashboard, Reports). Raw call logs and the status log are untouched; this only changes what is summed. Tested in `scripts/agent-time-window.test.ts`.
+- **A company's fixed break is cut out of time stats (user, 2026-11-28; Axiotta 1:10–2:30 pm = 13:10–14:30).** `clients.fixed_break_start/_end` ("HH:MM" IST, `migrations/20261128_company_fixed_break.sql`; Axiotta's values were set by hand, live), read in `auth.tsx` with the profile (`AuthUser.fixedBreak`; old cached profiles refetch) and handed to `setFixedBreak` — module state in `agent-time-stats.ts`, so every screen that calls `getAgentTimeStats` applies it. Signed-in, picked-break and idle time exclude that window; it is reported on its own as `lunchSeconds` (the part of it the agent's day reached, up to now). Calls saved inside it still count as talk/ring/wrap but are not taken off idle. No UI to edit it yet — set the two columns in SQL. **The agent report's time section (`reports/agent-time-breakdown.tsx`) is built so agents can check it**: Talking + Ringing + Wrap-up + Break + Idle = Signed in, a plain-English line for each, the counting rules stated on the page, and the last day's sign-in segments and call-by-call list. If calls outlast recorded sign-in, signed-in is raised to match and says so.
 - **`agent-time-stats.ts` is MEASURED since 2026-08-30** (this note said "seeded RNG" until
   2026-11-21 — stale). Talk = `call_logs.duration_seconds`, ring = `ring_seconds` (dial → answer),
   wrap = `wrap_seconds` (call ended on screen → disposition saved, `dashboard.call-queue.tsx`),
@@ -1319,6 +1320,15 @@ divided by all agents, against its own comment). Shared rule `currentStatusOf` /
 `isOnBreak` (`agent-current-status.ts`, tested): the open interval with a heartbeat in the last 3
 min (`agent-presence-constants.ts`), else "not signed in". Break here = a status the agent PICKED;
 unlike "Agents right now", idle over 5 min is NOT turned into a break in these two places.
+
+**Search/filters on superadmin tables (user, 2026-11-27: "add filters everywhere").** One shared
+box, `components/superadmin/list-search.tsx` (`useListSearch` + `ListSearch`, case-insensitive,
+any word order, client-side, shows "N of M"), now on Insights Wallet (companies), Insights Activity
+(by company, by service, recent lookups), Revenue (by company), plus Health Check pills (all /
+needs attention, by area). Excel exports from those tables export what is shown. Companies,
+Invoices, Numbers & Lines, Contracts, Activity and Archives already had their own filters. Use
+`useListSearch` for any new superadmin table. **Manager → Portfolio Overview opens on "Open"
+(everything not closed)**; Closed and All are one click away, and the header totals follow the pill.
 
 **One date filter on every superadmin page**: `SuperadminDateFilter` in
 `src/components/superadmin/usage-shared.tsx` = the admin `DateRangeFilter` plus presets (7/30/90
@@ -1617,6 +1627,22 @@ await saveDisposition({ ...data });
   panel and Contact History tab now read real `call_logs`, and the Payments tab reads real
   `payments`. The two fields themselves survive only as the fallback for an ad-hoc manual call
   (no debtor row behind it) and go away with the `MOCK_DEBTORS` array.
+
+**Paid-file uploads are dated (user, 2026-11-28).** `applyBulkPaidFile(portfolioId, rows, fileName)`
+stamps `debtors.paid_reported_at` on every account it marks paid and logs one `paid_file_uploads`
+row per upload (who, when, file, rows / marked / already paid / not found / amount), even when it
+marks nothing (`migrations/20261128_paid_file_uploads.sql`, live; RLS: same company + visible
+portfolio, insert by manager/admin as themselves). The portfolio dashboard shows a "Paid files
+uploaded" table and "Paid · file 27 Nov" on each account (`fetchPaidFileInfo`, `PAID_FILES_UPDATED`).
+Backfilled 2026-11-28 from bank_reported payments: 123 accounts dated, 14 earlier uploads rebuilt
+(named "Earlier upload (rebuilt from its payments)", no uploader). Amount-less files before this
+left no date, so ~1,000 paid accounts have none. **Paid files can be uploaded to a CLOSED portfolio
+too** (user, 2026-11-28) — the bank's file often arrives after the cycle ends; it only marks
+accounts paid and records payments (RLS `debtors_update` has no closed check).
+**Manager → Team Activity (2026-11-28)** shows every figure as a column (Now, login–logout,
+signed in, talking, ringing, wrap-up, break, idle, calls + contact %, PTPs, collected), team totals
+on top, and a click on an agent opens the same `AgentTimeBreakdown` + outcome split as the agent
+report. Time follows the date filter (`getAgentTimeStatsRange`; an open start = 31 days back).
 
 **Closing and reopening portfolios (2026-10-22).** Picking an old portfolio under "Continues
 portfolio" on the upload page closes it the moment the new file is saved (`createPortfolio`) —

@@ -25,6 +25,9 @@ function HealthPage() {
   const { report, loading, error, reload } = useHealthReport(day);
   const overall = report ? overallHealth(report.results) : null;
   const areas = ["Data safety", "Calling", "Insights"] as const;
+  // "Needs attention" hides the checks that passed (user, 2026-11-27: filters everywhere).
+  const [view, setView] = useState<"all" | "attention">("all");
+  const [areaFilter, setAreaFilter] = useState<(typeof areas)[number] | "all">("all");
 
   return (
     <div className="space-y-6">
@@ -111,21 +114,66 @@ function HealthPage() {
         </div>
       )}
 
+      {report && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(
+            [
+              ["all", "All checks"],
+              ["attention", "Needs attention"],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setView(v)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                view === v
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="mx-1 h-4 w-px bg-border" />
+          {(["all", ...areas] as const).map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => setAreaFilter(a)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                areaFilter === a
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+              }`}
+            >
+              {a === "all" ? "Every area" : a}
+            </button>
+          ))}
+        </div>
+      )}
+
       {report &&
-        areas.map((area) => (
-          <Card key={area}>
-            <CardHeader className="border-b border-border pb-3">
-              <CardTitle className="text-sm font-semibold">{area}</CardTitle>
-            </CardHeader>
-            <CardContent className="divide-y divide-border p-0">
-              {report.results
-                .filter((r) => r.area === area)
-                .map((r) => (
-                  <CheckRow key={r.id} r={r} />
-                ))}
-            </CardContent>
-          </Card>
-        ))}
+        areas
+          .filter((a) => areaFilter === "all" || a === areaFilter)
+          .filter(
+            (a) =>
+              view === "all" || report.results.some((r) => r.area === a && r.severity !== "ok"),
+          )
+          .map((area) => (
+            <Card key={area}>
+              <CardHeader className="border-b border-border pb-3">
+                <CardTitle className="text-sm font-semibold">{area}</CardTitle>
+              </CardHeader>
+              <CardContent className="divide-y divide-border p-0">
+                {report.results
+                  .filter((r) => r.area === area && (view === "all" || r.severity !== "ok"))
+                  .map((r) => (
+                    <CheckRow key={r.id} r={r} />
+                  ))}
+              </CardContent>
+            </Card>
+          ))}
 
       {!report && loading && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">

@@ -89,6 +89,8 @@ function useRevenue(range: { from: string; to: string }) {
   return { res, loading };
 }
 
+import { ListSearch, useListSearch } from "@/components/superadmin/list-search";
+
 function SuperadminRevenuePage() {
   const { range, setRange, report: usage, loading: usageLoading } = usePlatformUsage();
   const { res, loading } = useRevenue(range);
@@ -551,6 +553,7 @@ function InsightsRow({ c, margin }: { c: CompanyUsage; margin: number }) {
 }
 
 function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading: boolean }) {
+  const companySearch = useListSearch(revenue.byCompany, (c) => c.companyName);
   const iconCls = "h-3.5 w-3.5";
   const maxAgeing = Math.max(1, ...AGEING_BUCKETS.map((b) => revenue.ageing[b.key].total));
   return (
@@ -642,6 +645,13 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
               <Building2 className="h-4 w-4 text-primary" />
               By company
             </CardTitle>
+            <ListSearch
+              query={companySearch.query}
+              setQuery={companySearch.setQuery}
+              placeholder="Search company…"
+              shown={companySearch.shown.length}
+              total={revenue.byCompany.length}
+            />
           </CardHeader>
           <CardContent className="pt-4">
             {revenue.byCompany.length === 0 ? (
@@ -666,7 +676,7 @@ function InvoiceSections({ revenue, loading }: { revenue: RevenueReport; loading
                     </tr>
                   </thead>
                   <tbody>
-                    {revenue.byCompany.map((c) => (
+                    {companySearch.shown.map((c) => (
                       <tr key={c.clientId} className="border-b border-border last:border-0">
                         <td className="py-2 pr-4">
                           <Link
